@@ -239,7 +239,8 @@ static void cleanup_ur_progress_bar(void) {
 }
 
 static void completion_timer_cb(lv_timer_t *timer) {
-  if (scan_completed && return_callback && !closing && !destruction_in_progress) {
+  if (scan_completed && return_callback && !closing &&
+      !destruction_in_progress) {
     closing = true;
     lv_timer_del(completion_timer);
     completion_timer = NULL;
@@ -358,7 +359,8 @@ static void qr_decode_task(void *pvParameters) {
                 create_progress_indicators(qr_parser->total);
               if (part_index >= 0 && qr_parser->total > 1)
                 update_progress_indicator(part_index);
-            } else if (qr_parser->format == FORMAT_UR && qr_parser->ur_decoder) {
+            } else if (qr_parser->format == FORMAT_UR &&
+                       qr_parser->ur_decoder) {
               if (!ur_progress_bar)
                 create_ur_progress_bar();
               double percent_complete = ur_decoder_estimated_percent_complete(

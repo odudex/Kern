@@ -5,6 +5,7 @@
 #include "../../ui_components/ui_input_helpers.h"
 #include "../../ui_components/ui_key_info.h"
 #include "../../wallet/wallet.h"
+#include "wallet_settings.h"
 #include <lvgl.h>
 #include <wally_core.h>
 
@@ -15,6 +16,7 @@ static lv_obj_t *type_button = NULL;
 static lv_obj_t *prev_button = NULL;
 static lv_obj_t *next_button = NULL;
 static lv_obj_t *back_button = NULL;
+static lv_obj_t *settings_button = NULL;
 static lv_obj_t *address_list_container = NULL;
 static void (*return_callback)(void) = NULL;
 
@@ -27,6 +29,24 @@ static void back_button_cb(lv_event_t *e) {
   (void)e;
   if (return_callback)
     return_callback();
+}
+
+static void return_from_wallet_settings_cb(void) {
+  wallet_settings_page_destroy();
+  // Save callback before destroy clears it
+  void (*saved_callback)(void) = return_callback;
+  // Recreate page to refresh with updated key/wallet data
+  addresses_page_destroy();
+  addresses_page_create(lv_screen_active(), saved_callback);
+  addresses_page_show();
+}
+
+static void settings_button_cb(lv_event_t *e) {
+  (void)e;
+  addresses_page_hide();
+  wallet_settings_page_create(lv_screen_active(),
+                              return_from_wallet_settings_cb);
+  wallet_settings_page_show();
 }
 
 static void type_button_cb(lv_event_t *e) {
@@ -151,6 +171,9 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Back button (on parent for absolute positioning)
   back_button = ui_create_back_button(parent, back_button_cb);
+
+  // Settings button at top-right
+  settings_button = ui_create_settings_button(parent, settings_button_cb);
 }
 
 void addresses_page_show(void) {
@@ -167,6 +190,10 @@ void addresses_page_destroy(void) {
   if (back_button) {
     lv_obj_del(back_button);
     back_button = NULL;
+  }
+  if (settings_button) {
+    lv_obj_del(settings_button);
+    settings_button = NULL;
   }
   if (addresses_screen) {
     lv_obj_del(addresses_screen);

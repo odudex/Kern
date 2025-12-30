@@ -328,9 +328,8 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
       unsigned char *scriptsig = malloc(scriptsig_len);
       if (scriptsig) {
         size_t written = 0;
-        if (wally_psbt_get_input_final_scriptsig(psbt, i, scriptsig,
-                                                 scriptsig_len,
-                                                 &written) == WALLY_OK) {
+        if (wally_psbt_get_input_final_scriptsig(
+                psbt, i, scriptsig, scriptsig_len, &written) == WALLY_OK) {
           wally_psbt_set_input_final_scriptsig(trimmed, i, scriptsig, written);
         }
         free(scriptsig);
@@ -394,9 +393,8 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
         tap_sig_len > 0) {
       unsigned char tap_sig[65];
       size_t written = 0;
-      if (wally_psbt_get_input_taproot_signature(psbt, i, tap_sig,
-                                                 sizeof(tap_sig),
-                                                 &written) == WALLY_OK) {
+      if (wally_psbt_get_input_taproot_signature(
+              psbt, i, tap_sig, sizeof(tap_sig), &written) == WALLY_OK) {
         wally_psbt_set_input_taproot_signature(trimmed, i, tap_sig, written);
       }
     }

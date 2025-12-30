@@ -10,11 +10,13 @@
 #include "backup/mnemonic_words.h"
 #include "public_key.h"
 #include "sign.h"
+#include "wallet_settings.h"
 #include <esp_log.h>
 #include <esp_system.h>
 
 static lv_obj_t *home_screen = NULL;
 static lv_obj_t *power_button = NULL;
+static lv_obj_t *settings_button = NULL;
 static ui_menu_t *main_menu = NULL;
 static void menu_backup_cb(void);
 static void menu_xpub_cb(void);
@@ -24,6 +26,7 @@ static void return_from_mnemonic_words_cb(void);
 static void return_from_public_key_cb(void);
 static void return_from_addresses_cb(void);
 static void return_from_sign_cb(void);
+static void return_from_wallet_settings_cb(void);
 
 static void menu_backup_cb(void) {
   home_page_hide();
@@ -63,6 +66,15 @@ static void power_button_cb(lv_event_t *e) {
                              NULL);
 }
 
+// Helper to refresh home if settings were changed
+static void refresh_home_if_needed(void) {
+  if (wallet_settings_were_applied()) {
+    home_page_destroy();
+    home_page_create(lv_screen_active());
+  }
+  home_page_show();
+}
+
 static void return_from_mnemonic_words_cb(void) {
   mnemonic_words_page_destroy();
   home_page_show();
@@ -70,17 +82,30 @@ static void return_from_mnemonic_words_cb(void) {
 
 static void return_from_public_key_cb(void) {
   public_key_page_destroy();
-  home_page_show();
+  refresh_home_if_needed();
 }
 
 static void return_from_addresses_cb(void) {
   addresses_page_destroy();
-  home_page_show();
+  refresh_home_if_needed();
 }
 
 static void return_from_sign_cb(void) {
   sign_page_destroy();
   home_page_show();
+}
+
+static void settings_button_cb(lv_event_t *e) {
+  (void)e;
+  home_page_hide();
+  wallet_settings_page_create(lv_screen_active(),
+                              return_from_wallet_settings_cb);
+  wallet_settings_page_show();
+}
+
+static void return_from_wallet_settings_cb(void) {
+  wallet_settings_page_destroy();
+  refresh_home_if_needed();
 }
 
 void home_page_create(lv_obj_t *parent) {
@@ -106,6 +131,9 @@ void home_page_create(lv_obj_t *parent) {
 
   // Power button (reboot) at top-left
   power_button = ui_create_power_button(home_screen, power_button_cb);
+
+  // Settings button at top-right
+  settings_button = ui_create_settings_button(home_screen, settings_button_cb);
 }
 
 void home_page_show(void) {
@@ -130,6 +158,11 @@ void home_page_destroy(void) {
   if (power_button) {
     lv_obj_del(power_button);
     power_button = NULL;
+  }
+
+  if (settings_button) {
+    lv_obj_del(settings_button);
+    settings_button = NULL;
   }
 
   if (main_menu) {

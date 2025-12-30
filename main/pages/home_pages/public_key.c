@@ -1,20 +1,43 @@
 #include "public_key.h"
 #include "../../key/key.h"
 #include "../../ui_components/theme.h"
+#include "../../ui_components/ui_input_helpers.h"
 #include "../../ui_components/ui_key_info.h"
 #include "../../wallet/wallet.h"
+#include "wallet_settings.h"
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>
 #include <wally_core.h>
 
 static lv_obj_t *public_key_screen = NULL;
+static lv_obj_t *back_button = NULL;
+static lv_obj_t *settings_button = NULL;
 static void (*return_callback)(void) = NULL;
 
 static void back_button_cb(lv_event_t *e) {
+  (void)e;
   if (return_callback) {
     return_callback();
   }
+}
+
+static void return_from_wallet_settings_cb(void) {
+  wallet_settings_page_destroy();
+  // Save callback before destroy clears it
+  void (*saved_callback)(void) = return_callback;
+  // Recreate page to refresh with updated key/wallet data
+  public_key_page_destroy();
+  public_key_page_create(lv_screen_active(), saved_callback);
+  public_key_page_show();
+}
+
+static void settings_button_cb(lv_event_t *e) {
+  (void)e;
+  public_key_page_hide();
+  wallet_settings_page_create(lv_screen_active(),
+                              return_from_wallet_settings_cb);
+  wallet_settings_page_show();
 }
 
 void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
@@ -33,11 +56,9 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_screen(public_key_screen);
   lv_obj_set_style_pad_all(public_key_screen, theme_get_default_padding(), 0);
   lv_obj_set_flex_flow(public_key_screen, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(public_key_screen, LV_FLEX_ALIGN_SPACE_BETWEEN,
+  lv_obj_set_flex_align(public_key_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(public_key_screen, theme_get_default_padding(), 0);
-  lv_obj_add_event_cb(public_key_screen, back_button_cb, LV_EVENT_CLICKED,
-                      NULL);
 
   // Key info header at top
   ui_key_info_create(public_key_screen);
@@ -50,7 +71,6 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(content_wrapper, theme_get_default_padding(), 0);
   lv_obj_set_flex_grow(content_wrapper, 1);
-  lv_obj_add_flag(content_wrapper, LV_OBJ_FLAG_EVENT_BUBBLE);
 
   char fingerprint_hex[BIP32_KEY_FINGERPRINT_LEN * 2 + 1];
   if (!key_get_fingerprint_hex(fingerprint_hex))
@@ -72,7 +92,6 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     lv_obj_set_style_pad_all(qr_container, 15, 0);
     lv_obj_set_style_radius(qr_container, 0, 0);
     lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(qr_container, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_update_layout(qr_container);
 
@@ -99,9 +118,11 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     lv_obj_set_width(error_value, LV_PCT(100));
   }
 
-  lv_obj_t *hint_label =
-      theme_create_label(public_key_screen, "Tap to return", false);
-  lv_obj_set_style_text_align(hint_label, LV_TEXT_ALIGN_CENTER, 0);
+  // Back button (on parent for absolute positioning)
+  back_button = ui_create_back_button(parent, back_button_cb);
+
+  // Settings button at top-right
+  settings_button = ui_create_settings_button(parent, settings_button_cb);
 }
 
 void public_key_page_show(void) {
@@ -117,6 +138,14 @@ void public_key_page_hide(void) {
 }
 
 void public_key_page_destroy(void) {
+  if (back_button) {
+    lv_obj_del(back_button);
+    back_button = NULL;
+  }
+  if (settings_button) {
+    lv_obj_del(settings_button);
+    settings_button = NULL;
+  }
   if (public_key_screen) {
     lv_obj_del(public_key_screen);
     public_key_screen = NULL;
