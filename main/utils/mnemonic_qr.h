@@ -1,17 +1,3 @@
-/*
- * Mnemonic QR Code Parser
- * Handles detection and conversion of various mnemonic QR formats
- *
- * Supported formats:
- * - Plaintext: Space-separated BIP39 words
- * - Compact SeedQR: Raw binary entropy (16 bytes for 12 words, 32 bytes for 24
- * words)
- * - SeedQR: Numeric string where every 4 digits is a word index (0000-2047)
- *
- * MIT License
- * Copyright (c) 2021-2025 Krux contributors
- */
-
 #ifndef MNEMONIC_QR_H
 #define MNEMONIC_QR_H
 

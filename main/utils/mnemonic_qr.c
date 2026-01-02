@@ -1,11 +1,3 @@
-/*
- * Mnemonic QR Code Parser
- * Supports Plaintext, Compact SeedQR, and SeedQR formats
- *
- * MIT License
- * Copyright (c) 2021-2025 Krux contributors
- */
-
 #include "mnemonic_qr.h"
 #include <ctype.h>
 #include <stdlib.h>

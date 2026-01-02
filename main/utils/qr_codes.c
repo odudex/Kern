@@ -1,11 +1,3 @@
-/*
- * QR Part Parser - C Implementation
- * Based on Python implementation from Krux project
- *
- * MIT License
- * Copyright (c) 2021-2025 Krux contributors
- */
-
 #include "qr_codes.h"
 #include "../../components/cUR/src/ur_decoder.h"
 #include <ctype.h>

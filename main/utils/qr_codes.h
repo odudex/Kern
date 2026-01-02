@@ -1,11 +1,3 @@
-/*
- * QR Part Parser - C Implementation
- * Based on Python implementation from Krux project
- *
- * MIT License
- * Copyright (c) 2021-2025 Krux contributors
- */
-
 #ifndef QR_CODES_H
 #define QR_CODES_H
 
