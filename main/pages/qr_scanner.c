@@ -186,10 +186,10 @@ static void log_perf_metrics(void) {
            camera_fps, decode_fps, (unsigned long)perf_metrics.qr_detections,
            avg_decode_ms, avg_grayscale_ms, avg_quirc_ms);
 
-  if (fps_label && bsp_display_lock(0)) {
+  if (fps_label && lvgl_port_lock(0)) {
     lv_label_set_text_fmt(fps_label, "CAM:%.0f DEC:%.0f", camera_fps,
                           decode_fps);
-    bsp_display_unlock();
+    lvgl_port_unlock();
   }
 
   perf_metrics.camera_frames = 0;
@@ -207,7 +207,7 @@ static void create_progress_indicators(int total_parts) {
     return;
   }
 
-  if (!bsp_display_lock(DISPLAY_LOCK_TIMEOUT_MS)) {
+  if (!lvgl_port_lock(DISPLAY_LOCK_TIMEOUT_MS)) {
     return;
   }
 
@@ -228,7 +228,7 @@ static void create_progress_indicators(int total_parts) {
     ESP_LOGE(TAG, "Failed to allocate progress rectangles array");
     lv_obj_del(progress_frame);
     progress_frame = NULL;
-    bsp_display_unlock();
+    lvgl_port_unlock();
     return;
   }
   progress_rectangles_count = total_parts;
@@ -242,7 +242,7 @@ static void create_progress_indicators(int total_parts) {
     theme_apply_solid_rectangle(progress_rectangles[i]);
   }
 
-  bsp_display_unlock();
+  lvgl_port_unlock();
 }
 
 static void update_progress_indicator(int part_index) {
@@ -252,7 +252,7 @@ static void update_progress_indicator(int part_index) {
   }
 
   if (previously_parsed != part_index &&
-      bsp_display_lock(DISPLAY_LOCK_TIMEOUT_MS)) {
+      lvgl_port_lock(DISPLAY_LOCK_TIMEOUT_MS)) {
     lv_obj_set_style_bg_color(progress_rectangles[part_index],
                               highlight_color(), 0);
     if (previously_parsed >= 0) {
@@ -260,7 +260,7 @@ static void update_progress_indicator(int part_index) {
                                 main_color(), 0);
     }
     previously_parsed = part_index;
-    bsp_display_unlock();
+    lvgl_port_unlock();
   }
 }
 
@@ -274,7 +274,7 @@ static void cleanup_progress_indicators(void) {
 static void create_ur_progress_bar(void) {
   if (!qr_scanner_screen || ur_progress_bar)
     return;
-  if (!bsp_display_lock(DISPLAY_LOCK_TIMEOUT_MS))
+  if (!lvgl_port_lock(DISPLAY_LOCK_TIMEOUT_MS))
     return;
 
   int bar_width = lv_obj_get_width(qr_scanner_screen) * 80 / 100;
@@ -293,14 +293,14 @@ static void create_ur_progress_bar(void) {
   theme_apply_solid_rectangle(ur_progress_indicator);
   lv_obj_set_style_bg_color(ur_progress_indicator, highlight_color(), 0);
 
-  bsp_display_unlock();
+  lvgl_port_unlock();
 }
 
 static void update_ur_progress_bar(double percent_complete) {
   if (!ur_progress_bar || !ur_progress_indicator ||
       ur_progress_bar_inner_width <= 0)
     return;
-  if (!bsp_display_lock(DISPLAY_LOCK_TIMEOUT_MS))
+  if (!lvgl_port_lock(DISPLAY_LOCK_TIMEOUT_MS))
     return;
 
   int indicator_width = (int)(ur_progress_bar_inner_width * percent_complete);
@@ -310,7 +310,7 @@ static void update_ur_progress_bar(double percent_complete) {
     indicator_width = ur_progress_bar_inner_width;
 
   lv_obj_set_width(ur_progress_indicator, indicator_width);
-  bsp_display_unlock();
+  lvgl_port_unlock();
 }
 
 static void cleanup_ur_progress_bar(void) {
@@ -633,13 +633,13 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
                                  camera_buf_ves, CAMERA_SCREEN_WIDTH);
   buffer_swap_needed = true;
 
-  if (buffer_swap_needed && !closing && camera_img && bsp_display_lock(0)) {
+  if (buffer_swap_needed && !closing && camera_img && lvgl_port_lock(0)) {
     current_display_buffer = back_buffer;
     _img_refresh_dsc.data = current_display_buffer;
     lv_img_set_src(camera_img, &_img_refresh_dsc);
     lv_refr_now(NULL);
     buffer_swap_needed = false;
-    bsp_display_unlock();
+    lvgl_port_unlock();
   }
 
   if (qr_frame_queue) {
@@ -855,7 +855,7 @@ void qr_scanner_page_destroy(void) {
 
   qr_decoder_cleanup();
 
-  bool display_locked = bsp_display_lock(1000);
+  bool display_locked = lvgl_port_lock(1000);
   if (!display_locked)
     ESP_LOGW(TAG, "Failed to lock display for UI cleanup");
 
@@ -871,7 +871,7 @@ void qr_scanner_page_destroy(void) {
   }
 
   if (display_locked)
-    bsp_display_unlock();
+    lvgl_port_unlock();
 
   free_display_buffers();
 

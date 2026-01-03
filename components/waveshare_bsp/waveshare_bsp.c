@@ -357,19 +357,4 @@ lv_indev_t *bsp_display_get_input_dev(void)
     return disp_indev;
 }
 
-void bsp_display_rotate(lv_display_t *disp, lv_disp_rotation_t rotation)
-{
-    lv_disp_set_rotation(disp, rotation);
-}
-
-bool bsp_display_lock(uint32_t timeout_ms)
-{
-    return lvgl_port_lock(timeout_ms);
-}
-
-void bsp_display_unlock(void)
-{
-    lvgl_port_unlock();
-}
-
 #endif

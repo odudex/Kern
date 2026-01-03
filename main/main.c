@@ -26,7 +26,7 @@ void app_main(void) {
   ESP_LOGI(TAG, "Display initialized successfully");
 
   theme_init();
-  bsp_display_lock(0);
+  lvgl_port_lock(0);
 
   // Set up screen theme background
   lv_obj_t *screen = lv_screen_active();
@@ -43,7 +43,7 @@ void app_main(void) {
   kern_logo_animated(screen);
 
   // Unlock display to allow LVGL to render the splash screen
-  bsp_display_unlock();
+  lvgl_port_unlock();
 
   // Wait for a few seconds to show the splash
   vTaskDelay(pdMS_TO_TICKS(3000));
@@ -55,7 +55,7 @@ void app_main(void) {
   }
 
   // Lock display again for modifications
-  bsp_display_lock(0);
+  lvgl_port_lock(0);
 
   // Clear the screen and show login page
   lv_obj_clean(screen);
@@ -64,5 +64,5 @@ void app_main(void) {
   login_page_create(screen);
 
   // Unlock display
-  bsp_display_unlock();
+  lvgl_port_unlock();
 }

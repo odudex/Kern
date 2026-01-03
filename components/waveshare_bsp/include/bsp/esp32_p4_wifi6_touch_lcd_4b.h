@@ -77,9 +77,6 @@ typedef struct {
 lv_display_t *bsp_display_start(void);
 lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg);
 lv_indev_t *bsp_display_get_input_dev(void);
-bool bsp_display_lock(uint32_t timeout_ms);
-void bsp_display_unlock(void);
-void bsp_display_rotate(lv_display_t *disp, lv_disp_rotation_t rotation);
 
 #endif
 
