@@ -92,6 +92,7 @@ struct quirc_grid {
   int vscan;
   int grid_size;
   float c[QUIRC_PERSPECTIVE_PARAMS];
+  int timing_bias;
 };
 
 struct quirc_code {
@@ -161,6 +162,7 @@ ALWAYS_INLINE void perspective_map(const float *c, float u, float v,
  * Identification module functions (k_quirc_identify.c)
  */
 void k_quirc_identify(struct k_quirc *q, bool find_inverted);
+int k_quirc_get_threshold_offset(void);
 
 /*
  * Decode module functions (k_quirc_decode.c)

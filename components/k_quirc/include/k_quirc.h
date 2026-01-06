@@ -158,6 +158,41 @@ int k_quirc_decode_grayscale(const uint8_t *grayscale_data, int width,
                              int height, k_quirc_result_t *results,
                              int max_results, bool find_inverted);
 
+/* Debug visualization support */
+#ifdef K_QUIRC_DEBUG_VIS
+
+#define K_QUIRC_DEBUG_MAX_GRIDS 8
+#define K_QUIRC_DEBUG_MAX_CAPSTONES 32
+
+#define K_QUIRC_PIXEL_WHITE 0
+#define K_QUIRC_PIXEL_BLACK 1
+#define K_QUIRC_PIXEL_REGION 2
+
+typedef struct {
+  int x;
+  int y;
+} k_quirc_debug_point_t;
+
+typedef struct {
+  float c[8];
+  int grid_size;
+  int timing_bias;
+} k_quirc_debug_grid_t;
+
+typedef struct {
+  const void *pixels;
+  int w, h;
+  int num_grids;
+  k_quirc_debug_grid_t grids[K_QUIRC_DEBUG_MAX_GRIDS];
+  int num_capstones;
+  k_quirc_debug_point_t capstones[K_QUIRC_DEBUG_MAX_CAPSTONES];
+  int threshold_offset;
+} k_quirc_debug_info_t;
+
+const k_quirc_debug_info_t *k_quirc_get_debug_info(const k_quirc_t *q);
+
+#endif /* K_QUIRC_DEBUG_VIS */
+
 #ifdef __cplusplus
 }
 #endif

@@ -4,6 +4,8 @@
  */
 
 #include "k_quirc_internal.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /*
  * LIFO (stack) data structure for flood-fill algorithm
@@ -109,6 +111,77 @@ static void perspective_setup(float *c, const struct quirc_point *rect, float w,
   c[7] = (-x2 * y3 + x1 * y3 + x3 * y2 + x0 * (y1 - y2) - x3 * y1 +
           (x2 - x1) * y0) /
          hden;
+}
+
+static void solve_8x8_system(float A[8][8], float b[8], float x[8]) {
+  for (int k = 0; k < 8; k++) {
+    int max_row = k;
+    float max_val = fabsf(A[k][k]);
+    for (int i = k + 1; i < 8; i++) {
+      if (fabsf(A[i][k]) > max_val) {
+        max_val = fabsf(A[i][k]);
+        max_row = i;
+      }
+    }
+
+    if (max_row != k) {
+      for (int j = k; j < 8; j++) {
+        float tmp = A[k][j];
+        A[k][j] = A[max_row][j];
+        A[max_row][j] = tmp;
+      }
+      float tmp = b[k];
+      b[k] = b[max_row];
+      b[max_row] = tmp;
+    }
+
+    float pivot = A[k][k];
+    if (fabsf(pivot) < 1e-10f) {
+      for (int i = 0; i < 8; i++)
+        x[i] = 0.0f;
+      return;
+    }
+
+    for (int i = k + 1; i < 8; i++) {
+      float factor = A[i][k] / pivot;
+      for (int j = k; j < 8; j++) {
+        A[i][j] -= factor * A[k][j];
+      }
+      b[i] -= factor * b[k];
+    }
+  }
+
+  for (int i = 7; i >= 0; i--) {
+    x[i] = b[i];
+    for (int j = i + 1; j < 8; j++) {
+      x[i] -= A[i][j] * x[j];
+    }
+    x[i] /= A[i][i];
+  }
+}
+
+static void perspective_setup_direct(float *c, const float img[4][2],
+                                     const float mod[4][2]) {
+  float A[8][8];
+  float b[8];
+
+  for (int i = 0; i < 4; i++) {
+    float u = mod[i][0], v = mod[i][1];
+    float x = img[i][0], y = img[i][1];
+    int row1 = i * 2, row2 = i * 2 + 1;
+
+    A[row1][0] = u;    A[row1][1] = v;    A[row1][2] = 1.0f;
+    A[row1][3] = 0.0f; A[row1][4] = 0.0f; A[row1][5] = 0.0f;
+    A[row1][6] = -u * x; A[row1][7] = -v * x;
+    b[row1] = x;
+
+    A[row2][0] = 0.0f; A[row2][1] = 0.0f; A[row2][2] = 0.0f;
+    A[row2][3] = u;    A[row2][4] = v;    A[row2][5] = 1.0f;
+    A[row2][6] = -u * y; A[row2][7] = -v * y;
+    b[row2] = y;
+  }
+
+  solve_8x8_system(A, b, c);
 }
 
 static void perspective_unmap(const float *c, const struct quirc_point *in,
@@ -253,45 +326,117 @@ static uint8_t otsu_threshold(uint32_t *histogram, uint32_t total) {
   return threshold;
 }
 
-#define OTSU_MARGIN_PERCENT 20
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+#define THRESHOLD_OFFSET_MAX 20
+static int threshold_offset = 0;
+static bool processing_inverted = false;
+#endif
+
+static inline int clamp_threshold(int t) {
+  return (t < 0) ? 0 : (t > 255) ? 255 : t;
+}
 
 HOT_FUNC
 static void threshold(struct k_quirc *q, bool inverted) {
-  int width = q->w;
-  int height = q->h;
-  quirc_pixel_t *restrict pixels = q->pixels;
-  uint32_t total_pixels = (uint32_t)width * height;
+  int w = q->w;
+  int h = q->h;
+  quirc_pixel_t *pixels = q->pixels;
 
-  int margin_x = width * OTSU_MARGIN_PERCENT / 100;
-  int margin_y = height * OTSU_MARGIN_PERCENT / 100;
-  int start_x = margin_x;
-  int end_x = width - margin_x;
-  int start_y = margin_y;
-  int end_y = height - margin_y;
+#ifdef K_QUIRC_BILINEAR_THRESHOLD
+  int mid_x = w / 2;
+  int mid_y = h / 2;
 
-  uint32_t histogram[256] = {0};
-  uint32_t hist_pixels = (uint32_t)(end_x - start_x) * (end_y - start_y);
+  uint32_t hist_tl[256] = {0}, hist_tr[256] = {0};
+  uint32_t hist_bl[256] = {0}, hist_br[256] = {0};
 
-  for (int y = start_y; y < end_y; y++) {
-    quirc_pixel_t *row = pixels + y * width + start_x;
-    for (int x = start_x; x < end_x; x++) {
-      histogram[*row++]++;
+  for (int y = 0; y < h; y++) {
+    quirc_pixel_t *row = pixels + y * w;
+    if (y < mid_y) {
+      for (int x = 0; x < mid_x; x++)
+        hist_tl[row[x]]++;
+      for (int x = mid_x; x < w; x++)
+        hist_tr[row[x]]++;
+    } else {
+      for (int x = 0; x < mid_x; x++)
+        hist_bl[row[x]]++;
+      for (int x = mid_x; x < w; x++)
+        hist_br[row[x]]++;
     }
   }
 
-  uint8_t o_threshold = otsu_threshold(histogram, hist_pixels);
+  uint32_t quad_pixels = (uint32_t)mid_x * mid_y;
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+  uint8_t t_tl = clamp_threshold(otsu_threshold(hist_tl, quad_pixels) + threshold_offset);
+  uint8_t t_tr = clamp_threshold(otsu_threshold(hist_tr, quad_pixels) + threshold_offset);
+  uint8_t t_bl = clamp_threshold(otsu_threshold(hist_bl, quad_pixels) + threshold_offset);
+  uint8_t t_br = clamp_threshold(otsu_threshold(hist_br, quad_pixels) + threshold_offset);
+#else
+  uint8_t t_tl = otsu_threshold(hist_tl, quad_pixels);
+  uint8_t t_tr = otsu_threshold(hist_tr, quad_pixels);
+  uint8_t t_bl = otsu_threshold(hist_bl, quad_pixels);
+  uint8_t t_br = otsu_threshold(hist_br, quad_pixels);
+#endif
+
+  float inv_w = 1.0f / (w - 1);
+  float inv_h = 1.0f / (h - 1);
+
+  for (int y = 0; y < h; y++) {
+    float fy = y * inv_h;
+    float t_left = t_tl + fy * (t_bl - t_tl);
+    float t_right = t_tr + fy * (t_br - t_tr);
+
+    quirc_pixel_t *row = pixels + y * w;
+
+    if (inverted) {
+      int x = 0;
+      for (; x + 3 < w; x += 4) {
+        int t = (int)(t_left + x * inv_w * (t_right - t_left));
+        row[x]     = (row[x]     > t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+        row[x + 1] = (row[x + 1] > t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+        row[x + 2] = (row[x + 2] > t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+        row[x + 3] = (row[x + 3] > t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+      }
+      for (; x < w; x++) {
+        int t = (int)(t_left + x * inv_w * (t_right - t_left));
+        row[x] = (row[x] > t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+      }
+    } else {
+      int x = 0;
+      for (; x + 3 < w; x += 4) {
+        int t = (int)(t_left + x * inv_w * (t_right - t_left));
+        row[x]     = (row[x]     < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+        row[x + 1] = (row[x + 1] < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+        row[x + 2] = (row[x + 2] < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+        row[x + 3] = (row[x + 3] < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+      }
+      for (; x < w; x++) {
+        int t = (int)(t_left + x * inv_w * (t_right - t_left));
+        row[x] = (row[x] < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
+      }
+    }
+  }
+
+#else /* !K_QUIRC_BILINEAR_THRESHOLD */
+  uint32_t histogram[256] = {0};
+  int total_pixels = w * h;
+
+  for (int i = 0; i < total_pixels; i++)
+    histogram[pixels[i]]++;
+
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+  uint8_t t = clamp_threshold(otsu_threshold(histogram, (uint32_t)total_pixels) + threshold_offset);
+#else
+  uint8_t t = otsu_threshold(histogram, (uint32_t)total_pixels);
+#endif
 
   if (inverted) {
-    for (uint32_t i = 0; i < total_pixels; i++) {
-      pixels[i] =
-          (pixels[i] > o_threshold) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
-    }
+    for (int i = 0; i < total_pixels; i++)
+      pixels[i] = (pixels[i] > t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
   } else {
-    for (uint32_t i = 0; i < total_pixels; i++) {
-      pixels[i] =
-          (pixels[i] < o_threshold) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
-    }
+    for (int i = 0; i < total_pixels; i++)
+      pixels[i] = (pixels[i] < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
   }
+#endif /* K_QUIRC_BILINEAR_THRESHOLD */
 }
 
 ALWAYS_INLINE void area_count(void *user_data, int y, int left, int right) {
@@ -561,21 +706,6 @@ static void find_alignment_pattern(struct k_quirc *q, int index) {
   }
 }
 
-static void find_leftmost_to_line(void *user_data, int y, int left, int right) {
-  struct polygon_score_data *psd = (struct polygon_score_data *)user_data;
-  int xs[2] = {left, right};
-
-  for (int i = 0; i < 2; i++) {
-    int d = -psd->ref.y * xs[i] + psd->ref.x * y;
-
-    if (d < psd->scores[0]) {
-      psd->scores[0] = d;
-      psd->corners[0].x = xs[i];
-      psd->corners[0].y = y;
-    }
-  }
-}
-
 HOT_FUNC
 static int fitness_cell(const struct k_quirc *q, int index, int x, int y) {
   const struct quirc_grid *qr = &q->grids[index];
@@ -663,6 +793,43 @@ static int fitness_all(const struct k_quirc *q, int index) {
   return score;
 }
 
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+static int timing_bias(const struct k_quirc *q, int index) {
+  const struct quirc_grid *qr = &q->grids[index];
+  int bias = 0;
+
+  for (int i = 0; i < qr->grid_size - 14; i++) {
+    int cell_h = fitness_cell(q, index, i + 7, 6);
+    int cell_v = fitness_cell(q, index, 6, i + 7);
+
+    if (i & 1) {
+      if (cell_h < 0) bias++;
+      if (cell_v < 0) bias++;
+    } else {
+      if (cell_h > 0) bias--;
+      if (cell_v > 0) bias--;
+    }
+  }
+  return bias;
+}
+
+static void update_threshold_offset(int bias) {
+  if (bias > 0)
+    threshold_offset++;
+  else if (bias < 0)
+    threshold_offset--;
+
+  if (threshold_offset > THRESHOLD_OFFSET_MAX)
+    threshold_offset = THRESHOLD_OFFSET_MAX;
+  else if (threshold_offset < -THRESHOLD_OFFSET_MAX)
+    threshold_offset = -THRESHOLD_OFFSET_MAX;
+}
+
+int k_quirc_get_threshold_offset(void) { return threshold_offset; }
+#else
+int k_quirc_get_threshold_offset(void) { return 0; }
+#endif
+
 #define JIGGLE_PASSES 2
 
 static void jiggle_perspective(struct k_quirc *q, int index) {
@@ -671,8 +838,9 @@ static void jiggle_perspective(struct k_quirc *q, int index) {
   int pass;
   float adjustments[8];
 
+  float step_factor = 0.42f / (float)qr->grid_size;
   for (int i = 0; i < 8; i++)
-    adjustments[i] = qr->c[i] * 0.02f;
+    adjustments[i] = qr->c[i] * step_factor;
 
   for (pass = 0; pass < JIGGLE_PASSES; pass++) {
     for (int i = 0; i < 16; i++) {
@@ -703,15 +871,38 @@ static void jiggle_perspective(struct k_quirc *q, int index) {
 
 static void setup_qr_perspective(struct k_quirc *q, int index) {
   struct quirc_grid *qr = &q->grids[index];
-  struct quirc_point rect[4];
+  float gs = (float)qr->grid_size;
 
-  memcpy(&rect[0], &q->capstones[qr->caps[1]].corners[0], sizeof(rect[0]));
-  memcpy(&rect[1], &q->capstones[qr->caps[2]].corners[0], sizeof(rect[1]));
-  memcpy(&rect[2], &qr->align, sizeof(rect[2]));
-  memcpy(&rect[3], &q->capstones[qr->caps[0]].corners[0], sizeof(rect[3]));
+  struct quirc_point *c0 = &q->capstones[qr->caps[0]].center;
+  struct quirc_point *c1 = &q->capstones[qr->caps[1]].center;
+  struct quirc_point *c2 = &q->capstones[qr->caps[2]].center;
 
-  perspective_setup(qr->c, rect, qr->grid_size - 7, qr->grid_size - 7);
+  float img[4][2] = {
+      {(float)c1->x, (float)c1->y},
+      {(float)c2->x, (float)c2->y},
+      {(float)qr->align.x, (float)qr->align.y},
+      {(float)c0->x, (float)c0->y}
+  };
+
+  float mod[4][2] = {
+      {3.5f, 3.5f},
+      {gs - 3.5f, 3.5f},
+      {gs - 6.5f, gs - 6.5f},
+      {3.5f, gs - 3.5f}
+  };
+
+  if (qr->grid_size == 21) {
+    mod[2][0] = gs - 7.0f;
+    mod[2][1] = gs - 7.0f;
+  }
+
+  perspective_setup_direct(qr->c, img, mod);
   jiggle_perspective(q, index);
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+  qr->timing_bias = timing_bias(q, index);
+  if (!processing_inverted)
+    update_threshold_offset(qr->timing_bias);
+#endif
 }
 
 static float length(struct quirc_point a, struct quirc_point b) {
@@ -816,26 +1007,9 @@ static void record_qr_grid(struct k_quirc *q, int a, int b, int c) {
                  &qr->align);
 
   if (qr->grid_size > 21) {
-    struct polygon_score_data psd;
-    struct quirc_point rough;
-
-    memcpy(&rough, &qr->align, sizeof(rough));
-
     find_alignment_pattern(q, q->num_grids);
-
-    if (qr->align_region >= 0) {
-      struct quirc_region *r = &q->regions[qr->align_region];
-
-      memcpy(&qr->align, &r->seed, sizeof(qr->align));
-
-      memset(&psd, 0, sizeof(psd));
-      psd.corners = &qr->align;
-      memcpy(&psd.ref, &rough, sizeof(psd.ref));
-      psd.scores[0] = INT32_MAX;
-
-      flood_fill_seed(q, r->seed.x, r->seed.y, qr->align_region,
-                      QUIRC_PIXEL_BLACK, find_leftmost_to_line, &psd, 0);
-    }
+    if (qr->align_region >= 0)
+      memcpy(&qr->align, &q->regions[qr->align_region].seed, sizeof(qr->align));
   }
 
   qr->tpep[2].x = qr->align.x;
@@ -913,7 +1087,8 @@ static void pixels_setup(struct k_quirc *q) {
   if (sizeof(*q->image) == sizeof(*q->pixels)) {
     q->pixels = (quirc_pixel_t *)q->image;
   } else {
-    for (int i = 0; i < q->w * q->h; i++)
+    int total = q->w * q->h;
+    for (int i = 0; i < total; i++)
       q->pixels[i] = q->image[i];
   }
 }
@@ -922,6 +1097,9 @@ static void pixels_setup(struct k_quirc *q) {
  * Public identification function
  */
 void k_quirc_identify(struct k_quirc *q, bool find_inverted) {
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+  processing_inverted = false;
+#endif
   pixels_setup(q);
   threshold(q, false);
 
@@ -932,6 +1110,10 @@ void k_quirc_identify(struct k_quirc *q, bool find_inverted) {
     test_grouping(q, i);
 
   if (q->num_grids == 0 && find_inverted) {
+    vTaskDelay(1); // Yield to prevent watchdog trigger
+#ifdef K_QUIRC_ADAPTIVE_THRESHOLD
+    processing_inverted = true;
+#endif
     q->num_regions = QUIRC_PIXEL_REGION;
     q->num_capstones = 0;
     q->num_grids = 0;

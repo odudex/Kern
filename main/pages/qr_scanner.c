@@ -7,9 +7,6 @@
 #include "../utils/qr_codes.h"
 #include <esp_lcd_touch_gt911.h>
 #include <esp_log.h>
-#ifdef QR_PERF_DEBUG
-#include <esp_timer.h>
-#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <k_quirc.h>
@@ -17,13 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define YIELD_ROW_MIDPOINT 320
-#define CAMERA_SCREEN_WIDTH 720
+#ifdef QR_PERF_DEBUG
+#include <esp_timer.h>
+#endif
+
+#define CAMERA_SCREEN_WIDTH 640
 #define CAMERA_SCREEN_HEIGHT 640
 #define QR_FRAME_QUEUE_SIZE 1
 #define QR_DECODE_TASK_STACK_SIZE 32768
 #define QR_DECODE_TASK_PRIORITY 5
-#define QR_DECODE_SCALE_FACTOR 1
+#define QR_DECODE_SCALE_FACTOR 2
 #define PROGRESS_BAR_HEIGHT 20
 #define PROGRESS_FRAME_PADD 2
 #define PROGRESS_BLOC_PAD 1
@@ -38,6 +38,14 @@
 #define RGB565_RED_LEVELS (1 << RGB565_RED_BITS)
 #define RGB565_GREEN_LEVELS (1 << RGB565_GREEN_BITS)
 #define RGB565_BLUE_LEVELS (1 << RGB565_BLUE_BITS)
+
+#ifdef K_QUIRC_DEBUG_VIS
+#define DEBUG_COLOR_WHITE 0xFFFF
+#define DEBUG_COLOR_BLACK 0x0000
+#define DEBUG_COLOR_TIMING_OK 0x07E0
+#define DEBUG_COLOR_TIMING_BAD 0xF800
+#define DEBUG_COLOR_CAPSTONE 0x07FF
+#endif
 
 typedef enum {
   CAMERA_EVENT_TASK_RUN = BIT(0),
@@ -166,6 +174,7 @@ static void log_perf_metrics(void) {
   float elapsed_sec = elapsed_us / 1000000.0f;
   float camera_fps = perf_metrics.camera_frames / elapsed_sec;
   float decode_fps = perf_metrics.decode_frames / elapsed_sec;
+  float successes_per_sec = perf_metrics.qr_detections / elapsed_sec;
 
   float avg_decode_ms = 0;
   float avg_grayscale_ms = 0;
@@ -184,9 +193,9 @@ static void log_perf_metrics(void) {
   }
 
   ESP_LOGI(TAG,
-           "PERF: cam=%.1f fps, decode=%.1f fps, detections=%lu | "
+           "PERF: cam=%.1f fps, decode/s=%.1f , successes/s=%.1f | "
            "avg: total=%.1fms (gray=%.1fms, quirc=%.1fms)",
-           camera_fps, decode_fps, (unsigned long)perf_metrics.qr_detections,
+           camera_fps, decode_fps, successes_per_sec,
            avg_decode_ms, avg_grayscale_ms, avg_quirc_ms);
 
   if (fps_label && lvgl_port_lock(0)) {
@@ -381,6 +390,96 @@ static void free_display_buffers(void) {
   display_buffer_size = 0;
 }
 
+#ifdef K_QUIRC_DEBUG_VIS
+/* Perspective mapping helper (duplicated from k_quirc_internal.h) */
+static inline void debug_perspective_map(const float *c, float u, float v,
+                                         int *ret_x, int *ret_y) {
+  float den = c[6] * u + c[7] * v + 1.0f;
+  float inv_den = 1.0f / den;
+  float x = (c[0] * u + c[1] * v + c[2]) * inv_den;
+  float y = (c[3] * u + c[4] * v + c[5]) * inv_den;
+  *ret_x = (int)(x + 0.5f);
+  *ret_y = (int)(y + 0.5f);
+}
+
+/* Draw a marker at the specified position */
+static inline void debug_draw_marker(uint16_t *rgb565_out, int out_width,
+                                     int out_height, int cx, int cy, int radius,
+                                     uint16_t color) {
+  for (int dy = -radius; dy <= radius; dy++) {
+    for (int dx = -radius; dx <= radius; dx++) {
+      int px = cx + dx;
+      int py = cy + dy;
+      if (px >= 0 && px < out_width && py >= 0 && py < out_height) {
+        rgb565_out[py * out_width + px] = color;
+      }
+    }
+  }
+}
+
+static void render_debug_visualization(const k_quirc_debug_info_t *debug,
+                                       uint16_t *rgb565_out, int out_width,
+                                       int out_height) {
+  const uint16_t *pixels = (const uint16_t *)debug->pixels;
+
+  for (int y = 0; y < out_height && y < debug->h; y++) {
+    for (int x = 0; x < out_width && x < debug->w; x++) {
+      uint16_t pix = pixels[y * debug->w + x];
+      uint16_t color;
+
+      if (pix == K_QUIRC_PIXEL_WHITE)
+        color = DEBUG_COLOR_WHITE;
+      else if (pix == K_QUIRC_PIXEL_BLACK)
+        color = DEBUG_COLOR_BLACK;
+      else
+        color = 0x8410;
+
+      rgb565_out[y * out_width + x] = color;
+    }
+  }
+
+  for (int g = 0; g < debug->num_grids; g++) {
+    const k_quirc_debug_grid_t *grid = &debug->grids[g];
+    int grid_size = grid->grid_size;
+
+    for (int pos = 8; pos < grid_size - 8; pos++) {
+      bool expected_black = (pos & 1) == 0;
+
+      int hx, hy;
+      debug_perspective_map(grid->c, pos + 0.5f, 6.5f, &hx, &hy);
+      if (hx >= 0 && hx < out_width && hy >= 0 && hy < out_height) {
+        uint16_t actual = pixels[hy * debug->w + hx];
+        bool actual_black = (actual > K_QUIRC_PIXEL_WHITE);
+        uint16_t color = (actual_black == expected_black) ? DEBUG_COLOR_TIMING_OK
+                                                          : DEBUG_COLOR_TIMING_BAD;
+        debug_draw_marker(rgb565_out, out_width, out_height, hx, hy, 1, color);
+      }
+
+      int vx, vy;
+      debug_perspective_map(grid->c, 6.5f, pos + 0.5f, &vx, &vy);
+      if (vx >= 0 && vx < out_width && vy >= 0 && vy < out_height) {
+        uint16_t actual = pixels[vy * debug->w + vx];
+        bool actual_black = (actual > K_QUIRC_PIXEL_WHITE);
+        uint16_t color = (actual_black == expected_black) ? DEBUG_COLOR_TIMING_OK
+                                                          : DEBUG_COLOR_TIMING_BAD;
+        debug_draw_marker(rgb565_out, out_width, out_height, vx, vy, 1, color);
+      }
+    }
+  }
+
+  for (int i = 0; i < debug->num_capstones; i++) {
+    int cx = debug->capstones[i].x;
+    int cy = debug->capstones[i].y;
+    for (int d = -4; d <= 4; d++) {
+      if (cx + d >= 0 && cx + d < out_width && cy >= 0 && cy < out_height)
+        rgb565_out[cy * out_width + cx + d] = DEBUG_COLOR_CAPSTONE;
+      if (cx >= 0 && cx < out_width && cy + d >= 0 && cy + d < out_height)
+        rgb565_out[(cy + d) * out_width + cx] = DEBUG_COLOR_CAPSTONE;
+    }
+  }
+}
+#endif /* K_QUIRC_DEBUG_VIS */
+
 static void rgb565_to_grayscale_downsample(const uint8_t *rgb565_data,
                                            uint8_t *gray_data,
                                            uint32_t src_width,
@@ -402,8 +501,6 @@ static void rgb565_to_grayscale_downsample(const uint8_t *rgb565_data,
       gray_data[dst_y * dst_width + dst_x] =
           r5_to_gray[r5] + g6_to_gray[g6] + b5_to_gray[b5];
     }
-    if (dst_y == YIELD_ROW_MIDPOINT)
-      vTaskDelay(1);
   }
 }
 
@@ -447,6 +544,27 @@ static void qr_decode_task(void *pvParameters) {
       quirc_end = esp_timer_get_time();
 #endif
 
+#ifdef K_QUIRC_DEBUG_VIS
+      /* Render debug visualization to display_buffer_b (camera uses buffer_a) */
+      const k_quirc_debug_info_t *dbg = k_quirc_get_debug_info(qr_decoder);
+      if (dbg && dbg->pixels && display_buffer_b) {
+        render_debug_visualization(dbg, (uint16_t *)display_buffer_b,
+                                   CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT);
+
+        for (int g = 0; g < dbg->num_grids; g++) {
+          ESP_LOGI(TAG, "Grid %d: bias=%d offset=%d", g,
+                   dbg->grids[g].timing_bias, dbg->threshold_offset);
+        }
+
+        if (lvgl_port_lock(0)) {
+          _img_refresh_dsc.data = display_buffer_b;
+          lv_img_set_src(camera_img, &_img_refresh_dsc);
+          lv_refr_now(NULL);
+          lvgl_port_unlock();
+        }
+      }
+#endif
+
       int num_codes = k_quirc_count(qr_decoder);
       for (int i = 0; i < num_codes; i++) {
         if (closing || destruction_in_progress)
@@ -478,8 +596,13 @@ static void qr_decode_task(void *pvParameters) {
             }
 
             if (qr_parser_is_complete(qr_parser)) {
+#ifdef K_QUIRC_DEBUG_VIS
+              /* In debug mode, log success but don't exit - allow continued debugging */
+              ESP_LOGI(TAG, "DEBUG: QR decode SUCCESS - continuing for debug");
+#else
               scan_completed = true;
               break;
+#endif
             }
           }
         }
@@ -630,6 +753,24 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
+#ifdef K_QUIRC_DEBUG_VIS
+  /* In debug mode: camera always writes to buffer_a (for grayscale input),
+   * qr_decode_task always renders to buffer_b (for display).
+   * This prevents race conditions between camera writes and debug rendering. */
+  horizontal_crop_cam_to_display(camera_buf, display_buffer_a, camera_buf_hes,
+                                 camera_buf_ves, CAMERA_SCREEN_WIDTH);
+
+  if (qr_frame_queue) {
+    qr_frame_data_t dummy;
+    while (xQueueReceive(qr_frame_queue, &dummy, 0) == pdTRUE) {
+    }
+    qr_frame_data_t frame_data = {.frame_data = display_buffer_a,
+                                  .width = CAMERA_SCREEN_WIDTH,
+                                  .height = CAMERA_SCREEN_HEIGHT};
+    xQueueSend(qr_frame_queue, &frame_data, 0);
+  }
+#else
+  /* Normal mode: double-buffer swap for camera display */
   uint8_t *back_buffer = (current_display_buffer == display_buffer_a)
                              ? display_buffer_b
                              : display_buffer_a;
@@ -656,6 +797,7 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
                                   .height = CAMERA_SCREEN_HEIGHT};
     xQueueSend(qr_frame_queue, &frame_data, 0);
   }
+#endif
 
   __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
 }

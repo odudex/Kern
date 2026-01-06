@@ -174,3 +174,35 @@ int k_quirc_decode_grayscale(const uint8_t *grayscale_data, int width,
   k_quirc_destroy(q);
   return decoded;
 }
+
+#ifdef K_QUIRC_DEBUG_VIS
+
+static k_quirc_debug_info_t debug_info;
+
+const k_quirc_debug_info_t *k_quirc_get_debug_info(const k_quirc_t *q) {
+  if (!q)
+    return NULL;
+
+  debug_info.pixels = q->pixels;
+  debug_info.w = q->w;
+  debug_info.h = q->h;
+  debug_info.num_grids = q->num_grids;
+
+  for (int i = 0; i < q->num_grids && i < K_QUIRC_DEBUG_MAX_GRIDS; i++) {
+    memcpy(debug_info.grids[i].c, q->grids[i].c, sizeof(float) * 8);
+    debug_info.grids[i].grid_size = q->grids[i].grid_size;
+    debug_info.grids[i].timing_bias = q->grids[i].timing_bias;
+  }
+
+  debug_info.num_capstones = q->num_capstones;
+  for (int i = 0; i < q->num_capstones && i < K_QUIRC_DEBUG_MAX_CAPSTONES; i++) {
+    debug_info.capstones[i].x = q->capstones[i].center.x;
+    debug_info.capstones[i].y = q->capstones[i].center.y;
+  }
+
+  debug_info.threshold_offset = k_quirc_get_threshold_offset();
+
+  return &debug_info;
+}
+
+#endif /* K_QUIRC_DEBUG_VIS */
