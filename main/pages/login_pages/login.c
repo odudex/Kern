@@ -1,20 +1,17 @@
 #include "login.h"
+
+#include <lvgl.h>
+
 #include "../../ui_components/simple_dialog.h"
 #include "../../ui_components/theme.h"
 #include "../../ui_components/ui_menu.h"
 #include "about.h"
+#include "developer_tools/dev_menu.h"
 #include "load_mnemonic_pages/load_menu.h"
-#include "lvgl.h"
 #include "new_mnemonic_pages/new_mnemonic_menu.h"
 
 static ui_menu_t *login_menu = NULL;
 static lv_obj_t *login_screen = NULL;
-
-static void load_mnemonic_cb(void);
-static void new_mnemonic_cb(void);
-static void settings_cb(void);
-static void tools_cb(void);
-static void about_cb(void);
 
 static void return_to_login_cb(void) {
   about_page_destroy();
@@ -24,6 +21,8 @@ static void return_to_login_cb(void) {
 static void return_from_load_menu_cb(void) { login_page_show(); }
 
 static void return_from_new_mnemonic_menu_cb(void) { login_page_show(); }
+
+static void return_from_dev_menu_cb(void) { login_page_show(); }
 
 static void load_mnemonic_cb(void) {
   login_page_hide();
@@ -42,8 +41,10 @@ static void settings_cb(void) {
   show_simple_dialog("Login", "Settings not implemented yet");
 }
 
-static void tools_cb(void) {
-  show_simple_dialog("Login", "Tools not implemented yet");
+static void dev_tools_cb(void) {
+  login_page_hide();
+  dev_menu_page_create(lv_screen_active(), return_from_dev_menu_cb);
+  dev_menu_page_show();
 }
 
 static void about_cb(void) {
@@ -59,7 +60,7 @@ void login_page_create(lv_obj_t *parent) {
   ui_menu_add_entry(login_menu, "Load Mnemonic", load_mnemonic_cb);
   ui_menu_add_entry(login_menu, "New Mnemonic", new_mnemonic_cb);
   // ui_menu_add_entry(login_menu, "Settings", settings_cb);
-  // ui_menu_add_entry(login_menu, "Tools", tools_cb);
+  ui_menu_add_entry(login_menu, "Developer Tools", dev_tools_cb);
   ui_menu_add_entry(login_menu, "About", about_cb);
   ui_menu_show(login_menu);
 }
