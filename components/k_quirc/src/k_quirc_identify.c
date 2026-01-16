@@ -328,7 +328,7 @@ static uint8_t otsu_threshold(uint32_t *histogram, uint32_t total) {
 
 #ifdef K_QUIRC_ADAPTIVE_THRESHOLD
 #define THRESHOLD_OFFSET_MAX 20
-static int threshold_offset = 0;
+static int threshold_offset = 10;
 static bool processing_inverted = false;
 #endif
 
@@ -610,7 +610,6 @@ static void test_capstone(struct k_quirc *q, int x, int y, int *pb) {
 }
 
 static void finder_scan(struct k_quirc *q, int y) {
-  static const int check[5] = {1, 1, 3, 1, 1};
   quirc_pixel_t *row = q->pixels + y * q->w;
   uint8_t last_color;
   int run_length = 1;
@@ -632,22 +631,22 @@ static void finder_scan(struct k_quirc *q, int y) {
       run_count++;
 
       if (!color && run_count >= 5) {
-        int avg, err;
-        int ok = 1;
-
-        avg = (pb[0] + pb[1] + pb[3] + pb[4]) / 4;
+        int avg = (pb[0] + pb[1] + pb[3] + pb[4]) >> 2;
         if (avg == 0)
           avg = 1;
-        err = (avg * 3) / 4;
+        int err = (avg * 3) >> 2;
 
-        for (int i = 0; i < 5; i++) {
-          if (pb[i] < check[i] * avg - err || pb[i] > check[i] * avg + err) {
-            ok = 0;
-            break;
-          }
-        }
+        /* Check 1:1:3:1:1 finder pattern ratio */
+        int lo = avg - err;
+        int hi = avg + err;
+        int lo3 = avg * 3 - err;
+        int hi3 = avg * 3 + err;
 
-        if (ok) {
+        if (pb[0] >= lo && pb[0] <= hi &&
+            pb[1] >= lo && pb[1] <= hi &&
+            pb[2] >= lo3 && pb[2] <= hi3 &&
+            pb[3] >= lo && pb[3] <= hi &&
+            pb[4] >= lo && pb[4] <= hi) {
           test_capstone(q, x, y, pb);
         }
       }
@@ -1046,17 +1045,25 @@ static void test_neighbours(struct k_quirc *q, int i,
 
 static void test_grouping(struct k_quirc *q, int i) {
   struct quirc_capstone *c1 = &q->capstones[i];
-  int j;
   struct neighbour_list hlist, vlist;
+
+  if (c1->qr_grid >= 0)
+    return;
+
+  if (q->num_grids >= QUIRC_MAX_GRIDS)
+    return;
 
   hlist.count = 0;
   vlist.count = 0;
 
-  for (j = 0; j < q->num_capstones; j++) {
+  for (int j = 0; j < q->num_capstones; j++) {
     struct quirc_capstone *c2 = &q->capstones[j];
     float u, v;
 
     if (i == j)
+      continue;
+
+    if (c2->qr_grid >= 0)
       continue;
 
     perspective_unmap(c1->c, &c2->center, &u, &v);
@@ -1064,13 +1071,13 @@ static void test_grouping(struct k_quirc *q, int i) {
     u = fabsf(u - 3.5f);
     v = fabsf(v - 3.5f);
 
-    if (u < 0.2f * v) {
+    if (u < 0.2f * v && hlist.count < QUIRC_MAX_CAPSTONES) {
       struct neighbour *n = &hlist.n[hlist.count++];
       n->index = j;
       n->distance = v;
     }
 
-    if (v < 0.2f * u) {
+    if (v < 0.2f * u && vlist.count < QUIRC_MAX_CAPSTONES) {
       struct neighbour *n = &vlist.n[vlist.count++];
       n->index = j;
       n->distance = u;
@@ -1110,7 +1117,7 @@ void k_quirc_identify(struct k_quirc *q, bool find_inverted) {
     test_grouping(q, i);
 
   if (q->num_grids == 0 && find_inverted) {
-    vTaskDelay(1); // Yield to prevent watchdog trigger
+    vTaskDelay(1);
 #ifdef K_QUIRC_ADAPTIVE_THRESHOLD
     processing_inverted = true;
 #endif
@@ -1118,9 +1125,13 @@ void k_quirc_identify(struct k_quirc *q, bool find_inverted) {
     q->num_capstones = 0;
     q->num_grids = 0;
 
-    pixels_setup(q);
-    threshold(q, true);
-
+    /* Invert thresholded buffer (region codes were BLACK, so invert to WHITE) */
+    int total_pixels = q->w * q->h;
+    for (int i = 0; i < total_pixels; i++) {
+      q->pixels[i] = (q->pixels[i] == QUIRC_PIXEL_WHITE)
+                         ? QUIRC_PIXEL_BLACK
+                         : QUIRC_PIXEL_WHITE;
+    }
     for (int i = 0; i < q->h; i++)
       finder_scan(q, i);
 

@@ -195,8 +195,8 @@ static void log_perf_metrics(void) {
   ESP_LOGI(TAG,
            "PERF: cam=%.1f fps, decode/s=%.1f , successes/s=%.1f | "
            "avg: total=%.1fms (gray=%.1fms, quirc=%.1fms)",
-           camera_fps, decode_fps, successes_per_sec,
-           avg_decode_ms, avg_grayscale_ms, avg_quirc_ms);
+           camera_fps, decode_fps, successes_per_sec, avg_decode_ms,
+           avg_grayscale_ms, avg_quirc_ms);
 
   if (fps_label && lvgl_port_lock(0)) {
     lv_label_set_text_fmt(fps_label, "CAM:%.0f DEC:%.0f", camera_fps,
@@ -450,8 +450,9 @@ static void render_debug_visualization(const k_quirc_debug_info_t *debug,
       if (hx >= 0 && hx < out_width && hy >= 0 && hy < out_height) {
         uint16_t actual = pixels[hy * debug->w + hx];
         bool actual_black = (actual > K_QUIRC_PIXEL_WHITE);
-        uint16_t color = (actual_black == expected_black) ? DEBUG_COLOR_TIMING_OK
-                                                          : DEBUG_COLOR_TIMING_BAD;
+        uint16_t color = (actual_black == expected_black)
+                             ? DEBUG_COLOR_TIMING_OK
+                             : DEBUG_COLOR_TIMING_BAD;
         debug_draw_marker(rgb565_out, out_width, out_height, hx, hy, 1, color);
       }
 
@@ -460,8 +461,9 @@ static void render_debug_visualization(const k_quirc_debug_info_t *debug,
       if (vx >= 0 && vx < out_width && vy >= 0 && vy < out_height) {
         uint16_t actual = pixels[vy * debug->w + vx];
         bool actual_black = (actual > K_QUIRC_PIXEL_WHITE);
-        uint16_t color = (actual_black == expected_black) ? DEBUG_COLOR_TIMING_OK
-                                                          : DEBUG_COLOR_TIMING_BAD;
+        uint16_t color = (actual_black == expected_black)
+                             ? DEBUG_COLOR_TIMING_OK
+                             : DEBUG_COLOR_TIMING_BAD;
         debug_draw_marker(rgb565_out, out_width, out_height, vx, vy, 1, color);
       }
     }
@@ -545,7 +547,7 @@ static void qr_decode_task(void *pvParameters) {
 #endif
 
 #ifdef K_QUIRC_DEBUG_VIS
-      /* Render debug visualization to display_buffer_b (camera uses buffer_a) */
+      /* Render debug visualization to display_buffer_b */
       const k_quirc_debug_info_t *dbg = k_quirc_get_debug_info(qr_decoder);
       if (dbg && dbg->pixels && display_buffer_b) {
         render_debug_visualization(dbg, (uint16_t *)display_buffer_b,
@@ -597,7 +599,7 @@ static void qr_decode_task(void *pvParameters) {
 
             if (qr_parser_is_complete(qr_parser)) {
 #ifdef K_QUIRC_DEBUG_VIS
-              /* In debug mode, log success but don't exit - allow continued debugging */
+              /* In debug mode, log success but don't exit */
               ESP_LOGI(TAG, "DEBUG: QR decode SUCCESS - continuing for debug");
 #else
               scan_completed = true;

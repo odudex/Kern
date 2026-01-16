@@ -43,7 +43,7 @@
 #define QUIRC_PIXEL_REGION 2
 
 #ifndef QUIRC_MAX_REGIONS
-#define QUIRC_MAX_REGIONS 12769 /* Max Version 24 */
+#define QUIRC_MAX_REGIONS 254
 #endif
 
 #define QUIRC_MAX_CAPSTONES 32
