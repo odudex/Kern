@@ -18,10 +18,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* Limits on the maximum size of QR-codes and their content (Max Version 24). */
 #define K_QUIRC_MAX_BITMAP 1597  /* ceil(113*113/8) for version 24 */
 #define K_QUIRC_MAX_PAYLOAD 2048 /* v24 ECC-L numeric max: 1852 chars */
@@ -192,9 +188,5 @@ typedef struct {
 const k_quirc_debug_info_t *k_quirc_get_debug_info(const k_quirc_t *q);
 
 #endif /* K_QUIRC_DEBUG_VIS */
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* K_QUIRC_H */

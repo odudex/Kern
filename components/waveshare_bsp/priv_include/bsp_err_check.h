@@ -3,10 +3,6 @@
 #include "esp_check.h"
 #include "sdkconfig.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #if CONFIG_BSP_ERROR_CHECK
 #define BSP_ERROR_CHECK_RETURN_ERR(x)    ESP_ERROR_CHECK(x)
 #define BSP_ERROR_CHECK_RETURN_NULL(x)   ESP_ERROR_CHECK(x)
@@ -44,8 +40,4 @@ extern "C" {
             goto goto_tag;      \
         }                       \
     } while(0)
-#endif
-
-#ifdef __cplusplus
-}
 #endif

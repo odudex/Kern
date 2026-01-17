@@ -20,10 +20,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* Compression/decompression return codes */
 #define MZ_OK 0
 #define MZ_STREAM_END 1
@@ -174,9 +170,5 @@ int mz_compress_wbits(uint8_t *dest, size_t *dest_len, const uint8_t *source,
  */
 uint8_t *mz_compress_alloc_wbits(const uint8_t *source, size_t source_len,
                                  size_t *dest_len, int level, int wbits);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* MINIZ_H */

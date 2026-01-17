@@ -36,10 +36,6 @@
 #define BSP_LCD_TOUCH_RST     (GPIO_NUM_23)
 #define BSP_LCD_TOUCH_INT     (GPIO_NUM_NC)
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**************************************************************************************************
  *
  * I2C interface
@@ -78,8 +74,4 @@ lv_display_t *bsp_display_start(void);
 lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg);
 lv_indev_t *bsp_display_get_input_dev(void);
 
-#endif
-
-#ifdef __cplusplus
-}
 #endif

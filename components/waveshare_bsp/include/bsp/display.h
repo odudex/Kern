@@ -28,10 +28,6 @@
 #define BSP_MIPI_DSI_PHY_PWR_LDO_CHAN       (3)
 #define BSP_MIPI_DSI_PHY_PWR_LDO_VOLTAGE_MV (2500)
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
     int dummy;
 } bsp_display_config_t;
@@ -49,7 +45,3 @@ esp_err_t bsp_display_brightness_init(void);
 esp_err_t bsp_display_brightness_set(int brightness_percent);
 esp_err_t bsp_display_backlight_on(void);
 esp_err_t bsp_display_backlight_off(void);
-
-#ifdef __cplusplus
-}
-#endif
