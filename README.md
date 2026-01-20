@@ -95,9 +95,10 @@ The simplicity and UI polish of [SeedSigner](https://github.com/SeedSigner/seeds
   - Scan, parse and export
     - ✅ UR
     - ✅ pMofN
-    - ❌ BBQr
+    - ✅ BBQr
 - New Mnemonic
   - ✅ From dice rolls
+  - ✅ From words
   - ❌ From camera
 - Load Mnemonic
   - ✅ From manual input (typing words)

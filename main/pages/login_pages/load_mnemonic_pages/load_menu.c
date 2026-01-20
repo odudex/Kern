@@ -66,7 +66,7 @@ static void from_qr_code_cb(void) {
 static void from_manual_input_cb(void) {
   load_menu_page_hide();
   manual_input_page_create(lv_screen_active(), return_from_manual_input_cb,
-                           success_from_manual_input_cb);
+                           success_from_manual_input_cb, false);
   manual_input_page_show();
 }
 

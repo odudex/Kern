@@ -363,7 +363,8 @@ static int detect_format(const char *data, BBQrCode **bbqr) {
     // Validate BBQr header (convert to uppercase for validation)
     char encoding = toupper((unsigned char)data[2]);
     char file_type = toupper((unsigned char)data[3]);
-    if (bbqr_is_valid_encoding(encoding) && bbqr_is_valid_file_type(file_type)) {
+    if (bbqr_is_valid_encoding(encoding) &&
+        bbqr_is_valid_file_type(file_type)) {
       // Create BBQrCode structure
       *bbqr = (BBQrCode *)calloc(1, sizeof(BBQrCode));
       if (*bbqr) {

@@ -406,8 +406,8 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
 
   if (qr_format == FORMAT_BBQR) {
     // Encode as BBQr
-    BBQrParts *bbqr_parts =
-        bbqr_encode(psbt_bytes, psbt_len, BBQR_TYPE_PSBT, MAX_QR_CHARS_PER_FRAME);
+    BBQrParts *bbqr_parts = bbqr_encode(psbt_bytes, psbt_len, BBQR_TYPE_PSBT,
+                                        MAX_QR_CHARS_PER_FRAME);
     free(psbt_bytes);
 
     if (!bbqr_parts) {

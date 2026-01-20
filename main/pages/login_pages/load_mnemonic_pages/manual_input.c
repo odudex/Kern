@@ -39,6 +39,7 @@ static const char *filtered_words[BIP39_MAX_FILTERED_WORDS];
 static int filtered_count = 0;
 static input_mode_t current_mode = MODE_WORD_COUNT_SELECT;
 static char pending_word[16] = {0};
+static bool checksum_filter_mode = false;
 
 static void word_confirmation_cb(bool confirmed, void *user_data);
 static void create_word_count_menu(void);
@@ -55,8 +56,14 @@ static void finish_mnemonic(void);
 static void cleanup_ui(void);
 
 static void filter_words_by_prefix(void) {
-  filtered_count = bip39_filter_by_prefix(current_prefix, prefix_len,
-                                          filtered_words, BIP39_MAX_FILTERED_WORDS);
+  if (checksum_filter_mode && current_word_index == total_words - 1) {
+    filtered_count = bip39_filter_last_word_by_prefix(
+        entered_words, total_words, current_prefix, prefix_len, filtered_words,
+        BIP39_MAX_FILTERED_WORDS);
+  } else {
+    filtered_count = bip39_filter_by_prefix(
+        current_prefix, prefix_len, filtered_words, BIP39_MAX_FILTERED_WORDS);
+  }
 }
 
 static void cleanup_ui(void) {
@@ -99,6 +106,10 @@ static void word_confirmation_cb(bool confirmed, void *user_data) {
     if (current_word_index >= total_words) {
       finish_mnemonic();
     } else {
+      // Clear cache when moving to last word so it gets recalculated
+      if (checksum_filter_mode && current_word_index == total_words - 1) {
+        bip39_filter_clear_last_word_cache();
+      }
       create_keyboard_input();
     }
   } else {
@@ -128,18 +139,37 @@ static void update_keyboard_state(void) {
   if (!keyboard)
     return;
 
-  char title[32];
-  snprintf(title, sizeof(title), "Word %d/%d", current_word_index + 1,
-           total_words);
+  char title[48];
+  bool is_last_word =
+      checksum_filter_mode && current_word_index == total_words - 1;
+  if (is_last_word) {
+    snprintf(title, sizeof(title), "Word %d/%d (checksum)",
+             current_word_index + 1, total_words);
+  } else {
+    snprintf(title, sizeof(title), "Word %d/%d", current_word_index + 1,
+             total_words);
+  }
   ui_keyboard_set_title(keyboard, title);
   ui_keyboard_set_input_text(keyboard, current_prefix);
-  ui_keyboard_set_letters_enabled(keyboard, bip39_filter_get_valid_letters(current_prefix, prefix_len));
+
+  uint32_t valid_letters;
+  int match_count;
+  if (is_last_word) {
+    valid_letters = bip39_filter_get_valid_letters_for_last_word(
+        entered_words, total_words, current_prefix, prefix_len);
+    filter_words_by_prefix();
+    match_count = filtered_count;
+  } else {
+    valid_letters = bip39_filter_get_valid_letters(current_prefix, prefix_len);
+    match_count = bip39_filter_count_matches(current_prefix, prefix_len);
+  }
+
+  ui_keyboard_set_letters_enabled(keyboard, valid_letters);
   ui_keyboard_set_key_enabled(keyboard, UI_KB_KEY_BACKSPACE,
                               prefix_len > 0 || current_word_index > 0);
-
-  int match_count = bip39_filter_count_matches(current_prefix, prefix_len);
-  ui_keyboard_set_ok_enabled(keyboard, prefix_len > 0 && match_count > 0 &&
-                                           match_count <= BIP39_MAX_FILTERED_WORDS);
+  ui_keyboard_set_ok_enabled(keyboard,
+                             prefix_len > 0 && match_count > 0 &&
+                                 match_count <= BIP39_MAX_FILTERED_WORDS);
 }
 
 static void back_confirm_cb(bool confirmed, void *user_data) {
@@ -157,7 +187,7 @@ static void create_keyboard_input(void) {
   cleanup_ui();
   current_mode = MODE_KEYBOARD_INPUT;
 
-  char title[32];
+  char title[48];
   snprintf(title, sizeof(title), "Word %d/%d", current_word_index + 1,
            total_words);
 
@@ -299,17 +329,19 @@ static void finish_mnemonic(void) {
 
   manual_input_page_hide();
   mnemonic_editor_page_create(lv_screen_active(), return_callback,
-                              success_callback, mnemonic, false);
+                              success_callback, mnemonic, checksum_filter_mode);
   mnemonic_editor_page_show();
 }
 
 void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
-                              void (*success_cb)(void)) {
+                              void (*success_cb)(void),
+                              bool checksum_filter_last_word) {
   if (!parent)
     return;
 
   return_callback = return_cb;
   success_callback = success_cb;
+  checksum_filter_mode = checksum_filter_last_word;
 
   if (!bip39_filter_init()) {
     show_flash_error("Failed to load wordlist", return_cb, 0);
@@ -322,6 +354,7 @@ void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
   current_prefix[0] = '\0';
   filtered_count = 0;
   memset(entered_words, 0, sizeof(entered_words));
+  bip39_filter_clear_last_word_cache();
 
   manual_input_screen = theme_create_page_container(parent);
   create_word_count_menu();
@@ -365,4 +398,6 @@ void manual_input_page_destroy(void) {
   prefix_len = 0;
   filtered_count = 0;
   current_mode = MODE_WORD_COUNT_SELECT;
+  checksum_filter_mode = false;
+  bip39_filter_clear_last_word_cache();
 }

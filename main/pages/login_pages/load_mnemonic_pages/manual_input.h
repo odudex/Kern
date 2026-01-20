@@ -16,9 +16,12 @@
  * @param return_cb Callback function to call when returning to previous page
  * @param success_cb Callback function to call when mnemonic is successfully
  * loaded
+ * @param checksum_filter_last_word If true, only show checksum-valid words for
+ * the last word position (used when creating new mnemonic from manual input)
  */
 void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
-                              void (*success_cb)(void));
+                              void (*success_cb)(void),
+                              bool checksum_filter_last_word);
 
 /**
  * @brief Show the manual input page

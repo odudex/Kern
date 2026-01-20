@@ -126,13 +126,14 @@ static void return_from_qr_scanner_cb(void) {
       }
     }
   } else if (detected_format == FORMAT_BBQR) {
-    // BBQr returns raw binary PSBT data - parse directly without base64 conversion
+    // BBQr returns raw binary PSBT data - parse directly without base64
+    // conversion
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
       cleanup_psbt_data();
-      parse_success = (wally_psbt_from_bytes((const uint8_t *)qr_content,
-                                             qr_content_len, 0,
-                                             &current_psbt) == WALLY_OK);
+      parse_success =
+          (wally_psbt_from_bytes((const uint8_t *)qr_content, qr_content_len, 0,
+                                 &current_psbt) == WALLY_OK);
       free(qr_content);
     }
   } else {

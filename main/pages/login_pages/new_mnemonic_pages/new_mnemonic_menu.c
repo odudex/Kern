@@ -6,6 +6,7 @@
 #include "../../../ui_components/ui_menu.h"
 #include "../../home_pages/home.h"
 #include "../key_confirmation.h"
+#include "../load_mnemonic_pages/manual_input.h"
 #include "../mnemonic_editor.h"
 #include "dice_rolls.h"
 #include <lvgl.h>
@@ -17,9 +18,11 @@ static lv_obj_t *new_mnemonic_menu_screen = NULL;
 static void (*return_callback)(void) = NULL;
 
 static void from_dice_rolls_cb(void);
+static void from_words_cb(void);
 static void from_camera_cb(void);
 static void back_cb(void);
 static void return_from_dice_rolls_cb(void);
+static void return_from_manual_input_cb(void);
 static void return_from_mnemonic_editor_cb(void);
 static void return_from_key_confirmation_cb(void);
 static void success_from_key_confirmation_cb(void);
@@ -29,14 +32,19 @@ static void return_from_dice_rolls_cb(void) {
   dice_rolls_page_destroy();
 
   if (mnemonic) {
-    mnemonic_editor_page_create(lv_screen_active(),
-                                return_from_mnemonic_editor_cb,
-                                success_from_key_confirmation_cb, mnemonic, true);
+    mnemonic_editor_page_create(
+        lv_screen_active(), return_from_mnemonic_editor_cb,
+        success_from_key_confirmation_cb, mnemonic, true);
     mnemonic_editor_page_show();
     free(mnemonic);
   } else {
     new_mnemonic_menu_page_show();
   }
+}
+
+static void return_from_manual_input_cb(void) {
+  manual_input_page_destroy();
+  new_mnemonic_menu_page_show();
 }
 
 static void return_from_mnemonic_editor_cb(void) {
@@ -60,6 +68,13 @@ static void from_dice_rolls_cb(void) {
   new_mnemonic_menu_page_hide();
   dice_rolls_page_create(lv_screen_active(), return_from_dice_rolls_cb);
   dice_rolls_page_show();
+}
+
+static void from_words_cb(void) {
+  new_mnemonic_menu_page_hide();
+  manual_input_page_create(lv_screen_active(), return_from_manual_input_cb,
+                           success_from_key_confirmation_cb, true);
+  manual_input_page_show();
 }
 
 static void from_camera_cb(void) {
@@ -88,6 +103,7 @@ void new_mnemonic_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     return;
 
   ui_menu_add_entry(new_mnemonic_menu, "From Dice Rolls", from_dice_rolls_cb);
+  ui_menu_add_entry(new_mnemonic_menu, "From Words", from_words_cb);
   // ui_menu_add_entry(new_mnemonic_menu, "From Camera", from_camera_cb);
   ui_menu_show(new_mnemonic_menu);
 }

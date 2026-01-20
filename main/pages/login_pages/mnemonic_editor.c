@@ -138,10 +138,10 @@ static bool recalculate_last_word(void) {
   // Calculate entropy and checksum sizes based on word count
   // 12 words: 128 bits entropy + 4 bits checksum = 132 bits total
   // 24 words: 256 bits entropy + 8 bits checksum = 264 bits total
-  size_t checksum_bits = total_words / 3;  // 4 for 12 words, 8 for 24 words
+  size_t checksum_bits = total_words / 3; // 4 for 12 words, 8 for 24 words
   size_t entropy_bits = (total_words * 11) - checksum_bits;
   size_t entropy_bytes = entropy_bits / 8;
-  size_t last_word_entropy_bits = 11 - checksum_bits;  // 7 for 12, 3 for 24
+  size_t last_word_entropy_bits = 11 - checksum_bits; // 7 for 12, 3 for 24
 
   // Pack word indices (11 bits each) from first N-1 words
   uint8_t packed[32] = {0};
@@ -233,8 +233,8 @@ static void update_checksum_ui(void) {
 }
 
 static void filter_words_by_prefix(void) {
-  filtered_count = bip39_filter_by_prefix(current_prefix, prefix_len,
-                                          filtered_words, BIP39_MAX_FILTERED_WORDS);
+  filtered_count = bip39_filter_by_prefix(
+      current_prefix, prefix_len, filtered_words, BIP39_MAX_FILTERED_WORDS);
 }
 
 static void parse_mnemonic(const char *mnemonic) {
@@ -251,11 +251,9 @@ static void parse_mnemonic(const char *mnemonic) {
 
   char *token = strtok(mnemonic_copy, " ");
   while (token && total_words < 24) {
-    strncpy(entered_words[total_words], token,
-            sizeof(entered_words[0]) - 1);
+    strncpy(entered_words[total_words], token, sizeof(entered_words[0]) - 1);
     entered_words[total_words][sizeof(entered_words[0]) - 1] = '\0';
-    strncpy(original_words[total_words], token,
-            sizeof(original_words[0]) - 1);
+    strncpy(original_words[total_words], token, sizeof(original_words[0]) - 1);
     original_words[total_words][sizeof(original_words[0]) - 1] = '\0';
     total_words++;
     token = strtok(NULL, " ");
@@ -350,12 +348,14 @@ static void update_keyboard_state(void) {
            total_words);
   ui_keyboard_set_title(keyboard, title);
   ui_keyboard_set_input_text(keyboard, current_prefix);
-  ui_keyboard_set_letters_enabled(keyboard, bip39_filter_get_valid_letters(current_prefix, prefix_len));
+  ui_keyboard_set_letters_enabled(
+      keyboard, bip39_filter_get_valid_letters(current_prefix, prefix_len));
   ui_keyboard_set_key_enabled(keyboard, UI_KB_KEY_BACKSPACE, prefix_len > 0);
 
   int match_count = bip39_filter_count_matches(current_prefix, prefix_len);
-  ui_keyboard_set_ok_enabled(keyboard, prefix_len > 0 && match_count > 0 &&
-                                           match_count <= BIP39_MAX_FILTERED_WORDS);
+  ui_keyboard_set_ok_enabled(keyboard,
+                             prefix_len > 0 && match_count > 0 &&
+                                 match_count <= BIP39_MAX_FILTERED_WORDS);
 }
 
 static void keyboard_back_btn_cb(lv_event_t *e) {
@@ -370,13 +370,15 @@ static void show_keyboard_for_word(int index) {
   char title[32];
   snprintf(title, sizeof(title), "Word %d/%d", index + 1, total_words);
 
-  keyboard = ui_keyboard_create(mnemonic_editor_screen, title, keyboard_callback);
+  keyboard =
+      ui_keyboard_create(mnemonic_editor_screen, title, keyboard_callback);
   if (!keyboard) {
     return_to_word_grid();
     return;
   }
 
-  keyboard_back_btn = ui_create_back_button(mnemonic_editor_screen, keyboard_back_btn_cb);
+  keyboard_back_btn =
+      ui_create_back_button(mnemonic_editor_screen, keyboard_back_btn_cb);
 
   update_keyboard_state();
   ui_keyboard_show(keyboard);
@@ -396,8 +398,8 @@ static void word_confirmation_cb(bool confirmed, void *user_data) {
   (void)user_data;
 
   if (confirmed) {
-    snprintf(entered_words[editing_word_index],
-             sizeof(entered_words[0]), "%s", pending_word);
+    snprintf(entered_words[editing_word_index], sizeof(entered_words[0]), "%s",
+             pending_word);
     pending_word[0] = '\0';
     update_word_label(editing_word_index);
 
@@ -546,14 +548,16 @@ static void load_btn_cb(lv_event_t *e) {
   }
 
   mnemonic_editor_page_hide();
-  key_confirmation_page_create(lv_screen_active(), return_from_key_confirmation_cb,
+  key_confirmation_page_create(lv_screen_active(),
+                               return_from_key_confirmation_cb,
                                success_callback, mnemonic, strlen(mnemonic));
   key_confirmation_page_show();
 }
 
 #define GRID_MARGIN_H 10
-#define GRID_TOP_OFFSET 80   // Below back button area (20 padding + 60 button)
-#define GRID_BOTTOM_OFFSET 80 // Above load button area (10 margin + 60 button + 10)
+#define GRID_TOP_OFFSET 80 // Below back button area (20 padding + 60 button)
+#define GRID_BOTTOM_OFFSET                                                     \
+  80 // Above load button area (10 margin + 60 button + 10)
 
 static lv_obj_t *create_column(lv_obj_t *parent, int x, int width, int height) {
   lv_obj_t *col = lv_obj_create(parent);
@@ -566,8 +570,8 @@ static lv_obj_t *create_column(lv_obj_t *parent, int x, int width, int height) {
   lv_obj_set_style_pad_column(col, 0, 0);
   lv_obj_set_style_radius(col, 0, 0);
   lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(col, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_flex_align(col, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START);
   lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
   return col;
 }
@@ -616,19 +620,23 @@ static void create_word_grid(void) {
     // Two columns with chess pattern coloring
     int col_width = grid_width / 2 - 10;
     int btn_height = grid_height / 12;
-    lv_obj_t *left_col = create_column(word_grid_container, 0, col_width, grid_height);
-    lv_obj_t *right_col = create_column(word_grid_container, grid_width / 2 + 10, col_width, grid_height);
+    lv_obj_t *left_col =
+        create_column(word_grid_container, 0, col_width, grid_height);
+    lv_obj_t *right_col = create_column(
+        word_grid_container, grid_width / 2 + 10, col_width, grid_height);
 
     for (int i = 0; i < total_words; i++) {
       lv_obj_t *parent_col = (i < 12) ? left_col : right_col;
       int col_idx = (i < 12) ? 0 : 1;
       int row_idx = (i < 12) ? i : i - 12;
-      lv_color_t cell_bg = ((col_idx + row_idx) % 2 == 0) ? bg_color() : panel_color();
+      lv_color_t cell_bg =
+          ((col_idx + row_idx) % 2 == 0) ? bg_color() : panel_color();
       create_word_button(parent_col, i, btn_height, cell_bg);
     }
   } else {
     int btn_height = grid_height / total_words;
-    lv_obj_t *col = create_column(word_grid_container, 0, grid_width, grid_height);
+    lv_obj_t *col =
+        create_column(word_grid_container, 0, grid_width, grid_height);
 
     for (int i = 0; i < total_words; i++) {
       lv_color_t cell_bg = (i % 2 == 0) ? bg_color() : panel_color();
@@ -640,7 +648,8 @@ static void create_word_grid(void) {
 static void create_ui(void) {
   header_container = theme_create_flex_row(mnemonic_editor_screen);
   lv_obj_set_style_pad_column(header_container, 15, 0);
-  lv_obj_align(header_container, LV_ALIGN_TOP_MID, 0, theme_get_default_padding());
+  lv_obj_align(header_container, LV_ALIGN_TOP_MID, 0,
+               theme_get_default_padding());
 
   lv_obj_t *title = lv_label_create(header_container);
   lv_label_set_text(title, "Review Mnemonic");
@@ -679,7 +688,8 @@ static void create_ui(void) {
   lv_label_set_text(checksum_error_label, "Invalid checksum");
   lv_obj_set_style_text_color(checksum_error_label, error_color(), 0);
   lv_obj_set_style_text_font(checksum_error_label, theme_font_small(), 0);
-  lv_obj_align_to(checksum_error_label, load_btn, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+  lv_obj_align_to(checksum_error_label, load_btn, LV_ALIGN_OUT_LEFT_MID, -10,
+                  0);
   lv_obj_add_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
 
   if (!is_new_mnemonic)
@@ -687,8 +697,7 @@ static void create_ui(void) {
 }
 
 void mnemonic_editor_page_create(lv_obj_t *parent, void (*return_cb)(void),
-                                 void (*success_cb)(void),
-                                 const char *mnemonic,
+                                 void (*success_cb)(void), const char *mnemonic,
                                  bool new_mnemonic) {
   if (!parent)
     return;
