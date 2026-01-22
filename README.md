@@ -12,7 +12,7 @@ An OV5647 camera module is also required.
 
 ## Prerequisites
 
-- [esp-idf v5.5.1](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32p4/get-started/index.html)
+- [esp-idf v5.5.2](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32p4/get-started/index.html)
 
 ## Build
 
