@@ -484,27 +484,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_style_text_color(pp_label, main_color(), 0);
   lv_obj_center(pp_label);
 
-  // Account label
-  lv_obj_t *acc_label = lv_label_create(content);
-  lv_label_set_text(acc_label, "Account");
-  lv_obj_set_style_text_font(acc_label, theme_font_small(), 0);
-  lv_obj_set_style_text_color(acc_label, secondary_color(), 0);
-  lv_obj_set_style_margin_top(acc_label, 20, 0);
-
-  // Account button
-  account_btn = lv_btn_create(content);
-  lv_obj_set_size(account_btn, LV_PCT(50), 50);
-  theme_apply_touch_button(account_btn, false);
-  lv_obj_add_event_cb(account_btn, account_btn_cb, LV_EVENT_CLICKED, NULL);
-
-  account_value_label = lv_label_create(account_btn);
-  char acc_buf[12];
-  snprintf(acc_buf, sizeof(acc_buf), "%u", selected_account);
-  lv_label_set_text(account_value_label, acc_buf);
-  lv_obj_set_style_text_font(account_value_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(account_value_label, main_color(), 0);
-  lv_obj_center(account_value_label);
-
   // Network label
   lv_obj_t *net_label = lv_label_create(content);
   lv_label_set_text(net_label, "Network");
@@ -525,6 +504,27 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_add_event_cb(network_dropdown, dropdown_open_cb, LV_EVENT_READY, NULL);
   lv_obj_add_event_cb(network_dropdown, network_dropdown_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
+
+  // Account label
+  lv_obj_t *acc_label = lv_label_create(content);
+  lv_label_set_text(acc_label, "Account");
+  lv_obj_set_style_text_font(acc_label, theme_font_small(), 0);
+  lv_obj_set_style_text_color(acc_label, secondary_color(), 0);
+  lv_obj_set_style_margin_top(acc_label, 20, 0);
+
+  // Account button
+  account_btn = lv_btn_create(content);
+  lv_obj_set_size(account_btn, LV_PCT(50), 50);
+  theme_apply_touch_button(account_btn, false);
+  lv_obj_add_event_cb(account_btn, account_btn_cb, LV_EVENT_CLICKED, NULL);
+
+  account_value_label = lv_label_create(account_btn);
+  char acc_buf[12];
+  snprintf(acc_buf, sizeof(acc_buf), "%u", selected_account);
+  lv_label_set_text(account_value_label, acc_buf);
+  lv_obj_set_style_text_font(account_value_label, theme_font_medium(), 0);
+  lv_obj_set_style_text_color(account_value_label, main_color(), 0);
+  lv_obj_center(account_value_label);
 
   // Apply button
   apply_btn = lv_btn_create(content);

@@ -87,6 +87,80 @@ bool psbt_detect_network(const struct wally_psbt *psbt) {
   return false; // Default to mainnet
 }
 
+static bool extract_account_from_keypath(const unsigned char *keypath,
+                                         size_t keypath_len,
+                                         uint32_t *account_out) {
+  if (keypath_len < 16) {
+    return false;
+  }
+
+  uint32_t account;
+  memcpy(&account, keypath + 12, sizeof(uint32_t));
+
+  // Remove hardened bit to get actual account number
+  *account_out = account & 0x7FFFFFFF;
+  return true;
+}
+
+int32_t psbt_detect_account(const struct wally_psbt *psbt) {
+  if (!psbt) {
+    return -1;
+  }
+
+  unsigned char keypath[100];
+  size_t keypath_len, keypaths_size;
+  uint32_t detected_account = 0;
+  bool found = false;
+
+  // Check outputs first (more reliable for change outputs)
+  size_t num_outputs = 0;
+  wally_psbt_get_num_outputs(psbt, &num_outputs);
+
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (wally_psbt_get_output_keypaths_size(psbt, i, &keypaths_size) ==
+            WALLY_OK &&
+        keypaths_size > 0 &&
+        wally_psbt_get_output_keypath(psbt, i, 0, keypath, sizeof(keypath),
+                                      &keypath_len) == WALLY_OK) {
+      uint32_t account;
+      if (extract_account_from_keypath(keypath, keypath_len, &account)) {
+        if (!found) {
+          detected_account = account;
+          found = true;
+        } else if (account != detected_account) {
+          // Inconsistent accounts found
+          return -1;
+        }
+      }
+    }
+  }
+
+  // Check inputs as fallback
+  size_t num_inputs = 0;
+  wally_psbt_get_num_inputs(psbt, &num_inputs);
+
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (wally_psbt_get_input_keypaths_size(psbt, i, &keypaths_size) ==
+            WALLY_OK &&
+        keypaths_size > 0 &&
+        wally_psbt_get_input_keypath(psbt, i, 0, keypath, sizeof(keypath),
+                                     &keypath_len) == WALLY_OK) {
+      uint32_t account;
+      if (extract_account_from_keypath(keypath, keypath_len, &account)) {
+        if (!found) {
+          detected_account = account;
+          found = true;
+        } else if (account != detected_account) {
+          // Inconsistent accounts found
+          return -1;
+        }
+      }
+    }
+  }
+
+  return found ? (int32_t)detected_account : -1;
+}
+
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet) {
   if (!script || script_len == 0) {
@@ -186,16 +260,11 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
     return 0;
   }
 
-  // Get our fingerprint
   unsigned char our_fingerprint[BIP32_KEY_FINGERPRINT_LEN];
   if (!key_get_fingerprint(our_fingerprint)) {
     ESP_LOGE(TAG, "Failed to get key fingerprint");
     return 0;
   }
-
-  // Get wallet network to check for mismatches
-  wallet_network_t wallet_network = wallet_get_network();
-  bool wallet_is_testnet = (wallet_network == WALLET_NETWORK_TESTNET);
 
   size_t num_inputs = 0;
   if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK) {
@@ -240,13 +309,6 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
       }
 
       uint32_t coin_value = coin_type & 0x7FFFFFFF;
-      bool input_is_testnet = (coin_value == 1);
-
-      if (wallet_is_testnet != input_is_testnet) {
-        ESP_LOGW(TAG, "Network mismatch: input is %s but wallet is %s",
-                 input_is_testnet ? "testnet" : "mainnet",
-                 wallet_is_testnet ? "testnet" : "mainnet");
-      }
 
       char path_str[64];
       snprintf(path_str, sizeof(path_str), "m/84'/%u'/%u'/%u/%u", coin_value,

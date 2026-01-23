@@ -12,6 +12,11 @@ uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 // Detect network from derivation paths (returns true if testnet)
 bool psbt_detect_network(const struct wally_psbt *psbt);
 
+// Detect account from derivation paths
+// Returns the account number from PSBT derivation paths
+// Returns -1 if no derivation info found or inconsistent accounts
+int32_t psbt_detect_account(const struct wally_psbt *psbt);
+
 // Convert scriptPubKey to address string (caller must free)
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet);

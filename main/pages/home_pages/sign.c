@@ -8,6 +8,7 @@
 #include "../../key/key.h"
 #include "../../psbt/psbt.h"
 #include "../../ui_components/flash_error.h"
+#include "../../ui_components/info_dialog.h"
 #include "../../ui_components/qr_viewer.h"
 #include "../../ui_components/theme.h"
 #include "../../utils/qr_codes.h"
@@ -61,6 +62,8 @@ static output_type_t classify_output(size_t output_index,
                                      uint32_t *address_index_out);
 static void sign_button_cb(lv_event_t *e);
 static void return_from_qr_viewer_cb(void);
+static bool check_psbt_mismatch(void);
+static void mismatch_dialog_cb(void *user_data);
 
 // Classify output as self-transfer, change, or spend
 static output_type_t classify_output(size_t output_index,
@@ -179,15 +182,73 @@ static bool parse_and_display_psbt(const char *base64_data) {
   return true;
 }
 
-static bool create_psbt_info_display(void) {
-  if (!sign_screen || !current_psbt) {
+static void mismatch_dialog_cb(void *user_data) {
+  cleanup_psbt_data();
+  if (return_callback) {
+    return_callback();
+  }
+}
+
+// Check for mismatches between PSBT requirements and wallet configuration
+// Returns true if there is a mismatch (and shows dialog), false if OK to proceed
+static bool check_psbt_mismatch(void) {
+  if (!current_psbt) {
     return false;
   }
 
+  // Detect PSBT requirements (also sets global is_testnet for later use)
   is_testnet = psbt_detect_network(current_psbt);
+  int32_t psbt_account = psbt_detect_account(current_psbt);
 
-  if (!wallet_is_initialized()) {
+  // Get wallet configuration
+  wallet_network_t wallet_net = wallet_get_network();
+  bool wallet_is_testnet = (wallet_net == WALLET_NETWORK_TESTNET);
+  uint32_t wallet_account = wallet_get_account();
+
+  // Check for mismatches
+  bool network_mismatch = (is_testnet != wallet_is_testnet);
+  bool account_mismatch =
+      (psbt_account >= 0 && (uint32_t)psbt_account != wallet_account);
+
+  if (!network_mismatch && !account_mismatch) {
+    return false; // No mismatch, proceed
+  }
+
+  // Build mismatch message
+  char message[256];
+  int offset = 0;
+  offset += snprintf(message + offset, sizeof(message) - offset,
+                     "PSBT requires different settings for proper change detection:\n\n");
+
+  if (network_mismatch) {
+    offset +=
+        snprintf(message + offset, sizeof(message) - offset,
+                 "  Network:  %s -> %s\n", wallet_is_testnet ? "Testnet" : "Mainnet",
+                 is_testnet ? "Testnet" : "Mainnet");
+  }
+
+  if (account_mismatch) {
+    offset += snprintf(message + offset, sizeof(message) - offset,
+                       "  Account:  %u -> %d\n", wallet_account, psbt_account);
+  }
+
+  snprintf(message + offset, sizeof(message) - offset,
+           "\nGo to Settings " LV_SYMBOL_SETTINGS " to update\nconfiguration before signing.");
+
+  // Show mismatch dialog
+  show_info_dialog("Configuration Mismatch", message, mismatch_dialog_cb, NULL);
+
+  return true;
+}
+
+static bool create_psbt_info_display(void) {
+  if (!sign_screen || !current_psbt || !wallet_is_initialized()) {
     return false;
+  }
+
+  // Check for configuration mismatches before displaying (also sets is_testnet)
+  if (check_psbt_mismatch()) {
+    return true; // Mismatch dialog shown, don't proceed with display
   }
 
   size_t num_inputs = 0;
