@@ -10,6 +10,7 @@
 #define COLOR_ERROR lv_color_hex(0xFF0000)    // Red for errors
 #define COLOR_NO lv_color_hex(0xFF0000)       // Red for negative
 #define COLOR_YES lv_color_hex(0x00FF00)      // Green for positive
+#define COLOR_CYAN lv_color_hex(0x00FFFF)     // Cyan accent
 
 // Spacing constants
 #define DEFAULT_PADDING 30
@@ -34,6 +35,8 @@ lv_color_t yes_color(void) { return COLOR_YES; }
 
 lv_color_t no_color(void) { return COLOR_NO; }
 
+lv_color_t cyan_color(void) { return COLOR_CYAN; }
+
 // Theme fonts
 const lv_font_t *theme_font_small(void) { return &lv_font_montserrat_24; }
 
@@ -41,7 +44,7 @@ const lv_font_t *theme_font_medium(void) { return &lv_font_montserrat_36; }
 
 int theme_get_button_width(void) { return 150; }
 
-int theme_get_button_height(void) { return 50; }
+int theme_get_button_height(void) { return 100; }
 
 int theme_get_button_spacing(void) { return 20; }
 

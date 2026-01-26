@@ -13,6 +13,7 @@ lv_color_t panel_color(void);
 lv_color_t error_color(void);
 lv_color_t yes_color(void);
 lv_color_t no_color(void);
+lv_color_t cyan_color(void);
 
 // Theme fonts
 const lv_font_t *theme_font_small(void);

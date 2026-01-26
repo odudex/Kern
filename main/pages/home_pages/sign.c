@@ -332,6 +332,7 @@ static bool create_psbt_info_display(void) {
         lv_obj_t *title =
             theme_create_label(psbt_info_container, "Self-Transfer:", false);
         theme_apply_label(title, true);
+        lv_obj_set_style_text_color(title, cyan_color(), 0);
         lv_obj_set_width(title, LV_PCT(100));
         has_self_transfers = true;
       }
@@ -354,10 +355,6 @@ static bool create_psbt_info_display(void) {
       }
     }
   }
-  if (has_self_transfers) {
-    lv_obj_t *newline = theme_create_label(psbt_info_container, "\n", false);
-    lv_obj_set_width(newline, LV_PCT(100));
-  }
 
   // Display change
   bool has_change = false;
@@ -367,6 +364,8 @@ static bool create_psbt_info_display(void) {
         lv_obj_t *title =
             theme_create_label(psbt_info_container, "Change:", false);
         theme_apply_label(title, true);
+        lv_obj_set_style_text_color(title, yes_color(), 0);
+        lv_obj_set_style_margin_top(title, 15, 0);
         lv_obj_set_width(title, LV_PCT(100));
         has_change = true;
       }
@@ -389,10 +388,6 @@ static bool create_psbt_info_display(void) {
       }
     }
   }
-  if (has_change) {
-    lv_obj_t *newline = theme_create_label(psbt_info_container, "\n", false);
-    lv_obj_set_width(newline, LV_PCT(100));
-  }
 
   // Display spends
   bool has_spends = false;
@@ -402,6 +397,8 @@ static bool create_psbt_info_display(void) {
         lv_obj_t *title =
             theme_create_label(psbt_info_container, "Spending:", false);
         theme_apply_label(title, true);
+        lv_obj_set_style_text_color(title, highlight_color(), 0);
+        lv_obj_set_style_margin_top(title, 15, 0);
         lv_obj_set_width(title, LV_PCT(100));
         has_spends = true;
       }
