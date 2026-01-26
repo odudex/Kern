@@ -10,6 +10,7 @@
 #include "../../ui_components/flash_error.h"
 #include "../../ui_components/info_dialog.h"
 #include "../../ui_components/qr_viewer.h"
+#include "../../ui_components/sankey_diagram.h"
 #include "../../ui_components/theme.h"
 #include "../../utils/qr_codes.h"
 #include "../../wallet/wallet.h"
@@ -41,6 +42,7 @@ typedef struct {
 // UI components
 static lv_obj_t *sign_screen = NULL;
 static lv_obj_t *psbt_info_container = NULL;
+static sankey_diagram_t *tx_diagram = NULL;
 static void (*return_callback)(void) = NULL;
 static void (*saved_return_callback)(void) = NULL;
 
@@ -190,7 +192,8 @@ static void mismatch_dialog_cb(void *user_data) {
 }
 
 // Check for mismatches between PSBT requirements and wallet configuration
-// Returns true if there is a mismatch (and shows dialog), false if OK to proceed
+// Returns true if there is a mismatch (and shows dialog), false if OK to
+// proceed
 static bool check_psbt_mismatch(void) {
   if (!current_psbt) {
     return false;
@@ -217,14 +220,15 @@ static bool check_psbt_mismatch(void) {
   // Build mismatch message
   char message[256];
   int offset = 0;
-  offset += snprintf(message + offset, sizeof(message) - offset,
-                     "PSBT requires different settings for proper change detection:\n\n");
+  offset += snprintf(
+      message + offset, sizeof(message) - offset,
+      "PSBT requires different settings for proper change detection:\n\n");
 
   if (network_mismatch) {
-    offset +=
-        snprintf(message + offset, sizeof(message) - offset,
-                 "  Network:  %s -> %s\n", wallet_is_testnet ? "Testnet" : "Mainnet",
-                 is_testnet ? "Testnet" : "Mainnet");
+    offset += snprintf(message + offset, sizeof(message) - offset,
+                       "  Network:  %s -> %s\n",
+                       wallet_is_testnet ? "Testnet" : "Mainnet",
+                       is_testnet ? "Testnet" : "Mainnet");
   }
 
   if (account_mismatch) {
@@ -233,7 +237,8 @@ static bool check_psbt_mismatch(void) {
   }
 
   snprintf(message + offset, sizeof(message) - offset,
-           "\nGo to Settings " LV_SYMBOL_SETTINGS " to update\nconfiguration before signing.");
+           "\nGo to Settings " LV_SYMBOL_SETTINGS
+           " to update\nconfiguration before signing.");
 
   // Show mismatch dialog
   show_info_dialog("Configuration Mismatch", message, mismatch_dialog_cb, NULL);
@@ -263,10 +268,103 @@ static bool create_psbt_info_display(void) {
     return false;
   }
 
+  // Collect input amounts
+  uint64_t *input_amounts = malloc(num_inputs * sizeof(uint64_t));
+  if (!input_amounts) {
+    return false;
+  }
   uint64_t total_input_value = 0;
   for (size_t i = 0; i < num_inputs; i++) {
-    total_input_value += psbt_get_input_value(current_psbt, i);
+    input_amounts[i] = psbt_get_input_value(current_psbt, i);
+    total_input_value += input_amounts[i];
   }
+
+  // Get global transaction for outputs
+  struct wally_tx *global_tx = NULL;
+  int tx_ret = wally_psbt_get_global_tx_alloc(current_psbt, &global_tx);
+  if (tx_ret != WALLY_OK || !global_tx) {
+    free(input_amounts);
+    return false;
+  }
+
+  // Classify outputs and collect data for diagram
+  classified_output_t *classified_outputs =
+      calloc(num_outputs, sizeof(classified_output_t));
+  if (!classified_outputs) {
+    free(input_amounts);
+    wally_tx_free(global_tx);
+    return false;
+  }
+
+  // Calculate total output value and fee early for diagram
+  uint64_t total_output_value = 0;
+  for (size_t i = 0; i < num_outputs; i++) {
+    total_output_value += global_tx->outputs[i].satoshi;
+  }
+  uint64_t fee = (total_input_value > total_output_value)
+                     ? (total_input_value - total_output_value)
+                     : 0;
+
+  // Allocate for outputs + fee (if non-zero)
+  size_t diagram_output_count = num_outputs + (fee > 0 ? 1 : 0);
+  uint64_t *output_amounts = malloc(diagram_output_count * sizeof(uint64_t));
+  lv_color_t *output_colors = malloc(diagram_output_count * sizeof(lv_color_t));
+  if (!output_amounts || !output_colors) {
+    free(input_amounts);
+    free(output_amounts);
+    free(output_colors);
+    free(classified_outputs);
+    wally_tx_free(global_tx);
+    return false;
+  }
+
+  // First pass: classify all outputs
+  for (size_t i = 0; i < num_outputs; i++) {
+    classified_outputs[i].index = i;
+    classified_outputs[i].value = global_tx->outputs[i].satoshi;
+    classified_outputs[i].address = psbt_scriptpubkey_to_address(
+        global_tx->outputs[i].script, global_tx->outputs[i].script_len,
+        is_testnet);
+    classified_outputs[i].type = classify_output(
+        i, &global_tx->outputs[i], &classified_outputs[i].address_index);
+  }
+
+  // Build diagram arrays in display order: self-transfer, change, spend, fee
+  size_t diagram_idx = 0;
+
+  // Self-transfers first (cyan)
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
+      output_amounts[diagram_idx] = classified_outputs[i].value;
+      output_colors[diagram_idx] = cyan_color();
+      diagram_idx++;
+    }
+  }
+
+  // Change second (green)
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
+      output_amounts[diagram_idx] = classified_outputs[i].value;
+      output_colors[diagram_idx] = yes_color();
+      diagram_idx++;
+    }
+  }
+
+  // Spending third (orange)
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_SPEND) {
+      output_amounts[diagram_idx] = classified_outputs[i].value;
+      output_colors[diagram_idx] = highlight_color();
+      diagram_idx++;
+    }
+  }
+
+  // Fee last (red)
+  if (fee > 0) {
+    output_amounts[diagram_idx] = fee;
+    output_colors[diagram_idx] = error_color();
+  }
+
   psbt_info_container = lv_obj_create(sign_screen);
   lv_obj_set_size(psbt_info_container, LV_PCT(100), LV_PCT(100));
   lv_obj_set_flex_flow(psbt_info_container, LV_FLEX_FLOW_COLUMN);
@@ -277,53 +375,78 @@ static bool create_psbt_info_display(void) {
   theme_apply_screen(psbt_info_container);
   lv_obj_add_flag(psbt_info_container, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t *title =
-      theme_create_label(psbt_info_container, "PSBT Transaction", false);
-  theme_apply_label(title, true);
-  lv_obj_set_width(title, LV_PCT(100));
-  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+  // Create Sankey diagram
+  lv_obj_update_layout(psbt_info_container);
+  int32_t diagram_width = lv_obj_get_width(sign_screen) - 20;
+  tx_diagram = sankey_diagram_create(psbt_info_container, diagram_width, 160);
+  if (tx_diagram) {
+    sankey_diagram_set_inputs(tx_diagram, input_amounts, num_inputs);
+    sankey_diagram_set_outputs(tx_diagram, output_amounts, diagram_output_count,
+                               output_colors);
+    sankey_diagram_render(tx_diagram);
 
-  char inputs_text[64];
-  snprintf(inputs_text, sizeof(inputs_text), "Inputs: %zu", num_inputs);
+    lv_obj_t *canvas_obj = sankey_diagram_get_obj(tx_diagram);
+    lv_obj_t *title = theme_create_label(canvas_obj, "PSBT Transaction", false);
+    theme_apply_label(title, true);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
+  }
+
+  // Add overflow indicators below diagram if flows were omitted
+  size_t input_overflow = sankey_diagram_get_input_overflow(tx_diagram);
+  size_t output_overflow = sankey_diagram_get_output_overflow(tx_diagram);
+
+  if (input_overflow > 0 || output_overflow > 0) {
+    lv_obj_t *overflow_row = lv_obj_create(psbt_info_container);
+    lv_obj_set_size(overflow_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(overflow_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(overflow_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(overflow_row, 0, 0);
+    lv_obj_set_style_bg_opa(overflow_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(overflow_row, 0, 0);
+
+    if (input_overflow > 0) {
+      char overflow_text[32];
+      snprintf(overflow_text, sizeof(overflow_text), "+%zu more",
+               input_overflow);
+      lv_obj_t *label = theme_create_label(overflow_row, overflow_text, false);
+      lv_obj_set_style_text_color(label, secondary_color(), 0);
+    } else {
+      lv_obj_t *spacer = lv_obj_create(overflow_row);
+      lv_obj_set_size(spacer, 1, 1);
+      lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+      lv_obj_set_style_border_width(spacer, 0, 0);
+    }
+
+    if (output_overflow > 0) {
+      char overflow_text[32];
+      snprintf(overflow_text, sizeof(overflow_text), "+%zu more",
+               output_overflow);
+      lv_obj_t *label = theme_create_label(overflow_row, overflow_text, false);
+      lv_obj_set_style_text_color(label, secondary_color(), 0);
+    }
+  }
+
+  free(input_amounts);
+  free(output_amounts);
+  free(output_colors);
+
+  // Inputs section (white to match diagram input lines)
+  char inputs_text[128];
+  snprintf(inputs_text, sizeof(inputs_text), "Inputs(%zu): %llu sats",
+           num_inputs, total_input_value);
   lv_obj_t *inputs_label =
       theme_create_label(psbt_info_container, inputs_text, false);
+  theme_apply_label(inputs_label, true);
+  lv_obj_set_style_text_color(inputs_label, main_color(), 0);
   lv_obj_set_width(inputs_label, LV_PCT(100));
-
-  char total_input_text[128];
-  snprintf(total_input_text, sizeof(total_input_text), "Total Input: %llu sats",
-           total_input_value);
-  lv_obj_t *total_input_label =
-      theme_create_label(psbt_info_container, total_input_text, false);
-  lv_obj_set_width(total_input_label, LV_PCT(100));
 
   lv_obj_t *separator1 = lv_obj_create(psbt_info_container);
   lv_obj_set_size(separator1, LV_PCT(100), 2);
   lv_obj_set_style_bg_color(separator1, main_color(), 0);
   lv_obj_set_style_bg_opa(separator1, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(separator1, 0, 0);
-
-  struct wally_tx *global_tx = NULL;
-  int tx_ret = wally_psbt_get_global_tx_alloc(current_psbt, &global_tx);
-
-  if (tx_ret != WALLY_OK || !global_tx) {
-    return false;
-  }
-
-  classified_output_t *classified_outputs =
-      calloc(num_outputs, sizeof(classified_output_t));
-  if (!classified_outputs) {
-    wally_tx_free(global_tx);
-    return false;
-  }
-  for (size_t i = 0; i < num_outputs; i++) {
-    classified_outputs[i].index = i;
-    classified_outputs[i].value = global_tx->outputs[i].satoshi;
-    classified_outputs[i].address = psbt_scriptpubkey_to_address(
-        global_tx->outputs[i].script, global_tx->outputs[i].script_len,
-        is_testnet);
-    classified_outputs[i].type = classify_output(
-        i, &global_tx->outputs[i], &classified_outputs[i].address_index);
-  }
 
   bool has_self_transfers = false;
   for (size_t i = 0; i < num_outputs; i++) {
@@ -432,20 +555,13 @@ static bool create_psbt_info_display(void) {
   }
   free(classified_outputs);
 
-  uint64_t total_output_value = 0;
-  if (tx_ret == WALLY_OK && global_tx) {
-    for (size_t i = 0; i < global_tx->num_outputs; i++) {
-      total_output_value += global_tx->outputs[i].satoshi;
-    }
-  }
-
   if (global_tx) {
     wally_tx_free(global_tx);
     global_tx = NULL;
   }
 
-  if (total_input_value > 0) {
-    uint64_t fee = total_input_value - total_output_value;
+  // Fee section (red to match diagram)
+  if (fee > 0) {
     lv_obj_t *separator2 = lv_obj_create(psbt_info_container);
     lv_obj_set_size(separator2, LV_PCT(100), 2);
     lv_obj_set_style_bg_color(separator2, main_color(), 0);
@@ -457,6 +573,7 @@ static bool create_psbt_info_display(void) {
     lv_obj_t *fee_label =
         theme_create_label(psbt_info_container, fee_text, false);
     lv_obj_set_width(fee_label, LV_PCT(100));
+    lv_obj_set_style_text_color(fee_label, error_color(), 0);
   }
 
   lv_obj_t *button_container = lv_obj_create(psbt_info_container);
@@ -601,6 +718,11 @@ void sign_page_destroy(void) {
   qr_scanner_page_destroy();
 
   cleanup_psbt_data();
+
+  if (tx_diagram) {
+    sankey_diagram_destroy(tx_diagram);
+    tx_diagram = NULL;
+  }
 
   psbt_info_container = NULL;
 

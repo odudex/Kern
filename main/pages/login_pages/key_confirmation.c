@@ -68,7 +68,7 @@ static void create_ui(const char *fingerprint_hex) {
   lv_obj_set_style_pad_row(center, 20, 0);
   lv_obj_align(center, LV_ALIGN_TOP_MID, 0, 0);
 
-    lv_obj_t *fp_row = theme_create_flex_row(center);
+  lv_obj_t *fp_row = theme_create_flex_row(center);
   lv_obj_set_style_pad_column(fp_row, 8, 0);
 
   // Circular clip container for reveal animation

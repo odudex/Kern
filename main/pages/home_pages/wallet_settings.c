@@ -43,9 +43,22 @@ static uint32_t selected_account = 0;
 static char account_input_buffer[12];
 static int account_input_len = 0;
 
-static const char *numpad_map[] = {
-    "1", "2", "3", "\n", "4", "5", "6", "\n",
-    "7", "8", "9", "\n", LV_SYMBOL_BACKSPACE, "0", LV_SYMBOL_OK, ""};
+static const char *numpad_map[] = {"1",
+                                   "2",
+                                   "3",
+                                   "\n",
+                                   "4",
+                                   "5",
+                                   "6",
+                                   "\n",
+                                   "7",
+                                   "8",
+                                   "9",
+                                   "\n",
+                                   LV_SYMBOL_BACKSPACE,
+                                   "0",
+                                   LV_SYMBOL_OK,
+                                   ""};
 
 static void update_apply_button_state(void);
 
@@ -452,9 +465,8 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   snprintf(deriv_path, sizeof(deriv_path), "m/84'/%u'/%u'",
            (selected_network == WALLET_NETWORK_MAINNET) ? 0 : 1,
            selected_account);
-  lv_obj_t *deriv_cont =
-      ui_icon_text_row_create(header_cont, ICON_DERIVATION, deriv_path,
-                              secondary_color());
+  lv_obj_t *deriv_cont = ui_icon_text_row_create(header_cont, ICON_DERIVATION,
+                                                 deriv_path, secondary_color());
   derivation_label = lv_obj_get_child(deriv_cont, 1);
 
   // Content container below top bar
