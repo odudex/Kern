@@ -5,7 +5,6 @@
 
 #define MAX_FLOWS 16
 #define MIN_THICKNESS 4
-#define CURVE_SAMPLES 32
 #define THICKNESS_BUDGET_PCT 30
 
 typedef struct {
@@ -59,33 +58,53 @@ static inline void set_pixel(sankey_diagram_t *diagram, int32_t x, int32_t y,
   row[x] = color16;
 }
 
+static inline void set_pixel_blended(sankey_diagram_t *diagram, int32_t x,
+                                     int32_t y, uint16_t fg, uint8_t alpha) {
+  if (x < 0 || x >= diagram->width || y < 0 || y >= diagram->height)
+    return;
+  uint16_t *row = (uint16_t *)((uint8_t *)diagram->draw_buf->data +
+                               y * diagram->draw_buf->header.stride);
+  if (alpha >= 255) {
+    row[x] = fg;
+  } else if (alpha > 0) {
+    uint16_t bg = row[x];
+    uint8_t inv = 255 - alpha;
+    row[x] = ((((fg >> 11) * alpha + (bg >> 11) * inv) / 255) << 11) |
+             (((((fg >> 5) & 0x3F) * alpha + ((bg >> 5) & 0x3F) * inv) / 255) << 5) |
+             (((fg & 0x1F) * alpha + (bg & 0x1F) * inv) / 255);
+  }
+}
+
+static void draw_aa_column(sankey_diagram_t *diagram, int32_t x,
+                           float y_top_f, float y_bot_f, uint16_t color16) {
+  int32_t y_top = (int32_t)y_top_f;
+  int32_t y_bot = (int32_t)y_bot_f;
+
+  set_pixel_blended(diagram, x, y_top, color16,
+                    255 - (uint8_t)((y_top_f - y_top) * 255.0f));
+  for (int32_t y = y_top + 1; y < y_bot; y++)
+    set_pixel(diagram, x, y, color16);
+  if (y_bot > y_top)
+    set_pixel_blended(diagram, x, y_bot, color16,
+                      (uint8_t)((y_bot_f - y_bot) * 255.0f));
+}
+
 static void draw_gradient_rect(sankey_diagram_t *diagram, int32_t x_start,
-                               int32_t x_end, int32_t y_top, int32_t y_bot,
+                               int32_t x_end, float y_top_f, float y_bot_f,
                                lv_color_t left_color, lv_color_t right_color) {
   if (x_start > x_end) {
-    int32_t tmp = x_start;
-    x_start = x_end;
-    x_end = tmp;
-    lv_color_t tmp_c = left_color;
-    left_color = right_color;
-    right_color = tmp_c;
+    int32_t tmp = x_start; x_start = x_end; x_end = tmp;
+    lv_color_t tmp_c = left_color; left_color = right_color; right_color = tmp_c;
   }
-  if (y_top > y_bot) {
-    int32_t tmp = y_top;
-    y_top = y_bot;
-    y_bot = tmp;
+  if (y_top_f > y_bot_f) {
+    float tmp = y_top_f; y_top_f = y_bot_f; y_bot_f = tmp;
   }
-
   int32_t width = x_end - x_start;
-  if (width <= 0)
-    return;
+  if (width <= 0) return;
 
   for (int32_t x = x_start; x <= x_end; x++) {
-    uint16_t color16 = lv_color_to_u16(
-        color_lerp(left_color, right_color, (float)(x - x_start) / width));
-    for (int32_t y = y_top; y <= y_bot; y++) {
-      set_pixel(diagram, x, y, color16);
-    }
+    draw_aa_column(diagram, x, y_top_f, y_bot_f, lv_color_to_u16(
+        color_lerp(left_color, right_color, (float)(x - x_start) / width)));
   }
 }
 
@@ -94,37 +113,28 @@ static void draw_bezier_ribbon(sankey_diagram_t *diagram, float x0,
                                float y3_top, float y3_bot,
                                lv_color_t start_color, lv_color_t end_color) {
   float dx = (x3 - x0) / 3.0f;
-  float x1 = x0 + dx, x2 = x3 - dx;
+  float bx1 = x0 + dx, bx2 = x3 - dx;
 
-  for (int i = 0; i < CURVE_SAMPLES; i++) {
-    float t1 = (float)i / CURVE_SAMPLES;
-    float t2 = (float)(i + 1) / CURVE_SAMPLES;
-    uint16_t color16 =
-        lv_color_to_u16(color_lerp(start_color, end_color, (t1 + t2) / 2.0f));
-
-    float xt1 = bezier_eval(x0, x1, x2, x3, t1);
-    float yt1_top = bezier_eval(y0_top, y0_top, y3_top, y3_top, t1);
-    float yt1_bot = bezier_eval(y0_bot, y0_bot, y3_bot, y3_bot, t1);
-
-    float xt2 = bezier_eval(x0, x1, x2, x3, t2);
-    float yt2_top = bezier_eval(y0_top, y0_top, y3_top, y3_top, t2);
-    float yt2_bot = bezier_eval(y0_bot, y0_bot, y3_bot, y3_bot, t2);
-
-    int32_t xs = (int32_t)(xt1 + 0.5f), xe = (int32_t)(xt2 + 0.5f);
-
-    for (int32_t x = xs; x <= xe; x++) {
-      float frac = (xe != xs) ? (float)(x - xs) / (xe - xs) : 0.0f;
-      int32_t y1 = (int32_t)(yt1_top + frac * (yt2_top - yt1_top) + 0.5f);
-      int32_t y2 = (int32_t)(yt1_bot + frac * (yt2_bot - yt1_bot) + 0.5f);
-      if (y1 > y2) {
-        int32_t tmp = y1;
-        y1 = y2;
-        y2 = tmp;
-      }
-      for (int32_t y = y1; y <= y2; y++) {
-        set_pixel(diagram, x, y, color16);
-      }
+  for (int32_t x = (int32_t)(x0 + 0.5f); x <= (int32_t)(x3 + 0.5f); x++) {
+    // Binary search to find t for this x (10 iterations = 0.001 precision)
+    float t_lo = 0.0f, t_hi = 1.0f;
+    for (int i = 0; i < 10; i++) {
+      float t_mid = (t_lo + t_hi) * 0.5f;
+      if (bezier_eval(x0, bx1, bx2, x3, t_mid) < (float)x)
+        t_lo = t_mid;
+      else
+        t_hi = t_mid;
     }
+    float t = (t_lo + t_hi) * 0.5f;
+
+    float y_top_f = bezier_eval(y0_top, y0_top, y3_top, y3_top, t);
+    float y_bot_f = bezier_eval(y0_bot, y0_bot, y3_bot, y3_bot, t);
+    if (y_top_f > y_bot_f) {
+      float tmp = y_top_f; y_top_f = y_bot_f; y_bot_f = tmp;
+    }
+
+    draw_aa_column(diagram, x, y_top_f, y_bot_f,
+                   lv_color_to_u16(color_lerp(start_color, end_color, t)));
   }
 }
 
@@ -303,9 +313,8 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
   for (size_t i = 0; i < diagram->input_count; i++) {
     float half = diagram->inputs[i].thickness / 2.0f;
     draw_gradient_rect(diagram, 0, (int32_t)fade_width,
-                       (int32_t)(diagram->inputs[i].y_center - half),
-                       (int32_t)(diagram->inputs[i].y_center + half), bg,
-                       white);
+                       diagram->inputs[i].y_center - half,
+                       diagram->inputs[i].y_center + half, bg, white);
     draw_bezier_ribbon(diagram, fade_width, diagram->inputs[i].y_center - half,
                        diagram->inputs[i].y_center + half, center_x,
                        input_center_positions[i] - half,
@@ -321,8 +330,8 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
                        diagram->outputs[i].y_center + half, white,
                        diagram->outputs[i].color);
     draw_gradient_rect(diagram, (int32_t)fade_start_x, diagram->width - 1,
-                       (int32_t)(diagram->outputs[i].y_center - half),
-                       (int32_t)(diagram->outputs[i].y_center + half),
+                       diagram->outputs[i].y_center - half,
+                       diagram->outputs[i].y_center + half,
                        diagram->outputs[i].color, bg);
   }
 
