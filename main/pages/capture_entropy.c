@@ -137,14 +137,18 @@ static void horizontal_crop(const uint8_t *camera_buf, uint8_t *display_buf,
 static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
                             uint32_t camera_buf_hes, uint32_t camera_buf_ves,
                             size_t camera_buf_len) {
-  if (closing || !is_initialized || !camera_event_group)
+  __atomic_add_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
+
+  if (closing || !is_initialized || !camera_event_group) {
+    __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
     return;
+  }
 
   EventBits_t bits = xEventGroupGetBits(camera_event_group);
-  if (!(bits & CAMERA_EVENT_TASK_RUN) || (bits & CAMERA_EVENT_DELETE))
+  if (!(bits & CAMERA_EVENT_TASK_RUN) || (bits & CAMERA_EVENT_DELETE)) {
+    __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
     return;
-
-  __atomic_add_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
+  }
 
   if (!display_buffer_a || !display_buffer_b || !current_display_buffer) {
     __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);

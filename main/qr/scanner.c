@@ -740,21 +740,24 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
                                          uint32_t camera_buf_hes,
                                          uint32_t camera_buf_ves,
                                          size_t camera_buf_len) {
-  if (closing || !is_fully_initialized || !camera_event_group) {
+  __atomic_add_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
+
+  if (closing || destruction_in_progress || !is_fully_initialized ||
+      !camera_event_group) {
+    __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
 
   EventBits_t current_bits = xEventGroupGetBits(camera_event_group);
   if (!(current_bits & CAMERA_EVENT_TASK_RUN) ||
       (current_bits & CAMERA_EVENT_DELETE)) {
+    __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
 
 #ifdef QR_PERF_DEBUG
   __atomic_add_fetch(&perf_metrics.camera_frames, 1, __ATOMIC_RELAXED);
 #endif
-
-  __atomic_add_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
 
   if (!display_buffer_a || !display_buffer_b || !current_display_buffer) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
