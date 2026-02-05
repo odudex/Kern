@@ -34,4 +34,17 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet);
 // Returns new PSBT on success (caller must free), NULL on failure
 struct wally_psbt *psbt_trim(const struct wally_psbt *psbt);
 
+// Check if PSBT is a multisig transaction
+// Returns true if any input has witness script and multiple keypaths
+bool psbt_is_multisig(const struct wally_psbt *psbt);
+
+// Verify output belongs to loaded descriptor and extract derivation info
+// Returns true if output matches descriptor, sets is_change and address_index
+// If global_tx is provided, it is used directly; otherwise allocated internally
+bool psbt_verify_output_with_descriptor(const struct wally_psbt *psbt,
+                                        size_t output_index,
+                                        const struct wally_tx *global_tx,
+                                        bool *is_change,
+                                        uint32_t *address_index);
+
 #endif // PSBT_H

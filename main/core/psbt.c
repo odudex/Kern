@@ -7,6 +7,7 @@
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
+#include <wally_descriptor.h>
 #include <wally_map.h>
 #include <wally_psbt_members.h>
 #include <wally_script.h>
@@ -287,8 +288,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
       size_t keypath_len = 0;
 
       if (wally_psbt_get_input_keypath(psbt, i, j, keypath, sizeof(keypath),
-                                       &keypath_len) != WALLY_OK ||
-          keypath_len < 24) {
+                                       &keypath_len) != WALLY_OK) {
         continue;
       }
 
@@ -296,23 +296,42 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
         continue;
       }
 
-      uint32_t purpose, coin_type, account, change_val, index_val;
+      uint32_t purpose, coin_type, account;
       memcpy(&purpose, keypath + 4, sizeof(uint32_t));
       memcpy(&coin_type, keypath + 8, sizeof(uint32_t));
       memcpy(&account, keypath + 12, sizeof(uint32_t));
-      memcpy(&change_val, keypath + 16, sizeof(uint32_t));
-      memcpy(&index_val, keypath + 20, sizeof(uint32_t));
 
       uint32_t expected_account = 0x80000000 | wallet_get_account();
-      if (purpose != (0x80000000 | 84) || account != expected_account) {
-        continue;
-      }
-
       uint32_t coin_value = coin_type & 0x7FFFFFFF;
+      uint32_t purpose_value = purpose & 0x7FFFFFFF;
 
       char path_str[64];
-      snprintf(path_str, sizeof(path_str), "m/84'/%u'/%u'/%u/%u", coin_value,
-               wallet_get_account(), change_val, index_val);
+
+      // BIP84 single-sig: m/84'/coin'/account'/change/index (24 bytes keypath)
+      // BIP48 multisig: m/48'/coin'/account'/script_type'/change/index (28
+      // bytes keypath)
+      if (purpose_value == 84 && keypath_len >= 24 &&
+          account == expected_account) {
+        uint32_t change_val, index_val;
+        memcpy(&change_val, keypath + 16, sizeof(uint32_t));
+        memcpy(&index_val, keypath + 20, sizeof(uint32_t));
+
+        snprintf(path_str, sizeof(path_str), "m/84'/%u'/%u'/%u/%u", coin_value,
+                 wallet_get_account(), change_val, index_val);
+      } else if (purpose_value == 48 && keypath_len >= 28 &&
+                 account == expected_account) {
+        uint32_t script_type, change_val, index_val;
+        memcpy(&script_type, keypath + 16, sizeof(uint32_t));
+        memcpy(&change_val, keypath + 20, sizeof(uint32_t));
+        memcpy(&index_val, keypath + 24, sizeof(uint32_t));
+
+        uint32_t script_type_value = script_type & 0x7FFFFFFF;
+        snprintf(path_str, sizeof(path_str), "m/48'/%u'/%u'/%u'/%u/%u",
+                 coin_value, wallet_get_account(), script_type_value,
+                 change_val, index_val);
+      } else {
+        continue;
+      }
 
       struct ext_key *derived_key = NULL;
       if (!key_get_derived_key(path_str, &derived_key)) {
@@ -465,4 +484,152 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
   }
 
   return trimmed;
+}
+
+bool psbt_is_multisig(const struct wally_psbt *psbt) {
+  if (!psbt) {
+    return false;
+  }
+
+  size_t num_inputs = 0;
+  if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK ||
+      num_inputs == 0) {
+    return false;
+  }
+
+  // Check first input for multisig indicators
+  for (size_t i = 0; i < num_inputs; i++) {
+    // Check for witness script (P2WSH - used by native segwit multisig)
+    size_t witness_script_len = 0;
+    bool has_witness_script = (wally_psbt_get_input_witness_script_len(
+                                   psbt, i, &witness_script_len) == WALLY_OK &&
+                               witness_script_len > 0);
+
+    // Check for multiple keypaths (indicates multiple signers)
+    size_t keypaths_size = 0;
+    bool has_multiple_keypaths = (wally_psbt_get_input_keypaths_size(
+                                      psbt, i, &keypaths_size) == WALLY_OK &&
+                                  keypaths_size > 1);
+
+    // Multisig if has witness script AND multiple keypaths
+    if (has_witness_script && has_multiple_keypaths) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool psbt_verify_output_with_descriptor(const struct wally_psbt *psbt,
+                                        size_t output_index,
+                                        const struct wally_tx *global_tx,
+                                        bool *is_change,
+                                        uint32_t *address_index) {
+  if (!psbt || !is_change || !address_index || !wallet_has_descriptor()) {
+    return false;
+  }
+
+  // Check if output has derivation paths
+  size_t keypaths_size = 0;
+  if (wally_psbt_get_output_keypaths_size(psbt, output_index, &keypaths_size) !=
+          WALLY_OK ||
+      keypaths_size == 0) {
+    return false; // No derivation info, can't verify
+  }
+
+  // Get our fingerprint
+  unsigned char our_fingerprint[BIP32_KEY_FINGERPRINT_LEN];
+  if (!key_get_fingerprint(our_fingerprint)) {
+    return false;
+  }
+
+  // Find a keypath that matches our fingerprint and extract derivation info
+  uint32_t change_val = 0, index_val = 0;
+  bool found_our_key = false;
+
+  for (size_t i = 0; i < keypaths_size; i++) {
+    unsigned char keypath[100];
+    size_t keypath_len = 0;
+
+    if (wally_psbt_get_output_keypath(psbt, output_index, i, keypath,
+                                      sizeof(keypath),
+                                      &keypath_len) != WALLY_OK) {
+      continue;
+    }
+
+    // Check fingerprint match
+    if (keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
+        memcmp(keypath, our_fingerprint, BIP32_KEY_FINGERPRINT_LEN) != 0) {
+      continue;
+    }
+
+    // BIP48 multisig path: m/48'/coin'/account'/script'/change/index
+    // Keypath: [fingerprint(4)] [purpose(4)] [coin(4)] [account(4)]
+    // [script(4)] [change(4)] [index(4)] = 28 bytes
+    if (keypath_len >= 28) {
+      memcpy(&change_val, keypath + 20, sizeof(uint32_t));
+      memcpy(&index_val, keypath + 24, sizeof(uint32_t));
+      found_our_key = true;
+      break;
+    }
+  }
+
+  if (!found_our_key) {
+    return false; // Our key not in this output's derivation
+  }
+
+  // Use provided global_tx or allocate if not provided
+  struct wally_tx *allocated_tx = NULL;
+  const struct wally_tx *tx = global_tx;
+  if (!tx) {
+    if (wally_psbt_get_global_tx_alloc(psbt, &allocated_tx) != WALLY_OK ||
+        !allocated_tx) {
+      return false;
+    }
+    tx = allocated_tx;
+  }
+
+  if (output_index >= tx->num_outputs) {
+    if (allocated_tx)
+      wally_tx_free(allocated_tx);
+    return false;
+  }
+
+  const unsigned char *output_script = tx->outputs[output_index].script;
+  size_t output_script_len = tx->outputs[output_index].script_len;
+
+  // Generate address at the specific index from descriptor
+  char *address = NULL;
+  bool success = (change_val == 0)
+                     ? wallet_get_multisig_receive_address(index_val, &address)
+                     : wallet_get_multisig_change_address(index_val, &address);
+
+  if (!success || !address) {
+    if (allocated_tx)
+      wally_tx_free(allocated_tx);
+    return false;
+  }
+
+  // Convert address to scriptPubKey and compare
+  unsigned char script[100];
+  size_t script_len = 0;
+  bool is_testnet = (wallet_get_network() == WALLET_NETWORK_TESTNET);
+  const char *hrp = is_testnet ? "tb" : "bc";
+
+  int ret = wally_addr_segwit_to_bytes(address, hrp, 0, script, sizeof(script),
+                                       &script_len);
+  wally_free_string(address);
+
+  if (ret != WALLY_OK || script_len != output_script_len ||
+      memcmp(script, output_script, script_len) != 0) {
+    if (allocated_tx)
+      wally_tx_free(allocated_tx);
+    return false; // Script mismatch - output doesn't match descriptor
+  }
+
+  *is_change = (change_val == 1);
+  *address_index = index_val;
+  if (allocated_tx)
+    wally_tx_free(allocated_tx);
+  return true;
 }

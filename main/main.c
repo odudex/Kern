@@ -14,7 +14,12 @@
 static const char *TAG = "KERN_MAIN";
 
 void app_main(void) {
-  bsp_display_cfg_t cfg = {.lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
+  // Larger LVGL task stack: libwally descriptor parsing has deep call
+  // chains that exceed the default 7168-byte stack during multisig validation
+  lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+  lvgl_cfg.task_stack = 16384;
+
+  bsp_display_cfg_t cfg = {.lvgl_port_cfg = lvgl_cfg,
                            .buffer_size = BSP_LCD_DRAW_BUFF_SIZE,
                            .double_buffer = BSP_LCD_DRAW_BUFF_DOUBLE,
                            .flags = {

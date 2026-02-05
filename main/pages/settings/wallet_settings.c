@@ -20,6 +20,7 @@
 static lv_obj_t *wallet_settings_screen = NULL;
 static lv_obj_t *back_button = NULL;
 static lv_obj_t *network_dropdown = NULL;
+static lv_obj_t *policy_dropdown = NULL;
 static lv_obj_t *passphrase_btn = NULL;
 static lv_obj_t *apply_btn = NULL;
 static lv_obj_t *apply_label = NULL;
@@ -31,6 +32,7 @@ static char *stored_passphrase = NULL;
 static char *mnemonic_content = NULL;
 static char base_fingerprint_hex[9] = {0};
 static wallet_network_t selected_network = WALLET_NETWORK_MAINNET;
+static wallet_policy_t selected_policy = WALLET_POLICY_SINGLESIG;
 static bool settings_changed = false;
 
 static lv_obj_t *account_btn = NULL;
@@ -79,9 +81,8 @@ static void update_derivation_path(void) {
   if (!derivation_label)
     return;
   char path[48];
-  snprintf(path, sizeof(path), "m/84'/%u'/%u'",
-           (selected_network == WALLET_NETWORK_MAINNET) ? 0 : 1,
-           selected_account);
+  wallet_format_derivation_path(path, sizeof(path), selected_policy,
+                                selected_network, selected_account);
   lv_label_set_text(derivation_label, path);
 }
 
@@ -236,6 +237,18 @@ static void network_dropdown_cb(lv_event_t *e) {
   }
 }
 
+static void policy_dropdown_cb(lv_event_t *e) {
+  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+  wallet_policy_t new_policy =
+      (sel == 0) ? WALLET_POLICY_SINGLESIG : WALLET_POLICY_MULTISIG;
+  if (new_policy != selected_policy) {
+    selected_policy = new_policy;
+    settings_changed = true;
+    update_derivation_path();
+    update_apply_button_state();
+  }
+}
+
 static void dropdown_open_cb(lv_event_t *e) {
   lv_obj_t *list = lv_dropdown_get_list(lv_event_get_target(e));
   if (list) {
@@ -347,6 +360,7 @@ static void do_apply_settings(void) {
   bool is_testnet = (selected_network == WALLET_NETWORK_TESTNET);
   wallet_cleanup();
   wallet_set_account(selected_account);
+  wallet_set_policy(selected_policy);
 
   if (key_load_from_mnemonic(mnemonic_content, stored_passphrase, is_testnet)) {
     if (!wallet_init(selected_network)) {
@@ -391,6 +405,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
   selected_network = wallet_get_network();
   selected_account = wallet_get_account();
+  selected_policy = wallet_get_policy();
   settings_changed = false;
 
   // Get current mnemonic for later use
@@ -460,9 +475,8 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Derivation path row
   char deriv_path[48];
-  snprintf(deriv_path, sizeof(deriv_path), "m/84'/%u'/%u'",
-           (selected_network == WALLET_NETWORK_MAINNET) ? 0 : 1,
-           selected_account);
+  wallet_format_derivation_path(deriv_path, sizeof(deriv_path), selected_policy,
+                                selected_network, selected_account);
   lv_obj_t *deriv_cont = ui_icon_text_row_create(header_cont, ICON_DERIVATION,
                                                  deriv_path, secondary_color());
   derivation_label = lv_obj_get_child(deriv_cont, 1);
@@ -494,25 +508,67 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_style_text_color(pp_label, main_color(), 0);
   lv_obj_center(pp_label);
 
-  // Network label
-  lv_obj_t *net_label = lv_label_create(content);
+  // Network + Policy row container (side by side)
+  lv_obj_t *net_policy_row = lv_obj_create(content);
+  lv_obj_set_size(net_policy_row, LV_PCT(90), LV_SIZE_CONTENT);
+  theme_apply_transparent_container(net_policy_row);
+  lv_obj_set_flex_flow(net_policy_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(net_policy_row, LV_FLEX_ALIGN_SPACE_EVENLY,
+                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_margin_top(net_policy_row, 20, 0);
+
+  // Network column (label + dropdown)
+  lv_obj_t *net_col = lv_obj_create(net_policy_row);
+  lv_obj_set_size(net_col, LV_PCT(45), LV_SIZE_CONTENT);
+  theme_apply_transparent_container(net_col);
+  lv_obj_set_flex_flow(net_col, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(net_col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(net_col, 5, 0);
+
+  lv_obj_t *net_label = lv_label_create(net_col);
   lv_label_set_text(net_label, "Network");
   lv_obj_set_style_text_font(net_label, theme_font_small(), 0);
   lv_obj_set_style_text_color(net_label, secondary_color(), 0);
-  lv_obj_set_style_margin_top(net_label, 20, 0);
 
-  // Network dropdown
-  network_dropdown = lv_dropdown_create(content);
+  network_dropdown = lv_dropdown_create(net_col);
   lv_dropdown_set_options(network_dropdown, "Mainnet\nTestnet");
   lv_dropdown_set_selected(
       network_dropdown, (selected_network == WALLET_NETWORK_MAINNET) ? 0 : 1);
-  lv_obj_set_width(network_dropdown, LV_PCT(50));
+  lv_obj_set_width(network_dropdown, LV_PCT(100));
   lv_obj_set_style_bg_color(network_dropdown, disabled_color(), 0);
   lv_obj_set_style_text_color(network_dropdown, main_color(), 0);
   lv_obj_set_style_text_font(network_dropdown, theme_font_small(), 0);
   lv_obj_set_style_border_color(network_dropdown, highlight_color(), 0);
   lv_obj_add_event_cb(network_dropdown, dropdown_open_cb, LV_EVENT_READY, NULL);
   lv_obj_add_event_cb(network_dropdown, network_dropdown_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  // Policy column (label + dropdown)
+  lv_obj_t *policy_col = lv_obj_create(net_policy_row);
+  lv_obj_set_size(policy_col, LV_PCT(45), LV_SIZE_CONTENT);
+  theme_apply_transparent_container(policy_col);
+  lv_obj_set_flex_flow(policy_col, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(policy_col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(policy_col, 5, 0);
+
+  lv_obj_t *policy_label = lv_label_create(policy_col);
+  lv_label_set_text(policy_label, "Policy");
+  lv_obj_set_style_text_font(policy_label, theme_font_small(), 0);
+  lv_obj_set_style_text_color(policy_label, secondary_color(), 0);
+
+  policy_dropdown = lv_dropdown_create(policy_col);
+  lv_dropdown_set_options(policy_dropdown, "Single-sig\nMultisig");
+  lv_dropdown_set_selected(
+      policy_dropdown, (selected_policy == WALLET_POLICY_SINGLESIG) ? 0 : 1);
+  lv_obj_set_width(policy_dropdown, LV_PCT(100));
+  lv_obj_set_style_bg_color(policy_dropdown, disabled_color(), 0);
+  lv_obj_set_style_text_color(policy_dropdown, main_color(), 0);
+  lv_obj_set_style_text_font(policy_dropdown, theme_font_small(), 0);
+  lv_obj_set_style_border_color(policy_dropdown, highlight_color(), 0);
+  lv_obj_add_event_cb(policy_dropdown, dropdown_open_cb, LV_EVENT_READY, NULL);
+  lv_obj_add_event_cb(policy_dropdown, policy_dropdown_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
 
   // Account label
@@ -587,6 +643,7 @@ void wallet_settings_page_destroy(void) {
   back_button = NULL;
 
   network_dropdown = NULL;
+  policy_dropdown = NULL;
   passphrase_btn = NULL;
   account_btn = NULL;
   account_value_label = NULL;
@@ -597,5 +654,6 @@ void wallet_settings_page_destroy(void) {
   memset(base_fingerprint_hex, 0, sizeof(base_fingerprint_hex));
   return_callback = NULL;
   selected_network = WALLET_NETWORK_MAINNET;
+  selected_policy = WALLET_POLICY_SINGLESIG;
   settings_changed = false;
 }
