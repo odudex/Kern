@@ -2,7 +2,11 @@
 #include "../../components/cUR/src/types/output.h"
 #include "../qr/parser.h"
 #include "../qr/scanner.h"
+#include "../ui/assets/icons_24.h"
 #include "../ui/dialog.h"
+#include "../ui/key_info.h"
+#include "../ui/theme.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,6 +42,143 @@ static void descriptor_confirm_wrapper(const char *message,
   dialog_show_confirm(message, proceed, NULL, DIALOG_STYLE_FULLSCREEN);
 }
 
+// Context for descriptor info confirmation dialog
+typedef struct {
+  void (*proceed)(bool confirmed, void *user_data);
+  lv_obj_t *root;
+} info_confirm_context_t;
+
+static void info_confirm_respond(lv_event_t *e, bool confirmed) {
+  info_confirm_context_t *ctx = lv_event_get_user_data(e);
+  if (!ctx)
+    return;
+  void (*proceed)(bool, void *) = ctx->proceed;
+  if (ctx->root)
+    lv_obj_del(ctx->root);
+  free(ctx);
+  if (proceed)
+    proceed(confirmed, NULL);
+}
+
+static void info_confirm_yes_cb(lv_event_t *e) {
+  info_confirm_respond(e, true);
+}
+
+static void info_confirm_no_cb(lv_event_t *e) {
+  info_confirm_respond(e, false);
+}
+
+// Trim xpub for display: first 12 chars + "..." + last 8 chars
+static void trim_xpub_for_display(const char *xpub, char *out,
+                                  size_t out_size) {
+  size_t len = strlen(xpub);
+  if (len <= 23) {
+    strncpy(out, xpub, out_size - 1);
+    out[out_size - 1] = '\0';
+    return;
+  }
+  snprintf(out, out_size, "%.12s...%.8s", xpub, xpub + len - 8);
+}
+
+// UI wrapper for descriptor info confirmation
+static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
+                                            void (*proceed)(bool confirmed,
+                                                            void *user_data)) {
+  info_confirm_context_t *ctx = malloc(sizeof(info_confirm_context_t));
+  if (!ctx) {
+    proceed(false, NULL);
+    return;
+  }
+  ctx->proceed = proceed;
+
+  // Create fullscreen container
+  lv_obj_t *root = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
+  theme_apply_screen(root);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  ctx->root = root;
+
+  // Title with "Load?" prompt
+  char title[48];
+  if (info->is_multisig) {
+    snprintf(title, sizeof(title), "Multisig (%u of %u) - Load?",
+             info->threshold, info->num_keys);
+  } else {
+    snprintf(title, sizeof(title), "Single-sig - Load?");
+  }
+  lv_obj_t *title_label = theme_create_label(root, title, false);
+  lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
+  lv_obj_set_style_text_color(title_label, highlight_color(), 0);
+  lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(title_label, LV_PCT(100));
+  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
+
+  // Scrollable content area (between title and buttons)
+  lv_coord_t title_h = theme_font_medium()->line_height + 20;
+  lv_coord_t btn_h = theme_get_button_height();
+  lv_obj_t *scroll = lv_obj_create(root);
+  lv_obj_set_width(scroll, LV_PCT(100));
+  lv_obj_set_height(scroll, LV_VER_RES - title_h - btn_h);
+  lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 0, title_h);
+  lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(scroll, 0, 0);
+  lv_obj_set_style_pad_all(scroll, 10, 0);
+  lv_obj_set_style_pad_row(scroll, 4, 0);
+  lv_obj_set_flex_flow(scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(scroll, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START);
+  lv_obj_add_flag(scroll, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Key entries
+  for (uint32_t i = 0; i < info->num_keys; i++) {
+    // Letter + fingerprint on same row
+    char letter_fp[20];
+    snprintf(letter_fp, sizeof(letter_fp), "%c: %s", 'A' + (char)i,
+             info->keys[i].fingerprint_hex);
+    ui_icon_text_row_create(scroll, ICON_FINGERPRINT, letter_fp,
+                            highlight_color());
+
+    // Trimmed xpub (indented)
+    char trimmed[24];
+    trim_xpub_for_display(info->keys[i].xpub, trimmed, sizeof(trimmed));
+    lv_obj_t *xpub_label = theme_create_label(scroll, trimmed, false);
+    lv_obj_set_style_text_color(xpub_label, secondary_color(), 0);
+    lv_obj_set_style_text_font(xpub_label, theme_font_small(), 0);
+    lv_obj_set_style_pad_left(xpub_label, 20, 0);
+
+    // Derivation path row (indented)
+    lv_obj_t *deriv_row = ui_icon_text_row_create(
+        scroll, ICON_DERIVATION, info->keys[i].derivation, secondary_color());
+    lv_obj_set_style_pad_left(deriv_row, 20, 0);
+
+    // Separator between keys (except after last)
+    if (i < info->num_keys - 1) {
+      theme_create_separator(scroll);
+    }
+  }
+
+  // Button row (fixed at bottom)
+  lv_obj_t *no_btn = theme_create_button(root, "No", false);
+  lv_obj_set_size(no_btn, LV_PCT(50), theme_get_button_height());
+  lv_obj_align(no_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_add_event_cb(no_btn, info_confirm_no_cb, LV_EVENT_CLICKED, ctx);
+  lv_obj_t *no_label = lv_obj_get_child(no_btn, 0);
+  if (no_label) {
+    lv_obj_set_style_text_color(no_label, no_color(), 0);
+    lv_obj_set_style_text_font(no_label, theme_font_medium(), 0);
+  }
+
+  lv_obj_t *yes_btn = theme_create_button(root, "Yes", true);
+  lv_obj_set_size(yes_btn, LV_PCT(50), theme_get_button_height());
+  lv_obj_align(yes_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_add_event_cb(yes_btn, info_confirm_yes_cb, LV_EVENT_CLICKED, ctx);
+  lv_obj_t *yes_label = lv_obj_get_child(yes_btn, 0);
+  if (yes_label) {
+    lv_obj_set_style_text_color(yes_label, yes_color(), 0);
+    lv_obj_set_style_text_font(yes_label, theme_font_medium(), 0);
+  }
+}
+
 void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
                                        void *user_data,
                                        void (*error_cb)(void)) {
@@ -50,7 +191,7 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
     char *unambiguous = descriptor_to_unambiguous(descriptor_str);
     descriptor_validate_and_load(unambiguous ? unambiguous : descriptor_str,
                                  validation_cb, descriptor_confirm_wrapper,
-                                 user_data);
+                                 descriptor_info_confirm_wrapper, user_data);
     free(unambiguous);
     free(descriptor_str);
   } else {

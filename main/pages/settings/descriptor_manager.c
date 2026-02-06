@@ -206,6 +206,11 @@ static void descriptor_validation_cb(descriptor_validation_result_t result,
       show_qr_elements();
       update_qr_display();
     }
+    if (load_btn) {
+      lv_obj_t *label = lv_obj_get_child(load_btn, 0);
+      if (label)
+        lv_label_set_text(label, "Load Other Descriptor");
+    }
     return;
   }
 
@@ -314,12 +319,13 @@ void descriptor_manager_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_center(qr_code);
 
   load_btn = lv_btn_create(descriptor_screen);
-  lv_obj_set_size(load_btn, LV_PCT(60), 50);
+  lv_obj_set_size(load_btn, LV_PCT(80), 50);
   theme_apply_touch_button(load_btn, false);
   lv_obj_add_event_cb(load_btn, load_descriptor_btn_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *load_label = lv_label_create(load_btn);
-  lv_label_set_text(load_label, "Load Descriptor");
+  lv_label_set_text(load_label, has_descriptor ? "Load Other Descriptor"
+                                               : "Load Descriptor");
   lv_obj_set_style_text_font(load_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(load_label, main_color(), 0);
   lv_obj_center(load_label);

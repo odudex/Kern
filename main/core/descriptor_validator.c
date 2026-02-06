@@ -16,6 +16,7 @@ typedef struct {
   char *descriptor_str;
   validation_complete_cb callback;
   validation_confirm_cb confirm_cb;
+  validation_info_confirm_cb info_confirm_cb;
   void *user_data;
   wallet_network_t target_network;
   wallet_policy_t target_policy;
@@ -23,6 +24,7 @@ typedef struct {
   bool needs_network_change;
   bool needs_policy_change;
   bool needs_account_change;
+  descriptor_info_t info;
 } validation_context_t;
 
 static validation_context_t *current_ctx = NULL;
@@ -181,8 +183,102 @@ static char *extract_xpub_from_key(const char *key_str) {
   return xpub;
 }
 
-// Re-parse descriptor, verify xpub matches wallet, and load descriptor.
-static descriptor_validation_result_t verify_xpub_and_load(void) {
+// Parse multisig threshold from descriptor string (e.g., "multi(2,..." -> 2)
+static uint32_t parse_multisig_threshold(const char *descriptor_str) {
+  const char *multi = strstr(descriptor_str, "multi(");
+  if (!multi) {
+    return 0;
+  }
+  const char *num_start = multi + 6; // skip "multi("
+  char *end = NULL;
+  long val = strtol(num_start, &end, 10);
+  if (end == num_start || val <= 0) {
+    return 0;
+  }
+  return (uint32_t)val;
+}
+
+// Extract descriptor info (policy type, keys) from parsed descriptor
+static bool extract_descriptor_info(struct wally_descriptor *descriptor,
+                                    const char *descriptor_str,
+                                    descriptor_info_t *info) {
+  memset(info, 0, sizeof(descriptor_info_t));
+
+  uint32_t num_keys = 0;
+  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK) {
+    return false;
+  }
+
+  info->is_multisig = (num_keys > 1);
+  info->num_keys = (num_keys > DESCRIPTOR_INFO_MAX_KEYS)
+                       ? DESCRIPTOR_INFO_MAX_KEYS
+                       : num_keys;
+
+  if (info->is_multisig) {
+    info->threshold = parse_multisig_threshold(descriptor_str);
+  }
+
+  for (uint32_t i = 0; i < info->num_keys; i++) {
+    // Fingerprint
+    unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+    if (wally_descriptor_get_key_origin_fingerprint(
+            descriptor, i, fp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK) {
+      snprintf(info->keys[i].fingerprint_hex,
+               sizeof(info->keys[i].fingerprint_hex), "%02X%02X%02X%02X", fp[0],
+               fp[1], fp[2], fp[3]);
+    } else {
+      strncpy(info->keys[i].fingerprint_hex, "N/A",
+              sizeof(info->keys[i].fingerprint_hex));
+    }
+
+    // Xpub
+    char *key_str = NULL;
+    if (wally_descriptor_get_key(descriptor, i, &key_str) == WALLY_OK) {
+      char *xpub = extract_xpub_from_key(key_str);
+      if (xpub) {
+        strncpy(info->keys[i].xpub, xpub, sizeof(info->keys[i].xpub) - 1);
+        info->keys[i].xpub[sizeof(info->keys[i].xpub) - 1] = '\0';
+        free(xpub);
+      }
+      wally_free_string(key_str);
+    }
+
+    // Derivation path
+    char *path_str = NULL;
+    if (wally_descriptor_get_key_origin_path_str(descriptor, i, &path_str) ==
+        WALLY_OK) {
+      snprintf(info->keys[i].derivation, sizeof(info->keys[i].derivation),
+               "m/%s", path_str);
+      wally_free_string(path_str);
+    } else {
+      strncpy(info->keys[i].derivation, "N/A",
+              sizeof(info->keys[i].derivation));
+    }
+  }
+
+  return true;
+}
+
+// Callback after user confirms/declines descriptor info
+static void info_confirm_proceed(bool confirmed, void *user_data) {
+  (void)user_data;
+
+  if (!confirmed) {
+    complete_validation(VALIDATION_USER_DECLINED);
+    return;
+  }
+
+  if (!wallet_load_descriptor(current_ctx->descriptor_str)) {
+    ESP_LOGE(TAG, "Failed to load descriptor");
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+
+  complete_validation(VALIDATION_SUCCESS);
+}
+
+// Re-parse descriptor, verify xpub matches wallet, extract info, and show it.
+static void verify_xpub_and_show_info(void) {
   uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
                                ? WALLY_NETWORK_BITCOIN_MAINNET
                                : WALLY_NETWORK_BITCOIN_TESTNET;
@@ -191,33 +287,39 @@ static descriptor_validation_result_t verify_xpub_and_load(void) {
   if (wally_descriptor_parse(current_ctx->descriptor_str, NULL, wally_network,
                              0, &descriptor) != WALLY_OK) {
     ESP_LOGE(TAG, "Failed to parse descriptor for xpub verification");
-    return VALIDATION_PARSE_ERROR;
+    complete_validation(VALIDATION_PARSE_ERROR);
+    return;
   }
 
   int key_index = find_matching_key_index(descriptor);
   if (key_index < 0) {
     wally_descriptor_free(descriptor);
-    return VALIDATION_FINGERPRINT_NOT_FOUND;
+    complete_validation(VALIDATION_FINGERPRINT_NOT_FOUND);
+    return;
   }
 
   char *key_str = NULL;
   if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK) {
     wally_descriptor_free(descriptor);
-    return VALIDATION_INTERNAL_ERROR;
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
   }
 
   char *descriptor_xpub = extract_xpub_from_key(key_str);
   wally_free_string(key_str);
-  wally_descriptor_free(descriptor);
 
   if (!descriptor_xpub) {
-    return VALIDATION_PARSE_ERROR;
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_PARSE_ERROR);
+    return;
   }
 
   char *wallet_xpub = NULL;
   if (!wallet_get_account_xpub(&wallet_xpub)) {
     free(descriptor_xpub);
-    return VALIDATION_INTERNAL_ERROR;
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
   }
 
   bool xpub_match = (strcmp(descriptor_xpub, wallet_xpub) == 0);
@@ -226,15 +328,22 @@ static descriptor_validation_result_t verify_xpub_and_load(void) {
 
   if (!xpub_match) {
     ESP_LOGE(TAG, "XPub mismatch");
-    return VALIDATION_XPUB_MISMATCH;
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_XPUB_MISMATCH);
+    return;
   }
 
-  if (!wallet_load_descriptor(current_ctx->descriptor_str)) {
-    ESP_LOGE(TAG, "Failed to load descriptor");
-    return VALIDATION_INTERNAL_ERROR;
-  }
+  // Extract descriptor info before freeing
+  extract_descriptor_info(descriptor, current_ctx->descriptor_str,
+                          &current_ctx->info);
+  wally_descriptor_free(descriptor);
 
-  return VALIDATION_SUCCESS;
+  // Show info confirmation if callback is set, otherwise auto-confirm
+  if (current_ctx->info_confirm_cb) {
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+  } else {
+    info_confirm_proceed(true, NULL);
+  }
 }
 
 // Apply settings changes and verify xpub
@@ -273,7 +382,7 @@ static void apply_changes_and_verify(void) {
     return;
   }
 
-  complete_validation(verify_xpub_and_load());
+  verify_xpub_and_show_info();
 }
 
 // Callback for attribute change confirmation dialog
@@ -326,7 +435,7 @@ static void check_attributes_and_verify(struct wally_descriptor *descriptor,
 
   if (!network_mismatch && !policy_mismatch && !account_mismatch) {
     // No changes needed - verify xpub directly
-    complete_validation(verify_xpub_and_load());
+    verify_xpub_and_show_info();
     return;
   }
 
@@ -382,6 +491,7 @@ static void check_attributes_and_verify(struct wally_descriptor *descriptor,
 void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
+                                  validation_info_confirm_cb info_confirm_cb,
                                   void *user_data) {
   // Clean up any previous context
   cleanup_context();
@@ -415,6 +525,7 @@ void descriptor_validate_and_load(const char *descriptor_str,
 
   current_ctx->callback = callback;
   current_ctx->confirm_cb = confirm_cb;
+  current_ctx->info_confirm_cb = info_confirm_cb;
   current_ctx->user_data = user_data;
 
   // Parse descriptor
