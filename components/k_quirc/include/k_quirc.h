@@ -155,7 +155,7 @@ int k_quirc_decode_grayscale(const uint8_t *grayscale_data, int width,
                              int max_results, bool find_inverted);
 
 /* Debug visualization support */
-#ifdef K_QUIRC_DEBUG_VIS
+#ifdef K_QUIRC_DEBUG
 
 #define K_QUIRC_DEBUG_MAX_GRIDS 8
 #define K_QUIRC_DEBUG_MAX_CAPSTONES 32
@@ -187,6 +187,6 @@ typedef struct {
 
 const k_quirc_debug_info_t *k_quirc_get_debug_info(const k_quirc_t *q);
 
-#endif /* K_QUIRC_DEBUG_VIS */
+#endif /* K_QUIRC_DEBUG */
 
 #endif /* K_QUIRC_H */

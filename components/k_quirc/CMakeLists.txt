@@ -18,4 +18,4 @@ target_compile_definitions(${COMPONENT_LIB} PUBLIC K_QUIRC_BILINEAR_THRESHOLD)
 
 # Uncomment to enable QR debug visualization mode
 # This shows the thresholded pixel buffer with timing pattern overlays
-# target_compile_definitions(${COMPONENT_LIB} PUBLIC K_QUIRC_DEBUG_VIS)
+target_compile_definitions(${COMPONENT_LIB} PUBLIC K_QUIRC_DEBUG)

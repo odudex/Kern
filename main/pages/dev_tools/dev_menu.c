@@ -14,11 +14,15 @@
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
+#ifdef K_QUIRC_DEBUG
+#include "decode_snapshots.h"
+#endif
 #include "snapshot.h"
 
+#ifndef K_QUIRC_DEBUG
 static const char *TAG = "dev_menu";
-
 #define DECODE_TASK_STACK_SIZE 32768
+#endif
 
 static ui_menu_t *dev_menu = NULL;
 static lv_obj_t *dev_menu_screen = NULL;
@@ -35,8 +39,30 @@ static void snapshot_cb(void) {
   snapshot_page_show();
 }
 
+#ifdef K_QUIRC_DEBUG
+
+static void return_from_decode_cb(void) {
+  decode_snapshots_page_destroy();
+  dev_menu_page_show();
+}
+
+static void decode_snapshots_cb(void) {
+  if (!sd_card_is_mounted()) {
+    if (sd_card_init() != ESP_OK) {
+      dialog_show_message("Error", "Failed to mount SD card");
+      return;
+    }
+  }
+
+  dev_menu_page_hide();
+  decode_snapshots_page_create(lv_screen_active(), return_from_decode_cb);
+  decode_snapshots_page_show();
+}
+
+#else /* !K_QUIRC_DEBUG */
+
 static bool parse_pgm_header(const uint8_t *data, size_t len, int *width,
-                             int *height, size_t *data_offset) {
+                              int *height, size_t *data_offset) {
   if (len < 10 || data[0] != 'P' || data[1] != '5')
     return false;
 
@@ -185,6 +211,8 @@ static void decode_snapshots_cb(void) {
   }
   dialog_show_message("Decode Results", msg);
 }
+
+#endif /* K_QUIRC_DEBUG */
 
 static void back_cb(void) {
   void (*callback)(void) = return_callback;

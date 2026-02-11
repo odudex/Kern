@@ -175,7 +175,7 @@ int k_quirc_decode_grayscale(const uint8_t *grayscale_data, int width,
   return decoded;
 }
 
-#ifdef K_QUIRC_DEBUG_VIS
+#ifdef K_QUIRC_DEBUG
 
 static k_quirc_debug_info_t debug_info;
 
@@ -205,4 +205,4 @@ const k_quirc_debug_info_t *k_quirc_get_debug_info(const k_quirc_t *q) {
   return &debug_info;
 }
 
-#endif /* K_QUIRC_DEBUG_VIS */
+#endif /* K_QUIRC_DEBUG */
