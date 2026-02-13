@@ -541,6 +541,8 @@ static void create_encrypt_keyboard_overlay(const char *title,
   lv_obj_set_style_pad_gap(encrypt_keyboard, 6, 0);
   lv_obj_set_style_bg_color(encrypt_keyboard, disabled_color(), LV_PART_ITEMS);
   lv_obj_set_style_text_color(encrypt_keyboard, main_color(), LV_PART_ITEMS);
+  lv_obj_set_style_text_font(encrypt_keyboard, theme_font_small(),
+                             LV_PART_ITEMS);
   lv_obj_set_style_border_width(encrypt_keyboard, 0, LV_PART_ITEMS);
   lv_obj_set_style_radius(encrypt_keyboard, 6, LV_PART_ITEMS);
   lv_obj_set_style_bg_color(encrypt_keyboard, highlight_color(),

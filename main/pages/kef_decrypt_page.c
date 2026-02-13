@@ -241,6 +241,7 @@ void kef_decrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
   lv_obj_set_style_pad_gap(keyboard, 6, 0);
   lv_obj_set_style_bg_color(keyboard, disabled_color(), LV_PART_ITEMS);
   lv_obj_set_style_text_color(keyboard, main_color(), LV_PART_ITEMS);
+  lv_obj_set_style_text_font(keyboard, theme_font_small(), LV_PART_ITEMS);
   lv_obj_set_style_border_width(keyboard, 0, LV_PART_ITEMS);
   lv_obj_set_style_radius(keyboard, 6, LV_PART_ITEMS);
   lv_obj_set_style_bg_color(keyboard, highlight_color(),
