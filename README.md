@@ -48,6 +48,14 @@ git clone --depth 1 --recurse-submodules --shallow-submodules -b v6.1 https://gi
 . ~/esp/esp-idf/export.sh
 ```
 
+For formatting, host tests, and the desktop simulator, Nix users can enter the development shell:
+
+```bash
+nix develop
+```
+
+The Nix shell intentionally provides host tools only. Firmware builds still require the separate ESP-IDF v6.1 installation above; `just build` uses an existing `IDF_PATH` or falls back to `~/esp/esp-idf`.
+
 ## Build
 
 ### Cloning the Repository

@@ -28,6 +28,7 @@ simulator/build*/
 simulator/sim_data/
 
 # Tests
+*.dSYM/
 components/secure_memory/test/test_cleanup
 components/secure_memory/test/test_secret_alloc
 components/bbqr/test/test_bbqr
