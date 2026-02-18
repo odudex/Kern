@@ -30,6 +30,7 @@ static lv_obj_t *overlay_screen = NULL;
 static lv_obj_t *overlay_title = NULL;
 static lv_obj_t *progress_dialog = NULL;
 static ui_text_input_t text_input = {0};
+static lv_obj_t *strength_label = NULL;
 
 static void (*return_callback)(void) = NULL;
 static kef_encrypt_success_cb_t success_callback = NULL;
@@ -61,6 +62,97 @@ static size_t confirm_key_len = 0;
 
 static void show_password_input(void);
 
+/* ---------- Key strength indicator ---------- */
+
+typedef enum {
+  KEY_STRENGTH_NONE,
+  KEY_STRENGTH_WEAK,
+  KEY_STRENGTH_FAIR,
+  KEY_STRENGTH_GOOD,
+  KEY_STRENGTH_STRONG,
+} key_strength_t;
+
+static key_strength_t calculate_key_strength(const char *text) {
+  if (!text || text[0] == '\0')
+    return KEY_STRENGTH_NONE;
+
+  size_t len = strlen(text);
+  int has_lower = 0, has_upper = 0, has_digit = 0, has_symbol = 0;
+
+  for (size_t i = 0; i < len; i++) {
+    char c = text[i];
+    if (c >= 'a' && c <= 'z')
+      has_lower = 1;
+    else if (c >= 'A' && c <= 'Z')
+      has_upper = 1;
+    else if (c >= '0' && c <= '9')
+      has_digit = 1;
+    else
+      has_symbol = 1;
+  }
+
+  int classes = has_lower + has_upper + has_digit + has_symbol;
+
+  if (len < 6)
+    return KEY_STRENGTH_WEAK;
+  if (len < 8)
+    return (classes >= 3) ? KEY_STRENGTH_FAIR : KEY_STRENGTH_WEAK;
+  if (len < 12)
+    return (classes >= 3) ? KEY_STRENGTH_GOOD : KEY_STRENGTH_FAIR;
+  return (classes >= 3) ? KEY_STRENGTH_STRONG : KEY_STRENGTH_GOOD;
+}
+
+static const char *strength_text(key_strength_t s) {
+  switch (s) {
+  case KEY_STRENGTH_WEAK:
+    return "Weak";
+  case KEY_STRENGTH_FAIR:
+    return "Fair";
+  case KEY_STRENGTH_GOOD:
+    return "Good";
+  case KEY_STRENGTH_STRONG:
+    return "Strong";
+  default:
+    return "";
+  }
+}
+
+static lv_color_t strength_color(key_strength_t s) {
+  switch (s) {
+  case KEY_STRENGTH_WEAK:
+    return error_color();
+  case KEY_STRENGTH_FAIR:
+    return highlight_color();
+  case KEY_STRENGTH_GOOD:
+  case KEY_STRENGTH_STRONG:
+    return yes_color();
+  default:
+    return lv_color_white();
+  }
+}
+
+static void key_changed_cb(lv_event_t *e) {
+  (void)e;
+  if (!strength_label || !text_input.textarea)
+    return;
+
+  /* Only show strength during first entry, not confirm step */
+  if (confirm_key) {
+    lv_label_set_text(strength_label, "");
+    return;
+  }
+
+  const char *text = lv_textarea_get_text(text_input.textarea);
+  key_strength_t s = calculate_key_strength(text);
+
+  if (s == KEY_STRENGTH_NONE) {
+    lv_label_set_text(strength_label, "");
+  } else {
+    lv_label_set_text(strength_label, strength_text(s));
+    lv_obj_set_style_text_color(strength_label, strength_color(s), 0);
+  }
+}
+
 /* ---------- Overlay management ---------- */
 
 static void destroy_overlay(void) {
@@ -89,6 +181,7 @@ static void destroy_overlay(void) {
   SECURE_FREE_BUFFER(confirm_key, confirm_key_len);
   confirm_key_len = 0;
   overlay_title = NULL;
+  strength_label = NULL;
 }
 
 static void cancel_cb(lv_event_t *e) {
@@ -112,6 +205,15 @@ static void create_overlay(const char *title, const char *placeholder,
 
   ui_text_input_create(&text_input, overlay_screen, placeholder, password_mode,
                        ready_cb);
+
+  if (password_mode) {
+    strength_label = lv_label_create(overlay_screen);
+    lv_label_set_text(strength_label, "");
+    lv_obj_set_style_text_font(strength_label, theme_font_small(), 0);
+    lv_obj_align(strength_label, LV_ALIGN_TOP_MID, 0, 195);
+    lv_obj_add_event_cb(text_input.keyboard, key_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+  }
 }
 
 /* ---------- Encryption task (runs on CPU 1) ---------- */
@@ -170,6 +272,8 @@ static void encrypt_poll_timer_cb(lv_timer_t *timer) {
   ui_text_input_show(&text_input);
   if (text_input.textarea)
     lv_textarea_set_text(text_input.textarea, "");
+  if (strength_label)
+    lv_obj_clear_flag(strength_label, LV_OBJ_FLAG_HIDDEN);
   dialog_show_error(kef_error_str(encrypt_result), NULL, 0);
 }
 
@@ -193,6 +297,8 @@ static void password_ready_cb(lv_event_t *e) {
     lv_textarea_set_text(text_input.textarea, "");
     if (overlay_title)
       lv_label_set_text(overlay_title, "Confirm Key");
+    if (strength_label)
+      lv_obj_add_flag(strength_label, LV_OBJ_FLAG_HIDDEN);
     return;
   }
 
@@ -203,6 +309,8 @@ static void password_ready_cb(lv_event_t *e) {
     lv_textarea_set_text(text_input.textarea, "");
     if (overlay_title)
       lv_label_set_text(overlay_title, "Encryption Key");
+    if (strength_label)
+      lv_obj_clear_flag(strength_label, LV_OBJ_FLAG_HIDDEN);
     dialog_show_error("Keys don't match", NULL, 0);
     return;
   }

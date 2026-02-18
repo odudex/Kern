@@ -43,10 +43,7 @@ static void save_success_dialog_cb(void *user_data) {
   go_back();
 }
 
-static void deferred_save_cb(lv_timer_t *timer) {
-  (void)timer;
-  save_timer = NULL;
-
+static void do_save(void) {
   esp_err_t ret = storage_save_mnemonic(target_location, pending_id,
                                         pending_envelope, pending_envelope_len);
 
@@ -70,6 +67,40 @@ static void deferred_save_cb(lv_timer_t *timer) {
   } else {
     dialog_show_error("Failed to save", go_back, 0);
   }
+}
+
+static void overwrite_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (confirmed) {
+    do_save();
+  } else {
+    pending_envelope = NULL;
+    pending_envelope_len = 0;
+    pending_id = NULL;
+    if (progress_dialog) {
+      lv_obj_del(progress_dialog);
+      progress_dialog = NULL;
+    }
+    kef_encrypt_page_destroy();
+    go_back();
+  }
+}
+
+static void deferred_save_cb(lv_timer_t *timer) {
+  (void)timer;
+  save_timer = NULL;
+
+  if (storage_mnemonic_exists(target_location, pending_id)) {
+    if (progress_dialog) {
+      lv_obj_del(progress_dialog);
+      progress_dialog = NULL;
+    }
+    dialog_show_confirm("A backup with this ID already exists. Overwrite?",
+                        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
+    return;
+  }
+
+  do_save();
 }
 
 /* ---------- Encrypt callbacks ---------- */
