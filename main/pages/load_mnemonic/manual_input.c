@@ -8,7 +8,7 @@
 #include "../../ui/theme.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/bip39_filter.h"
-#include "../mnemonic_editor.h"
+#include "../shared/mnemonic_editor.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <string.h>

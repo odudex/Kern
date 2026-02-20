@@ -17,8 +17,8 @@
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
 #include "../../ui/theme.h"
-#include "../descriptor_loader.h"
 #include "../load_descriptor_storage.h"
+#include "../shared/descriptor_loader.h"
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>

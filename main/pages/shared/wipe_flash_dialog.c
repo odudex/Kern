@@ -1,8 +1,8 @@
 // Wipe Flash Dialog — shared confirmation and erase flow
 
 #include "wipe_flash_dialog.h"
-#include "../core/storage.h"
-#include "../ui/dialog.h"
+#include "../../core/storage.h"
+#include "../../ui/dialog.h"
 #include <lvgl.h>
 #include <stddef.h>
 

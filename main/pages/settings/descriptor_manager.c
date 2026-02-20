@@ -9,8 +9,8 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
-#include "../descriptor_loader.h"
 #include "../load_descriptor_storage.h"
+#include "../shared/descriptor_loader.h"
 #include "../store_descriptor.h"
 #include <bbqr.h>
 #include <lvgl.h>

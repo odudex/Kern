@@ -9,7 +9,7 @@
 #ifndef STORAGE_BROWSER_H
 #define STORAGE_BROWSER_H
 
-#include "../core/storage.h"
+#include "../../core/storage.h"
 #include <lvgl.h>
 
 typedef struct {

@@ -9,12 +9,12 @@
  */
 
 #include "kef_encrypt_page.h"
-#include "../core/kef.h"
-#include "../core/key.h"
-#include "../ui/dialog.h"
-#include "../ui/input_helpers.h"
-#include "../ui/theme.h"
-#include "../utils/secure_mem.h"
+#include "../../core/kef.h"
+#include "../../core/key.h"
+#include "../../ui/dialog.h"
+#include "../../ui/input_helpers.h"
+#include "../../ui/theme.h"
+#include "../../utils/secure_mem.h"
 
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>

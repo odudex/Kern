@@ -9,11 +9,11 @@
  */
 
 #include "kef_decrypt_page.h"
-#include "../core/kef.h"
-#include "../ui/dialog.h"
-#include "../ui/input_helpers.h"
-#include "../ui/theme.h"
-#include "../utils/secure_mem.h"
+#include "../../core/kef.h"
+#include "../../ui/dialog.h"
+#include "../../ui/input_helpers.h"
+#include "../../ui/theme.h"
+#include "../../utils/secure_mem.h"
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/idf_additions.h>

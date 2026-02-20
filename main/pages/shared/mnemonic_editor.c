@@ -1,13 +1,13 @@
 // Mnemonic Editor Page - Review and edit mnemonic words before loading
 
 #include "mnemonic_editor.h"
-#include "../ui/assets/icons_24.h"
-#include "../ui/dialog.h"
-#include "../ui/input_helpers.h"
-#include "../ui/keyboard.h"
-#include "../ui/menu.h"
-#include "../ui/theme.h"
-#include "../utils/bip39_filter.h"
+#include "../../ui/assets/icons_24.h"
+#include "../../ui/dialog.h"
+#include "../../ui/input_helpers.h"
+#include "../../ui/keyboard.h"
+#include "../../ui/menu.h"
+#include "../../ui/theme.h"
+#include "../../utils/bip39_filter.h"
 #include "key_confirmation.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -18,7 +18,7 @@
 #include <wally_core.h>
 #include <wally_crypto.h>
 
-#include "../utils/secure_mem.h"
+#include "../../utils/secure_mem.h"
 
 #define MAX_MNEMONIC_LEN 256
 

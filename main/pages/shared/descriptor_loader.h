@@ -1,7 +1,7 @@
 #ifndef DESCRIPTOR_LOADER_H
 #define DESCRIPTOR_LOADER_H
 
-#include "../core/descriptor_validator.h"
+#include "../../core/descriptor_validator.h"
 #include <lvgl.h>
 #include <stdbool.h>
 

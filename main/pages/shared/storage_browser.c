@@ -1,10 +1,10 @@
 // Storage Browser — shared file listing, selection, delete, and wipe flow
 
 #include "storage_browser.h"
-#include "../core/storage.h"
-#include "../ui/dialog.h"
-#include "../ui/menu.h"
-#include "../ui/theme.h"
+#include "../../core/storage.h"
+#include "../../ui/dialog.h"
+#include "../../ui/menu.h"
+#include "../../ui/theme.h"
 #include "wipe_flash_dialog.h"
 #include <lvgl.h>
 #include <stdio.h>

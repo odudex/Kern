@@ -4,9 +4,9 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
 #include "../home/home.h"
-#include "../key_confirmation.h"
 #include "../load_mnemonic/manual_input.h"
-#include "../mnemonic_editor.h"
+#include "../shared/key_confirmation.h"
+#include "../shared/mnemonic_editor.h"
 #include "dice_rolls.h"
 #include "entropy_from_camera.h"
 #include <lvgl.h>

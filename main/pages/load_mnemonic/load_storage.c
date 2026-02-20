@@ -4,9 +4,9 @@
 #include "../../core/kef.h"
 #include "../../core/storage.h"
 #include "../../ui/dialog.h"
-#include "../kef_decrypt_page.h"
-#include "../key_confirmation.h"
-#include "../storage_browser.h"
+#include "../shared/kef_decrypt_page.h"
+#include "../shared/key_confirmation.h"
+#include "../shared/storage_browser.h"
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>

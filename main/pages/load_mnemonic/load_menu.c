@@ -8,8 +8,8 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
 #include "../home/home.h"
-#include "../kef_decrypt_page.h"
-#include "../key_confirmation.h"
+#include "../shared/kef_decrypt_page.h"
+#include "../shared/key_confirmation.h"
 #include "load_storage.h"
 #include "manual_input.h"
 #include <lvgl.h>

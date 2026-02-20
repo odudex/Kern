@@ -7,7 +7,7 @@
 #include "../ui/dialog.h"
 #include "../ui/theme.h"
 #include "../utils/secure_mem.h"
-#include "kef_encrypt_page.h"
+#include "shared/kef_encrypt_page.h"
 
 #include <lvgl.h>
 #include <stdlib.h>

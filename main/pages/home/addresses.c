@@ -9,9 +9,9 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/theme.h"
-#include "../descriptor_loader.h"
 #include "../load_descriptor_storage.h"
 #include "../settings/wallet_settings.h"
+#include "../shared/descriptor_loader.h"
 #include <lvgl.h>
 #include <stdint.h>
 #include <stdlib.h>
