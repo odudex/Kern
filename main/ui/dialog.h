@@ -30,6 +30,10 @@ void dialog_show_confirm(const char *message,
                          dialog_confirm_callback_t callback, void *user_data,
                          dialog_style_t style);
 
+void dialog_show_danger_confirm(const char *message,
+                                dialog_confirm_callback_t callback,
+                                void *user_data, dialog_style_t style);
+
 void dialog_show_message(const char *title, const char *message);
 
 /**

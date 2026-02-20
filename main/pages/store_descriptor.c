@@ -132,8 +132,9 @@ static void deferred_save_encrypted_cb(lv_timer_t *timer) {
       lv_obj_del(progress_dialog);
       progress_dialog = NULL;
     }
-    dialog_show_confirm("A descriptor with this ID\nalready exists. Overwrite?",
-                        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
+    dialog_show_danger_confirm(
+        "A descriptor with this ID\nalready exists. Overwrite?",
+        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
     return;
   }
 
@@ -168,8 +169,9 @@ static void deferred_save_plaintext_cb(lv_timer_t *timer) {
       lv_obj_del(progress_dialog);
       progress_dialog = NULL;
     }
-    dialog_show_confirm("A descriptor with this ID already exists. Overwrite?",
-                        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
+    dialog_show_danger_confirm(
+        "A descriptor with this ID already exists. Overwrite?",
+        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
     return;
   }
 

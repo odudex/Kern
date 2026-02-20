@@ -146,8 +146,8 @@ static void delete_action_cb(int idx) {
   char msg[80];
   snprintf(msg, sizeof(msg), "Delete \"%s\"?",
            display_names[idx] ? display_names[idx] : stored_filenames[idx]);
-  dialog_show_confirm(msg, inline_delete_confirm_cb, NULL,
-                      DIALOG_STYLE_OVERLAY);
+  dialog_show_danger_confirm(msg, inline_delete_confirm_cb, NULL,
+                             DIALOG_STYLE_OVERLAY);
 }
 
 /* ---------- Wipe flash ---------- */

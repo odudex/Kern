@@ -95,8 +95,9 @@ static void deferred_save_cb(lv_timer_t *timer) {
       lv_obj_del(progress_dialog);
       progress_dialog = NULL;
     }
-    dialog_show_confirm("A backup with this ID already exists. Overwrite?",
-                        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
+    dialog_show_danger_confirm(
+        "A backup with this ID already exists. Overwrite?",
+        overwrite_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
     return;
   }
 

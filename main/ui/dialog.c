@@ -215,9 +215,10 @@ void dialog_show_error(const char *message, dialog_simple_callback_t callback,
   lv_timer_set_repeat_count(timer, 1);
 }
 
-void dialog_show_confirm(const char *message,
-                         dialog_confirm_callback_t callback, void *user_data,
-                         dialog_style_t style) {
+static void show_confirm_internal(const char *message,
+                                  dialog_confirm_callback_t callback,
+                                  void *user_data, dialog_style_t style,
+                                  bool danger) {
   if (!message)
     return;
 
@@ -229,6 +230,9 @@ void dialog_show_confirm(const char *message,
   ctx->user_data = user_data;
 
   lv_obj_t *dialog = create_dialog_container(style, &ctx->root);
+
+  if (danger && style == DIALOG_STYLE_OVERLAY)
+    lv_obj_set_style_border_color(dialog, error_color(), 0);
 
   lv_obj_t *msg_label = theme_create_label(dialog, message, false);
   lv_label_set_recolor(msg_label, true);
@@ -244,7 +248,7 @@ void dialog_show_confirm(const char *message,
   lv_obj_add_event_cb(no_btn, confirm_no_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *no_label = lv_obj_get_child(no_btn, 0);
   if (no_label) {
-    lv_obj_set_style_text_color(no_label, no_color(), 0);
+    lv_obj_set_style_text_color(no_label, danger ? yes_color() : no_color(), 0);
     lv_obj_set_style_text_font(no_label, theme_font_medium(), 0);
   }
 
@@ -254,11 +258,24 @@ void dialog_show_confirm(const char *message,
   lv_obj_add_event_cb(yes_btn, confirm_yes_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *yes_label = lv_obj_get_child(yes_btn, 0);
   if (yes_label) {
-    lv_obj_set_style_text_color(yes_label, yes_color(), 0);
+    lv_obj_set_style_text_color(yes_label, danger ? no_color() : yes_color(),
+                                0);
     lv_obj_set_style_text_font(yes_label, theme_font_medium(), 0);
   }
 
   dialog_fit_overlay(dialog, style, message, theme_get_button_height() + 20);
+}
+
+void dialog_show_confirm(const char *message,
+                         dialog_confirm_callback_t callback, void *user_data,
+                         dialog_style_t style) {
+  show_confirm_internal(message, callback, user_data, style, false);
+}
+
+void dialog_show_danger_confirm(const char *message,
+                                dialog_confirm_callback_t callback,
+                                void *user_data, dialog_style_t style) {
+  show_confirm_internal(message, callback, user_data, style, true);
 }
 
 lv_obj_t *dialog_show_progress(const char *title, const char *message,

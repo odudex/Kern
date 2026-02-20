@@ -47,7 +47,7 @@ static void wipe_flash_confirm_cb(bool confirmed, void *user_data) {
 
 void wipe_flash_dialog_start(void (*complete_cb)(void)) {
   wipe_done_cb = complete_cb;
-  dialog_show_confirm(
+  dialog_show_danger_confirm(
       "All mnemonics and descriptors stored in flash will be permanently "
       "erased.\nContinue?",
       wipe_flash_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
