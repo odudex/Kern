@@ -56,7 +56,7 @@ i2c_master_bus_handle_t bsp_i2c_get_handle(void);
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
 
-#define BSP_LCD_DRAW_BUFF_SIZE     (BSP_LCD_H_RES * 50)
+#define BSP_LCD_DRAW_BUFF_SIZE     (BSP_LCD_H_RES * BSP_LCD_V_RES / 4)
 #define BSP_LCD_DRAW_BUFF_DOUBLE   (0)
 
 typedef struct {
