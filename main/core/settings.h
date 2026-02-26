@@ -11,6 +11,8 @@ wallet_network_t settings_get_default_network(void);
 esp_err_t settings_set_default_network(wallet_network_t network);
 wallet_policy_t settings_get_default_policy(void);
 esp_err_t settings_set_default_policy(wallet_policy_t policy);
+uint8_t settings_get_brightness(void);
+esp_err_t settings_set_brightness(uint8_t brightness);
 esp_err_t settings_reset_all(void);
 
 #endif // SETTINGS_H

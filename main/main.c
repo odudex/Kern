@@ -54,7 +54,7 @@ void app_main(void) {
   vTaskDelay(pdMS_TO_TICKS(50));
 
   // Now turn on backlight
-  bsp_display_brightness_set(50);
+  bsp_display_brightness_set(settings_get_brightness());
 
   // Show animated logo splash screen
   kern_logo_animated(screen);
