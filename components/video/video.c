@@ -236,6 +236,15 @@ esp_err_t app_video_set_bufs(int fd, uint32_t fb_num, const void **fb) {
   return ESP_OK;
 
 fail:
+  if (req.memory == V4L2_MEMORY_MMAP) {
+    for (int i = 0; i < MAX_BUFFER_COUNT; i++) {
+      if (app_video.camera_buffer[i] &&
+          app_video.camera_buffer[i] != MAP_FAILED) {
+        munmap(app_video.camera_buffer[i], app_video.camera_buf_size);
+        app_video.camera_buffer[i] = NULL;
+      }
+    }
+  }
   close(fd);
   return ESP_FAIL;
 }
@@ -376,9 +385,30 @@ esp_err_t app_video_close(int fd) {
                         pdFALSE, pdMS_TO_TICKS(1000));
   }
 
-  if (fd >= 0 && close(fd)) {
-    ESP_LOGE(TAG, "Close failed: %s", strerror(errno));
-    ret = ESP_FAIL;
+  if (fd >= 0) {
+    // Release mmap'd buffers before closing FD
+    if (app_video.camera_mem_mode == V4L2_MEMORY_MMAP) {
+      for (int i = 0; i < MAX_BUFFER_COUNT; i++) {
+        if (app_video.camera_buffer[i] &&
+            app_video.camera_buffer[i] != MAP_FAILED) {
+          munmap(app_video.camera_buffer[i], app_video.camera_buf_size);
+          app_video.camera_buffer[i] = NULL;
+        }
+      }
+    }
+
+    // Explicitly release V4L2 buffers
+    struct v4l2_requestbuffers req = {
+        .count = 0,
+        .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        .memory = app_video.camera_mem_mode,
+    };
+    ioctl(fd, VIDIOC_REQBUFS, &req);
+
+    if (close(fd)) {
+      ESP_LOGE(TAG, "Close failed: %s", strerror(errno));
+      ret = ESP_FAIL;
+    }
   }
 
   if (app_video.event_group) {
