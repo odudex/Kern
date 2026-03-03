@@ -125,14 +125,18 @@ static void free_buffers(void) {
 
 static void horizontal_crop(const uint8_t *camera_buf, uint8_t *display_buf,
                             uint32_t camera_width, uint32_t camera_height) {
+  if (camera_width < CAMERA_WIDTH || camera_height < CAMERA_HEIGHT) {
+    ESP_LOGE(TAG, "Camera resolution too small for crop");
+    return;
+  }
   uint32_t crop_x = (camera_width - CAMERA_WIDTH) / 2;
   uint32_t crop_y = (camera_height - CAMERA_HEIGHT) / 2;
   const uint16_t *src = (const uint16_t *)camera_buf;
   uint16_t *dst = (uint16_t *)display_buf;
 
   for (uint32_t y = 0; y < CAMERA_HEIGHT; y++) {
-    memcpy(dst + y * CAMERA_WIDTH,
-           src + (y + crop_y) * camera_width + crop_x, CAMERA_WIDTH * 2);
+    memcpy(dst + y * CAMERA_WIDTH, src + (y + crop_y) * camera_width + crop_x,
+           CAMERA_WIDTH * 2);
   }
 }
 

@@ -163,7 +163,7 @@ static void split_content_into_parts(const char *content) {
       return;
     }
 
-    strcpy(qr_parts[i].data, header);
+    memcpy(qr_parts[i].data, header, header_len);
     memcpy(qr_parts[i].data + header_len, content + offset, chunk_size);
     qr_parts[i].data[qr_parts[i].len] = '\0';
   }

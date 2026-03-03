@@ -251,6 +251,10 @@ char *qr_parser_result(QRPartParser *parser, size_t *result_len) {
     // Calculate total payload length
     size_t total_payload_len = 0;
     for (int i = 0; i < parser->parts_count; i++) {
+      if (total_payload_len + parser->parts[i]->data_len < total_payload_len ||
+          total_payload_len + parser->parts[i]->data_len > 1024 * 1024) {
+        return NULL;
+      }
       total_payload_len += parser->parts[i]->data_len;
     }
 
@@ -304,6 +308,10 @@ char *qr_parser_result(QRPartParser *parser, size_t *result_len) {
   // Calculate total length
   size_t total_len = 0;
   for (int i = 0; i < parser->parts_count; i++) {
+    if (total_len + parser->parts[i]->data_len < total_len ||
+        total_len + parser->parts[i]->data_len > 1024 * 1024) {
+      return NULL;
+    }
     total_len += parser->parts[i]->data_len;
   }
 
@@ -401,7 +409,8 @@ static bool parse_pmofn_qr_part(const char *data, char **part, int *index,
   *part = (char *)malloc(part_len + 1);
   if (!*part)
     return false;
-  strcpy(*part, space_pos + 1);
+  memcpy(*part, space_pos + 1, part_len);
+  (*part)[part_len] = '\0';
 
   return true;
 }

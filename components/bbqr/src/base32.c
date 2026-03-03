@@ -92,9 +92,9 @@ bool base32_decode(const char *input, size_t input_len, uint8_t *output,
     return true;
   }
 
-  // Calculate expected output length based on actual data chars
-  // Each base32 char represents 5 bits
-  // n chars -> n*5 bits -> floor(n*5/8) bytes
+  // Calculate expected output length based on input chars (upper bound).
+  // Note: if input contains whitespace, actual output will be smaller
+  // since whitespace chars are skipped but counted in input_len.
   size_t total_bits = input_len * 5;
   size_t expected_bytes = total_bits / 8;
 

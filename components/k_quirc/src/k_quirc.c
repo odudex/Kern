@@ -33,6 +33,9 @@ void k_quirc_destroy(k_quirc_t *q) {
 }
 
 int k_quirc_resize(k_quirc_t *q, int w, int h) {
+  if (w <= 0 || h <= 0 || w > 1280 || h > 1280)
+    return -1;
+
   if (q->image)
     K_FREE(q->image);
 
@@ -128,8 +131,11 @@ k_quirc_error_t k_quirc_decode(k_quirc_t *q, int index,
     result->data.mask = data->mask;
     result->data.data_type = data->data_type;
     result->data.payload_len = data->payload_len;
+    if (result->data.payload_len >= K_QUIRC_MAX_PAYLOAD)
+      result->data.payload_len = K_QUIRC_MAX_PAYLOAD - 1;
     result->data.eci = data->eci;
-    memcpy(result->data.payload, data->payload, data->payload_len + 1);
+    memcpy(result->data.payload, data->payload, result->data.payload_len);
+    result->data.payload[result->data.payload_len] = 0;
   }
 
   K_FREE(code);

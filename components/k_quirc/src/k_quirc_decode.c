@@ -447,6 +447,11 @@ static void read_data(const struct quirc_code *code, struct quirc_data *data,
   int dir = -1;
   uint8_t reserved[K_QUIRC_MAX_BITMAP];
 
+  /* Verify bitmap fits: (size*size+7)/8 must fit in K_QUIRC_MAX_BITMAP */
+  if (code->size <= 0 ||
+      (size_t)((code->size * code->size + 7) >> 3) > K_QUIRC_MAX_BITMAP)
+    return;
+
   build_reserved_bitmap(data->version, code->size, reserved);
 
   while (x > 0) {

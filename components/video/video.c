@@ -292,6 +292,10 @@ static esp_err_t receive_frame(int fd) {
 
 static void process_frame(void) {
   uint8_t idx = app_video.v4l2_buf.index;
+  if (idx >= MAX_BUFFER_COUNT) {
+    ESP_LOGE(TAG, "Buffer index %u out of range", idx);
+    return;
+  }
   app_video.v4l2_buf.m.userptr = (unsigned long)app_video.camera_buffer[idx];
   app_video.v4l2_buf.length = app_video.camera_buf_size;
 

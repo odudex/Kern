@@ -674,6 +674,13 @@ static void horizontal_crop_cam_to_display(const uint8_t *camera_buf,
                                            uint32_t camera_height,
                                            uint32_t display_width) {
   uint32_t display_height = display_width; // square display
+  if (camera_width < display_width || camera_height < display_height) {
+    ESP_LOGE(TAG,
+             "Camera resolution %" PRIu32 "x%" PRIu32
+             " smaller than display %" PRIu32 "x%" PRIu32,
+             camera_width, camera_height, display_width, display_height);
+    return;
+  }
   uint32_t crop_x = (camera_width - display_width) / 2;
   uint32_t crop_y = (camera_height - display_height) / 2;
   const uint16_t *src = (const uint16_t *)camera_buf;
