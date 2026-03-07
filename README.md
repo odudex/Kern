@@ -101,7 +101,7 @@ pip install esptool
 3. Flash the firmware:
 
 ```bash
-esptool.py --chip esp32p4 --baud 460800 write-flash 0x0 kern-<version>.bin
+esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-<version>.bin
 ```
 
 # References
