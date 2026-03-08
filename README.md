@@ -104,6 +104,15 @@ pip install esptool
 esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-<version>.bin
 ```
 
+> **Note:** Flashing the merged binary from offset `0x0` erases the entire flash range it covers, including the NVS partition where PIN and settings are stored. To preserve NVS data when updating, flash the individual binaries instead:
+>
+> ```bash
+> esptool --chip esp32p4 --baud 460800 write-flash \
+>   0x2000 bootloader.bin \
+>   0x8000 partition-table.bin \
+>   0x10000 firmware.bin
+> ```
+
 # References
 Kern is strongly inspired by [Krux](https://github.com/selfcustody/krux), sharing similar but simplified UI elements and flow.
 
@@ -165,11 +174,12 @@ The simplicity and UI polish of [SeedSigner](https://github.com/SeedSigner/seeds
   - ✅ PIN
   - ❌ OTP based secure boot
   - ❌ Flash/RAM encryption
+  - ❌ Option to disable USB-serial and JTAG
 
 - Easy Installer
- - ❌ Flasher
- - ❌ Secure boot activation
- - ❌ Flash/RAM encryption activation
+  - ❌ Flasher
+  - ❌ Secure boot activation
+  - ❌ Flash/RAM encryption activation
 
 - Reliability
   - ❌ Auto tests
