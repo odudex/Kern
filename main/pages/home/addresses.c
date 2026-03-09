@@ -433,7 +433,7 @@ static void perform_address_sweep(void) {
     if (!success || !address)
       continue;
 
-    if (strcmp(address, scanned_address) == 0) {
+    if (strcasecmp(address, scanned_address) == 0) {
       wally_free_string(address);
       char msg[64];
       snprintf(msg, sizeof(msg), "Receive #%u", i);
@@ -457,7 +457,7 @@ static void perform_address_sweep(void) {
     if (!success || !address)
       continue;
 
-    if (strcmp(address, scanned_address) == 0) {
+    if (strcasecmp(address, scanned_address) == 0) {
       wally_free_string(address);
       char msg[64];
       snprintf(msg, sizeof(msg), "Change #%u", i);
@@ -485,6 +485,14 @@ static void return_from_scan_cb(void) {
   if (!content) {
     addresses_page_show();
     return;
+  }
+
+  // Strip BIP21 "bitcoin:" URI prefix if present
+  if (strncasecmp(content, "bitcoin:", 8) == 0) {
+    char *query = strchr(content + 8, '?');
+    size_t addr_len = query ? (size_t)(query - content - 8) : strlen(content + 8);
+    memmove(content, content + 8, addr_len);
+    content[addr_len] = '\0';
   }
 
   // Validate address using libwally

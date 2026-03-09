@@ -1,4 +1,5 @@
 #include "descriptor_loader.h"
+#include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/output.h"
 #include "../../core/key.h"
 #include "../../qr/parser.h"
@@ -8,9 +9,166 @@
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wally_core.h>
+
+// Convert extended pubkey with non-standard version bytes to xpub/tpub.
+// Handles Zpub, Ypub (mainnet) and Vpub, Upub (testnet).
+static char *convert_xpub_version(const char *key) {
+  static const struct {
+    uint8_t from[4], to[4];
+  } version_map[] = {
+      {{0x02, 0xaa, 0x7e, 0xd3}, {0x04, 0x88, 0xb2, 0x1e}}, // Zpub -> xpub
+      {{0x02, 0x95, 0xb4, 0x3f}, {0x04, 0x88, 0xb2, 0x1e}}, // Ypub -> xpub
+      {{0x04, 0x5f, 0x1c, 0xf6}, {0x04, 0x35, 0x87, 0xcf}}, // Vpub -> tpub
+      {{0x04, 0x4a, 0x52, 0x62}, {0x04, 0x35, 0x87, 0xcf}}, // Upub -> tpub
+  };
+
+  uint8_t decoded[78 + BASE58_CHECKSUM_LEN];
+  size_t written = 0;
+  if (wally_base58_to_bytes(key, BASE58_FLAG_CHECKSUM, decoded, sizeof(decoded),
+                            &written) != WALLY_OK ||
+      written != 78)
+    return NULL;
+
+  for (size_t i = 0; i < sizeof(version_map) / sizeof(version_map[0]); i++) {
+    if (memcmp(decoded, version_map[i].from, 4) == 0) {
+      memcpy(decoded, version_map[i].to, 4);
+      goto encode;
+    }
+  }
+
+  // Already xpub/tpub — re-encode unchanged
+  if (memcmp(decoded, "\x04\x88\xb2\x1e", 4) != 0 &&
+      memcmp(decoded, "\x04\x35\x87\xcf", 4) != 0)
+    return NULL;
+
+encode:;
+  char *wally_str = NULL;
+  if (wally_base58_from_bytes(decoded, written, BASE58_FLAG_CHECKSUM,
+                              &wally_str) != WALLY_OK)
+    return NULL;
+  char *result = strdup(wally_str);
+  wally_free_string(wally_str);
+  return result;
+}
+
+// Parse BlueWallet multisig setup file into a standard descriptor.
+static char *bluewallet_to_descriptor(const char *text) {
+  if (!text)
+    return NULL;
+
+  const char *policy_line = strstr(text, "Policy:");
+  const char *deriv_line = strstr(text, "Derivation:");
+  const char *format_line = strstr(text, "Format:");
+  if (!policy_line || !deriv_line || !format_line)
+    return NULL;
+
+  unsigned int threshold = 0, num_keys = 0;
+  if (sscanf(policy_line, "Policy: %u of %u", &threshold, &num_keys) != 2 ||
+      threshold == 0 || num_keys == 0 || threshold > num_keys || num_keys > 15)
+    return NULL;
+
+  char derivation[64] = {0};
+  if (sscanf(deriv_line, "Derivation: %63s", derivation) != 1)
+    return NULL;
+  const char *origin_path = derivation;
+  if (origin_path[0] == 'm' && origin_path[1] == '/')
+    origin_path += 2;
+
+  char format[16] = {0};
+  sscanf(format_line, "Format: %15s", format);
+  const char *wrapper_open, *wrapper_close;
+  if (strcasecmp(format, "P2WSH") == 0) {
+    wrapper_open = "wsh(";
+    wrapper_close = ")";
+  } else if (strcasecmp(format, "P2SH-P2WSH") == 0 ||
+             strcasecmp(format, "P2WSH-P2SH") == 0) {
+    wrapper_open = "sh(wsh(";
+    wrapper_close = "))";
+  } else if (strcasecmp(format, "P2SH") == 0) {
+    wrapper_open = "sh(";
+    wrapper_close = ")";
+  } else {
+    return NULL;
+  }
+
+  char fingerprints[15][9];
+  char *xpubs[15];
+  unsigned int found_keys = 0;
+  memset(xpubs, 0, sizeof(xpubs));
+
+  const char *line = text;
+  while (*line && found_keys < num_keys) {
+    while (*line == ' ' || *line == '\t')
+      line++;
+
+    if (strlen(line) > 10) {
+      bool is_hex = true;
+      for (int i = 0; i < 8 && is_hex; i++)
+        is_hex = isxdigit((unsigned char)line[i]);
+
+      if (is_hex && line[8] == ':' && line[9] == ' ') {
+        for (int i = 0; i < 8; i++)
+          fingerprints[found_keys][i] = tolower((unsigned char)line[i]);
+        fingerprints[found_keys][8] = '\0';
+
+        const char *key_start = line + 10;
+        const char *key_end = key_start;
+        while (*key_end && *key_end != '\n' && *key_end != '\r' &&
+               *key_end != ' ')
+          key_end++;
+
+        char *raw_key = malloc(key_end - key_start + 1);
+        if (!raw_key)
+          goto cleanup;
+        memcpy(raw_key, key_start, key_end - key_start);
+        raw_key[key_end - key_start] = '\0';
+
+        xpubs[found_keys] = convert_xpub_version(raw_key);
+        free(raw_key);
+        if (!xpubs[found_keys])
+          goto cleanup;
+        found_keys++;
+      }
+    }
+
+    while (*line && *line != '\n')
+      line++;
+    if (*line == '\n')
+      line++;
+  }
+
+  if (found_keys != num_keys)
+    goto cleanup;
+
+  size_t desc_size = 64;
+  for (unsigned int i = 0; i < num_keys; i++)
+    desc_size += 8 + strlen(origin_path) + strlen(xpubs[i]) + 5;
+
+  char *descriptor = malloc(desc_size);
+  if (!descriptor)
+    goto cleanup;
+
+  int pos = snprintf(descriptor, desc_size, "%ssortedmulti(%u", wrapper_open,
+                     threshold);
+  for (unsigned int i = 0; i < num_keys; i++)
+    pos += snprintf(descriptor + pos, desc_size - pos, ",[%s/%s]%s",
+                    fingerprints[i], origin_path, xpubs[i]);
+  snprintf(descriptor + pos, desc_size - pos, ")%s", wrapper_close);
+
+  for (unsigned int i = 0; i < found_keys; i++)
+    free(xpubs[i]);
+  return descriptor;
+
+cleanup:
+  for (unsigned int i = 0; i < found_keys; i++)
+    free(xpubs[i]);
+  return NULL;
+}
 
 bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   switch (result) {
@@ -194,11 +352,14 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
   qr_scanner_page_destroy();
 
   if (descriptor_str) {
-    char *unambiguous = descriptor_to_unambiguous(descriptor_str);
-    descriptor_validate_and_load(unambiguous ? unambiguous : descriptor_str,
+    char *converted = bluewallet_to_descriptor(descriptor_str);
+    const char *to_process = converted ? converted : descriptor_str;
+    char *unambiguous = descriptor_to_unambiguous(to_process);
+    descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                  validation_cb, descriptor_confirm_wrapper,
                                  descriptor_info_confirm_wrapper, user_data);
     free(unambiguous);
+    free(converted);
     free(descriptor_str);
   } else {
     dialog_show_error("Unsupported descriptor format", NULL, 2000);
@@ -217,11 +378,14 @@ void descriptor_loader_process_string(const char *descriptor_str,
     return;
   }
 
-  char *unambiguous = descriptor_to_unambiguous(descriptor_str);
-  descriptor_validate_and_load(unambiguous ? unambiguous : descriptor_str,
+  char *converted = bluewallet_to_descriptor(descriptor_str);
+  const char *to_process = converted ? converted : descriptor_str;
+  char *unambiguous = descriptor_to_unambiguous(to_process);
+  descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                validation_cb, descriptor_confirm_wrapper,
                                descriptor_info_confirm_wrapper, user_data);
   free(unambiguous);
+  free(converted);
 }
 
 /* ---------- Source selection menu ---------- */
@@ -266,7 +430,19 @@ char *descriptor_extract_from_scanner(void) {
         output_free(output);
         return descriptor;
       }
-      return output_descriptor_from_cbor_account(cbor_data, cbor_len);
+      char *account_desc =
+          output_descriptor_from_cbor_account(cbor_data, cbor_len);
+      if (account_desc)
+        return account_desc;
+
+      bytes_data_t *bytes = bytes_from_cbor(cbor_data, cbor_len);
+      if (bytes) {
+        size_t len = 0;
+        const uint8_t *data = bytes_get_data(bytes, &len);
+        char *text = (data && len > 0) ? strndup((const char *)data, len) : NULL;
+        bytes_free(bytes);
+        return text;
+      }
     }
     return NULL;
   }
