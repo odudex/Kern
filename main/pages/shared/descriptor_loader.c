@@ -439,7 +439,8 @@ char *descriptor_extract_from_scanner(void) {
       if (bytes) {
         size_t len = 0;
         const uint8_t *data = bytes_get_data(bytes, &len);
-        char *text = (data && len > 0) ? strndup((const char *)data, len) : NULL;
+        char *text =
+            (data && len > 0) ? strndup((const char *)data, len) : NULL;
         bytes_free(bytes);
         return text;
       }

@@ -50,6 +50,8 @@ int theme_get_button_spacing(void) { return 20; }
 
 int theme_get_default_padding(void) { return DEFAULT_PADDING; }
 
+int theme_get_min_touch_size(void) { return 90; }
+
 void theme_apply_screen(lv_obj_t *obj) {
   if (!obj)
     return;

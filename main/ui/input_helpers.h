@@ -24,13 +24,13 @@ void ui_text_input_show(ui_text_input_t *input);
 void ui_text_input_hide(ui_text_input_t *input);
 void ui_text_input_destroy(ui_text_input_t *input);
 
-// Creates 60x60 back button at top-left (5,5) with LV_SYMBOL_LEFT
+// Creates back button at top-left with LV_SYMBOL_LEFT
 lv_obj_t *ui_create_back_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 
-// Creates 60x60 power button at top-left (5,5) with LV_SYMBOL_POWER
+// Creates power button at top-left with LV_SYMBOL_POWER
 lv_obj_t *ui_create_power_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 
-// Creates 60x60 settings button at top-right with LV_SYMBOL_SETTINGS
+// Creates settings button at top-right with LV_SYMBOL_SETTINGS
 lv_obj_t *ui_create_settings_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 
 #endif

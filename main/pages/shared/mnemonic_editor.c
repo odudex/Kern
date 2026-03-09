@@ -683,7 +683,7 @@ static void create_ui(void) {
   create_word_grid();
 
   load_btn = lv_btn_create(mnemonic_editor_screen);
-  lv_obj_set_size(load_btn, 140, 60);
+  lv_obj_set_size(load_btn, 140, theme_get_min_touch_size());
   lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
   theme_apply_touch_button(load_btn, true);
   lv_obj_add_event_cb(load_btn, load_btn_cb, LV_EVENT_CLICKED, NULL);

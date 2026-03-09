@@ -490,7 +490,8 @@ static void return_from_scan_cb(void) {
   // Strip BIP21 "bitcoin:" URI prefix if present
   if (strncasecmp(content, "bitcoin:", 8) == 0) {
     char *query = strchr(content + 8, '?');
-    size_t addr_len = query ? (size_t)(query - content - 8) : strlen(content + 8);
+    size_t addr_len =
+        query ? (size_t)(query - content - 8) : strlen(content + 8);
     memmove(content, content + 8, addr_len);
     content[addr_len] = '\0';
   }

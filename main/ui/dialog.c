@@ -326,7 +326,7 @@ void dialog_show_message(const char *title, const char *message) {
   lv_obj_align(msg_label, LV_ALIGN_CENTER, 0, -10);
 
   lv_obj_t *btn = theme_create_button(modal, "OK", true);
-  lv_obj_set_size(btn, 100, 50);
+  lv_obj_set_size(btn, 100, theme_get_min_touch_size());
   lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_add_event_cb(btn, message_close_cb, LV_EVENT_CLICKED, modal);
 }

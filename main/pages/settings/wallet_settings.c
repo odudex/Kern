@@ -523,7 +523,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_style_margin_top(pp_desc_row, 20, 0);
 
   passphrase_btn = lv_btn_create(pp_desc_row);
-  lv_obj_set_size(passphrase_btn, LV_PCT(45), 50);
+  lv_obj_set_size(passphrase_btn, LV_PCT(45), theme_get_min_touch_size());
   theme_apply_touch_button(passphrase_btn, false);
   lv_obj_add_event_cb(passphrase_btn, passphrase_btn_cb, LV_EVENT_CLICKED,
                       NULL);
@@ -535,7 +535,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_center(pp_label);
 
   descriptor_btn = lv_btn_create(pp_desc_row);
-  lv_obj_set_size(descriptor_btn, LV_PCT(45), 50);
+  lv_obj_set_size(descriptor_btn, LV_PCT(45), theme_get_min_touch_size());
   theme_apply_touch_button(descriptor_btn, false);
   lv_obj_add_event_cb(descriptor_btn, descriptor_btn_cb, LV_EVENT_CLICKED,
                       NULL);
@@ -606,7 +606,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Account button
   account_btn = lv_btn_create(content);
-  lv_obj_set_size(account_btn, LV_PCT(50), 50);
+  lv_obj_set_size(account_btn, LV_PCT(50), theme_get_min_touch_size());
   theme_apply_touch_button(account_btn, false);
   lv_obj_add_event_cb(account_btn, account_btn_cb, LV_EVENT_CLICKED, NULL);
 

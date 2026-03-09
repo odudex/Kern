@@ -645,7 +645,8 @@ static void build_split_state(void) {
   lv_obj_set_flex_grow(split_display_label, 1);
 
   split_eye_btn = lv_btn_create(display_row);
-  lv_obj_set_size(split_eye_btn, 50, 50);
+  lv_obj_set_size(split_eye_btn, theme_get_min_touch_size(),
+                  theme_get_min_touch_size());
   lv_obj_set_style_bg_opa(split_eye_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_width(split_eye_btn, 0, 0);
   lv_obj_set_style_border_width(split_eye_btn, 0, 0);

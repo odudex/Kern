@@ -3,7 +3,9 @@
 #include "input_helpers.h"
 #include "theme.h"
 
-#define CORNER_BUTTON_PADDING 20
+#define CORNER_BUTTON_WIDTH 120
+#define CORNER_BUTTON_HEIGHT 90
+#define CORNER_BUTTON_PADDING 10
 
 static lv_obj_t *create_top_left_corner_button(lv_obj_t *parent,
                                                const char *symbol,
@@ -12,7 +14,7 @@ static lv_obj_t *create_top_left_corner_button(lv_obj_t *parent,
     return NULL;
 
   lv_obj_t *btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, 60, 60);
+  lv_obj_set_size(btn, CORNER_BUTTON_WIDTH, CORNER_BUTTON_HEIGHT);
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, CORNER_BUTTON_PADDING,
                CORNER_BUTTON_PADDING);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
@@ -45,7 +47,7 @@ static lv_obj_t *create_top_right_corner_button(lv_obj_t *parent,
     return NULL;
 
   lv_obj_t *btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, 60, 60);
+  lv_obj_set_size(btn, CORNER_BUTTON_WIDTH, CORNER_BUTTON_HEIGHT);
   lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -CORNER_BUTTON_PADDING,
                CORNER_BUTTON_PADDING);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
@@ -103,7 +105,8 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   /* Eye toggle (password mode only) */
   if (password_mode) {
     input->eye_btn = lv_btn_create(parent);
-    lv_obj_set_size(input->eye_btn, 50, 50);
+    lv_obj_set_size(input->eye_btn, theme_get_min_touch_size(),
+                    theme_get_min_touch_size());
     lv_obj_align_to(input->eye_btn, input->textarea, LV_ALIGN_OUT_RIGHT_MID, 5,
                     0);
     lv_obj_set_style_bg_opa(input->eye_btn, LV_OPA_TRANSP, 0);

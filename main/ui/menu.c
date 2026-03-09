@@ -152,7 +152,7 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
 
   /* Action icon button on the right */
   lv_obj_t *icon_btn = lv_btn_create(menu->buttons[idx]);
-  lv_obj_set_size(icon_btn, 40, LV_PCT(100));
+  lv_obj_set_size(icon_btn, theme_get_min_touch_size(), LV_PCT(100));
   lv_obj_set_style_bg_opa(icon_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_width(icon_btn, 0, 0);
   lv_obj_set_style_border_width(icon_btn, 0, 0);

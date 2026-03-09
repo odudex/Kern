@@ -24,6 +24,7 @@ int theme_get_button_width(void);
 int theme_get_button_height(void);
 int theme_get_button_spacing(void);
 int theme_get_default_padding(void);
+int theme_get_min_touch_size(void);
 
 void theme_apply_screen(lv_obj_t *obj);
 lv_obj_t *theme_create_page_container(lv_obj_t *parent);
