@@ -3,8 +3,8 @@
  * Reed-Solomon error correction and QR code payload decoding
  */
 
-#include "k_quirc_internal.h"
 #include "esp_log.h"
+#include "k_quirc_internal.h"
 
 static const char *TAG = "k_quirc";
 

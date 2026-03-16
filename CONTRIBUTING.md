@@ -26,6 +26,50 @@ Do not introduce UI dependencies into core modules. If a core function needs use
 
 - Follow the existing style in the file you are modifying.
 - Keep changes focused, one logical change per commit.
+- Format your code before submitting:
+  ```bash
+  ./format.sh
+  ```
+  This runs `clang-format` (provided by ESP-IDF) on all `.c` and `.h` files in `main/` and first-party components.
+
+### Static Analysis
+
+The project uses two static analysis tools to catch bugs early. Both are available after sourcing ESP-IDF (`source ~/esp/esp-idf/export.sh`), except `cppcheck` which is installed separately.
+
+Both tools cover `main/` and first-party components (`bbqr`, `cUR`, `k_quirc`, `sd_card`, `video`, `waveshare_bsp`). `libwally-core` is excluded (third-party upstream).
+
+**clang-tidy** (recommended — catches real bugs):
+```bash
+# Requires a build first (for compile_commands.json)
+idf.py build
+
+# Run on a single file
+clang-tidy -p build/compile_commands.json main/core/wallet.c
+
+# Run on all project source files (excluding libwally-core)
+find main components/bbqr components/cUR components/k_quirc \
+     components/sd_card components/video components/waveshare_bsp \
+     -name '*.c' -not -path '*/build/*' 2>/dev/null | \
+  xargs -P$(nproc) -I{} clang-tidy -p build/compile_commands.json {}
+```
+
+The project `.clang-tidy` config enables bug-finding and security checks tuned for embedded C. Warnings about unknown GCC flags (`-fno-tree-switch-conversion`, `-fstrict-volatile-bitfields`) are expected and harmless — they come from clang analyzing GCC-compiled code.
+
+**cppcheck**:
+```bash
+# Install: sudo apt install cppcheck
+
+# Run on project source directories
+cppcheck main/ components/bbqr components/cUR components/k_quirc \
+  components/sd_card components/video components/waveshare_bsp \
+  --enable=warning,style,performance \
+  --suppress=missingIncludeSystem \
+  --suppress=missingInclude \
+  -I main/ -I main/core -I main/ui -I main/pages -I main/qr -I main/utils \
+  --std=c11
+```
+
+Note: `cppcheck` does not understand secure memory wipe patterns (zeroing variables before return) and will flag them as dead stores — these are intentional and should be ignored.
 
 ### Security
 

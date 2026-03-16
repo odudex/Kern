@@ -1,0 +1,33 @@
+---
+# clang-tidy configuration for Kern (ESP-IDF / embedded C project)
+#
+# Focus on bug-finding and security checks relevant to a Bitcoin hardware wallet.
+# Avoid style/naming checks (project has its own conventions) and C++ checks.
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-macro-parentheses,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -clang-analyzer-deadcode.DeadStores,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  misc-redundant-expression,
+  readability-redundant-control-flow,
+  readability-misleading-indentation,
+  readability-duplicate-include,
+  performance-*,
+  -performance-no-int-to-ptr,
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: '(main|components/(bbqr|cUR|k_quirc|sd_card|video|waveshare_bsp))/.*\.h$'
+
+CheckOptions:
+  - key: bugprone-suspicious-string-compare.WarnOnLogicalNotComparison
+    value: true

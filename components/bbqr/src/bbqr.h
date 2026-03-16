@@ -8,17 +8,17 @@
 /**
  * @brief BBQr encoding types
  */
-#define BBQR_ENCODING_HEX 'H'      // Hexadecimal encoding
-#define BBQR_ENCODING_BASE32 '2'   // Base32 encoding (uncompressed)
-#define BBQR_ENCODING_ZLIB 'Z'     // Base32 + zlib compression
+#define BBQR_ENCODING_HEX 'H'    // Hexadecimal encoding
+#define BBQR_ENCODING_BASE32 '2' // Base32 encoding (uncompressed)
+#define BBQR_ENCODING_ZLIB 'Z'   // Base32 + zlib compression
 
 /**
  * @brief BBQr file types
  */
-#define BBQR_TYPE_PSBT 'P'         // PSBT (Partially Signed Bitcoin Transaction)
-#define BBQR_TYPE_TRANSACTION 'T'  // Raw Bitcoin transaction
-#define BBQR_TYPE_JSON 'J'         // JSON data
-#define BBQR_TYPE_UNICODE 'U'      // Unicode text
+#define BBQR_TYPE_PSBT 'P'        // PSBT (Partially Signed Bitcoin Transaction)
+#define BBQR_TYPE_TRANSACTION 'T' // Raw Bitcoin transaction
+#define BBQR_TYPE_JSON 'J'        // JSON data
+#define BBQR_TYPE_UNICODE 'U'     // Unicode text
 
 /**
  * @brief Header length for BBQr format
@@ -29,22 +29,22 @@
  * @brief Structure to hold parsed BBQr part information
  */
 typedef struct {
-  char encoding;    // Encoding type ('H', '2', or 'Z')
-  char file_type;   // File type ('P', 'T', 'J', 'U')
-  int total;        // Total number of parts (1-1295)
-  int index;        // Part index (0-based, 0-1294)
-  const char *payload;  // Pointer to payload data (not null-terminated)
-  size_t payload_len;   // Length of payload data
+  char encoding;       // Encoding type ('H', '2', or 'Z')
+  char file_type;      // File type ('P', 'T', 'J', 'U')
+  int total;           // Total number of parts (1-1295)
+  int index;           // Part index (0-based, 0-1294)
+  const char *payload; // Pointer to payload data (not null-terminated)
+  size_t payload_len;  // Length of payload data
 } BBQrPart;
 
 /**
  * @brief Structure to hold BBQr encoded parts for output
  */
 typedef struct {
-  char **parts;       // Array of null-terminated part strings
-  int count;          // Number of parts
-  char encoding;      // Encoding used
-  char file_type;     // File type
+  char **parts;   // Array of null-terminated part strings
+  int count;      // Number of parts
+  char encoding;  // Encoding used
+  char file_type; // File type
 } BBQrParts;
 
 /**

@@ -105,8 +105,7 @@ void test_repetitive_data(void) {
     return;
   }
 
-  printf("(%zu -> %zu bytes, %.1f%% ratio) ",
-         original_len, compressed_len,
+  printf("(%zu -> %zu bytes, %.1f%% ratio) ", original_len, compressed_len,
          100.0 * compressed_len / original_len);
 
   /* Verify compression achieved */
@@ -142,12 +141,11 @@ void test_repetitive_data(void) {
 void test_mixed_content(void) {
   TEST("mixed content round-trip");
 
-  const char *original =
-      "Hello, this is a test string for compression. "
-      "It should compress reasonably well because it has "
-      "some repetition. Hello hello hello! "
-      "The quick brown fox jumps over the lazy dog. "
-      "Pack my box with five dozen liquor jugs.";
+  const char *original = "Hello, this is a test string for compression. "
+                         "It should compress reasonably well because it has "
+                         "some repetition. Hello hello hello! "
+                         "The quick brown fox jumps over the lazy dog. "
+                         "Pack my box with five dozen liquor jugs.";
   size_t original_len = strlen(original);
 
   /* Compress */
@@ -317,9 +315,10 @@ void test_wbits_10(void) {
 void test_wbits_15(void) {
   TEST("wbits=15 (32KB window)");
 
-  const char *original = "Testing compression with wbits=15. "
-                         "This uses the maximum 32KB window. "
-                         "Larger windows can find more matches but use more RAM.";
+  const char *original =
+      "Testing compression with wbits=15. "
+      "This uses the maximum 32KB window. "
+      "Larger windows can find more matches but use more RAM.";
   size_t original_len = strlen(original);
 
   /* Compress with wbits=15 */
@@ -372,8 +371,8 @@ void test_binary_data(void) {
 
   /* Compress */
   size_t compressed_len = 0;
-  uint8_t *compressed = mz_compress_alloc(original, original_len,
-                                          &compressed_len, MZ_DEFAULT_COMPRESSION);
+  uint8_t *compressed = mz_compress_alloc(
+      original, original_len, &compressed_len, MZ_DEFAULT_COMPRESSION);
   if (!compressed) {
     FAIL("compression returned NULL");
     return;
@@ -446,8 +445,8 @@ void test_single_byte(void) {
 
   /* Compress */
   size_t compressed_len = 0;
-  uint8_t *compressed = mz_compress_alloc(original, original_len,
-                                          &compressed_len, MZ_DEFAULT_COMPRESSION);
+  uint8_t *compressed = mz_compress_alloc(
+      original, original_len, &compressed_len, MZ_DEFAULT_COMPRESSION);
   if (!compressed) {
     FAIL("compression returned NULL");
     return;
@@ -497,8 +496,8 @@ void test_large_data(void) {
 
   /* Compress */
   size_t compressed_len = 0;
-  uint8_t *compressed = mz_compress_alloc(original, original_len,
-                                          &compressed_len, MZ_DEFAULT_COMPRESSION);
+  uint8_t *compressed = mz_compress_alloc(
+      original, original_len, &compressed_len, MZ_DEFAULT_COMPRESSION);
   if (!compressed) {
     free(original);
     FAIL("compression returned NULL");
@@ -542,25 +541,20 @@ void test_psbt_like_data(void) {
   /* Typical PSBT header and structure */
   const uint8_t original[] = {
       0x70, 0x73, 0x62, 0x74, 0xff, /* "psbt" + separator */
-      0x01, 0x00, 0x52, 0x02, 0x00, 0x00, 0x00, 0x01,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0xf2, 0x05,
-      0x2a, 0x01, 0x00, 0x00, 0x00, 0x19, 0x76, 0xa9,
-      0x14, 0x89, 0xab, 0xcd, 0xef, 0xab, 0xba, 0xab,
-      0xba, 0xab, 0xba, 0xab, 0xba, 0xab, 0xba, 0xab,
-      0xba, 0xab, 0xba, 0xab, 0xba, 0x88, 0xac, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-  };
+      0x01, 0x00, 0x52, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+      0x01, 0x00, 0xf2, 0x05, 0x2a, 0x01, 0x00, 0x00, 0x00, 0x19, 0x76,
+      0xa9, 0x14, 0x89, 0xab, 0xcd, 0xef, 0xab, 0xba, 0xab, 0xba, 0xab,
+      0xba, 0xab, 0xba, 0xab, 0xba, 0xab, 0xba, 0xab, 0xba, 0xab, 0xba,
+      0x88, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   size_t original_len = sizeof(original);
 
   /* Compress with BBQr default wbits=10 */
   size_t compressed_len = 0;
-  uint8_t *compressed =
-      mz_compress_alloc_wbits(original, original_len, &compressed_len,
-                              MZ_DEFAULT_COMPRESSION, 10);
+  uint8_t *compressed = mz_compress_alloc_wbits(
+      original, original_len, &compressed_len, MZ_DEFAULT_COMPRESSION, 10);
   if (!compressed) {
     FAIL("compression returned NULL");
     return;
@@ -604,8 +598,8 @@ void test_fixed_buffer(void) {
   uint8_t compressed[256];
   size_t compressed_len = sizeof(compressed);
 
-  int ret = mz_compress(compressed, &compressed_len,
-                        (const uint8_t *)original, original_len);
+  int ret = mz_compress(compressed, &compressed_len, (const uint8_t *)original,
+                        original_len);
   if (ret != MZ_OK) {
     printf("(mz_compress returned %d) ", ret);
     FAIL("compression failed");
@@ -618,8 +612,8 @@ void test_fixed_buffer(void) {
   uint8_t decompressed[256];
   size_t decompressed_len = sizeof(decompressed);
 
-  ret = mz_uncompress(decompressed, &decompressed_len,
-                      compressed, compressed_len);
+  ret = mz_uncompress(decompressed, &decompressed_len, compressed,
+                      compressed_len);
   if (ret != MZ_OK) {
     printf("(mz_uncompress returned %d) ", ret);
     FAIL("decompression failed");
@@ -647,8 +641,8 @@ void test_buffer_too_small(void) {
   uint8_t compressed[8]; /* Way too small */
   size_t compressed_len = sizeof(compressed);
 
-  int ret = mz_compress(compressed, &compressed_len,
-                        (const uint8_t *)original, original_len);
+  int ret = mz_compress(compressed, &compressed_len, (const uint8_t *)original,
+                        original_len);
 
   if (ret == MZ_BUF_ERROR) {
     PASS();
@@ -670,9 +664,9 @@ void test_zlib_header(void) {
   uint8_t compressed[64];
   size_t compressed_len = sizeof(compressed);
 
-  int ret = mz_compress_wbits(compressed, &compressed_len,
-                              (const uint8_t *)original, original_len,
-                              MZ_DEFAULT_COMPRESSION, 10);
+  int ret =
+      mz_compress_wbits(compressed, &compressed_len, (const uint8_t *)original,
+                        original_len, MZ_DEFAULT_COMPRESSION, 10);
   if (ret != MZ_OK) {
     FAIL("compression failed");
     return;

@@ -57,8 +57,7 @@ int k_quirc_resize(k_quirc_t *q, int w, int h) {
 
   if (!q->flood_fill_stack) {
     /* Each flood-fill stack entry is {int16_t x, y, l, r} = 8 bytes */
-    q->flood_fill_stack =
-        K_MALLOC(QUIRC_FLOOD_FILL_STACK * 8);
+    q->flood_fill_stack = K_MALLOC(QUIRC_FLOOD_FILL_STACK * 8);
     if (!q->flood_fill_stack) {
       K_FREE(new_image);
       return -1;
@@ -213,7 +212,8 @@ const k_quirc_debug_info_t *k_quirc_get_debug_info(const k_quirc_t *q) {
   }
 
   debug_info.num_capstones = q->num_capstones;
-  for (int i = 0; i < q->num_capstones && i < K_QUIRC_DEBUG_MAX_CAPSTONES; i++) {
+  for (int i = 0; i < q->num_capstones && i < K_QUIRC_DEBUG_MAX_CAPSTONES;
+       i++) {
     debug_info.capstones[i].x = q->capstones[i].center.x;
     debug_info.capstones[i].y = q->capstones[i].center.y;
   }

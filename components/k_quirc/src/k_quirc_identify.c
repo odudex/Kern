@@ -3,9 +3,9 @@
  * QR code detection: flood-fill, thresholding, capstone and grid detection
  */
 
-#include "k_quirc_internal.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "k_quirc_internal.h"
 
 /*
  * LIFO (stack) for flood-fill — uses persistent buffer from struct k_quirc
@@ -144,14 +144,24 @@ static void perspective_setup_direct(float *c, const float img[4][2],
     float x = img[i][0], y = img[i][1];
     int row1 = i * 2, row2 = i * 2 + 1;
 
-    A[row1][0] = u;    A[row1][1] = v;    A[row1][2] = 1.0f;
-    A[row1][3] = 0.0f; A[row1][4] = 0.0f; A[row1][5] = 0.0f;
-    A[row1][6] = -u * x; A[row1][7] = -v * x;
+    A[row1][0] = u;
+    A[row1][1] = v;
+    A[row1][2] = 1.0f;
+    A[row1][3] = 0.0f;
+    A[row1][4] = 0.0f;
+    A[row1][5] = 0.0f;
+    A[row1][6] = -u * x;
+    A[row1][7] = -v * x;
     b[row1] = x;
 
-    A[row2][0] = 0.0f; A[row2][1] = 0.0f; A[row2][2] = 0.0f;
-    A[row2][3] = u;    A[row2][4] = v;    A[row2][5] = 1.0f;
-    A[row2][6] = -u * y; A[row2][7] = -v * y;
+    A[row2][0] = 0.0f;
+    A[row2][1] = 0.0f;
+    A[row2][2] = 0.0f;
+    A[row2][3] = u;
+    A[row2][4] = v;
+    A[row2][5] = 1.0f;
+    A[row2][6] = -u * y;
+    A[row2][7] = -v * y;
     b[row2] = y;
   }
 
@@ -351,10 +361,14 @@ static void threshold(struct k_quirc *q, bool inverted) {
 
   uint32_t quad_pixels = (uint32_t)half_w * half_h;
 #ifdef K_QUIRC_ADAPTIVE_THRESHOLD
-  int t_tl = clamp_threshold(otsu_threshold(hist_tl, quad_pixels) + threshold_offset);
-  int t_tr = clamp_threshold(otsu_threshold(hist_tr, quad_pixels) + threshold_offset);
-  int t_bl = clamp_threshold(otsu_threshold(hist_bl, quad_pixels) + threshold_offset);
-  int t_br = clamp_threshold(otsu_threshold(hist_br, quad_pixels) + threshold_offset);
+  int t_tl =
+      clamp_threshold(otsu_threshold(hist_tl, quad_pixels) + threshold_offset);
+  int t_tr =
+      clamp_threshold(otsu_threshold(hist_tr, quad_pixels) + threshold_offset);
+  int t_bl =
+      clamp_threshold(otsu_threshold(hist_bl, quad_pixels) + threshold_offset);
+  int t_br =
+      clamp_threshold(otsu_threshold(hist_br, quad_pixels) + threshold_offset);
 #else
   int t_tl = otsu_threshold(hist_tl, quad_pixels);
   int t_tr = otsu_threshold(hist_tr, quad_pixels);
@@ -386,8 +400,8 @@ static void threshold(struct k_quirc *q, bool inverted) {
 
     for (int x = 0; x < w; x++) {
       int t = t_fp >> 16;
-      row[x] = ((row[x] ^ xor_mask) < t) ? QUIRC_PIXEL_BLACK
-                                           : QUIRC_PIXEL_WHITE;
+      row[x] =
+          ((row[x] ^ xor_mask) < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
       t_fp += dt_fp;
       error += abs_rem;
       if (error >= inv_w_dim) {
@@ -416,15 +430,16 @@ static void threshold(struct k_quirc *q, bool inverted) {
   }
 
 #ifdef K_QUIRC_ADAPTIVE_THRESHOLD
-  uint8_t t = clamp_threshold(otsu_threshold(histogram, sampled_pixels) + threshold_offset);
+  uint8_t t = clamp_threshold(otsu_threshold(histogram, sampled_pixels) +
+                              threshold_offset);
 #else
   uint8_t t = otsu_threshold(histogram, sampled_pixels);
 #endif
 
   int total_pixels = w * h;
   for (int i = 0; i < total_pixels; i++)
-    pixels[i] = ((pixels[i] ^ xor_mask) < t) ? QUIRC_PIXEL_BLACK
-                                              : QUIRC_PIXEL_WHITE;
+    pixels[i] =
+        ((pixels[i] ^ xor_mask) < t) ? QUIRC_PIXEL_BLACK : QUIRC_PIXEL_WHITE;
 #endif /* K_QUIRC_BILINEAR_THRESHOLD */
 }
 
@@ -631,10 +646,8 @@ static void finder_scan(struct k_quirc *q, int y) {
         int lo3 = avg * 3 - err;
         int hi3 = avg * 3 + err;
 
-        if (pb[0] >= lo && pb[0] <= hi &&
-            pb[1] >= lo && pb[1] <= hi &&
-            pb[2] >= lo3 && pb[2] <= hi3 &&
-            pb[3] >= lo && pb[3] <= hi &&
+        if (pb[0] >= lo && pb[0] <= hi && pb[1] >= lo && pb[1] <= hi &&
+            pb[2] >= lo3 && pb[2] <= hi3 && pb[3] >= lo && pb[3] <= hi &&
             pb[4] >= lo && pb[4] <= hi) {
           test_capstone(q, x, y, pb);
         }
@@ -791,11 +804,15 @@ static int timing_bias(const struct k_quirc *q, int index) {
     int cell_v = fitness_cell(q, index, 6, i + 7);
 
     if (i & 1) {
-      if (cell_h < 0) bias++;
-      if (cell_v < 0) bias++;
+      if (cell_h < 0)
+        bias++;
+      if (cell_v < 0)
+        bias++;
     } else {
-      if (cell_h > 0) bias--;
-      if (cell_v > 0) bias--;
+      if (cell_h > 0)
+        bias--;
+      if (cell_v > 0)
+        bias--;
     }
   }
   return bias;
@@ -865,19 +882,15 @@ static void setup_qr_perspective(struct k_quirc *q, int index) {
   struct quirc_point *c1 = &q->capstones[qr->caps[1]].center;
   struct quirc_point *c2 = &q->capstones[qr->caps[2]].center;
 
-  float img[4][2] = {
-      {(float)c1->x, (float)c1->y},
-      {(float)c2->x, (float)c2->y},
-      {(float)qr->align.x, (float)qr->align.y},
-      {(float)c0->x, (float)c0->y}
-  };
+  float img[4][2] = {{(float)c1->x, (float)c1->y},
+                     {(float)c2->x, (float)c2->y},
+                     {(float)qr->align.x, (float)qr->align.y},
+                     {(float)c0->x, (float)c0->y}};
 
-  float mod[4][2] = {
-      {3.5f, 3.5f},
-      {gs - 3.5f, 3.5f},
-      {gs - 6.5f, gs - 6.5f},
-      {3.5f, gs - 3.5f}
-  };
+  float mod[4][2] = {{3.5f, 3.5f},
+                     {gs - 3.5f, 3.5f},
+                     {gs - 6.5f, gs - 6.5f},
+                     {3.5f, gs - 3.5f}};
 
   if (qr->grid_size == 21) {
     mod[2][0] = gs - 7.0f;
@@ -908,12 +921,14 @@ static void measure_grid_size(struct k_quirc *q, int index) {
 
   float ab = length(b->corners[0], a->corners[3]);
   float capstone_ab_size = (length(b->corners[0], b->corners[3]) +
-                            length(a->corners[0], a->corners[3])) * 0.5f;
+                            length(a->corners[0], a->corners[3])) *
+                           0.5f;
   float ver_grid = 7.0f * ab / capstone_ab_size;
 
   float bc = length(b->corners[0], c->corners[1]);
   float capstone_bc_size = (length(b->corners[0], b->corners[1]) +
-                            length(c->corners[0], c->corners[1])) * 0.5f;
+                            length(c->corners[0], c->corners[1])) *
+                           0.5f;
   float hor_grid = 7.0f * bc / capstone_bc_size;
 
   float grid_size_estimate = (ver_grid + hor_grid) * 0.5f;
@@ -1112,12 +1127,12 @@ void k_quirc_identify(struct k_quirc *q, bool find_inverted) {
     q->num_capstones = 0;
     q->num_grids = 0;
 
-    /* Invert thresholded buffer (region codes were BLACK, so invert to WHITE) */
+    /* Invert thresholded buffer (region codes were BLACK, so invert to WHITE)
+     */
     int total_pixels = q->w * q->h;
     for (int i = 0; i < total_pixels; i++) {
-      q->pixels[i] = (q->pixels[i] == QUIRC_PIXEL_WHITE)
-                         ? QUIRC_PIXEL_BLACK
-                         : QUIRC_PIXEL_WHITE;
+      q->pixels[i] = (q->pixels[i] == QUIRC_PIXEL_WHITE) ? QUIRC_PIXEL_BLACK
+                                                         : QUIRC_PIXEL_WHITE;
     }
     for (int i = 0; i < q->h; i++)
       finder_scan(q, i);

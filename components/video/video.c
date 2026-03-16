@@ -131,8 +131,8 @@ int app_video_open(char *dev, video_fmt_t fmt) {
     goto fail;
   }
 
-  ESP_LOGI(TAG, "Resolution: %" PRIu32 "x%" PRIu32, default_format.fmt.pix.width,
-           default_format.fmt.pix.height);
+  ESP_LOGI(TAG, "Resolution: %" PRIu32 "x%" PRIu32,
+           default_format.fmt.pix.width, default_format.fmt.pix.height);
 
   app_video.camera_buf_hes = default_format.fmt.pix.width;
   app_video.camera_buf_ves = default_format.fmt.pix.height;
@@ -299,8 +299,9 @@ static void process_frame(void) {
   app_video.v4l2_buf.m.userptr = (unsigned long)app_video.camera_buffer[idx];
   app_video.v4l2_buf.length = app_video.camera_buf_size;
 
-  app_video.frame_cb(app_video.camera_buffer[idx], idx, app_video.camera_buf_hes,
-                     app_video.camera_buf_ves, app_video.camera_buf_size);
+  app_video.frame_cb(app_video.camera_buffer[idx], idx,
+                     app_video.camera_buf_hes, app_video.camera_buf_ves,
+                     app_video.camera_buf_size);
 }
 
 static esp_err_t release_frame(int fd) {
@@ -359,9 +360,9 @@ esp_err_t app_video_stream_task_start(int fd, int core_id) {
 
   app_video.video_fd = fd;
 
-  if (xTaskCreatePinnedToCore(stream_task, "video_stream", VIDEO_TASK_STACK_SIZE,
-                              NULL, VIDEO_TASK_PRIORITY, &app_video.task_handle,
-                              core_id) != pdPASS) {
+  if (xTaskCreatePinnedToCore(stream_task, "video_stream",
+                              VIDEO_TASK_STACK_SIZE, NULL, VIDEO_TASK_PRIORITY,
+                              &app_video.task_handle, core_id) != pdPASS) {
     ESP_LOGE(TAG, "Task create failed");
     return ESP_FAIL;
   }
@@ -375,8 +376,8 @@ esp_err_t app_video_stream_task_stop(int fd) {
   return ESP_OK;
 }
 
-esp_err_t app_video_register_frame_operation_cb(
-    app_video_frame_operation_cb_t cb) {
+esp_err_t
+app_video_register_frame_operation_cb(app_video_frame_operation_cb_t cb) {
   app_video.frame_cb = cb;
   return ESP_OK;
 }

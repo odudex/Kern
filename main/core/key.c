@@ -218,6 +218,11 @@ bool key_get_mnemonic_words(char ***words_out, size_t *word_count_out) {
     token = strtok(NULL, " ");
   }
 
+  if (count == 0) {
+    SECURE_FREE_STRING(mnemonic_copy);
+    return false;
+  }
+
   char **words = (char **)malloc(count * sizeof(char *));
   if (!words) {
     SECURE_FREE_STRING(mnemonic_copy);

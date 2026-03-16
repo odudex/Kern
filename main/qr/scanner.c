@@ -62,8 +62,8 @@ static lv_obj_t *ur_progress_indicator = NULL;
 static int ur_progress_bar_inner_width = 0;
 static void (*return_callback)(void) = NULL;
 
-static int _camera_ctlr_handle = -1;
-static lv_img_dsc_t _img_refresh_dsc;
+static int camera_ctlr_handle = -1;
+static lv_img_dsc_t img_refresh_dsc;
 static bool video_system_initialized = false;
 static EventGroupHandle_t camera_event_group = NULL;
 
@@ -648,8 +648,8 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
 
   if (buffer_swap_needed && !closing && camera_img && lvgl_port_lock(0)) {
     current_display_buffer = back_buffer;
-    _img_refresh_dsc.data = current_display_buffer;
-    lv_img_set_src(camera_img, &_img_refresh_dsc);
+    img_refresh_dsc.data = current_display_buffer;
+    lv_img_set_src(camera_img, &img_refresh_dsc);
     lv_refr_now(NULL);
     buffer_swap_needed = false;
     lvgl_port_unlock();
@@ -720,8 +720,8 @@ static void camera_init(void) {
 
   video_system_initialized = true;
 
-  _camera_ctlr_handle = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT_RGB565);
-  if (_camera_ctlr_handle < 0) {
+  camera_ctlr_handle = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT_RGB565);
+  if (camera_ctlr_handle < 0) {
     ESP_LOGE(TAG, "Failed to open camera device");
     return;
   }
@@ -729,7 +729,7 @@ static void camera_init(void) {
   ESP_ERROR_CHECK(
       app_video_register_frame_operation_cb(camera_video_frame_operation));
 
-  _img_refresh_dsc = (lv_img_dsc_t){
+  img_refresh_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
                  .w = CAMERA_SCREEN_WIDTH,
                  .h = CAMERA_SCREEN_HEIGHT},
@@ -743,11 +743,11 @@ static void camera_init(void) {
   }
 
   current_display_buffer = display_buffer_a;
-  _img_refresh_dsc.data = current_display_buffer;
+  img_refresh_dsc.data = current_display_buffer;
 
-  ESP_ERROR_CHECK(app_video_set_bufs(_camera_ctlr_handle, CAM_BUF_NUM, NULL));
+  ESP_ERROR_CHECK(app_video_set_bufs(camera_ctlr_handle, CAM_BUF_NUM, NULL));
 
-  esp_err_t start_err = app_video_stream_task_start(_camera_ctlr_handle, 0);
+  esp_err_t start_err = app_video_stream_task_start(camera_ctlr_handle, 0);
   if (start_err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start camera stream task: %s",
              esp_err_to_name(start_err));
@@ -760,7 +760,7 @@ static void camera_init(void) {
 }
 
 static bool camera_run(void) {
-  if (_camera_ctlr_handle < 0 || !video_system_initialized) {
+  if (camera_ctlr_handle < 0 || !video_system_initialized) {
     camera_init();
   }
   return true;
@@ -868,11 +868,11 @@ void qr_scanner_page_destroy(void) {
     ESP_LOGW(TAG, "Timeout waiting for frame operations (remaining: %d)",
              remaining_ops);
 
-  if (_camera_ctlr_handle >= 0) {
-    app_video_stream_task_stop(_camera_ctlr_handle);
+  if (camera_ctlr_handle >= 0) {
+    app_video_stream_task_stop(camera_ctlr_handle);
     vTaskDelay(pdMS_TO_TICKS(50));
-    app_video_close(_camera_ctlr_handle);
-    _camera_ctlr_handle = -1;
+    app_video_close(camera_ctlr_handle);
+    camera_ctlr_handle = -1;
   }
 
   qr_decoder_cleanup();

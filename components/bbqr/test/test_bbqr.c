@@ -1,262 +1,276 @@
 /*
  * BBQr Test Suite
- * Compile with: gcc -o test_bbqr test_bbqr.c ../src/base32.c ../src/miniz.c ../src/bbqr.c -I../src -lz
- * Or without system zlib: gcc -o test_bbqr test_bbqr.c ../src/base32.c ../src/miniz.c ../src/bbqr.c -I../src
+ * Compile with: gcc -o test_bbqr test_bbqr.c ../src/base32.c ../src/miniz.c
+ * ../src/bbqr.c -I../src -lz Or without system zlib: gcc -o test_bbqr
+ * test_bbqr.c ../src/base32.c ../src/miniz.c ../src/bbqr.c -I../src
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 #include "base32.h"
 #include "bbqr.h"
-#include "miniz.h"
 #include "bbqr_samples.h"
+#include "miniz.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
 
 #define TEST(name) printf("Testing: %s... ", name)
-#define PASS() do { printf("PASS\n"); tests_passed++; } while(0)
-#define FAIL(msg) do { printf("FAIL: %s\n", msg); tests_failed++; } while(0)
+#define PASS()                                                                 \
+  do {                                                                         \
+    printf("PASS\n");                                                          \
+    tests_passed++;                                                            \
+  } while (0)
+#define FAIL(msg)                                                              \
+  do {                                                                         \
+    printf("FAIL: %s\n", msg);                                                 \
+    tests_failed++;                                                            \
+  } while (0)
 
 /* Test base32 encoding */
 void test_base32_encode(void) {
-    TEST("base32_encode basic");
+  TEST("base32_encode basic");
 
-    const uint8_t input[] = "Hello";
-    char output[32];
-    size_t len = base32_encode(input, 5, output, sizeof(output));
+  const uint8_t input[] = "Hello";
+  char output[32];
+  size_t len = base32_encode(input, 5, output, sizeof(output));
 
-    if (len > 0 && strcmp(output, "JBSWY3DP") == 0) {
-        PASS();
-    } else {
-        FAIL(output);
-    }
+  if (len > 0 && strcmp(output, "JBSWY3DP") == 0) {
+    PASS();
+  } else {
+    FAIL(output);
+  }
 }
 
 /* Test base32 decoding */
 void test_base32_decode(void) {
-    TEST("base32_decode basic");
+  TEST("base32_decode basic");
 
-    const char *input = "JBSWY3DP";
-    uint8_t output[32];
-    size_t out_len;
+  const char *input = "JBSWY3DP";
+  uint8_t output[32];
+  size_t out_len;
 
-    if (base32_decode(input, strlen(input), output, sizeof(output), &out_len)) {
-        output[out_len] = '\0';
-        if (out_len == 5 && strcmp((char*)output, "Hello") == 0) {
-            PASS();
-        } else {
-            FAIL("Wrong decoded value");
-        }
+  if (base32_decode(input, strlen(input), output, sizeof(output), &out_len)) {
+    output[out_len] = '\0';
+    if (out_len == 5 && strcmp((char *)output, "Hello") == 0) {
+      PASS();
     } else {
-        FAIL("Decode failed");
+      FAIL("Wrong decoded value");
     }
+  } else {
+    FAIL("Decode failed");
+  }
 }
 
 /* Test base32 round-trip */
 void test_base32_roundtrip(void) {
-    TEST("base32 round-trip");
+  TEST("base32 round-trip");
 
-    const uint8_t original[] = {0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD, 0x80, 0x7F};
-    char encoded[64];
-    uint8_t decoded[64];
-    size_t decoded_len;
+  const uint8_t original[] = {0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD, 0x80, 0x7F};
+  char encoded[64];
+  uint8_t decoded[64];
+  size_t decoded_len;
 
-    size_t enc_len = base32_encode(original, sizeof(original), encoded, sizeof(encoded));
-    if (enc_len == 0) {
-        FAIL("Encode failed");
-        return;
-    }
+  size_t enc_len =
+      base32_encode(original, sizeof(original), encoded, sizeof(encoded));
+  if (enc_len == 0) {
+    FAIL("Encode failed");
+    return;
+  }
 
-    if (!base32_decode(encoded, enc_len, decoded, sizeof(decoded), &decoded_len)) {
-        FAIL("Decode failed");
-        return;
-    }
+  if (!base32_decode(encoded, enc_len, decoded, sizeof(decoded),
+                     &decoded_len)) {
+    FAIL("Decode failed");
+    return;
+  }
 
-    if (decoded_len == sizeof(original) && memcmp(original, decoded, decoded_len) == 0) {
-        PASS();
-    } else {
-        FAIL("Data mismatch");
-    }
+  if (decoded_len == sizeof(original) &&
+      memcmp(original, decoded, decoded_len) == 0) {
+    PASS();
+  } else {
+    FAIL("Data mismatch");
+  }
 }
 
 /* Test base36 encoding/decoding */
 void test_base36(void) {
-    TEST("base36 encode/decode");
+  TEST("base36 encode/decode");
 
-    char c1, c2;
+  char c1, c2;
 
-    /* Test 0 */
-    bbqr_base36_encode(0, &c1, &c2);
-    if (c1 != '0' || c2 != '0') {
-        FAIL("0 encode failed");
-        return;
-    }
-    if (bbqr_base36_decode('0', '0') != 0) {
-        FAIL("0 decode failed");
-        return;
-    }
+  /* Test 0 */
+  bbqr_base36_encode(0, &c1, &c2);
+  if (c1 != '0' || c2 != '0') {
+    FAIL("0 encode failed");
+    return;
+  }
+  if (bbqr_base36_decode('0', '0') != 0) {
+    FAIL("0 decode failed");
+    return;
+  }
 
-    /* Test 1 */
-    bbqr_base36_encode(1, &c1, &c2);
-    if (c1 != '0' || c2 != '1') {
-        FAIL("1 encode failed");
-        return;
-    }
-    if (bbqr_base36_decode('0', '1') != 1) {
-        FAIL("1 decode failed");
-        return;
-    }
+  /* Test 1 */
+  bbqr_base36_encode(1, &c1, &c2);
+  if (c1 != '0' || c2 != '1') {
+    FAIL("1 encode failed");
+    return;
+  }
+  if (bbqr_base36_decode('0', '1') != 1) {
+    FAIL("1 decode failed");
+    return;
+  }
 
-    /* Test 36 */
-    bbqr_base36_encode(36, &c1, &c2);
-    if (c1 != '1' || c2 != '0') {
-        FAIL("36 encode failed");
-        return;
-    }
-    if (bbqr_base36_decode('1', '0') != 36) {
-        FAIL("36 decode failed");
-        return;
-    }
+  /* Test 36 */
+  bbqr_base36_encode(36, &c1, &c2);
+  if (c1 != '1' || c2 != '0') {
+    FAIL("36 encode failed");
+    return;
+  }
+  if (bbqr_base36_decode('1', '0') != 36) {
+    FAIL("36 decode failed");
+    return;
+  }
 
-    /* Test 1295 (max) */
-    bbqr_base36_encode(1295, &c1, &c2);
-    if (c1 != 'Z' || c2 != 'Z') {
-        FAIL("1295 encode failed");
-        return;
-    }
-    if (bbqr_base36_decode('Z', 'Z') != 1295) {
-        FAIL("1295 decode failed");
-        return;
-    }
+  /* Test 1295 (max) */
+  bbqr_base36_encode(1295, &c1, &c2);
+  if (c1 != 'Z' || c2 != 'Z') {
+    FAIL("1295 encode failed");
+    return;
+  }
+  if (bbqr_base36_decode('Z', 'Z') != 1295) {
+    FAIL("1295 decode failed");
+    return;
+  }
 
-    PASS();
+  PASS();
 }
 
 /* Test BBQr header parsing */
 void test_bbqr_parse_header(void) {
-    TEST("bbqr_parse_part header");
+  TEST("bbqr_parse_part header");
 
-    const char *qr = "B$ZP0100TESTPAYLOAD";
-    BBQrPart part;
+  const char *qr = "B$ZP0100TESTPAYLOAD";
+  BBQrPart part;
 
-    if (!bbqr_parse_part(qr, strlen(qr), &part)) {
-        FAIL("Parse failed");
-        return;
-    }
+  if (!bbqr_parse_part(qr, strlen(qr), &part)) {
+    FAIL("Parse failed");
+    return;
+  }
 
-    if (part.encoding != 'Z') {
-        FAIL("Wrong encoding");
-        return;
-    }
-    if (part.file_type != 'P') {
-        FAIL("Wrong file type");
-        return;
-    }
-    if (part.total != 1) {
-        FAIL("Wrong total");
-        return;
-    }
-    if (part.index != 0) {
-        FAIL("Wrong index");
-        return;
-    }
-    if (part.payload_len != 11 || strncmp(part.payload, "TESTPAYLOAD", 11) != 0) {
-        FAIL("Wrong payload");
-        return;
-    }
+  if (part.encoding != 'Z') {
+    FAIL("Wrong encoding");
+    return;
+  }
+  if (part.file_type != 'P') {
+    FAIL("Wrong file type");
+    return;
+  }
+  if (part.total != 1) {
+    FAIL("Wrong total");
+    return;
+  }
+  if (part.index != 0) {
+    FAIL("Wrong index");
+    return;
+  }
+  if (part.payload_len != 11 || strncmp(part.payload, "TESTPAYLOAD", 11) != 0) {
+    FAIL("Wrong payload");
+    return;
+  }
 
-    PASS();
+  PASS();
 }
 
 /* Test miniz compression/decompression round-trip */
 void test_miniz_roundtrip(void) {
-    TEST("miniz compress/decompress round-trip");
+  TEST("miniz compress/decompress round-trip");
 
-    const char *original = "Hello, this is a test string for compression. "
-                          "It should compress reasonably well because it has "
-                          "some repetition. Hello hello hello!";
-    size_t original_len = strlen(original);
+  const char *original = "Hello, this is a test string for compression. "
+                         "It should compress reasonably well because it has "
+                         "some repetition. Hello hello hello!";
+  size_t original_len = strlen(original);
 
-    /* Compress */
-    size_t compressed_len = 0;
-    uint8_t *compressed = mz_compress_alloc((const uint8_t*)original, original_len,
-                                            &compressed_len, MZ_DEFAULT_COMPRESSION);
-    if (!compressed) {
-        FAIL("Compression failed");
-        return;
-    }
+  /* Compress */
+  size_t compressed_len = 0;
+  uint8_t *compressed =
+      mz_compress_alloc((const uint8_t *)original, original_len,
+                        &compressed_len, MZ_DEFAULT_COMPRESSION);
+  if (!compressed) {
+    FAIL("Compression failed");
+    return;
+  }
 
-    printf("(compressed %zu -> %zu bytes) ", original_len, compressed_len);
+  printf("(compressed %zu -> %zu bytes) ", original_len, compressed_len);
 
-    /* Decompress */
-    size_t decompressed_len = 0;
-    uint8_t *decompressed = mz_uncompress_alloc(compressed, compressed_len, &decompressed_len);
-    free(compressed);
+  /* Decompress */
+  size_t decompressed_len = 0;
+  uint8_t *decompressed =
+      mz_uncompress_alloc(compressed, compressed_len, &decompressed_len);
+  free(compressed);
 
-    if (!decompressed) {
-        FAIL("Decompression failed");
-        return;
-    }
+  if (!decompressed) {
+    FAIL("Decompression failed");
+    return;
+  }
 
-    if (decompressed_len != original_len || memcmp(original, decompressed, original_len) != 0) {
-        free(decompressed);
-        FAIL("Data mismatch");
-        return;
-    }
-
+  if (decompressed_len != original_len ||
+      memcmp(original, decompressed, original_len) != 0) {
     free(decompressed);
-    PASS();
+    FAIL("Data mismatch");
+    return;
+  }
+
+  free(decompressed);
+  PASS();
 }
 
 /* Test BBQr encode/decode round-trip */
 void test_bbqr_roundtrip(void) {
-    TEST("bbqr encode/decode round-trip");
+  TEST("bbqr encode/decode round-trip");
 
-    /* Sample PSBT-like data */
-    const uint8_t original[] = {
-        0x70, 0x73, 0x62, 0x74, 0xff,  /* "psbt" + 0xff */
-        0x01, 0x00, 0x52, 0x02, 0x00, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    };
-    size_t original_len = sizeof(original);
+  /* Sample PSBT-like data */
+  const uint8_t original[] = {0x70, 0x73, 0x62, 0x74, 0xff, /* "psbt" + 0xff */
+                              0x01, 0x00, 0x52, 0x02, 0x00, 0x00, 0x00, 0x01,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  size_t original_len = sizeof(original);
 
-    BBQrParts *parts = bbqr_encode(original, original_len, BBQR_TYPE_PSBT, 400);
-    if (!parts) {
-        FAIL("Encode failed");
-        return;
-    }
+  BBQrParts *parts = bbqr_encode(original, original_len, BBQR_TYPE_PSBT, 400);
+  if (!parts) {
+    FAIL("Encode failed");
+    return;
+  }
 
-    BBQrPart parsed;
-    if (!bbqr_parse_part(parts->parts[0], strlen(parts->parts[0]), &parsed)) {
-        bbqr_parts_free(parts);
-        FAIL("Parse failed");
-        return;
-    }
-
-    size_t decoded_len = 0;
-    uint8_t *decoded = bbqr_decode_payload(parsed.encoding, parsed.payload,
-                                           parsed.payload_len, &decoded_len);
+  BBQrPart parsed;
+  if (!bbqr_parse_part(parts->parts[0], strlen(parts->parts[0]), &parsed)) {
     bbqr_parts_free(parts);
+    FAIL("Parse failed");
+    return;
+  }
 
-    if (!decoded) {
-        FAIL("Decode failed");
-        return;
-    }
+  size_t decoded_len = 0;
+  uint8_t *decoded = bbqr_decode_payload(parsed.encoding, parsed.payload,
+                                         parsed.payload_len, &decoded_len);
+  bbqr_parts_free(parts);
 
-    if (decoded_len != original_len || memcmp(original, decoded, original_len) != 0) {
-        free(decoded);
-        FAIL("Data mismatch");
-        return;
-    }
+  if (!decoded) {
+    FAIL("Decode failed");
+    return;
+  }
 
+  if (decoded_len != original_len ||
+      memcmp(original, decoded, original_len) != 0) {
     free(decoded);
-    PASS();
+    FAIL("Data mismatch");
+    return;
+  }
+
+  free(decoded);
+  PASS();
 }
 
 /* Expected PSBT data (base64 decoded) for test_real_bbqr_decode */
@@ -337,203 +351,220 @@ static const uint8_t EXPECTED_PSBT[] = {
     0x3b, 0x06, 0x70, 0x2f, 0xb6, 0xe1, 0xaa, 0x39, 0xec, 0x90, 0x6a, 0xb3,
     0xef, 0x1b, 0xc5, 0xc1, 0x36, 0xd7, 0x9a, 0x96, 0x7e, 0x18, 0xd6, 0x3d,
     0xc4, 0xa7, 0x54, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x00, 0x00,
-    0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0xcb, 0x00, 0x00, 0x00, 0x00
-};
+    0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0xcb, 0x00, 0x00, 0x00, 0x00};
 
 /* Test decoding a real BBQr PSBT QR code */
 void test_real_bbqr_decode(void) {
-    TEST("decode real BBQr QR code");
+  TEST("decode real BBQr QR code");
 
-    const char *qr = "B$ZP0100FMUE4KXZZ7EPBDMJQGAYCNLYKGBFKYWMRTPNHW5M4ZOZZVH6MGM6HG4J74XZXXZ6VXSRFZHP7L2DOO2QCHB5777774JVFSCFVRBA4YQVOIJKXEANU2IFCO4BAEGMIGCEGYDKRPV5NXIR45Z4UM35NLFYZC4VCM556BHYSJ4DH4RYW2P3PHTKJN2FVMNIAKRDE5HC67Z46OMP4HLPAN7JPNEUPSURP6JTU63BNTPTHEZTCNKOXTLYY6MPZCZ32CO3WOXLU4W6LPXLG5YZV76KDKGULLK34VJ5B3LWEZSUK4DAWXFTHWZDZBEBUGARDCAZICMJCUN6IMMO5DQLSM2AE27D4Y6N5JOF7JNVG4GZEKY62XHORTGCYQGVBRFGZTCLGVRFFYU7IWPFS6HRSBKYJ5ARH2FWOTUFM5JSGOF6MU4O4O5YKZHF6AWDOQQLABQRVC3JZYRLL2UN5OJA6LP2ZQHQ573BOHEX3V42FC5QEXS4DFHPW4WHPP3VKP6PZLJX5FOUCXOF5UXTSVY7HR4ZQPDRR5M2RLQGKZN6YMDN5E53M2GHTKFSPCS6JMD76V6LT26DGZ7OCNX3QLKMZ5N6X6WTNUXVXF2HDIUV6EMX3JXV727XWXMGLVLCTN6TH5SM4BKLRDWVCYNUYW44R5XW3WBI2NZTNMRBZFNOC5MO37RM657WEH6BEWKZUT75CSFANSXY5O65CXFZQMYP5VRS66CFO76WN2TGH3POVPOSBWVS3NUYW26IXUKMRQ57LXSE2BSOTAKQLNLRSLILW5LIIXZONBSKOROXRFMH5ORQXHJ5YPWOGV2FU7D4LP55J3V4LQ5ZGF2BTNXWBNOFBJCCQMJRFV6L53GPHM4WSK2GQ4XGXNQC7VWQ6V2ZX2MZBNPZXX2NDA3G25TU3K6DVL4TJCAAAA";
+  const char *qr =
+      "B$"
+      "ZP0100FMUE4KXZZ7EPBDMJQGAYCNLYKGBFKYWMRTPNHW5M4ZOZZVH6MGM6HG4J74XZXXZ6VX"
+      "SRFZHP7L2DOO2QCHB5777774JVFSCFVRBA4YQVOIJKXEANU2IFCO4BAEGMIGCEGYDKRPV5NX"
+      "IR45Z4UM35NLFYZC4VCM556BHYSJ4DH4RYW2P3PHTKJN2FVMNIAKRDE5HC67Z46OMP4HLPAN"
+      "7JPNEUPSURP6JTU63BNTPTHEZTCNKOXTLYY6MPZCZ32CO3WOXLU4W6LPXLG5YZV76KDKGULL"
+      "K34VJ5B3LWEZSUK4DAWXFTHWZDZBEBUGARDCAZICMJCUN6IMMO5DQLSM2AE27D4Y6N5JOF7J"
+      "NVG4GZEKY62XHORTGCYQGVBRFGZTCLGVRFFYU7IWPFS6HRSBKYJ5ARH2FWOTUFM5JSGOF6MU"
+      "4O4O5YKZHF6AWDOQQLABQRVC3JZYRLL2UN5OJA6LP2ZQHQ573BOHEX3V42FC5QEXS4DFHPW4"
+      "WHPP3VKP6PZLJX5FOUCXOF5UXTSVY7HR4ZQPDRR5M2RLQGKZN6YMDN5E53M2GHTKFSPCS6JM"
+      "D76V6LT26DGZ7OCNX3QLKMZ5N6X6WTNUXVXF2HDIUV6EMX3JXV727XWXMGLVLCTN6TH5SM4B"
+      "KLRDWVCYNUYW44R5XW3WBI2NZTNMRBZFNOC5MO37RM657WEH6BEWKZUT75CSFANSXY5O65CX"
+      "FZQMYP5VRS66CFO76WN2TGH3POVPOSBWVS3NUYW26IXUKMRQ57LXSE2BSOTAKQLNLRSLILW5"
+      "LIIXZONBSKOROXRFMH5ORQXHJ5YPWOGV2FU7D4LP55J3V4LQ5ZGF2BTNXWBNOFBJCCQMJRFV"
+      "6L53GPHM4WSK2GQ4XGXNQC7VWQ6V2ZX2MZBNPZXX2NDA3G25TU3K6DVL4TJCAAAA";
 
-    BBQrPart part;
-    if (!bbqr_parse_part(qr, strlen(qr), &part)) {
-        FAIL("Header parse failed");
-        return;
-    }
+  BBQrPart part;
+  if (!bbqr_parse_part(qr, strlen(qr), &part)) {
+    FAIL("Header parse failed");
+    return;
+  }
 
-    size_t decoded_len = 0;
-    uint8_t *decoded = bbqr_decode_payload(part.encoding, part.payload,
-                                           part.payload_len, &decoded_len);
-    if (!decoded) {
-        FAIL("Decode failed");
-        return;
-    }
+  size_t decoded_len = 0;
+  uint8_t *decoded = bbqr_decode_payload(part.encoding, part.payload,
+                                         part.payload_len, &decoded_len);
+  if (!decoded) {
+    FAIL("Decode failed");
+    return;
+  }
 
-    /* Verify PSBT magic and data */
-    if (decoded_len < 5 || memcmp(decoded, "psbt\xff", 5) != 0) {
-        free(decoded);
-        FAIL("Invalid PSBT magic");
-        return;
-    }
-
-    if (decoded_len != sizeof(EXPECTED_PSBT) ||
-        memcmp(decoded, EXPECTED_PSBT, sizeof(EXPECTED_PSBT)) != 0) {
-        free(decoded);
-        FAIL("Data mismatch");
-        return;
-    }
-
+  /* Verify PSBT magic and data */
+  if (decoded_len < 5 || memcmp(decoded, "psbt\xff", 5) != 0) {
     free(decoded);
-    PASS();
+    FAIL("Invalid PSBT magic");
+    return;
+  }
+
+  if (decoded_len != sizeof(EXPECTED_PSBT) ||
+      memcmp(decoded, EXPECTED_PSBT, sizeof(EXPECTED_PSBT)) != 0) {
+    free(decoded);
+    FAIL("Data mismatch");
+    return;
+  }
+
+  free(decoded);
+  PASS();
 }
 
 /**
  * @brief Helper to verify BBQr decoding against test vectors
  */
-void verify_bbqr_decode(const char *test_name, const char **parts, int count, 
+void verify_bbqr_decode(const char *test_name, const char **parts, int count,
                         const uint8_t *expected, size_t expected_len) {
-    printf("Testing vector: %s... ", test_name);
+  printf("Testing vector: %s... ", test_name);
 
-    char *assembled_payload = NULL;
-    size_t assembled_len = 0;
-    char encoding = 0;
-    char file_type = 0;
+  char *assembled_payload = NULL;
+  size_t assembled_len = 0;
+  char encoding = 0;
+  char file_type = 0;
 
-    // Verify and assemble parts
-    for (int i = 0; i < count; i++) {
-        BBQrPart part;
-        if (!bbqr_parse_part(parts[i], strlen(parts[i]), &part)) {
-             free(assembled_payload);
-             FAIL("Parse failed for part");
-             return;
-        }
-        
-        if (i == 0) {
-            encoding = part.encoding;
-            file_type = part.file_type;
-            if (part.total != count) {
-                 free(assembled_payload);
-                 FAIL("Wrong total count in header");
-                 return;
-            }
-        } else {
-            if (part.encoding != encoding || part.file_type != file_type) {
-                free(assembled_payload);
-                FAIL("Inconsistent header info");
-                return;
-            }
-        }
-        
-        // Ensure parts are provided in order for this simple test harness
-        if (part.index != i) {
-             free(assembled_payload);
-             FAIL("Parts out of order");
-             return;
-        }
-
-        // Append payload
-        char *new_payload = realloc(assembled_payload, assembled_len + part.payload_len);
-        if (!new_payload) {
-            free(assembled_payload);
-            FAIL("Memory allocation");
-            return;
-        }
-        assembled_payload = new_payload;
-        memcpy(assembled_payload + assembled_len, part.payload, part.payload_len);
-        assembled_len += part.payload_len;
+  // Verify and assemble parts
+  for (int i = 0; i < count; i++) {
+    BBQrPart part;
+    if (!bbqr_parse_part(parts[i], strlen(parts[i]), &part)) {
+      free(assembled_payload);
+      FAIL("Parse failed for part");
+      return;
     }
 
-    size_t decoded_len = 0;
-    uint8_t *decoded = bbqr_decode_payload(encoding, assembled_payload, assembled_len, &decoded_len);
-    free(assembled_payload);
-
-    if (!decoded) {
-        FAIL("Decode failed");
+    if (i == 0) {
+      encoding = part.encoding;
+      file_type = part.file_type;
+      if (part.total != count) {
+        free(assembled_payload);
+        FAIL("Wrong total count in header");
         return;
-    }
-
-    if (decoded_len != expected_len) {
-        printf("Expected len %zu, got %zu. ", expected_len, decoded_len);
-        if (decoded_len > expected_len) {
-            printf("Extra bytes at end: ");
-            for(size_t i=expected_len; i<decoded_len; i++) printf("%02x ", decoded[i]);
-            printf("\n");
-        }
-        free(decoded);
-        FAIL("Length mismatch");
+      }
+    } else {
+      if (part.encoding != encoding || part.file_type != file_type) {
+        free(assembled_payload);
+        FAIL("Inconsistent header info");
         return;
+      }
     }
 
-    if (memcmp(decoded, expected, expected_len) != 0) {
-        free(decoded);
-        FAIL("Data mismatch");
-        return;
+    // Ensure parts are provided in order for this simple test harness
+    if (part.index != i) {
+      free(assembled_payload);
+      FAIL("Parts out of order");
+      return;
     }
 
+    // Append payload
+    char *new_payload =
+        realloc(assembled_payload, assembled_len + part.payload_len);
+    if (!new_payload) {
+      free(assembled_payload);
+      FAIL("Memory allocation");
+      return;
+    }
+    assembled_payload = new_payload;
+    memcpy(assembled_payload + assembled_len, part.payload, part.payload_len);
+    assembled_len += part.payload_len;
+  }
+
+  size_t decoded_len = 0;
+  uint8_t *decoded = bbqr_decode_payload(encoding, assembled_payload,
+                                         assembled_len, &decoded_len);
+  free(assembled_payload);
+
+  if (!decoded) {
+    FAIL("Decode failed");
+    return;
+  }
+
+  if (decoded_len != expected_len) {
+    printf("Expected len %zu, got %zu. ", expected_len, decoded_len);
+    if (decoded_len > expected_len) {
+      printf("Extra bytes at end: ");
+      for (size_t i = expected_len; i < decoded_len; i++)
+        printf("%02x ", decoded[i]);
+      printf("\n");
+    }
     free(decoded);
-    PASS();
+    FAIL("Length mismatch");
+    return;
+  }
+
+  if (memcmp(decoded, expected, expected_len) != 0) {
+    free(decoded);
+    FAIL("Data mismatch");
+    return;
+  }
+
+  free(decoded);
+  PASS();
 }
 
 void test_vectors(void) {
-    printf("Running Test Vectors...\n");
+  printf("Running Test Vectors...\n");
 
-    // Descriptors
-    verify_bbqr_decode("Nunchuk Single", bbqr_desc_nunchuk_single_parts,
-                       BBQR_ARRAY_LEN(bbqr_desc_nunchuk_single_parts),
-                       (const uint8_t*)bbqr_desc_nunchuk_single_expected,
-                       strlen(bbqr_desc_nunchuk_single_expected));
+  // Descriptors
+  verify_bbqr_decode("Nunchuk Single", bbqr_desc_nunchuk_single_parts,
+                     BBQR_ARRAY_LEN(bbqr_desc_nunchuk_single_parts),
+                     (const uint8_t *)bbqr_desc_nunchuk_single_expected,
+                     strlen(bbqr_desc_nunchuk_single_expected));
 
-    verify_bbqr_decode("Nunchuk Multi", bbqr_desc_nunchuk_multi_parts,
-                       BBQR_ARRAY_LEN(bbqr_desc_nunchuk_multi_parts),
-                       (const uint8_t*)bbqr_desc_nunchuk_multi_expected,
-                       strlen(bbqr_desc_nunchuk_multi_expected));
+  verify_bbqr_decode("Nunchuk Multi", bbqr_desc_nunchuk_multi_parts,
+                     BBQR_ARRAY_LEN(bbqr_desc_nunchuk_multi_parts),
+                     (const uint8_t *)bbqr_desc_nunchuk_multi_expected,
+                     strlen(bbqr_desc_nunchuk_multi_expected));
 
-    verify_bbqr_decode("Sparrow Single", bbqr_desc_sparrow_single_parts,
-                       BBQR_ARRAY_LEN(bbqr_desc_sparrow_single_parts),
-                       (const uint8_t*)bbqr_desc_sparrow_single_expected,
-                       strlen(bbqr_desc_sparrow_single_expected));
+  verify_bbqr_decode("Sparrow Single", bbqr_desc_sparrow_single_parts,
+                     BBQR_ARRAY_LEN(bbqr_desc_sparrow_single_parts),
+                     (const uint8_t *)bbqr_desc_sparrow_single_expected,
+                     strlen(bbqr_desc_sparrow_single_expected));
 
-    verify_bbqr_decode("Sparrow Multi", bbqr_desc_sparrow_multi_parts,
-                       BBQR_ARRAY_LEN(bbqr_desc_sparrow_multi_parts),
-                       (const uint8_t*)bbqr_desc_sparrow_multi_expected,
-                       strlen(bbqr_desc_sparrow_multi_expected));
+  verify_bbqr_decode("Sparrow Multi", bbqr_desc_sparrow_multi_parts,
+                     BBQR_ARRAY_LEN(bbqr_desc_sparrow_multi_parts),
+                     (const uint8_t *)bbqr_desc_sparrow_multi_expected,
+                     strlen(bbqr_desc_sparrow_multi_expected));
 
-    // JSON
-    verify_bbqr_decode("Coldcard JSON", bbqr_json_coldcard_parts,
-                       BBQR_ARRAY_LEN(bbqr_json_coldcard_parts),
-                       bbqr_json_coldcard_expected, bbqr_json_coldcard_expected_len);
+  // JSON
+  verify_bbqr_decode("Coldcard JSON", bbqr_json_coldcard_parts,
+                     BBQR_ARRAY_LEN(bbqr_json_coldcard_parts),
+                     bbqr_json_coldcard_expected,
+                     bbqr_json_coldcard_expected_len);
 
-    // PSBTs (Zlib)
-    verify_bbqr_decode("Nunchuk PSBT", bbqr_nunchuk_psbt_parts,
-                       BBQR_ARRAY_LEN(bbqr_nunchuk_psbt_parts),
-                       bbqr_nunchuk_psbt_bytes, bbqr_nunchuk_psbt_bytes_len);
+  // PSBTs (Zlib)
+  verify_bbqr_decode("Nunchuk PSBT", bbqr_nunchuk_psbt_parts,
+                     BBQR_ARRAY_LEN(bbqr_nunchuk_psbt_parts),
+                     bbqr_nunchuk_psbt_bytes, bbqr_nunchuk_psbt_bytes_len);
 
-    verify_bbqr_decode("Sparrow PSBT", bbqr_sparrow_psbt_parts,
-                       BBQR_ARRAY_LEN(bbqr_sparrow_psbt_parts),
-                       bbqr_sparrow_psbt_bytes, bbqr_sparrow_psbt_bytes_len);
+  verify_bbqr_decode("Sparrow PSBT", bbqr_sparrow_psbt_parts,
+                     BBQR_ARRAY_LEN(bbqr_sparrow_psbt_parts),
+                     bbqr_sparrow_psbt_bytes, bbqr_sparrow_psbt_bytes_len);
 
-    // PSBTs (Base32 - No Compression)
-    verify_bbqr_decode("Nunchuk PSBT (NC)", bbqr_nunchuk_psbt_nc_parts,
-                       BBQR_ARRAY_LEN(bbqr_nunchuk_psbt_nc_parts),
-                       bbqr_nunchuk_psbt_bytes, bbqr_nunchuk_psbt_bytes_len);
+  // PSBTs (Base32 - No Compression)
+  verify_bbqr_decode("Nunchuk PSBT (NC)", bbqr_nunchuk_psbt_nc_parts,
+                     BBQR_ARRAY_LEN(bbqr_nunchuk_psbt_nc_parts),
+                     bbqr_nunchuk_psbt_bytes, bbqr_nunchuk_psbt_bytes_len);
 
-    verify_bbqr_decode("Sparrow PSBT (NC)", bbqr_sparrow_psbt_nc_parts,
-                       BBQR_ARRAY_LEN(bbqr_sparrow_psbt_nc_parts),
-                       bbqr_sparrow_psbt_bytes, bbqr_sparrow_psbt_bytes_len);
+  verify_bbqr_decode("Sparrow PSBT (NC)", bbqr_sparrow_psbt_nc_parts,
+                     BBQR_ARRAY_LEN(bbqr_sparrow_psbt_nc_parts),
+                     bbqr_sparrow_psbt_bytes, bbqr_sparrow_psbt_bytes_len);
 
-    // Signed PSBT Hex
-    verify_bbqr_decode("Signed PSBT (Hex)", bbqr_signed_psbt_hex_parts,
-                       BBQR_ARRAY_LEN(bbqr_signed_psbt_hex_parts),
-                       bbqr_signed_psbt_bytes, bbqr_signed_psbt_bytes_len);
+  // Signed PSBT Hex
+  verify_bbqr_decode("Signed PSBT (Hex)", bbqr_signed_psbt_hex_parts,
+                     BBQR_ARRAY_LEN(bbqr_signed_psbt_hex_parts),
+                     bbqr_signed_psbt_bytes, bbqr_signed_psbt_bytes_len);
 }
 
 int main(void) {
-    printf("BBQr Test Suite\n");
-    printf("================\n\n");
+  printf("BBQr Test Suite\n");
+  printf("================\n\n");
 
-    test_base32_encode();
-    test_base32_decode();
-    test_base32_roundtrip();
-    test_base36();
-    test_bbqr_parse_header();
-    test_miniz_roundtrip();
-    test_bbqr_roundtrip();
-    test_real_bbqr_decode();
-    test_vectors();
+  test_base32_encode();
+  test_base32_decode();
+  test_base32_roundtrip();
+  test_base36();
+  test_bbqr_parse_header();
+  test_miniz_roundtrip();
+  test_bbqr_roundtrip();
+  test_real_bbqr_decode();
+  test_vectors();
 
-    printf("\n================\n");
-    printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);
+  printf("\n================\n");
+  printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);
 
-    return tests_failed > 0 ? 1 : 0;
+  return tests_failed > 0 ? 1 : 0;
 }

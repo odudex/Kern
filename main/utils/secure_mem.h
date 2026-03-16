@@ -15,12 +15,12 @@
  * the memset call via dead store elimination. This is the same technique
  * used by libsodium and OpenSSL.
  */
-static void *(*const volatile _secure_memset)(void *, int, size_t) = memset;
+static void *(*const volatile secure_memset_fn)(void *, int, size_t) = memset;
 
 /* Guaranteed memory zeroing - cannot be optimized away */
 static inline void secure_memzero(void *ptr, size_t len) {
   if (ptr && len > 0) {
-    _secure_memset(ptr, 0, len);
+    secure_memset_fn(ptr, 0, len);
   }
 }
 

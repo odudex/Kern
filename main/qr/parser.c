@@ -334,7 +334,7 @@ char *qr_parser_result(QRPartParser *parser, size_t *result_len) {
 
 static bool starts_with_case_insensitive(const char *str, const char *prefix) {
   while (*prefix) {
-    if (tolower(*str) != tolower(*prefix))
+    if (tolower((unsigned char)*str) != tolower((unsigned char)*prefix))
       return false;
     str++;
     prefix++;

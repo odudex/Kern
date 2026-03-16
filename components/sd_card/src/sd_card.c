@@ -18,7 +18,8 @@ static bool s_mounted = false;
 
 static esp_err_t sd_card_enable_power(void) {
   static esp_ldo_channel_handle_t s_ldo_chan = NULL;
-  if (s_ldo_chan) return ESP_OK;
+  if (s_ldo_chan)
+    return ESP_OK;
 
   esp_ldo_channel_config_t ldo_cfg = {.chan_id = 4, .voltage_mv = 3300};
   esp_err_t ret = esp_ldo_acquire_channel(&ldo_cfg, &s_ldo_chan);
@@ -29,12 +30,14 @@ static esp_err_t sd_card_enable_power(void) {
 }
 
 esp_err_t sd_card_init(void) {
-  if (s_mounted) return ESP_OK;
+  if (s_mounted)
+    return ESP_OK;
 
   ESP_LOGI(TAG, "Initializing SD card");
 
   esp_err_t ret = sd_card_enable_power();
-  if (ret != ESP_OK) return ret;
+  if (ret != ESP_OK)
+    return ret;
 
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
       .format_if_mount_failed = false,
@@ -68,7 +71,8 @@ esp_err_t sd_card_init(void) {
 }
 
 esp_err_t sd_card_deinit(void) {
-  if (!s_mounted || !s_card) return ESP_OK;
+  if (!s_mounted || !s_card)
+    return ESP_OK;
 
   esp_err_t ret = esp_vfs_fat_sdcard_unmount(SD_CARD_MOUNT_POINT, s_card);
   if (ret != ESP_OK) {
@@ -85,8 +89,10 @@ bool sd_card_is_mounted(void) { return s_mounted; }
 
 esp_err_t sd_card_write_file(const char *path, const uint8_t *data,
                              size_t len) {
-  if (!path || !data) return ESP_ERR_INVALID_ARG;
-  if (!s_mounted) return ESP_ERR_INVALID_STATE;
+  if (!path || !data)
+    return ESP_ERR_INVALID_ARG;
+  if (!s_mounted)
+    return ESP_ERR_INVALID_STATE;
 
   FILE *f = fopen(path, "wb");
   if (!f) {
@@ -106,18 +112,23 @@ esp_err_t sd_card_write_file(const char *path, const uint8_t *data,
 
 esp_err_t sd_card_read_file(const char *path, uint8_t **data_out,
                             size_t *len_out) {
-  if (!path || !data_out || !len_out) return ESP_ERR_INVALID_ARG;
-  if (!s_mounted) return ESP_ERR_INVALID_STATE;
+  if (!path || !data_out || !len_out)
+    return ESP_ERR_INVALID_ARG;
+  if (!s_mounted)
+    return ESP_ERR_INVALID_STATE;
 
   *data_out = NULL;
   *len_out = 0;
 
   struct stat st;
-  if (stat(path, &st) != 0) return ESP_ERR_NOT_FOUND;
-  if (st.st_size == 0) return ESP_OK;
+  if (stat(path, &st) != 0)
+    return ESP_ERR_NOT_FOUND;
+  if (st.st_size == 0)
+    return ESP_OK;
 
   uint8_t *buffer = malloc(st.st_size);
-  if (!buffer) return ESP_ERR_NO_MEM;
+  if (!buffer)
+    return ESP_ERR_NO_MEM;
 
   FILE *f = fopen(path, "rb");
   if (!f) {
@@ -139,8 +150,10 @@ esp_err_t sd_card_read_file(const char *path, uint8_t **data_out,
 }
 
 esp_err_t sd_card_file_exists(const char *path, bool *exists) {
-  if (!path || !exists) return ESP_ERR_INVALID_ARG;
-  if (!s_mounted) return ESP_ERR_INVALID_STATE;
+  if (!path || !exists)
+    return ESP_ERR_INVALID_ARG;
+  if (!s_mounted)
+    return ESP_ERR_INVALID_STATE;
 
   struct stat st;
   *exists = (stat(path, &st) == 0);
@@ -148,30 +161,38 @@ esp_err_t sd_card_file_exists(const char *path, bool *exists) {
 }
 
 esp_err_t sd_card_delete_file(const char *path) {
-  if (!path) return ESP_ERR_INVALID_ARG;
-  if (!s_mounted) return ESP_ERR_INVALID_STATE;
+  if (!path)
+    return ESP_ERR_INVALID_ARG;
+  if (!s_mounted)
+    return ESP_ERR_INVALID_STATE;
 
   struct stat st;
-  if (stat(path, &st) != 0) return ESP_ERR_NOT_FOUND;
-  if (unlink(path) != 0) return ESP_FAIL;
+  if (stat(path, &st) != 0)
+    return ESP_ERR_NOT_FOUND;
+  if (unlink(path) != 0)
+    return ESP_FAIL;
   return ESP_OK;
 }
 
 esp_err_t sd_card_list_files(const char *dir_path, char ***files_out,
                              int *count_out) {
-  if (!dir_path || !files_out || !count_out) return ESP_ERR_INVALID_ARG;
-  if (!s_mounted) return ESP_ERR_INVALID_STATE;
+  if (!dir_path || !files_out || !count_out)
+    return ESP_ERR_INVALID_ARG;
+  if (!s_mounted)
+    return ESP_ERR_INVALID_STATE;
 
   *files_out = NULL;
   *count_out = 0;
 
   DIR *dir = opendir(dir_path);
-  if (!dir) return ESP_FAIL;
+  if (!dir)
+    return ESP_FAIL;
 
   int count = 0;
   struct dirent *entry;
   while ((entry = readdir(dir)) != NULL) {
-    if (entry->d_type == DT_REG) count++;
+    if (entry->d_type == DT_REG)
+      count++;
   }
 
   if (count == 0) {
@@ -191,7 +212,8 @@ esp_err_t sd_card_list_files(const char *dir_path, char ***files_out,
     if (entry->d_type == DT_REG) {
       files[idx] = strdup(entry->d_name);
       if (!files[idx]) {
-        for (int i = 0; i < idx; i++) free(files[i]);
+        for (int i = 0; i < idx; i++)
+          free(files[i]);
         free(files);
         closedir(dir);
         return ESP_ERR_NO_MEM;
@@ -207,7 +229,9 @@ esp_err_t sd_card_list_files(const char *dir_path, char ***files_out,
 }
 
 void sd_card_free_file_list(char **files, int count) {
-  if (!files) return;
-  for (int i = 0; i < count; i++) free(files[i]);
+  if (!files)
+    return;
+  for (int i = 0; i < count; i++)
+    free(files[i]);
   free(files);
 }

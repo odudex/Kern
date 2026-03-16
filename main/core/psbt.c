@@ -240,7 +240,7 @@ bool psbt_get_output_derivation(const struct wally_psbt *psbt,
     memcpy(&change_val, keypath + 16, sizeof(uint32_t));
     memcpy(&index_val, keypath + 20, sizeof(uint32_t));
 
-    uint32_t expected_coin = is_testnet ? (0x80000000 | 1) : (0x80000000 | 0);
+    uint32_t expected_coin = is_testnet ? (0x80000000 | 1) : 0x80000000;
     uint32_t expected_account = 0x80000000 | wallet_get_account();
 
     if (purpose == (0x80000000 | 84) && coin_type == expected_coin &&

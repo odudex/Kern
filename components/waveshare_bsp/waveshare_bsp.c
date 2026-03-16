@@ -156,10 +156,10 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config,
       .lcd_cmd_bits = 8,
       .lcd_param_bits = 8,
   };
+  esp_lcd_panel_handle_t disp_panel = NULL;
   ESP_GOTO_ON_ERROR(esp_lcd_new_panel_io_dbi(mipi_dsi_bus, &dbi_config, &io),
                     err, TAG, "New panel IO failed");
 
-  esp_lcd_panel_handle_t disp_panel = NULL;
   ESP_LOGI(TAG, "Install ST7703 LCD control panel");
 #if CONFIG_BSP_LCD_COLOR_FORMAT_RGB888
   esp_lcd_dpi_panel_config_t dpi_config =
@@ -378,9 +378,11 @@ lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg) {
 
   BSP_ERROR_CHECK_RETURN_NULL(bsp_display_brightness_init());
 
-  BSP_NULL_CHECK(disp = bsp_display_lcd_init(cfg), NULL);
+  disp = bsp_display_lcd_init(cfg);
+  BSP_NULL_CHECK(disp, NULL);
 
-  BSP_NULL_CHECK(disp_indev = bsp_display_indev_init(disp), NULL);
+  disp_indev = bsp_display_indev_init(disp);
+  BSP_NULL_CHECK(disp_indev, NULL);
 
   return disp;
 }

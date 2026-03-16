@@ -491,7 +491,6 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
     pos += cipher_len;
     memcpy(envelope + pos, tag, vi->auth_size);
     secure_memzero(tag, sizeof(tag));
-    pos += vi->auth_size;
   } else {
     rc = cipher_encrypt(vi, key, iv, padded, padded_len, cipher_dest);
     if (rc != CRYPTO_OK) {
@@ -506,7 +505,6 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
                                  envelope + pos, vi->auth_size);
       if (err != KEF_OK)
         goto cleanup;
-      pos += vi->auth_size;
     }
   }
 

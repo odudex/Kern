@@ -270,8 +270,7 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
       return NULL;
     }
 
-    encoded_len =
-        base32_encode(data, data_len, encoded_data, max_encoded + 1);
+    encoded_len = base32_encode(data, data_len, encoded_data, max_encoded + 1);
     if (encoded_len == 0) {
       free(encoded_data);
       return NULL;
@@ -297,7 +296,8 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
 
   // Recalculate payload per part to distribute evenly
   payload_per_part = (encoded_len + num_parts - 1) / num_parts;
-  payload_per_part = ((payload_per_part + 7) / 8) * 8;  // Round up to multiple of 8
+  payload_per_part =
+      ((payload_per_part + 7) / 8) * 8; // Round up to multiple of 8
 
   // Allocate parts structure
   BBQrParts *parts = (BBQrParts *)calloc(1, sizeof(BBQrParts));
@@ -321,8 +321,9 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
   size_t offset = 0;
   for (int i = 0; i < num_parts; i++) {
     size_t remaining = encoded_len - offset;
-    size_t this_payload_len =
-        (remaining > (size_t)payload_per_part) ? (size_t)payload_per_part : remaining;
+    size_t this_payload_len = (remaining > (size_t)payload_per_part)
+                                  ? (size_t)payload_per_part
+                                  : remaining;
 
     // Allocate part string (header + payload + null terminator)
     parts->parts[i] = (char *)malloc(BBQR_HEADER_LEN + this_payload_len + 1);

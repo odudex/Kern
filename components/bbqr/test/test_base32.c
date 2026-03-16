@@ -98,9 +98,9 @@ static const uint8_t TEST_BYTES_9[] = {0xff, 0xff, 0xff, 0xff, 0xff,
                                        0xff, 0xff, 0xff, 0xff, 0xff};
 
 /* "Hello, World!" */
-static const uint8_t TEST_BYTES_10[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x2c,
-                                        0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64,
-                                        0x21};
+static const uint8_t TEST_BYTES_10[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f,
+                                        0x2c, 0x20, 0x57, 0x6f, 0x72,
+                                        0x6c, 0x64, 0x21};
 
 /* Full range of first 16 bytes */
 static const uint8_t TEST_BYTES_11[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
@@ -141,8 +141,7 @@ static const base32_test_vector_t test_vectors[] = {
      "5B46YXZVCJ6L6O5VEYZGIBZ5PCP2FSE3BCPRF4P6KDVO6VQCEANPHTBKS4HABHGPVGB5DZ"
      "DQNCMJ5DCNJQ7AHRAEWA3KCK5LDRZZYAIAEIBAHRGIA3IMCGNTGXRZWFCLYS5LDJIQA3HT"
      "3F25XZ2APYY645MTT2PAI4YEIARACLVQV5EVHYZ32RYH2UR7A6Q53JHM6MHKCU3YZ5LMWE"
-     "5IKIYU2MYQEIDYRJLDX4L2C6CYBK6FVY5ZMX247QBMH76XJ34FMJSD4DGDZHW34AAQAAA="
-     },
+     "5IKIYU2MYQEIDYRJLDX4L2C6CYBK6FVY5ZMX247QBMH76XJ34FMJSD4DGDZHW34AAQAAA="},
     {TEST_BYTES_1, sizeof(TEST_BYTES_1), "JBSWY3DPEBLW64TMMQ",
      "JBSWY3DPEBLW64TMMQ======"},
     {TEST_BYTES_2, sizeof(TEST_BYTES_2), "JBSWY3DPEBLW64TMMQXA",
@@ -264,8 +263,8 @@ void test_base32_decode_unpadded(void) {
              i);
     TEST(test_name);
 
-    if (!base32_decode(tv->encoded, strlen(tv->encoded), output,
-                       sizeof(output), &out_len)) {
+    if (!base32_decode(tv->encoded, strlen(tv->encoded), output, sizeof(output),
+                       &out_len)) {
       FAIL("decode failed");
       continue;
     }

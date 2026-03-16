@@ -39,8 +39,8 @@
 #define MZ_DEFAULT_COMPRESSION 6
 
 /* Window bits (wbits) - determines LZ77 window size: 2^wbits bytes */
-#define MZ_MIN_WBITS 8  /* 256 bytes */
-#define MZ_MAX_WBITS 15 /* 32KB */
+#define MZ_MIN_WBITS 8      /* 256 bytes */
+#define MZ_MAX_WBITS 15     /* 32KB */
 #define MZ_DEFAULT_WBITS 10 /* 1024 bytes - optimal for BBQr */
 
 /* Flush types */
