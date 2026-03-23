@@ -10,3 +10,5 @@ compile_commands.json
 
 .vscode
 .clangd
+
+CLAUDE.md
