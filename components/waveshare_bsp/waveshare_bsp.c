@@ -163,10 +163,10 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config,
   ESP_LOGI(TAG, "Install ST7703 LCD control panel");
 #if CONFIG_BSP_LCD_COLOR_FORMAT_RGB888
   esp_lcd_dpi_panel_config_t dpi_config =
-      ST7703_720_720_PANEL_60HZ_DPI_CONFIG(LCD_COLOR_PIXEL_FORMAT_RGB888);
+      ST7703_720_720_PANEL_60HZ_DPI_CONFIG(LCD_COLOR_FMT_RGB888);
 #else
   esp_lcd_dpi_panel_config_t dpi_config =
-      ST7703_720_720_PANEL_60HZ_DPI_CONFIG(LCD_COLOR_PIXEL_FORMAT_RGB565);
+      ST7703_720_720_PANEL_60HZ_DPI_CONFIG(LCD_COLOR_FMT_RGB565);
 #endif
   dpi_config.num_fbs = CONFIG_BSP_LCD_DPI_BUFFER_NUMS;
 

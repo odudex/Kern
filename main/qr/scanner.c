@@ -8,6 +8,8 @@
 #include <esp_lcd_touch_gt911.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <k_quirc.h>
 #include <lvgl.h>
