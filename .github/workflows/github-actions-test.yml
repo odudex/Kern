@@ -13,6 +13,6 @@ jobs:
     - name: esp-idf build
       uses: espressif/esp-idf-ci-action@v1
       with:
-        esp_idf_version: v5.5
+        esp_idf_version: v6.0
         target: esp32p4
         command: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults" build all size-components size
