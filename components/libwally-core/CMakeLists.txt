@@ -21,12 +21,12 @@ idf_component_register(SRCS
                        "upstream/src/secp256k1/src/modules/schnorrsig"
                        "upstream/src/secp256k1/src/modules/surjection"
                        "upstream/src/secp256k1/src/modules/whitelist"
-                       PRIV_REQUIRES mbedtls)
+                       PRIV_REQUIRES mbedtls mbedtls_compat)
 
 set_source_files_properties(
     upstream/src/amalgamation/combined.c
     PROPERTIES COMPILE_FLAGS
-    "-Wno-nonnull-compare -Wno-unused-function -Wno-error=maybe-uninitialized -Wno-type-limits -Wno-error=array-parameter"
+    "-Wno-nonnull-compare -Wno-unused-function -Wno-error=maybe-uninitialized -Wno-type-limits -Wno-error=array-parameter -Wno-error=unterminated-string-initialization"
     )
 
 if(CONFIG_AMALGAMATED_BUILD)
