@@ -6,9 +6,8 @@ dependencies:
     version: ^2
     public: true
   lvgl/lvgl: '>=8,<10'
-  waveshare/esp_lcd_st7703:
-    version: '*'
-    override_path: '../esp_lcd_st7703'
+  espressif/esp_lcd_st7703:
+    version: '>=2.0.2'
 
 description: Minimal BSP for Waveshare ESP32-P4-WIFI6-Touch-LCD (without audio)
 targets:

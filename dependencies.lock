@@ -60,6 +60,22 @@ dependencies:
     targets:
     - esp32p4
     version: 1.3.1
+  espressif/esp_lcd_st7703:
+    component_hash: 625e45fa2a156622dfc5aca3538b89a61cf163ca73f558fe7f586692874832d7
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: idf
+      require: private
+      version: '>=5.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32p4
+    version: 2.0.2
   espressif/esp_lcd_touch:
     component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
     dependencies:
@@ -201,23 +217,13 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 9.3.0
-  waveshare/esp_lcd_st7703:
-    dependencies:
-    - name: idf
-      version: '>=5.3'
-    source:
-      path: components/esp_lcd_st7703
-      type: local
-    targets:
-    - esp32p4
-    version: 1.0.5
 direct_dependencies:
+- espressif/esp_lcd_st7703
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_port
 - espressif/esp_video
 - idf
 - lvgl/lvgl
-- waveshare/esp_lcd_st7703
-manifest_hash: 3f946970260d29eb433b25857be059fc41aedeab87dd83edf5bd60041bca1f8d
+manifest_hash: bc9a44bc07e6cdeb585fb8a538920550ab88eba2dacd6724b995e7190d65a272
 target: esp32p4
 version: 3.0.0

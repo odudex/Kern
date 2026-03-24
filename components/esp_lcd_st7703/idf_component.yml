@@ -1,7 +1,0 @@
-dependencies:
-  idf:
-    version: '>=5.3'
-description: 'ESP LCD ST7703 driver (local fork, patched for ESP-IDF v6.0)'
-targets:
-- esp32p4
-version: 1.0.5
