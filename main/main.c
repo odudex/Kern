@@ -72,13 +72,16 @@ void app_main(void) {
                            .flags = {
                                .buff_dma = true,
                                .buff_spiram = true,
-                               .sw_rotate = false,
+                               .sw_rotate = true,
                            }};
-  bsp_display_start_with_config(&cfg);
+  lv_display_t *disp = bsp_display_start_with_config(&cfg);
   ESP_LOGI(TAG, "Display initialized successfully");
 
   theme_init();
   lvgl_port_lock(0);
+
+  // Apply saved screen rotation
+  lv_display_set_rotation(disp, settings_get_rotation());
 
   // Set up screen theme background
   lv_obj_t *screen = lv_screen_active();

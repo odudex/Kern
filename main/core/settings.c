@@ -10,6 +10,7 @@ static const char *NVS_NAMESPACE = "settings";
 static const char *KEY_DEFAULT_NET = "def_net";
 static const char *KEY_DEFAULT_POL = "def_pol";
 static const char *KEY_BRIGHTNESS = "bright";
+static const char *KEY_ROTATION = "rotation";
 
 static nvs_handle_t settings_nvs;
 static bool initialized = false;
@@ -77,6 +78,26 @@ esp_err_t settings_set_brightness(uint8_t brightness) {
   if (brightness > 100)
     brightness = 100;
   esp_err_t err = nvs_set_u8(settings_nvs, KEY_BRIGHTNESS, brightness);
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
+}
+
+uint8_t settings_get_rotation(void) {
+  if (!initialized)
+    return 0;
+  uint8_t val = 0;
+  if (nvs_get_u8(settings_nvs, KEY_ROTATION, &val) != ESP_OK)
+    return 0;
+  return (val <= 3) ? val : 0;
+}
+
+esp_err_t settings_set_rotation(uint8_t rotation) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  if (rotation > 3)
+    rotation = 0;
+  esp_err_t err = nvs_set_u8(settings_nvs, KEY_ROTATION, rotation);
   if (err != ESP_OK)
     return err;
   return nvs_commit(settings_nvs);

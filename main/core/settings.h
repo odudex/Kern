@@ -13,6 +13,8 @@ wallet_policy_t settings_get_default_policy(void);
 esp_err_t settings_set_default_policy(wallet_policy_t policy);
 uint8_t settings_get_brightness(void);
 esp_err_t settings_set_brightness(uint8_t brightness);
+uint8_t settings_get_rotation(void);
+esp_err_t settings_set_rotation(uint8_t rotation);
 esp_err_t settings_reset_all(void);
 
 #endif // SETTINGS_H

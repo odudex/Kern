@@ -13,6 +13,7 @@
 #include <freertos/task.h>
 #include <k_quirc.h>
 #include <lvgl.h>
+#include <driver/ppa.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -101,6 +102,17 @@ static volatile bool closing = false;
 static volatile bool scan_completed = false;
 static volatile bool is_fully_initialized = false;
 static volatile bool destruction_in_progress = false;
+
+// PPA hardware rotation for counter-rotating camera frames
+static ppa_client_handle_t cam_ppa_client = NULL;
+static uint8_t *cam_ppa_buffer = NULL;
+static size_t cam_ppa_buffer_size = 0;
+static ppa_srm_rotation_angle_t cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
+
+// PPA client for QR decode grayscale conversion (RGB565 -> GRAY8 + downscale)
+static ppa_client_handle_t qr_ppa_client = NULL;
+static uint8_t *qr_ppa_buffer = NULL;
+static size_t qr_ppa_buffer_size = 0;
 static volatile int active_frame_operations = 0;
 static lv_timer_t *completion_timer = NULL;
 
@@ -437,8 +449,48 @@ static void qr_decode_task(void *pvParameters) {
 #ifdef QR_PERF_DEBUG
       gray_start = esp_timer_get_time();
 #endif
-      rgb565_to_grayscale_downsample(frame_data.frame_data, qr_buf,
-                                     frame_data.width, frame_data.height);
+      if (qr_ppa_client && qr_ppa_buffer) {
+        // PPA bilinear downscale 640x640 -> 320x320 RGB565, then
+        // software grayscale on the smaller image.
+        // On P4 rev >= 3, output could be GRAY8 directly (see init note).
+        uint32_t out_w = frame_data.width / QR_DECODE_SCALE_FACTOR;
+        uint32_t out_h = frame_data.height / QR_DECODE_SCALE_FACTOR;
+        float scale = 1.0f / QR_DECODE_SCALE_FACTOR;
+        ppa_srm_oper_config_t srm = {
+            .in.buffer = frame_data.frame_data,
+            .in.pic_w = frame_data.width,
+            .in.pic_h = frame_data.height,
+            .in.block_w = frame_data.width,
+            .in.block_h = frame_data.height,
+            .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+            .out.buffer = qr_ppa_buffer,
+            .out.buffer_size = qr_ppa_buffer_size,
+            .out.pic_w = out_w,
+            .out.pic_h = out_h,
+            .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+            .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+            .scale_x = scale,
+            .scale_y = scale,
+            .mode = PPA_TRANS_MODE_BLOCKING,
+        };
+        if (ppa_do_scale_rotate_mirror(qr_ppa_client, &srm) == ESP_OK) {
+          // Convert already-downscaled RGB565 to grayscale (1:1, no skip)
+          const uint16_t *pixels = (const uint16_t *)qr_ppa_buffer;
+          for (uint32_t i = 0; i < out_w * out_h; i++) {
+            uint16_t pixel = pixels[i];
+            uint8_t r5 = (pixel >> 11) & 0x1F;
+            uint8_t g6 = (pixel >> 5) & 0x3F;
+            uint8_t b5 = pixel & 0x1F;
+            qr_buf[i] = r5_to_gray[r5] + g6_to_gray[g6] + b5_to_gray[b5];
+          }
+        } else {
+          rgb565_to_grayscale_downsample(frame_data.frame_data, qr_buf,
+                                         frame_data.width, frame_data.height);
+        }
+      } else {
+        rgb565_to_grayscale_downsample(frame_data.frame_data, qr_buf,
+                                       frame_data.width, frame_data.height);
+      }
 #ifdef QR_PERF_DEBUG
       gray_end = esp_timer_get_time();
       quirc_start = esp_timer_get_time();
@@ -546,6 +598,32 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
     goto error;
   }
 
+  // Set up PPA for hardware-accelerated bilinear downscaling before
+  // software grayscale conversion. PPA downscales 640x640 RGB565 to
+  // 320x320 RGB565 with bilinear interpolation (better quality than
+  // nearest-neighbor), then software converts the smaller image to gray.
+  // NOTE: ESP32-P4 rev >= 3 (ECO5) supports PPA_SRM_COLOR_MODE_GRAY8,
+  // which would allow merging downscale + grayscale into a single PPA call.
+  ppa_client_config_t qr_ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
+  if (ppa_register_client(&qr_ppa_cfg, &qr_ppa_client) == ESP_OK) {
+    qr_ppa_buffer_size = decode_width * decode_height * 2; // RGB565
+    qr_ppa_buffer_size =
+        (qr_ppa_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
+        ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
+    qr_ppa_buffer = heap_caps_aligned_calloc(
+        CONFIG_CACHE_L2_CACHE_LINE_SIZE, qr_ppa_buffer_size, 1,
+        MALLOC_CAP_SPIRAM);
+    if (!qr_ppa_buffer) {
+      ESP_LOGW(TAG, "Failed to allocate QR PPA buffer, using software "
+                     "downsampling");
+      ppa_unregister_client(qr_ppa_client);
+      qr_ppa_client = NULL;
+    }
+  } else {
+    ESP_LOGW(TAG, "Failed to register QR PPA client, using software "
+                   "downsampling");
+  }
+
   qr_parser = qr_parser_create();
   if (!qr_parser) {
     ESP_LOGE(TAG, "Failed to create QR parser");
@@ -648,15 +726,47 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
                                  camera_buf_ves, CAMERA_SCREEN_WIDTH);
   buffer_swap_needed = true;
 
-  if (buffer_swap_needed && !closing && camera_img && lvgl_port_lock(0)) {
-    current_display_buffer = back_buffer;
-    img_refresh_dsc.data = current_display_buffer;
-    lv_img_set_src(camera_img, &img_refresh_dsc);
-    lv_refr_now(NULL);
+  // PPA counter-rotate outside the LVGL lock so it doesn't block UI
+  uint8_t *display_src = back_buffer;
+  if (cam_ppa_client && cam_ppa_buffer && !closing) {
+    ppa_srm_oper_config_t srm = {
+        .in.buffer = back_buffer,
+        .in.pic_w = CAMERA_SCREEN_WIDTH,
+        .in.pic_h = CAMERA_SCREEN_HEIGHT,
+        .in.block_w = CAMERA_SCREEN_WIDTH,
+        .in.block_h = CAMERA_SCREEN_HEIGHT,
+        .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        .out.buffer = cam_ppa_buffer,
+        .out.buffer_size = cam_ppa_buffer_size,
+        .out.pic_w = CAMERA_SCREEN_WIDTH,
+        .out.pic_h = CAMERA_SCREEN_HEIGHT,
+        .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        .rotation_angle = cam_ppa_angle,
+        .scale_x = 1.0,
+        .scale_y = 1.0,
+        .mode = PPA_TRANS_MODE_BLOCKING,
+    };
+    if (ppa_do_scale_rotate_mirror(cam_ppa_client, &srm) == ESP_OK) {
+      display_src = cam_ppa_buffer;
+    }
+  }
+
+  if (buffer_swap_needed && !closing && !destruction_in_progress &&
+      lvgl_port_lock(0)) {
+    // Re-check after taking lock — destroy may have run between the check
+    // above and acquiring the lock, nulling camera_img
+    if (!closing && !destruction_in_progress && camera_img) {
+      current_display_buffer = back_buffer;
+      img_refresh_dsc.data = display_src;
+      lv_img_set_src(camera_img, &img_refresh_dsc);
+      lv_refr_now(NULL);
+    }
     buffer_swap_needed = false;
     lvgl_port_unlock();
   }
 
+  // QR decoder gets un-rotated buffer (QR codes are orientation-invariant,
+  // but using original data avoids unnecessary processing)
   if (qr_frame_queue) {
     qr_frame_data_t dummy;
     while (xQueueReceive(qr_frame_queue, &dummy, 0) == pdTRUE) {
@@ -758,6 +868,38 @@ static void camera_init(void) {
 
   if (!qr_decoder_init(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
     ESP_LOGE(TAG, "Failed to initialize QR decoder");
+  }
+
+  // Set up PPA hardware rotation to counter-rotate camera frames when
+  // display rotation is active. This keeps display rotation ON (so UI
+  // widgets render correctly) while the camera feed appears un-rotated.
+  lv_display_rotation_t rot = lv_display_get_rotation(lv_display_get_default());
+  if (rot != LV_DISPLAY_ROTATION_0) {
+    static const ppa_srm_rotation_angle_t counter_map[] = {
+        [LV_DISPLAY_ROTATION_0] = PPA_SRM_ROTATION_ANGLE_0,
+        [LV_DISPLAY_ROTATION_90] = PPA_SRM_ROTATION_ANGLE_270,
+        [LV_DISPLAY_ROTATION_180] = PPA_SRM_ROTATION_ANGLE_180,
+        [LV_DISPLAY_ROTATION_270] = PPA_SRM_ROTATION_ANGLE_90,
+    };
+    cam_ppa_angle = counter_map[rot];
+
+    ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
+    if (ppa_register_client(&ppa_cfg, &cam_ppa_client) == ESP_OK) {
+      cam_ppa_buffer_size =
+          CAMERA_SCREEN_WIDTH * CAMERA_SCREEN_HEIGHT * 2;
+      cam_ppa_buffer_size =
+          (cam_ppa_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
+          ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
+      cam_ppa_buffer = heap_caps_aligned_calloc(
+          CONFIG_CACHE_L2_CACHE_LINE_SIZE, cam_ppa_buffer_size, 1,
+          MALLOC_CAP_SPIRAM);
+      if (!cam_ppa_buffer) {
+        ESP_LOGW(TAG, "Failed to allocate PPA buffer, camera won't "
+                       "counter-rotate");
+        ppa_unregister_client(cam_ppa_client);
+        cam_ppa_client = NULL;
+      }
+    }
   }
 }
 
@@ -898,6 +1040,29 @@ void qr_scanner_page_destroy(void) {
     lvgl_port_unlock();
 
   free_display_buffers();
+
+  // Clean up PPA camera rotation resources
+  if (cam_ppa_client) {
+    ppa_unregister_client(cam_ppa_client);
+    cam_ppa_client = NULL;
+  }
+  if (cam_ppa_buffer) {
+    free(cam_ppa_buffer);
+    cam_ppa_buffer = NULL;
+  }
+  cam_ppa_buffer_size = 0;
+  cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
+
+  // Clean up PPA QR grayscale conversion resources
+  if (qr_ppa_client) {
+    ppa_unregister_client(qr_ppa_client);
+    qr_ppa_client = NULL;
+  }
+  if (qr_ppa_buffer) {
+    free(qr_ppa_buffer);
+    qr_ppa_buffer = NULL;
+  }
+  qr_ppa_buffer_size = 0;
 
   if (video_system_initialized) {
     app_video_deinit();
