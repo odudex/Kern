@@ -14,6 +14,17 @@ An OV5647 camera module is also required.
 
 - [esp-idf v6.0](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32p4/get-started/index.html)
 
+### Checkout ESP-IDF to Commit
+
+Checkout to an early 6.1 version which has bugfixes we need for Kern
+
+```bash
+cd <your ESP-IDF installation dir>
+git checkout 44c77cbf46844cd056c923277ece745173cb270d
+git submodule update --recursive
+./install.sh esp32p4
+```
+
 ## Build
 
 ### Cloning the Repository
