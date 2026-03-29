@@ -2,6 +2,8 @@
 
 #include "scanner.h"
 #include "../components/cUR/src/ur_decoder.h"
+#include "../core/settings.h"
+#include "../ui/input_helpers.h"
 #include "../ui/theme.h"
 #include "../utils/memory_utils.h"
 #include "parser.h"
@@ -26,7 +28,6 @@
 #define QR_FRAME_QUEUE_SIZE 1
 #define QR_DECODE_TASK_STACK_SIZE 32768
 #define QR_DECODE_TASK_PRIORITY 5
-#define QR_DECODE_SCALE_FACTOR 2
 #define PROGRESS_BAR_HEIGHT 20
 #define PROGRESS_FRAME_PADD 2
 #define PROGRESS_BLOC_PAD 1
@@ -83,25 +84,20 @@ static SemaphoreHandle_t qr_task_done_sem = NULL;
 static QRPartParser *qr_parser = NULL;
 static int previously_parsed = -1;
 
-static const uint8_t r5_to_gray[RGB565_RED_LEVELS] = {
-    0,  2,  4,  7,  9,  12, 14, 17, 19, 22, 24, 27, 29, 31, 34, 36,
-    39, 41, 44, 46, 49, 51, 53, 56, 58, 61, 63, 66, 68, 71, 73, 76};
-
-static const uint8_t g6_to_gray[RGB565_GREEN_LEVELS] = {
-    0,   2,   4,   7,   9,   11,  14,  16,  18,  21,  23,  25,  28,
-    30,  32,  35,  37,  39,  42,  44,  46,  49,  51,  53,  56,  58,
-    60,  63,  65,  67,  70,  72,  74,  77,  79,  81,  84,  86,  88,
-    91,  93,  95,  98,  100, 102, 105, 107, 109, 112, 114, 116, 119,
-    121, 123, 126, 128, 130, 133, 135, 137, 140, 142, 144, 147};
-
-static const uint8_t b5_to_gray[RGB565_BLUE_LEVELS] = {
-    0,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
-    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 29};
+// Direct RGB565-to-grayscale lookup table (64KB, initialized once)
+static uint8_t *rgb565_gray_lut = NULL;
 
 static volatile bool closing = false;
 static volatile bool scan_completed = false;
 static volatile bool is_fully_initialized = false;
 static volatile bool destruction_in_progress = false;
+
+// Camera settings overlay
+static lv_obj_t *settings_overlay = NULL;
+static lv_obj_t *ae_slider = NULL;
+static lv_obj_t *focus_slider = NULL;
+static bool has_focus_motor = false;
+static volatile bool settings_active = false;
 
 // PPA hardware rotation for counter-rotating camera frames
 static ppa_client_handle_t cam_ppa_client = NULL;
@@ -109,10 +105,6 @@ static uint8_t *cam_ppa_buffer = NULL;
 static size_t cam_ppa_buffer_size = 0;
 static ppa_srm_rotation_angle_t cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
 
-// PPA client for QR decode grayscale conversion (RGB565 -> GRAY8 + downscale)
-static ppa_client_handle_t qr_ppa_client = NULL;
-static uint8_t *qr_ppa_buffer = NULL;
-static size_t qr_ppa_buffer_size = 0;
 static volatile int active_frame_operations = 0;
 static lv_timer_t *completion_timer = NULL;
 
@@ -144,10 +136,8 @@ static void horizontal_crop_cam_to_display(const uint8_t *camera_buf,
                                            uint32_t display_width);
 static bool allocate_display_buffers(uint32_t width, uint32_t height);
 static void free_display_buffers(void);
-static void rgb565_to_grayscale_downsample(const uint8_t *rgb565_data,
-                                           uint8_t *gray_data,
-                                           uint32_t src_width,
-                                           uint32_t src_height);
+static void rgb565_to_grayscale(const uint8_t *rgb565_data, uint8_t *gray_data,
+                                uint32_t width, uint32_t height);
 static void qr_decode_task(void *pvParameters);
 static bool qr_decoder_init(uint32_t width, uint32_t height);
 static void qr_decoder_cleanup(void);
@@ -353,12 +343,122 @@ static void completion_timer_cb(lv_timer_t *timer) {
 }
 
 static void touch_event_cb(lv_event_t *e) {
-  if (closing)
+  if (closing || settings_overlay)
     return;
   closing = true;
   if (return_callback)
     return_callback();
 }
+
+// --- Camera settings overlay ---
+
+static void destroy_settings_overlay(void) {
+  if (!settings_overlay)
+    return;
+
+  // Save current values to NVS (invert focus slider back to hardware range)
+  if (ae_slider)
+    settings_set_ae_target((uint8_t)lv_slider_get_value(ae_slider));
+  if (focus_slider)
+    settings_set_focus_position(
+        (uint16_t)(FOCUS_POSITION_MAX - lv_slider_get_value(focus_slider)));
+
+  lv_obj_del(settings_overlay);
+  settings_overlay = NULL;
+  ae_slider = NULL;
+  focus_slider = NULL;
+  settings_active = false;
+}
+
+static void ae_slider_cb(lv_event_t *e) {
+  int32_t val = lv_slider_get_value(lv_event_get_target(e));
+  app_video_set_ae_target(camera_ctlr_handle, (uint32_t)val);
+}
+
+static void focus_slider_cb(lv_event_t *e) {
+  int32_t val = lv_slider_get_value(lv_event_get_target(e));
+  app_video_set_focus(camera_ctlr_handle, (uint32_t)(FOCUS_POSITION_MAX - val));
+}
+
+static void settings_close_cb(lv_event_t *e) { destroy_settings_overlay(); }
+
+static void style_settings_slider(lv_obj_t *slider) {
+  lv_obj_set_width(slider, LV_PCT(90));
+  lv_obj_set_height(slider, 20);
+  lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_KNOB);
+  lv_obj_set_style_bg_color(slider, panel_color(), LV_PART_MAIN);
+  lv_obj_set_style_pad_all(slider, 8, LV_PART_KNOB);
+  lv_obj_set_style_margin_bottom(slider, 20, 0);
+}
+
+static void create_settings_overlay(void) {
+  if (settings_overlay)
+    return;
+
+  settings_active = true;
+
+  // Full-screen blocker
+  settings_overlay = lv_obj_create(qr_scanner_screen);
+  lv_obj_remove_style_all(settings_overlay);
+  lv_obj_set_size(settings_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(settings_overlay, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(settings_overlay, LV_OPA_10, 0);
+  lv_obj_add_flag(settings_overlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(settings_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Bottom-aligned panel
+  lv_obj_t *panel = lv_obj_create(settings_overlay);
+  lv_obj_set_size(panel, LV_PCT(85), LV_SIZE_CONTENT);
+  lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, -12);
+  theme_apply_frame(panel);
+  lv_obj_set_style_bg_opa(panel, LV_OPA_70, 0);
+  lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_ver(panel, 12, 0);
+  lv_obj_set_style_pad_hor(panel, 12, 0);
+  lv_obj_set_style_pad_row(panel, 10, 0);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+  // Exposure label + slider
+  lv_obj_t *ae_title = lv_label_create(panel);
+  lv_label_set_text(ae_title, "Exposure");
+  lv_obj_set_style_text_font(ae_title, theme_font_small(), 0);
+  lv_obj_set_style_text_color(ae_title, main_color(), 0);
+
+  ae_slider = lv_slider_create(panel);
+  lv_slider_set_range(ae_slider, AE_TARGET_MIN, AE_TARGET_MAX);
+  lv_slider_set_value(ae_slider, settings_get_ae_target(), LV_ANIM_OFF);
+  style_settings_slider(ae_slider);
+  lv_obj_add_event_cb(ae_slider, ae_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+  // Focus label + slider (only if motor detected, inverted: left=near right=far)
+  if (has_focus_motor) {
+    lv_obj_t *focus_title = lv_label_create(panel);
+    lv_label_set_text(focus_title, "Focus");
+    lv_obj_set_style_text_font(focus_title, theme_font_small(), 0);
+    lv_obj_set_style_text_color(focus_title, main_color(), 0);
+
+    focus_slider = lv_slider_create(panel);
+    lv_slider_set_range(focus_slider, 0, FOCUS_POSITION_MAX);
+    lv_slider_set_value(focus_slider,
+                        FOCUS_POSITION_MAX - settings_get_focus_position(),
+                        LV_ANIM_OFF);
+    style_settings_slider(focus_slider);
+    lv_obj_add_event_cb(focus_slider, focus_slider_cb, LV_EVENT_VALUE_CHANGED,
+                        NULL);
+  }
+
+  // Close button
+  lv_obj_t *close_btn = theme_create_button(panel, "Close", true);
+  lv_obj_set_width(close_btn, LV_PCT(60));
+  lv_obj_set_style_bg_opa(close_btn, LV_OPA_COVER, 0);
+  lv_obj_add_event_cb(close_btn, settings_close_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void settings_btn_cb(lv_event_t *e) { create_settings_overlay(); }
 
 static uint8_t *allocate_buffer_with_fallback(size_t size) {
   uint8_t *buffer = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -396,26 +496,25 @@ static void free_display_buffers(void) {
   display_buffer_size = 0;
 }
 
-static void rgb565_to_grayscale_downsample(const uint8_t *rgb565_data,
-                                           uint8_t *gray_data,
-                                           uint32_t src_width,
-                                           uint32_t src_height) {
+static void rgb565_to_grayscale(const uint8_t *rgb565_data, uint8_t *gray_data,
+                                uint32_t width, uint32_t height) {
   const uint16_t *pixels = (const uint16_t *)rgb565_data;
-  uint32_t dst_width = src_width / QR_DECODE_SCALE_FACTOR;
-  uint32_t dst_height = src_height / QR_DECODE_SCALE_FACTOR;
+  uint32_t total = width * height;
 
-  for (uint32_t dst_y = 0; dst_y < dst_height; dst_y++) {
-    uint32_t src_y = dst_y * QR_DECODE_SCALE_FACTOR;
-    for (uint32_t dst_x = 0; dst_x < dst_width; dst_x++) {
-      uint32_t src_idx = src_y * src_width + dst_x * QR_DECODE_SCALE_FACTOR;
-      uint16_t pixel = pixels[src_idx];
-
+  if (rgb565_gray_lut) {
+    for (uint32_t i = 0; i < total; i++) {
+      gray_data[i] = rgb565_gray_lut[pixels[i]];
+    }
+  } else {
+    for (uint32_t i = 0; i < total; i++) {
+      uint16_t pixel = pixels[i];
       uint8_t r5 = (pixel >> 11) & 0x1F;
       uint8_t g6 = (pixel >> 5) & 0x3F;
       uint8_t b5 = pixel & 0x1F;
-
-      gray_data[dst_y * dst_width + dst_x] =
-          r5_to_gray[r5] + g6_to_gray[g6] + b5_to_gray[b5];
+      uint8_t r8 = (r5 * 255 + 15) / 31;
+      uint8_t g8 = (g6 * 255 + 31) / 63;
+      uint8_t b8 = (b5 * 255 + 15) / 31;
+      gray_data[i] = (uint8_t)((77 * r8 + 150 * g8 + 29 * b8) >> 8);
     }
   }
 }
@@ -439,6 +538,10 @@ static void qr_decode_task(void *pvParameters) {
     if (closing || destruction_in_progress)
       break;
 
+    // Skip decoding while settings panel is open (camera feed continues)
+    if (settings_active)
+      continue;
+
 #ifdef QR_PERF_DEBUG
     int64_t frame_start = esp_timer_get_time();
     int64_t gray_start, gray_end, quirc_start, quirc_end;
@@ -449,48 +552,8 @@ static void qr_decode_task(void *pvParameters) {
 #ifdef QR_PERF_DEBUG
       gray_start = esp_timer_get_time();
 #endif
-      if (qr_ppa_client && qr_ppa_buffer) {
-        // PPA bilinear downscale 640x640 -> 320x320 RGB565, then
-        // software grayscale on the smaller image.
-        // On P4 rev >= 3, output could be GRAY8 directly (see init note).
-        uint32_t out_w = frame_data.width / QR_DECODE_SCALE_FACTOR;
-        uint32_t out_h = frame_data.height / QR_DECODE_SCALE_FACTOR;
-        float scale = 1.0f / QR_DECODE_SCALE_FACTOR;
-        ppa_srm_oper_config_t srm = {
-            .in.buffer = frame_data.frame_data,
-            .in.pic_w = frame_data.width,
-            .in.pic_h = frame_data.height,
-            .in.block_w = frame_data.width,
-            .in.block_h = frame_data.height,
-            .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-            .out.buffer = qr_ppa_buffer,
-            .out.buffer_size = qr_ppa_buffer_size,
-            .out.pic_w = out_w,
-            .out.pic_h = out_h,
-            .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-            .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-            .scale_x = scale,
-            .scale_y = scale,
-            .mode = PPA_TRANS_MODE_BLOCKING,
-        };
-        if (ppa_do_scale_rotate_mirror(qr_ppa_client, &srm) == ESP_OK) {
-          // Convert already-downscaled RGB565 to grayscale (1:1, no skip)
-          const uint16_t *pixels = (const uint16_t *)qr_ppa_buffer;
-          for (uint32_t i = 0; i < out_w * out_h; i++) {
-            uint16_t pixel = pixels[i];
-            uint8_t r5 = (pixel >> 11) & 0x1F;
-            uint8_t g6 = (pixel >> 5) & 0x3F;
-            uint8_t b5 = pixel & 0x1F;
-            qr_buf[i] = r5_to_gray[r5] + g6_to_gray[g6] + b5_to_gray[b5];
-          }
-        } else {
-          rgb565_to_grayscale_downsample(frame_data.frame_data, qr_buf,
-                                         frame_data.width, frame_data.height);
-        }
-      } else {
-        rgb565_to_grayscale_downsample(frame_data.frame_data, qr_buf,
-                                       frame_data.width, frame_data.height);
-      }
+      rgb565_to_grayscale(frame_data.frame_data, qr_buf, frame_data.width,
+                          frame_data.height);
 #ifdef QR_PERF_DEBUG
       gray_end = esp_timer_get_time();
       quirc_start = esp_timer_get_time();
@@ -563,8 +626,26 @@ static void qr_decode_task(void *pvParameters) {
 }
 
 static bool qr_decoder_init(uint32_t width, uint32_t height) {
-  uint32_t decode_width = width / QR_DECODE_SCALE_FACTOR;
-  uint32_t decode_height = height / QR_DECODE_SCALE_FACTOR;
+
+  // Build direct RGB565->grayscale LUT (64KB) for single-lookup conversion
+  if (!rgb565_gray_lut) {
+    rgb565_gray_lut = heap_caps_malloc(65536, MALLOC_CAP_SPIRAM);
+    if (rgb565_gray_lut) {
+      for (uint32_t i = 0; i < 65536; i++) {
+        uint8_t r5 = (i >> 11) & 0x1F;
+        uint8_t g6 = (i >> 5) & 0x3F;
+        uint8_t b5 = i & 0x1F;
+        // BT.601 luma with full 8-bit precision:
+        // expand RGB565 to 8-bit, then Y = (77*R + 150*G + 29*B) >> 8
+        uint8_t r8 = (r5 * 255 + 15) / 31;
+        uint8_t g8 = (g6 * 255 + 31) / 63;
+        uint8_t b8 = (b5 * 255 + 15) / 31;
+        rgb565_gray_lut[i] = (uint8_t)((77 * r8 + 150 * g8 + 29 * b8) >> 8);
+      }
+    } else {
+      ESP_LOGW(TAG, "Failed to allocate RGB565 grayscale LUT");
+    }
+  }
 
   qr_decoder = k_quirc_new();
   if (!qr_decoder) {
@@ -572,7 +653,7 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
     goto error;
   }
 
-  if (k_quirc_resize(qr_decoder, decode_width, decode_height) < 0) {
+  if (k_quirc_resize(qr_decoder, width, height) < 0) {
     ESP_LOGE(TAG, "Failed to resize QR decoder");
     goto error;
   }
@@ -596,32 +677,6 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
   if (task_result != pdPASS) {
     ESP_LOGE(TAG, "Failed to create QR decode task");
     goto error;
-  }
-
-  // Set up PPA for hardware-accelerated bilinear downscaling before
-  // software grayscale conversion. PPA downscales 640x640 RGB565 to
-  // 320x320 RGB565 with bilinear interpolation (better quality than
-  // nearest-neighbor), then software converts the smaller image to gray.
-  // NOTE: ESP32-P4 rev >= 3 (ECO5) supports PPA_SRM_COLOR_MODE_GRAY8,
-  // which would allow merging downscale + grayscale into a single PPA call.
-  ppa_client_config_t qr_ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
-  if (ppa_register_client(&qr_ppa_cfg, &qr_ppa_client) == ESP_OK) {
-    qr_ppa_buffer_size = decode_width * decode_height * 2; // RGB565
-    qr_ppa_buffer_size =
-        (qr_ppa_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
-        ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
-    qr_ppa_buffer =
-        heap_caps_aligned_calloc(CONFIG_CACHE_L2_CACHE_LINE_SIZE,
-                                 qr_ppa_buffer_size, 1, MALLOC_CAP_SPIRAM);
-    if (!qr_ppa_buffer) {
-      ESP_LOGW(TAG, "Failed to allocate QR PPA buffer, using software "
-                    "downsampling");
-      ppa_unregister_client(qr_ppa_client);
-      qr_ppa_client = NULL;
-    }
-  } else {
-    ESP_LOGW(TAG, "Failed to register QR PPA client, using software "
-                  "downsampling");
   }
 
   qr_parser = qr_parser_create();
@@ -686,6 +741,11 @@ static void qr_decoder_cleanup(void) {
   if (qr_parser) {
     qr_parser_destroy(qr_parser);
     qr_parser = NULL;
+  }
+
+  if (rgb565_gray_lut) {
+    heap_caps_free(rgb565_gray_lut);
+    rgb565_gray_lut = NULL;
   }
 }
 
@@ -838,6 +898,9 @@ static void camera_init(void) {
     return;
   }
 
+  // Detect focus motor before streaming starts
+  has_focus_motor = app_video_has_focus_motor(camera_ctlr_handle);
+
   ESP_ERROR_CHECK(
       app_video_register_frame_operation_cb(camera_video_frame_operation));
 
@@ -864,6 +927,14 @@ static void camera_init(void) {
     ESP_LOGE(TAG, "Failed to start camera stream task: %s",
              esp_err_to_name(start_err));
     return;
+  }
+
+  // Apply camera settings after stream starts (ISP pipeline must be active).
+  // Disable AF so manual focus isn't overridden by the IPA pipeline.
+  app_video_set_ae_target(camera_ctlr_handle, settings_get_ae_target());
+  if (has_focus_motor) {
+    app_video_disable_af();
+    app_video_set_focus(camera_ctlr_handle, settings_get_focus_position());
   }
 
   if (!qr_decoder_init(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
@@ -920,7 +991,7 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   qr_scanner_screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(qr_scanner_screen, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(qr_scanner_screen, lv_color_hex(0x1e1e1e), 0);
+  lv_obj_set_style_bg_color(qr_scanner_screen, bg_color(), 0);
   lv_obj_set_style_bg_opa(qr_scanner_screen, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(qr_scanner_screen, 0, 0);
   lv_obj_set_style_pad_all(qr_scanner_screen, 0, 0);
@@ -944,13 +1015,18 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(camera_img, CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT);
   lv_obj_center(camera_img);
   lv_obj_clear_flag(camera_img, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(camera_img, lv_color_white(), 0);
+  lv_obj_set_style_bg_color(camera_img, bg_color(), 0);
   lv_obj_set_style_bg_opa(camera_img, LV_OPA_COVER, 0);
 
   lv_obj_t *title_label =
       theme_create_label(qr_scanner_screen, "QR Scanner", false);
   theme_apply_label(title_label, true);
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 8);
+
+  lv_obj_t *settings_btn =
+      ui_create_settings_button(qr_scanner_screen, settings_btn_cb);
+  lv_obj_set_style_bg_opa(settings_btn, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(settings_btn, bg_color(), 0);
 
 #ifdef QR_PERF_DEBUG
   fps_label = lv_label_create(qr_scanner_screen);
@@ -986,6 +1062,8 @@ void qr_scanner_page_destroy(void) {
   destruction_in_progress = true;
   closing = true;
   is_fully_initialized = false;
+  destroy_settings_overlay();
+  has_focus_motor = false;
 
   if (completion_timer) {
     lv_timer_del(completion_timer);
@@ -1051,17 +1129,6 @@ void qr_scanner_page_destroy(void) {
   }
   cam_ppa_buffer_size = 0;
   cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
-
-  // Clean up PPA QR grayscale conversion resources
-  if (qr_ppa_client) {
-    ppa_unregister_client(qr_ppa_client);
-    qr_ppa_client = NULL;
-  }
-  if (qr_ppa_buffer) {
-    free(qr_ppa_buffer);
-    qr_ppa_buffer = NULL;
-  }
-  qr_ppa_buffer_size = 0;
 
   if (video_system_initialized) {
     app_video_deinit();
