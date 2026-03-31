@@ -1,0 +1,15 @@
+CompileFlags:
+  Add:
+    - --target=riscv32
+  Remove:
+    - --target=riscv32-esp-elf
+    - -march=*
+    - -mabi=*
+    - -mtune=*
+    - -specs=*
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -fmacro-prefix-map=*
+    - -fdebug-prefix-map=*
+    - -fzero-init-padding-bits=*
+    - -fno-malloc-dce
