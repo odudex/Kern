@@ -72,9 +72,11 @@ idf.py monitor
 If you have [just](https://github.com/casey/just) installed, you can use the provided `.justfile`:
 
 ```bash
-just build   # Build the project
-just flash   # Flash to device
-just clean   # Clean build artifacts
+just build    # Build the project
+just flash    # Flash to device
+just format   # Format source code with clang-format
+just test     # Run tests
+just clean    # Clean build artifacts
 ```
 
 ### Full Clean
