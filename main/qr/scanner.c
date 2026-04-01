@@ -434,7 +434,8 @@ static void create_settings_overlay(void) {
   style_settings_slider(ae_slider);
   lv_obj_add_event_cb(ae_slider, ae_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-  // Focus label + slider (only if motor detected, inverted: left=near right=far)
+  // Focus label + slider (only if motor detected, inverted: left=near
+  // right=far)
   if (has_focus_motor) {
     lv_obj_t *focus_title = lv_label_create(panel);
     lv_label_set_text(focus_title, "Focus");
