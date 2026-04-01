@@ -5,6 +5,14 @@
 
 set -e
 
+# Usage: ./format.sh [--check]
+#   --check   Dry-run mode: exit 1 if any file needs formatting (for CI)
+
+CHECK_MODE=false
+if [ "${1:-}" = "--check" ]; then
+    CHECK_MODE=true
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DIRS=(
@@ -17,14 +25,33 @@ DIRS=(
     "$SCRIPT_DIR/components/waveshare_bsp"
 )
 
-echo "Running clang-format on project source files..."
+if $CHECK_MODE; then
+    echo "Checking clang-format on project source files..."
+    FORMAT_ARGS="--dry-run -Werror"
+else
+    echo "Running clang-format on project source files..."
+    FORMAT_ARGS="-i"
+fi
+
+FAILED=false
 
 for dir in "${DIRS[@]}"; do
     if [ ! -d "$dir" ]; then
         echo "Warning: $dir not found, skipping"
         continue
     fi
-    find "$dir" -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/build/*" -exec clang-format -i {} \;
+    while IFS= read -r -d '' file; do
+        if ! clang-format $FORMAT_ARGS "$file"; then
+            FAILED=true
+        fi
+    done < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/build/*" -print0)
 done
 
-echo "Formatting complete!"
+if $CHECK_MODE && $FAILED; then
+    echo "Format check failed!"
+    exit 1
+elif $CHECK_MODE; then
+    echo "Format check passed!"
+else
+    echo "Formatting complete!"
+fi

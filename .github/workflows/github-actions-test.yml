@@ -1,10 +1,19 @@
 name: GitHub Actions test
 on: [push]
 jobs:
-  build:
-
+  format-check:
     runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Install clang-format
+      run: sudo apt-get update && sudo apt-get install -y clang-format
+    - name: Check formatting
+      run: ./format.sh --check
 
+  build:
+    needs: format-check
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout repo
       uses: actions/checkout@v2
