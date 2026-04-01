@@ -13,8 +13,16 @@ jobs:
     - name: Check formatting
       run: ./format.sh --check
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Run tests
+      run: ./test.sh
+
   build:
-    needs: format-check
+    needs: [format-check, test]
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repo
