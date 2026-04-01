@@ -9,4 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "Running bbqr tests..."
 make -C "$SCRIPT_DIR/components/bbqr/test" run
 
+echo "Running core tests..."
+make -C "$SCRIPT_DIR/main/core/test" run
+
 echo "All tests passed!"

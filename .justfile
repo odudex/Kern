@@ -19,3 +19,4 @@ clean:
     rm -fRd compile_commands.json
     rm -fRd .cache/
     make -C components/bbqr/test clean
+    make -C main/core/test clean

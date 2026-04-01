@@ -15,3 +15,7 @@ CLAUDE.md
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/bbqr/test/test_miniz
+
+main/core/test/test_derivation_path
+main/core/test/combined.o
+main/core/test/libwally.a
