@@ -11,3 +11,12 @@ compile_commands.json
 .vscode
 
 CLAUDE.md
+
+components/bbqr/test/test_bbqr
+components/bbqr/test/test_base32
+components/bbqr/test/test_miniz
+.cm/logs/
+
+# Simulator build artifacts and runtime data
+simulator/build*/
+simulator/sim_data/

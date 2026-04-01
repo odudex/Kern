@@ -8,6 +8,9 @@
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>
+#ifdef SIMULATOR
+#include <string.h>
+#endif
 #include <wally_core.h>
 
 static lv_obj_t *public_key_screen = NULL;

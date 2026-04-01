@@ -75,7 +75,19 @@ If you have [just](https://github.com/casey/just) installed, you can use the pro
 just build   # Build the project
 just flash   # Flash to device
 just clean   # Clean build artifacts
+
+# Desktop simulator
+just sim-build  # Build the simulator
+just sim        # Build and run the simulator
+just sim-clean  # Remove simulator build artifacts
+just sim-reset  # Wipe simulator data (factory reset)
+just sim-qr IMG # Run simulator with a QR image
 ```
+
+The simulator renders the full LVGL UI in an SDL2 window.
+Pass extra flags after `just sim`, e.g.
+`just sim --qr-dir path/to/images/ --verbose`.
+See [simulator/README.md](simulator/README.md) for details.
 
 ### Full Clean
 
