@@ -1,6 +1,7 @@
 #include "key.h"
 #include "../utils/secure_mem.h"
 #include <esp_log.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <wally_bip39.h>
@@ -108,23 +109,46 @@ bool key_get_fingerprint_hex(char *hex_out) {
 // Parse BIP32 path like "m/84'/0'/0'" into uint32_t array
 static bool parse_derivation_path(const char *path, uint32_t *indices_out,
                                   size_t *depth_out, size_t max_depth) {
-  if (!path || !indices_out || !depth_out) {
+  if (!path || !path[0] || !indices_out || !depth_out) {
     return false;
   }
 
-  if (path[0] != 'm' || path[1] != '/') {
-    return false;
+  for (const char *c = path; *c; c++) {
+    if (*c != 'm' && *c != '/' && *c != '\'' && *c != 'h' && *c != 'H' &&
+        !(*c >= '0' && *c <= '9')) {
+      return false;
+    }
   }
 
-  const char *p = path + 2;
+  const char *p = path;
+  if (p[0] == 'm') {
+    p++;
+    if (p[0] == '/') {
+      p++;
+      if (p[0] == '\0') {
+        return false;
+      }
+    } else if (p[0] != '\0') {
+      return false;
+    }
+  }
   size_t depth = 0;
 
   while (*p && depth < max_depth) {
     uint32_t value = 0;
     bool has_digits = false;
 
+    if (*p == '0' && p[1] >= '0' && p[1] <= '9') {
+      return false;
+    }
+
     while (*p >= '0' && *p <= '9') {
-      value = value * 10 + (*p - '0');
+      uint32_t digit = (uint32_t)(*p - '0');
+      if (value > UINT32_MAX / 10 ||
+          (value == UINT32_MAX / 10 && digit > UINT32_MAX % 10)) {
+        return false;
+      }
+      value = value * 10 + digit;
       p++;
       has_digits = true;
     }
@@ -133,15 +157,23 @@ static bool parse_derivation_path(const char *path, uint32_t *indices_out,
       return false;
     }
 
-    if (*p == '\'') {
+    if (*p == '\'' || *p == 'h' || *p == 'H') {
+      if (value >= BIP32_INITIAL_HARDENED_CHILD) {
+        return false;
+      }
       value |= BIP32_INITIAL_HARDENED_CHILD;
       p++;
+    } else if (value >= BIP32_INITIAL_HARDENED_CHILD) {
+      return false;
     }
 
     indices_out[depth++] = value;
 
     if (*p == '/') {
       p++;
+      if (*p == '\0') {
+        return false;
+      }
     } else if (*p == '\0') {
       break;
     } else {
