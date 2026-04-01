@@ -8,7 +8,11 @@ build:
 flash:
     . $IDF_PATH/export.sh && idf.py flash
 
+test:
+    ./test.sh
+
 clean:
     rm -fRd build/
     rm -fRd compile_commands.json
     rm -fRd .cache/
+    make -C components/bbqr/test clean
