@@ -8,6 +8,9 @@ build:
 flash:
     . $IDF_PATH/export.sh && idf.py flash
 
+format:
+    ./format.sh
+
 test:
     ./test.sh
 
