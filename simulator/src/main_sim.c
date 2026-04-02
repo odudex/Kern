@@ -86,8 +86,8 @@ static void splash_done_cb(lv_timer_t *t) {
     if (pin_is_configured()) {
         pin_page_create(scr, PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
     } else {
-        /* First boot — run PIN setup flow */
-        pin_page_create(scr, PIN_PAGE_SETUP, post_unlock_cb, NULL);
+        nav_init(scr);
+        login_page_create(scr);
     }
 }
 
