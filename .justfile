@@ -42,3 +42,11 @@ sim-reset:
 # Run simulator with a QR image (software renderer for ssh -X)
 sim-qr IMAGE: sim-build
     SDL_VIDEODRIVER=x11 SDL_RENDER_DRIVER=software ./simulator/build/kern_simulator --qr-image {{IMAGE}}
+
+# Build simulator with webcam support (V4L2)
+sim-build-webcam:
+    cd simulator && cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DSIM_WEBCAM=ON && cmake --build build -- -j$(nproc)
+
+# Run simulator with webcam (builds with V4L2 support)
+sim-webcam *ARGS: sim-build-webcam
+    SDL_VIDEODRIVER=x11 SDL_RENDER_DRIVER=software ./simulator/build/kern_simulator --webcam {{ARGS}}

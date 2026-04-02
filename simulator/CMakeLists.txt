@@ -152,12 +152,27 @@ set(PIN_PAGE_SOURCES
 )
 
 # --- Platform simulators (BSP, SD card, video/camera) ---
+option(SIM_WEBCAM "Enable webcam capture via V4L2" OFF)
+
 set(PLATFORM_SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/bsp_sim/bsp_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/sd_card_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/video_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/stb_image_impl.c
 )
+
+if(SIM_WEBCAM)
+    # v4l2_capture uses real kernel V4L2 headers (not the ESP-IDF stubs),
+    # so it is compiled as a separate library without the stubs include path.
+    add_library(v4l2_capture STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture.c
+    )
+    target_include_directories(v4l2_capture PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim
+    )
+    target_compile_options(v4l2_capture PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
 
 # --- Application pages ---
 set(APP_PAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/pages)
@@ -264,6 +279,7 @@ target_compile_definitions(kern_simulator PRIVATE
     SIM_LCD_V_RES=${SIM_LCD_V_RES}
     K_QUIRC_ADAPTIVE_THRESHOLD
     K_QUIRC_BILINEAR_THRESHOLD
+    $<$<BOOL:${SIM_WEBCAM}>:SIM_WEBCAM=1>
 )
 
 target_compile_options(kern_simulator PRIVATE
@@ -276,6 +292,14 @@ target_compile_options(kern_simulator PRIVATE
     -include mbedtls_compat.h
 )
 
+target_link_options(kern_simulator PRIVATE
+    # Redirect lv_refr_now() to a no-op wrapper in bsp_sim.c.
+    # Background threads (camera stream) call lv_refr_now() which clears
+    # LVGL's dirty state without rendering (SDL2 requires the main thread).
+    # The wrapper keeps widgets dirty so lv_timer_handler() renders them.
+    -Wl,--wrap=lv_refr_now
+)
+
 target_link_libraries(kern_simulator PRIVATE
     SDL2
     Threads::Threads
@@ -284,4 +308,5 @@ target_link_libraries(kern_simulator PRIVATE
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}
     ${MBEDX509_LIB}
+    $<$<BOOL:${SIM_WEBCAM}>:v4l2_capture>
 )

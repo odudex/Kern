@@ -16,6 +16,7 @@
 #include "pages/pin/pin_page.h"
 #include "pages/login/login.h"
 #include "ui/nav.h"
+#include "esp_lvgl_port.h"
 #include "utils/bip39_filter.h"
 #include <wally_core.h>
 #include <nvs_flash.h>
@@ -104,6 +105,7 @@ static void print_usage(const char *prog) {
     printf("  -d, --data-dir <path>   Data directory (default: simulator/sim_data/)\n");
     printf("  -W, --width <N>         Display width in pixels (default: %d)\n", SIM_LCD_H_RES);
     printf("  -H, --height <N>        Display height in pixels (default: %d)\n", SIM_LCD_V_RES);
+    printf("  -w, --webcam [device]   Use webcam (default: /dev/video0)\n");
     printf("  -v, --verbose           Enable DEBUG-level logging\n");
     printf("  -h, --help              Show this help\n");
 }
@@ -116,6 +118,7 @@ int main(int argc, char *argv[]) {
         { "data-dir", required_argument, NULL, 'd' },
         { "width",    required_argument, NULL, 'W' },
         { "height",   required_argument, NULL, 'H' },
+        { "webcam",   optional_argument, NULL, 'w' },
         { "verbose",  no_argument,       NULL, 'v' },
         { "help",     no_argument,       NULL, 'h' },
         { NULL, 0, NULL, 0 }
@@ -123,7 +126,7 @@ int main(int argc, char *argv[]) {
     int sim_width = SIM_LCD_H_RES;
     int sim_height = SIM_LCD_V_RES;
     int opt;
-    while ((opt = getopt_long(argc, argv, "q:Q:d:W:H:vh", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "q:Q:d:W:H:w::vh", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'q':
                 sim_video_set_qr_image(optarg);
@@ -143,6 +146,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'H':
                 sim_height = atoi(optarg);
+                break;
+            case 'w':
+                sim_video_set_webcam(optarg);
                 break;
             case 'v':
                 esp_log_level_set("*", ESP_LOG_DEBUG);
@@ -235,7 +241,14 @@ int main(int argc, char *argv[]) {
      * SDL_QUIT is handled by LVGL's SDL driver which calls exit(0)
      * --------------------------------------------------------------------- */
     while (1) {
+        lvgl_port_lock(0);
         uint32_t ms_til_next = lv_timer_handler();
+        lvgl_port_unlock();
+        /* Cap delay to ~33ms (~30fps).  Background threads (camera stream)
+         * update LVGL image sources via lv_img_set_src() which marks the
+         * widget dirty, but SDL2 can only render from the main thread.
+         * A short cap ensures lv_timer_handler() redraws promptly. */
+        if (ms_til_next > 33) ms_til_next = 33;
         SDL_Delay(ms_til_next < 1 ? 1 : ms_til_next);
     }
 

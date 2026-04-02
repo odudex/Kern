@@ -50,6 +50,7 @@ just sim
 | `--data-dir <path>` | Base data directory (default: `sim_data/`) |
 | `--width <N>`       | Display width in pixels (default: 720)     |
 | `--height <N>`      | Display height in pixels (default: 720)    |
+| `--webcam [device]` | Use webcam (default: `/dev/video0`). Requires `-DSIM_WEBCAM=ON` build |
 | `--verbose`         | Enable DEBUG-level logging                 |
 | `--help`            | Show usage and exit                        |
 
@@ -95,6 +96,28 @@ Settings persist across runs in the NVS files.
 Delete `sim_data/` (or the custom `--data-dir`) to reset to
 factory state.
 
+## Webcam Support (Optional)
+
+Build with V4L2 webcam capture to scan real QR codes and generate
+real entropy:
+
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DSIM_WEBCAM=ON
+cmake --build build -- -j$(nproc)
+./build/kern_simulator --webcam
+# Or specify a device:
+./build/kern_simulator --webcam /dev/video1
+```
+
+Your user must be in the `video` group to access the webcam device:
+
+```bash
+sudo usermod -aG video $USER   # then log out/in
+```
+
+When `--webcam` is passed but the device cannot be opened, the
+simulator falls back to blank-frame mode.
+
 ## Build-Time Resolution Override
 
 ```bash
@@ -114,7 +137,8 @@ Forcing the software renderer works around this.
 
 ## Known Limitations
 
-- Camera simulation is file-based (no real camera access)
+- Camera simulation is file-based by default (build with
+  `-DSIM_WEBCAM=ON` for real webcam support via V4L2)
 - eFuse HMAC uses a hardcoded test key (anti-phishing
   words differ from real device)
 - PPA rotation may not match hardware exactly

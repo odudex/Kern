@@ -10,6 +10,9 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "stb_image.h"
+#ifdef SIM_WEBCAM
+#include "v4l2_capture.h"
+#endif
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -38,6 +41,12 @@ static size_t s_qr_dir_index = 0;      /* cycles through images in s_qr_image_di
 
 static uint8_t *s_user_bufs[4];
 static uint32_t s_num_user_bufs = 0;
+
+#ifdef SIM_WEBCAM
+static bool s_webcam_enabled = false;
+static char *s_webcam_device = NULL;
+static v4l2_capture_t *s_webcam = NULL;
+#endif
 
 /* --- Helpers --- */
 
@@ -76,6 +85,12 @@ static uint8_t *alloc_blank_rgb565(uint32_t w, uint32_t h, size_t *out_size) {
 static void *stream_thread_func(void *arg) {
     (void)arg;
     while (s_streaming) {
+#ifdef SIM_WEBCAM
+        if (s_webcam && s_frame_buf) {
+            /* Capture live frame — poll() inside read_rgb565 rate-limits */
+            v4l2_capture_read_rgb565(s_webcam, s_frame_buf, s_frame_size);
+        }
+#endif
         if (s_frame_cb && s_frame_buf) {
             uint8_t *deliver_buf = s_frame_buf;
             if (s_num_user_bufs > 0 && s_user_bufs[0]) {
@@ -84,7 +99,10 @@ static void *stream_thread_func(void *arg) {
             }
             s_frame_cb(deliver_buf, 0, s_width, s_height, s_frame_size);
         }
-        usleep(33333); /* ~30 fps */
+#ifdef SIM_WEBCAM
+        if (!s_webcam)
+#endif
+            usleep(33333); /* ~30 fps (only for static image mode) */
     }
     return NULL;
 }
@@ -101,6 +119,27 @@ int app_video_open(char *dev, video_fmt_t init_fmt) {
     free(s_frame_buf);
     s_frame_buf = NULL;
     s_frame_size = 0;
+
+#ifdef SIM_WEBCAM
+    if (s_webcam_enabled) {
+        /* Request at least 1280x720 so both dimensions >= 640, which is
+         * the minimum capture_entropy.c needs for horizontal_crop(). */
+        s_webcam = v4l2_capture_open(s_webcam_device, 1280, 720);
+        if (s_webcam) {
+            v4l2_capture_get_resolution(s_webcam, &s_width, &s_height);
+            s_frame_size = (size_t)s_width * s_height * 2;
+            s_frame_buf = calloc(1, s_frame_size);
+            if (s_frame_buf) {
+                ESP_LOGI(TAG, "Webcam opened: %"PRIu32"x%"PRIu32, s_width, s_height);
+                return 42;
+            }
+            /* alloc failed — fall through */
+            v4l2_capture_close(s_webcam);
+            s_webcam = NULL;
+        }
+        ESP_LOGW(TAG, "Webcam unavailable, falling back to image/blank");
+    }
+#endif
 
     if (s_qr_image_path) {
         s_frame_buf = load_rgb565(s_qr_image_path, &s_width, &s_height, &s_frame_size);
@@ -238,6 +277,12 @@ esp_err_t app_video_stream_task_stop(int video_fd) {
 
 esp_err_t app_video_close(int video_fd) {
     app_video_stream_task_stop(video_fd);
+#ifdef SIM_WEBCAM
+    if (s_webcam) {
+        v4l2_capture_close(s_webcam);
+        s_webcam = NULL;
+    }
+#endif
     free(s_frame_buf);
     s_frame_buf = NULL;
     s_frame_size = 0;
@@ -279,4 +324,15 @@ void sim_video_set_qr_image(const char *path) {
 void sim_video_set_qr_dir(const char *dir_path) {
     free(s_qr_image_dir);
     s_qr_image_dir = dir_path ? strdup(dir_path) : NULL;
+}
+
+void sim_video_set_webcam(const char *device) {
+#ifdef SIM_WEBCAM
+    free(s_webcam_device);
+    s_webcam_device = strdup(device ? device : "/dev/video0");
+    s_webcam_enabled = true;
+#else
+    (void)device;
+    fprintf(stderr, "Warning: webcam support not compiled in (build with -DSIM_WEBCAM=ON)\n");
+#endif
 }

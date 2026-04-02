@@ -14,7 +14,20 @@
 
 static const char *TAG = "BSP_SIM";
 
-static pthread_mutex_t s_lvgl_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t s_lvgl_mutex;
+static pthread_once_t s_lvgl_mutex_once = PTHREAD_ONCE_INIT;
+static pthread_t s_main_thread;
+static volatile bool s_main_thread_set = false;
+
+static void init_lvgl_mutex(void) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&s_lvgl_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+    s_main_thread = pthread_self();
+    s_main_thread_set = true;
+}
 
 /* Saved indev for bsp_display_get_input_dev() */
 static lv_indev_t *s_mouse_indev = NULL;
@@ -31,9 +44,20 @@ esp_err_t lvgl_port_deinit(void) {
 }
 
 bool lvgl_port_lock(uint32_t timeout_ms) {
+    pthread_once(&s_lvgl_mutex_once, init_lvgl_mutex);
+
+    /* Main thread uses recursive lock (re-entrant from LVGL callbacks).
+     * Background threads (camera stream) use trylock so they never block
+     * the main thread during page-destroy waits. */
+    if (s_main_thread_set && pthread_equal(pthread_self(), s_main_thread)) {
+        return pthread_mutex_lock(&s_lvgl_mutex) == 0;
+    }
+
     if (timeout_ms == 0) {
-        pthread_mutex_lock(&s_lvgl_mutex);
-        return true;
+        /* Background thread: use a short timed lock so the stream thread
+         * can acquire the lock between lv_timer_handler() calls, without
+         * blocking long enough to deadlock during page-destroy waits. */
+        timeout_ms = 10;
     }
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -51,6 +75,23 @@ void lvgl_port_unlock(void) {
 }
 
 void lvgl_port_flush_ready(lv_display_t *disp) {
+    (void)disp;
+}
+
+/**
+ * Wrapper for lv_refr_now() — linked via --wrap=lv_refr_now.
+ *
+ * Camera frame callbacks call lv_refr_now() from background threads to force
+ * an immediate display update.  On the real device this works because the
+ * display driver writes directly to the LCD.  With SDL2, rendering must happen
+ * on the main thread; calling from a background thread silently fails but
+ * clears LVGL's dirty state, preventing the main thread from ever rendering
+ * the update.
+ *
+ * Making this a no-op lets lv_img_set_src() mark the widget dirty, and the
+ * main loop's lv_timer_handler() picks it up on the next iteration (~30 fps).
+ */
+void __wrap_lv_refr_now(lv_display_t *disp) {
     (void)disp;
 }
 
@@ -108,5 +149,7 @@ esp_err_t bsp_i2c_deinit(void) {
 }
 
 i2c_master_bus_handle_t bsp_i2c_get_handle(void) {
-    return NULL;
+    /* Return a non-NULL dummy handle so callers (scanner, capture_entropy)
+     * don't bail out.  app_video_main() ignores the handle in the simulator. */
+    return (i2c_master_bus_handle_t)1;
 }

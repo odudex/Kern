@@ -12,3 +12,10 @@ void sim_video_set_qr_image(const char *path);
  * Call before app_video_open(). If NULL or not called, uses single image or blank.
  */
 void sim_video_set_qr_dir(const char *dir_path);
+
+/**
+ * Enable webcam capture via V4L2.
+ * Call before app_video_open(). If device is NULL, defaults to /dev/video0.
+ * Requires SIM_WEBCAM build option; otherwise prints a warning and is a no-op.
+ */
+void sim_video_set_webcam(const char *device);
