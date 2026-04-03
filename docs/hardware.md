@@ -15,15 +15,15 @@ configurations — boards, displays, and cameras — that are known to work.
 
 | Device | Display | Camera | Radio | Status | Notes |
 |--------|---------|--------|-------|--------|-------|
-| [Waveshare ESP32-P4-WiFi6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) | 4" 720×720 ST7703 (MIPI-DSI) | OV5647 (MIPI-CSI) | ⚠️ ESP32-C6 | ✅ Working | Primary development board. Radio is on a separate ESP32-C6 chip — can be left unprogrammed. |
+| [Waveshare ESP32-P4-WiFi6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) | 4" 720×720 ST7703 (MIPI-DSI) | OV5647 (MIPI-CSI) |  ESP32-C6 |  Working | Primary development board. Radio is on a separate ESP32-C6 chip — can be left unprogrammed. |
 
 ### DIY Kits (assemble your own)
 
 | Board | Display | Camera | Radio | Status | Notes |
 |-------|---------|--------|-------|--------|-------|
-| [Waveshare ESP32-P4-Pico](https://www.waveshare.com/esp32-p4-pico.htm) | TBD | TBD | ❌ None | 🔧 In progress | Compact, radio-free. Requires external display and camera via MIPI or SPI. Good starting point for a clean DIY build. |
+| [Waveshare ESP32-P4-Pico](https://www.waveshare.com/esp32-p4-pico.htm) | TBD | TBD |  None |  In progress | Compact, radio-free. Requires external display and camera via MIPI or SPI. Good starting point for a clean DIY build. |
 
-> **Legend:** ✅ Working · 🔧 In progress / untested · ❌ Not working · ⚠️ Has radio
+> **Legend:** Working · 🔧 In progress / untested ·  Not working ·  Has radio
 
 ---
 
