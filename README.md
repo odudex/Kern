@@ -4,11 +4,25 @@ Kern is an experimental project that explores the capabilities of the ESP32-P4 a
 
 ## Hardware
 
-Early development uses the [Waveshare ESP32-P4-WiFi6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm).
+Kern targets the **ESP32-P4** SoC. The ESP32-P4 itself contains no radio
+(Wi-Fi / Bluetooth); some boards add a companion chip that does. For a
+production air-gapped signing device, prefer a radio-free board.
 
-ESP32-P4 does not contain radio (WiFi, BLE), but this board has a radio in a secondary chip (ESP32-C6 mini). Later the project will migrate to use radio-less, simpler and cheaper boards with ESP32-P4 only.
+### Validated hardware
 
-An OV5647 camera module is also required.
+See **[docs/hardware.md](docs/hardware.md)** for the full list of validated
+boards, displays, and camera modules, including DIY kit options and guidance
+on contributing new configurations.
+
+### Primary development board
+
+[Waveshare ESP32-P4-WiFi6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm)
+— 4" 720×720 touch display, OV5647 MIPI-CSI camera, onboard SD card slot.
+Includes an ESP32-C6 companion chip for Wi-Fi (unused by Kern).
+
+### Camera
+
+An **OV5647** camera module connected via MIPI-CSI is required for QR scanning.
 
 ## Prerequisites
 
