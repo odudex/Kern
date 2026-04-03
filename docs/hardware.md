@@ -23,7 +23,7 @@ configurations — boards, displays, and cameras — that are known to work.
 |-------|---------|--------|-------|--------|-------|
 | [Waveshare ESP32-P4-Pico](https://www.waveshare.com/esp32-p4-pico.htm) | TBD | TBD |  None |  In progress | Compact, radio-free. Requires external display and camera via MIPI or SPI. Good starting point for a clean DIY build. |
 
-> **Legend:** Working · 🔧 In progress / untested ·  Not working ·  Has radio
+> **Legend:** Working · In progress / untested ·  Not working ·  Has radio
 
 ---
 
