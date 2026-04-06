@@ -10,7 +10,9 @@
 
 #define INNER_RING_PCT 63
 #define CORE_PCT 33
-#define TEXT_GAP 100
+/* Gap between logo and text as percentage of logo diameter (matches branding)
+ */
+#define TEXT_GAP_PCT 21
 
 static lv_obj_t *create_circle(lv_obj_t *parent, int32_t diameter,
                                int32_t border) {
@@ -39,14 +41,15 @@ static lv_obj_t *create_label(lv_obj_t *parent) {
   return label;
 }
 
-static lv_obj_t *create_flex_container(lv_obj_t *parent, lv_align_t align) {
+static lv_obj_t *create_flex_container(lv_obj_t *parent, lv_align_t align,
+                                       int32_t gap) {
   lv_obj_t *c = lv_obj_create(parent);
   lv_obj_remove_style_all(c);
   lv_obj_set_size(c, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(c, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(c, TEXT_GAP, 0);
+  lv_obj_set_style_pad_column(c, gap, 0);
   lv_obj_align(c, align, 0, 0);
   return c;
 }
@@ -85,9 +88,11 @@ lv_obj_t *kern_logo_create(lv_obj_t *parent, int32_t x, int32_t y,
 
 /** Create logo with text, horizontally centered at top */
 lv_obj_t *kern_logo_with_text(lv_obj_t *parent, int32_t x, int32_t y) {
-  lv_obj_t *c = create_flex_container(parent, LV_ALIGN_TOP_MID);
+  int32_t logo_size = 160;
+  lv_obj_t *c = create_flex_container(parent, LV_ALIGN_TOP_MID,
+                                      logo_size * TEXT_GAP_PCT / 100);
   lv_obj_align(c, LV_ALIGN_TOP_MID, x, y);
-  kern_logo_create(c, 0, 0, 160);
+  kern_logo_create(c, 0, 0, logo_size);
   create_label(c);
   return c;
 }
@@ -97,7 +102,8 @@ void kern_logo_animated(lv_obj_t *parent) {
   int32_t size = 200;
   int32_t t = LV_MAX(size / 80, 1);
 
-  lv_obj_t *c = create_flex_container(parent, LV_ALIGN_CENTER);
+  lv_obj_t *c =
+      create_flex_container(parent, LV_ALIGN_CENTER, size * TEXT_GAP_PCT / 100);
 
   lv_obj_t *logo = lv_obj_create(c);
   lv_obj_remove_style_all(logo);
