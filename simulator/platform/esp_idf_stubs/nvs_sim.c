@@ -219,15 +219,6 @@ esp_err_t nvs_open(const char *namespace_name, nvs_open_mode_t open_mode,
     return ESP_OK;
 }
 
-void nvs_close(nvs_handle_t handle) {
-    int idx = (int)handle - 1;
-    if (idx < 0 || idx >= NVS_MAX_HANDLES || !s_handles[idx].used) return;
-    nvs_handle_impl_t *h = &s_handles[idx];
-    if (h->dirty) save_to_file(h);
-    free_entries(h);
-    h->used = false;
-}
-
 /* -------------------------------------------------------------------------- */
 /* Commit / erase                                                              */
 /* -------------------------------------------------------------------------- */
@@ -247,26 +238,6 @@ esp_err_t nvs_erase_all(nvs_handle_t handle) {
     free_entries(&s_handles[idx]);
     s_handles[idx].dirty = 1;
     return ESP_OK;
-}
-
-esp_err_t nvs_erase_key(nvs_handle_t handle, const char *key) {
-    int idx = (int)handle - 1;
-    if (idx < 0 || idx >= NVS_MAX_HANDLES || !s_handles[idx].used)
-        return ESP_ERR_NVS_INVALID_HANDLE;
-    if (!key) return ESP_ERR_INVALID_ARG;
-    nvs_handle_impl_t *h = &s_handles[idx];
-    nvs_entry_t **prev = &h->entries;
-    for (nvs_entry_t *e = h->entries; e; e = e->next) {
-        if (strncmp(e->key, key, NVS_MAX_KEY_LEN) == 0) {
-            *prev = e->next;
-            free(e->value);
-            free(e);
-            h->dirty = 1;
-            return ESP_OK;
-        }
-        prev = &e->next;
-    }
-    return ESP_ERR_NVS_NOT_FOUND;
 }
 
 /* -------------------------------------------------------------------------- */

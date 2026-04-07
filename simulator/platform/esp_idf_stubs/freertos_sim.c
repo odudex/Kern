@@ -118,13 +118,6 @@ void vTaskSuspend(TaskHandle_t handle) {
     pause();
 }
 
-TickType_t xTaskGetTickCount(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (TickType_t)((uint64_t)ts.tv_sec * 1000ULL +
-                        (uint64_t)(ts.tv_nsec / 1000000ULL));
-}
-
 /* -------------------------------------------------------------------------- */
 /* Semaphores                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -143,16 +136,6 @@ SemaphoreHandle_t xSemaphoreCreateBinary(void) {
     pthread_cond_init(&s->cond, NULL);
     s->value     = 0; /* Binary semaphore starts unavailable */
     s->is_binary = true;
-    return s;
-}
-
-SemaphoreHandle_t xSemaphoreCreateMutex(void) {
-    sem_impl_t *s = calloc(1, sizeof(sem_impl_t));
-    if (!s) return NULL;
-    pthread_mutex_init(&s->mutex, NULL);
-    pthread_cond_init(&s->cond, NULL);
-    s->value     = 1; /* Mutex starts unlocked */
-    s->is_binary = false;
     return s;
 }
 
@@ -272,11 +255,6 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
     return pdPASS;
 }
 
-BaseType_t xQueueSendToBack(QueueHandle_t queue, const void *item,
-                            TickType_t timeout) {
-    return xQueueSend(queue, item, timeout);
-}
-
 BaseType_t xQueueReceive(QueueHandle_t queue, void *buffer, TickType_t timeout) {
     queue_impl_t *q = (queue_impl_t *)queue;
     if (!q || !buffer) return pdFAIL;
@@ -363,42 +341,6 @@ EventBits_t xEventGroupGetBits(EventGroupHandle_t group) {
     eg_impl_t *eg = (eg_impl_t *)group;
     if (!eg) return 0;
     pthread_mutex_lock(&eg->mutex);
-    EventBits_t result = eg->bits;
-    pthread_mutex_unlock(&eg->mutex);
-    return result;
-}
-
-EventBits_t xEventGroupWaitBits(EventGroupHandle_t group,
-                                 EventBits_t bits_to_wait,
-                                 BaseType_t clear_on_exit,
-                                 BaseType_t wait_all,
-                                 TickType_t timeout) {
-    eg_impl_t *eg = (eg_impl_t *)group;
-    if (!eg) return 0;
-
-    struct timespec abs;
-    if (timeout != portMAX_DELAY && timeout != 0) abs = ticks_to_abstime(timeout);
-    pthread_mutex_lock(&eg->mutex);
-
-    for (;;) {
-        EventBits_t cur = eg->bits;
-        bool satisfied = wait_all
-            ? ((cur & bits_to_wait) == bits_to_wait)
-            : ((cur & bits_to_wait) != 0);
-
-        if (satisfied) {
-            EventBits_t ret_bits = cur & bits_to_wait;
-            if (clear_on_exit) eg->bits &= ~bits_to_wait;
-            pthread_mutex_unlock(&eg->mutex);
-            return eg->bits | ret_bits;
-        }
-        if (timeout == 0) break;
-        int rc = (timeout == portMAX_DELAY)
-            ? pthread_cond_wait(&eg->cond, &eg->mutex)
-            : pthread_cond_timedwait(&eg->cond, &eg->mutex, &abs);
-        if (rc != 0) break;
-    }
-
     EventBits_t result = eg->bits;
     pthread_mutex_unlock(&eg->mutex);
     return result;

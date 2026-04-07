@@ -15,10 +15,9 @@ BaseType_t xTaskCreatePinnedToCore(TaskFunction_t func, const char *name,
                                    UBaseType_t priority, TaskHandle_t *handle,
                                    int core_id);
 
-void       vTaskDelete(TaskHandle_t handle);
-void       vTaskDelay(TickType_t ticks);
-void       vTaskSuspend(TaskHandle_t handle);
-TickType_t xTaskGetTickCount(void);
+void vTaskDelete(TaskHandle_t handle);
+void vTaskDelay(TickType_t ticks);
+void vTaskSuspend(TaskHandle_t handle);
 
 static inline TaskHandle_t xTaskGetIdleTaskHandleForCore(int core_id) {
     (void)core_id;

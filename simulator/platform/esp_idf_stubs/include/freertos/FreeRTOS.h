@@ -47,9 +47,4 @@ EventGroupHandle_t xEventGroupCreate(void);
 EventBits_t        xEventGroupSetBits(EventGroupHandle_t group, EventBits_t bits);
 EventBits_t        xEventGroupClearBits(EventGroupHandle_t group, EventBits_t bits);
 EventBits_t        xEventGroupGetBits(EventGroupHandle_t group);
-EventBits_t        xEventGroupWaitBits(EventGroupHandle_t group,
-                                       EventBits_t bits_to_wait,
-                                       BaseType_t clear_on_exit,
-                                       BaseType_t wait_all,
-                                       TickType_t timeout);
 void               vEventGroupDelete(EventGroupHandle_t group);
