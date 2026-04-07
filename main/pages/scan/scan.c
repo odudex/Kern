@@ -37,6 +37,9 @@
 #include <wally_script.h>
 #include <wally_transaction.h>
 
+// Address indices above this are considered unusual and warrant a warning.
+#define UNUSUAL_DERIVATION_INDEX 10000u
+
 typedef enum {
   OUTPUT_TYPE_SELF_TRANSFER,
   OUTPUT_TYPE_CHANGE,
@@ -839,6 +842,16 @@ static bool create_psbt_info_display(void) {
         lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_pad_left(addr, 20, 0);
       }
+
+      if (classified_outputs[i].address_index >= UNUSUAL_DERIVATION_INDEX) {
+        lv_obj_t *warn = theme_create_label(
+            psbt_info_container,
+            "WARNING: unusual derivation index. May be unrecoverable", false);
+        lv_obj_set_style_text_color(warn, error_color(), 0);
+        lv_obj_set_width(warn, LV_PCT(100));
+        lv_obj_set_style_pad_left(warn, 20, 0);
+        lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
+      }
     }
   }
 
@@ -869,6 +882,16 @@ static bool create_psbt_info_display(void) {
         lv_obj_set_width(addr, LV_PCT(100));
         lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_pad_left(addr, 20, 0);
+      }
+
+      if (classified_outputs[i].address_index >= UNUSUAL_DERIVATION_INDEX) {
+        lv_obj_t *warn = theme_create_label(
+            psbt_info_container,
+            "WARNING: unusual derivation index. May be unrecoverable", false);
+        lv_obj_set_style_text_color(warn, error_color(), 0);
+        lv_obj_set_width(warn, LV_PCT(100));
+        lv_obj_set_style_pad_left(warn, 20, 0);
+        lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
       }
     }
   }
