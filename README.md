@@ -1,4 +1,19 @@
-# KERN
+<p align="center">
+  <img src="branding/kern_logo_with_text_dark_bg.png" alt="Kern" width="400">
+</p>
+
+<p align="center">
+  <a href="docs/screens/login.png"><img src="docs/screens/login.png" width="15%"></a>
+  <a href="docs/screens/enter_key.png"><img src="docs/screens/enter_key.png" width="15%"></a>
+  <a href="docs/screens/home.png"><img src="docs/screens/home.png" width="15%"></a>
+  <a href="docs/screens/addresses.png"><img src="docs/screens/addresses.png" width="15%"></a>
+</p>
+<p align="center">
+  <a href="docs/screens/mnemonic_edit.png"><img src="docs/screens/mnemonic_edit.png" width="15%"></a>
+  <a href="docs/screens/transcript.png"><img src="docs/screens/transcript.png" width="15%"></a>
+  <a href="docs/screens/xpub.png"><img src="docs/screens/xpub.png" width="15%"></a>
+  <a href="docs/screens/tx.png"><img src="docs/screens/tx.png" width="15%"></a>
+</p>
 
 Kern is an experimental project that explores the capabilities of the ESP32-P4 as a platform to perform air-gapped Bitcoin signatures and cryptography.
 

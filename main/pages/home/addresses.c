@@ -23,7 +23,7 @@
 #define NUM_ADDRESSES 8
 
 static lv_obj_t *addresses_screen = NULL;
-static lv_obj_t *type_button = NULL;
+static lv_obj_t *type_dropdown = NULL;
 static lv_obj_t *prev_button = NULL;
 static lv_obj_t *next_button = NULL;
 static lv_obj_t *back_button = NULL;
@@ -98,12 +98,10 @@ static void settings_button_cb(lv_event_t *e) {
   wallet_settings_page_show();
 }
 
-static void type_button_cb(lv_event_t *e) {
-  (void)e;
-  show_change = !show_change;
+static void type_dropdown_cb(lv_event_t *e) {
+  lv_obj_t *dd = lv_event_get_target(e);
+  show_change = (lv_dropdown_get_selected(dd) == 1);
   address_offset = 0;
-  lv_label_set_text(lv_obj_get_child(type_button, 0),
-                    show_change ? "Change" : "Receive");
   refresh_address_list();
 }
 
@@ -471,8 +469,10 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_align(btn_cont, LV_FLEX_ALIGN_SPACE_BETWEEN,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-  type_button =
-      create_nav_button(btn_cont, "Receive", LV_PCT(40), type_button_cb);
+  type_dropdown = theme_create_dropdown(btn_cont, "Receive\nChange");
+  lv_obj_set_width(type_dropdown, LV_PCT(40));
+  lv_obj_add_event_cb(type_dropdown, type_dropdown_cb, LV_EVENT_VALUE_CHANGED,
+                      NULL);
   prev_button = create_nav_button(btn_cont, "<", LV_PCT(15), prev_button_cb);
   next_button = create_nav_button(btn_cont, ">", LV_PCT(15), next_button_cb);
   lv_obj_add_state(prev_button, LV_STATE_DISABLED);
@@ -544,7 +544,7 @@ void addresses_page_destroy(void) {
     lv_obj_del(addresses_screen);
     addresses_screen = NULL;
   }
-  type_button = NULL;
+  type_dropdown = NULL;
   prev_button = NULL;
   next_button = NULL;
   scan_button = NULL;
