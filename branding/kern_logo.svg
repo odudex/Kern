@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Kern Logo - "Essential Point" design: concentric rings + solid core -->
+  <!-- Color: #ff6600 (Kern orange) -->
+
+  <!-- Outer ring -->
+  <circle cx="100" cy="100" r="98.5" fill="none" stroke="#ff6600" stroke-width="2.5"/>
+
+  <!-- Inner ring (63% diameter) -->
+  <circle cx="100" cy="100" r="58" fill="none" stroke="#ff6600" stroke-width="5"/>
+
+  <!-- Core (33% diameter, solid) -->
+  <circle cx="100" cy="100" r="33" fill="#ff6600"/>
+</svg>
