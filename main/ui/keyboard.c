@@ -41,7 +41,7 @@ static const char btn_to_char[] = {
     'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'a', 's', 'd',  'f',
     'g', 'h', 'j', 'k', 'l', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '\b', '\n'};
 
-#define BTN_COUNT (sizeof(btn_to_char))
+#define BTN_COUNT (sizeof(btn_to_char) / sizeof((btn_to_char)[0]))
 
 static int get_key_index_from_btn(uint32_t btn_id) {
   if (btn_id >= BTN_COUNT)
