@@ -967,8 +967,20 @@ static bool create_psbt_info_display(void) {
   return true;
 }
 
-static void sign_button_cb(lv_event_t *e) {
+static lv_obj_t *sign_progress_dialog = NULL;
+
+static void dismiss_sign_progress(void) {
+  if (sign_progress_dialog) {
+    lv_obj_del(sign_progress_dialog);
+    sign_progress_dialog = NULL;
+  }
+}
+
+static void deferred_sign_cb(lv_timer_t *timer) {
+  (void)timer;
+
   if (!current_psbt) {
+    dismiss_sign_progress();
     dialog_show_error("No PSBT loaded", NULL, 2000);
     return;
   }
@@ -976,6 +988,7 @@ static void sign_button_cb(lv_event_t *e) {
   size_t signatures_added = psbt_sign(current_psbt, is_testnet);
 
   if (signatures_added == 0) {
+    dismiss_sign_progress();
     dialog_show_error("Failed to sign PSBT", NULL, 2000);
     return;
   }
@@ -993,6 +1006,8 @@ static void sign_button_cb(lv_event_t *e) {
   if (trimmed_psbt) {
     wally_psbt_free(trimmed_psbt);
   }
+
+  dismiss_sign_progress();
 
   if (ret != WALLY_OK) {
     dialog_show_error("Failed to encode PSBT", NULL, 2000);
@@ -1015,6 +1030,21 @@ static void sign_button_cb(lv_event_t *e) {
   scan_page_destroy();
 
   qr_viewer_page_show();
+}
+
+static void sign_button_cb(lv_event_t *e) {
+  (void)e;
+  if (!current_psbt) {
+    dialog_show_error("No PSBT loaded", NULL, 2000);
+    return;
+  }
+
+  // Signing big PSBTs can take a few seconds — show a progress dialog and
+  // defer the work to a one-shot timer so LVGL gets to render it first.
+  sign_progress_dialog =
+      dialog_show_progress("Sign", "Processing...", DIALOG_STYLE_OVERLAY);
+  lv_timer_t *t = lv_timer_create(deferred_sign_cb, 50, NULL);
+  lv_timer_set_repeat_count(t, 1);
 }
 
 static void return_from_qr_viewer_cb(void) {
@@ -1320,6 +1350,7 @@ void scan_page_hide(void) {
 }
 
 void scan_page_destroy(void) {
+  dismiss_sign_progress();
   qr_scanner_page_destroy();
   load_descriptor_storage_page_destroy();
   descriptor_loader_destroy_source_menu();
