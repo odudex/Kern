@@ -171,11 +171,27 @@ esp_err_t ppa_unregister_client(ppa_client_handle_t client) {
 esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t client,
                                       const ppa_srm_oper_config_t *config) {
     (void)client;
-    if (!config) return ESP_ERR_INVALID_ARG;
-    size_t copy_len = config->in.block_w * config->in.block_h * 2;
-    if (copy_len > config->out.buffer_size) copy_len = config->out.buffer_size;
-    if (config->out.buffer && config->in.buffer)
-        memcpy(config->out.buffer, config->in.buffer, copy_len);
+    if (!config || !config->out.buffer || !config->in.buffer)
+        return ESP_ERR_INVALID_ARG;
+
+    /* Nearest-neighbor crop + scale (RGB565 = 2 bytes/pixel) */
+    const uint16_t *src = (const uint16_t *)config->in.buffer;
+    uint16_t *dst = (uint16_t *)config->out.buffer;
+    uint32_t src_stride = config->in.pic_w;
+    uint32_t ox = config->in.block_offset_x;
+    uint32_t oy = config->in.block_offset_y;
+    uint32_t crop_w = config->in.block_w;
+    uint32_t crop_h = config->in.block_h;
+    uint32_t dst_w = config->out.pic_w;
+    uint32_t dst_h = config->out.pic_h;
+
+    for (uint32_t dy = 0; dy < dst_h; dy++) {
+        uint32_t sy = oy + (dy * crop_h / dst_h);
+        for (uint32_t dx = 0; dx < dst_w; dx++) {
+            uint32_t sx = ox + (dx * crop_w / dst_w);
+            dst[dy * dst_w + dx] = src[sy * src_stride + sx];
+        }
+    }
     return ESP_OK;
 }
 

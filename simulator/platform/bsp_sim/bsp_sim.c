@@ -121,6 +121,14 @@ lv_indev_t *bsp_display_get_input_dev(void) {
     return s_mouse_indev;
 }
 
+bool bsp_display_lock(uint32_t timeout_ms) {
+    return lvgl_port_lock(timeout_ms);
+}
+
+void bsp_display_unlock(void) {
+    lvgl_port_unlock();
+}
+
 esp_err_t bsp_display_brightness_init(void) {
     return ESP_OK;
 }

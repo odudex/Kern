@@ -18,6 +18,7 @@ static lv_obj_t *create_circle(lv_obj_t *parent, int32_t diameter,
                                int32_t border) {
   lv_obj_t *obj = lv_obj_create(parent);
   lv_obj_remove_style_all(obj);
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(obj, diameter, diameter);
   lv_obj_center(obj);
   lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, 0);
@@ -32,12 +33,18 @@ static lv_obj_t *create_circle(lv_obj_t *parent, int32_t diameter,
   return obj;
 }
 
+static const lv_font_t *logo_font(void) {
+  return theme_get_screen_width() >= 600 ? &kern_logo_100
+                                         : &lv_font_montserrat_36;
+}
+
 static lv_obj_t *create_label(lv_obj_t *parent) {
   lv_obj_t *label = lv_label_create(parent);
   lv_label_set_text(label, "KERN");
-  lv_obj_set_style_text_font(label, &kern_logo_100, 0);
+  const lv_font_t *font = logo_font();
+  lv_obj_set_style_text_font(label, font, 0);
   lv_obj_set_style_text_color(label, main_color(), 0);
-  lv_obj_set_style_text_letter_space(label, -1, 0);
+  lv_obj_set_style_text_letter_space(label, font == &kern_logo_100 ? -1 : 0, 0);
   return label;
 }
 
@@ -75,6 +82,7 @@ lv_obj_t *kern_logo_create(lv_obj_t *parent, int32_t x, int32_t y,
                            int32_t size) {
   lv_obj_t *c = lv_obj_create(parent);
   lv_obj_remove_style_all(c);
+  lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(c, size, size);
   lv_obj_set_pos(c, x, y);
 
@@ -88,18 +96,34 @@ lv_obj_t *kern_logo_create(lv_obj_t *parent, int32_t x, int32_t y,
 
 /** Create logo with text, horizontally centered at top */
 lv_obj_t *kern_logo_with_text(lv_obj_t *parent, int32_t x, int32_t y) {
-  int32_t logo_size = 160;
-  lv_obj_t *c = create_flex_container(parent, LV_ALIGN_TOP_MID,
-                                      logo_size * TEXT_GAP_PCT / 100);
+  int32_t sz = theme_get_logo_size() * 160 / 200;
+  lv_obj_t *c =
+      create_flex_container(parent, LV_ALIGN_TOP_MID, sz * TEXT_GAP_PCT / 100);
   lv_obj_align(c, LV_ALIGN_TOP_MID, x, y);
-  kern_logo_create(c, 0, 0, logo_size);
+  kern_logo_create(c, 0, 0, sz);
+  create_label(c);
+  return c;
+}
+
+/** Create logo with text as a flex-friendly child (no forced alignment) */
+lv_obj_t *kern_logo_with_text_inline(lv_obj_t *parent) {
+  int32_t sz = theme_get_logo_size() * 160 / 200;
+  lv_obj_t *c = lv_obj_create(parent);
+  lv_obj_remove_style_all(c);
+  lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(c, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(c, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(c, sz * TEXT_GAP_PCT / 100, 0);
+  kern_logo_create(c, 0, 0, sz);
   create_label(c);
   return c;
 }
 
 /** Animated logo with text for boot screen, vertically centered */
 void kern_logo_animated(lv_obj_t *parent) {
-  int32_t size = 200;
+  int32_t size = theme_get_logo_size();
   int32_t t = LV_MAX(size / 80, 1);
 
   lv_obj_t *c =

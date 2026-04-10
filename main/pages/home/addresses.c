@@ -263,7 +263,7 @@ static void show_address_detail(int index) {
   lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
 
   // QR code in white container
-  int32_t square_size = lv_disp_get_hor_res(NULL) * 55 / 100;
+  int32_t square_size = theme_get_screen_width() * 55 / 100;
 
   lv_obj_t *qr_container = lv_obj_create(detail_container);
   lv_obj_set_size(qr_container, square_size, square_size);
@@ -351,9 +351,23 @@ static void refresh_address_list(void) {
     stored_indices[si] = idx;
     stored_count++;
 
-    // Create truncated display text
+    // Create truncated display text — fit to available width
+    // Estimate chars that fit: screen width / avg char width, minus index
+    // prefix
+    const lv_font_t *font = theme_font_small();
+    int avg_char_w = lv_font_get_glyph_width(font, '0', '0');
+    int32_t usable_w =
+        theme_get_screen_width() - 2 * theme_get_default_padding();
+    int max_chars = usable_w / avg_char_w - 4; // subtract "N: " prefix
+    int prefix = max_chars * 55 / 100;         // 55% prefix
+    int suffix = max_chars - prefix - 3;       // 3 for "..."
+    if (prefix < 6)
+      prefix = 6;
+    if (suffix < 4)
+      suffix = 4;
     char truncated[64];
-    truncate_address_middle(truncated, sizeof(truncated), address, 14, 10);
+    truncate_address_middle(truncated, sizeof(truncated), address, prefix,
+                            suffix);
 
     char btn_text[80];
     snprintf(btn_text, sizeof(btn_text), "%u: %s", idx, truncated);
@@ -370,7 +384,8 @@ static void refresh_address_list(void) {
     lv_label_set_text(label, btn_text);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_align(label, LV_ALIGN_LEFT_MID);
-    theme_apply_button_label(label, false);
+    lv_obj_set_style_text_font(label, theme_font_small(), 0);
+    lv_obj_set_style_text_color(label, main_color(), 0);
 
     lv_obj_add_event_cb(btn, address_button_cb, LV_EVENT_CLICKED,
                         (void *)(intptr_t)si);
@@ -483,7 +498,7 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_touch_button(scan_button, false);
   lv_obj_t *scan_label = lv_label_create(scan_button);
   lv_label_set_text(scan_label, ICON_QRCODE_36);
-  lv_obj_set_style_text_font(scan_label, &icons_36, 0);
+  lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
   lv_obj_center(scan_label);
   lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
 

@@ -19,11 +19,16 @@ Kern is an experimental project that explores the capabilities of the ESP32-P4 a
 
 ## Hardware
 
-Early development uses the [Waveshare ESP32-P4-WiFi6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm).
+Kern supports two Waveshare ESP32-P4 boards:
 
-ESP32-P4 does not contain radio (WiFi, BLE), but this board has a radio in a secondary chip (ESP32-C6 mini). Later the project will migrate to use radio-less, simpler and cheaper boards with ESP32-P4 only.
+| Board | Display | Touch | Camera |
+|-------|---------|-------|--------|
+| [ESP32-P4-WiFi6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) (`wave_4b`) | 720x720 MIPI DSI | GT911 | OV5647 + DW9714 autofocus |
+| [ESP32-P4-WiFi6-Touch-LCD-3.5](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-3.5.htm) (`wave_35`) | 320x480 SPI | FT5x06 | OV5647 (no autofocus) |
 
-An OV5647 camera module is also required.
+ESP32-P4 does not contain radio (WiFi, BLE), but these boards have a radio in a secondary chip (ESP32-C6 mini). Later the project will migrate to use radio-less, simpler and cheaper boards with ESP32-P4 only.
+
+An OV5647 camera module is required for both boards.
 
 ## Prerequisites
 
@@ -64,47 +69,43 @@ git submodule update --init --recursive
 
 ### Building the Project
 
-Build the project from the root directory with:
+Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter — `wave_4b` (default) or `wave_35`:
 
 ```bash
-idf.py build
+just build              # Build for wave_4b (default)
+just build wave_35      # Build for wave_35
+just flash wave_35      # Flash for wave_35
+just monitor            # Serial monitor
+just clean              # Required when switching boards
 ```
 
-or flash the project to the device with:
+Or using `idf.py` directly:
 
 ```bash
-idf.py flash
+# wave_4b
+idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_4b' build
+
+# wave_35
+idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_35' build
 ```
 
-and if you are debugging you may want to run monitor too:
+> **Note:** Switching between boards requires a clean build (`just clean`) because sdkconfig is board-specific.
+
+### Desktop Simulator
+
+The simulator renders the full LVGL UI in an SDL2 window, matching each board's resolution:
 
 ```bash
-idf.py monitor
+just sim                # Run simulator as wave_4b (720x720)
+just sim wave_35        # Run simulator as wave_35 (320x480)
+just sim-build wave_35  # Build only
+just sim-clean          # Remove simulator build artifacts
+just sim-reset          # Wipe simulator data (factory reset)
+just sim-qr IMG         # Run with a QR image
+just sim-webcam         # Run with real webcam (V4L2)
 ```
 
-#### Optional: Using `just`
-
-If you have [just](https://github.com/casey/just) installed, you can use the provided `.justfile`:
-
-```bash
-just build      # Build the project
-just flash      # Flash to device
-just format     # Format source code with clang-format
-just test       # Run tests
-just clean      # Clean build artifacts
-
-# Desktop simulator
-just sim-build  # Build the simulator
-just sim        # Build and run the simulator
-just sim-clean  # Remove simulator build artifacts
-just sim-reset  # Wipe simulator data (factory reset)
-just sim-qr IMG # Run simulator with a QR image
-```
-
-The simulator renders the full LVGL UI in an SDL2 window.
-Pass extra flags after `just sim`, e.g.
-`just sim --qr-dir path/to/images/ --verbose`.
-See [simulator/README.md](simulator/README.md) for details.
+Switching simulator boards also requires `just sim-clean` first. See [simulator/README.md](simulator/README.md) for details.
 
 ### Full Clean
 

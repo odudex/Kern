@@ -7,8 +7,8 @@
 #include "../ui/theme.h"
 #include "../utils/memory_utils.h"
 #include "parser.h"
-#include <driver/ppa.h>
 #include <bsp/esp-bsp.h>
+#include <driver/ppa.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -32,12 +32,16 @@
   ((CAMERA_SCREEN_DIM_MIN) < 640 ? (CAMERA_SCREEN_DIM_MIN) : 640)
 #define CAMERA_SCREEN_WIDTH CAMERA_SCREEN_SIZE
 #define CAMERA_SCREEN_HEIGHT CAMERA_SCREEN_SIZE
-// Sensor outputs 1280x960 (binning mode). We take a centered 960x960 region
-// and downscale it to CAMERA_SCREEN_SIZE with the PPA in a single pass
-// (combined with counter-rotation when the display is rotated).
+// Sensor outputs 1280x960 (binning mode). We take a centered square crop and
+// downscale to CAMERA_SCREEN_SIZE with the PPA in a single pass.
+// The crop is chosen so the scale factor is an exact binary fraction (1/2)
+// when possible, avoiding PPA fixed-point rounding artifacts at the edges.
+// wave_4b: crop 960 -> 640  (scale 2/3)
+// wave_35: crop 640 -> 320  (scale 1/2)
 #define CAMERA_INPUT_WIDTH 1280
 #define CAMERA_INPUT_HEIGHT 960
-#define CAMERA_INPUT_CROP 960
+#define CAMERA_INPUT_CROP                                                      \
+  ((CAMERA_SCREEN_SIZE * 2 <= 960) ? (CAMERA_SCREEN_SIZE * 2) : 960)
 #define CAMERA_INPUT_CROP_OFFSET_X                                             \
   ((CAMERA_INPUT_WIDTH - CAMERA_INPUT_CROP) / 2)
 #define CAMERA_INPUT_CROP_OFFSET_Y                                             \
@@ -800,6 +804,7 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
+#ifndef SIMULATOR
   if (camera_buf_hes != CAMERA_INPUT_WIDTH ||
       camera_buf_ves != CAMERA_INPUT_HEIGHT) {
     ESP_LOGE(TAG,
@@ -810,22 +815,42 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
+#endif
 
   uint8_t *back_buffer = (current_display_buffer == display_buffer_a)
                              ? display_buffer_b
                              : display_buffer_a;
 
-  // Single PPA pass: centered 960x960 crop -> 640x640 scale + counter-rotation
+  // Single PPA pass: centered square crop -> screen-size scale +
+  // counter-rotation
   uint8_t *display_src = back_buffer;
   if (cam_ppa_client && !closing) {
+#ifdef SIMULATOR
+    // Simulator webcam can be any resolution; derive crop from actual frame
+    uint32_t in_w = camera_buf_hes;
+    uint32_t in_h = camera_buf_ves;
+    uint32_t crop = (in_w < in_h) ? in_w : in_h;
+    if (crop > (uint32_t)(CAMERA_SCREEN_SIZE * 2))
+      crop = CAMERA_SCREEN_SIZE * 2;
+    uint32_t crop_ox = (in_w - crop) / 2;
+    uint32_t crop_oy = (in_h - crop) / 2;
+    float sim_scale = (float)CAMERA_SCREEN_WIDTH / (float)crop;
+#else
+    uint32_t in_w = CAMERA_INPUT_WIDTH;
+    uint32_t in_h = CAMERA_INPUT_HEIGHT;
+    uint32_t crop = CAMERA_INPUT_CROP;
+    uint32_t crop_ox = CAMERA_INPUT_CROP_OFFSET_X;
+    uint32_t crop_oy = CAMERA_INPUT_CROP_OFFSET_Y;
+    float sim_scale = CAMERA_PPA_SCALE;
+#endif
     ppa_srm_oper_config_t srm = {
         .in.buffer = camera_buf,
-        .in.pic_w = CAMERA_INPUT_WIDTH,
-        .in.pic_h = CAMERA_INPUT_HEIGHT,
-        .in.block_w = CAMERA_INPUT_CROP,
-        .in.block_h = CAMERA_INPUT_CROP,
-        .in.block_offset_x = CAMERA_INPUT_CROP_OFFSET_X,
-        .in.block_offset_y = CAMERA_INPUT_CROP_OFFSET_Y,
+        .in.pic_w = in_w,
+        .in.pic_h = in_h,
+        .in.block_w = crop,
+        .in.block_h = crop,
+        .in.block_offset_x = crop_ox,
+        .in.block_offset_y = crop_oy,
         .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
         .out.buffer = back_buffer,
         .out.buffer_size = display_buffer_size,
@@ -835,8 +860,8 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
         .out.block_offset_y = 0,
         .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
         .rotation_angle = cam_ppa_angle,
-        .scale_x = CAMERA_PPA_SCALE,
-        .scale_y = CAMERA_PPA_SCALE,
+        .scale_x = sim_scale,
+        .scale_y = sim_scale,
         .mode = PPA_TRANS_MODE_BLOCKING,
     };
     if (ppa_do_scale_rotate_mirror(cam_ppa_client, &srm) != ESP_OK) {

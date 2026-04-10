@@ -38,6 +38,14 @@ lv_obj_t *kern_logo_create(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
 lv_obj_t *kern_logo_with_text(lv_obj_t *parent, lv_coord_t x, lv_coord_t y);
 
 /**
+ * Create logo with text as a flex-friendly child (no forced alignment)
+ *
+ * @param parent Parent LVGL object (typically a flex container)
+ * @return Pointer to created container object
+ */
+lv_obj_t *kern_logo_with_text_inline(lv_obj_t *parent);
+
+/**
  * Create animated logo with pulse effect
  * Great for boot/splash screens
  *

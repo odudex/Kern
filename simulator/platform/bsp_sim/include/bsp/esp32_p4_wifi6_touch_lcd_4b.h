@@ -33,6 +33,8 @@ typedef struct {
 lv_display_t *bsp_display_start(void);
 lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg);
 lv_indev_t   *bsp_display_get_input_dev(void);
+bool          bsp_display_lock(uint32_t timeout_ms);
+void          bsp_display_unlock(void);
 #endif /* BSP_CONFIG_NO_GRAPHIC_LIB */
 
 esp_err_t               bsp_i2c_init(void);

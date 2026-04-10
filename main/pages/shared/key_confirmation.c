@@ -86,7 +86,7 @@ static void create_ui(const char *fingerprint_hex) {
 
   lv_obj_t *icon = lv_label_create(icon_clip);
   lv_label_set_text(icon, ICON_FINGERPRINT_36);
-  lv_obj_set_style_text_font(icon, &icons_36, 0);
+  lv_obj_set_style_text_font(icon, theme_font_medium(), 0);
   lv_obj_set_style_text_color(icon, highlight_color(), 0);
   lv_obj_center(icon);
 

@@ -36,8 +36,7 @@ static lv_obj_t *keyboard_back_btn = NULL;
 static lv_obj_t *load_btn = NULL;
 static lv_obj_t *load_label = NULL;
 static lv_obj_t *header_container = NULL;
-static lv_obj_t *fingerprint_icon = NULL;
-static lv_obj_t *fingerprint_text = NULL;
+static lv_obj_t *fingerprint_label = NULL;
 static ui_keyboard_t *keyboard = NULL;
 static ui_menu_t *current_menu = NULL;
 
@@ -202,22 +201,21 @@ static bool recalculate_last_word(void) {
 }
 
 static void update_fingerprint_display(void) {
-  if (!fingerprint_icon || !fingerprint_text)
+  if (!fingerprint_label)
     return;
 
   if (is_checksum_valid()) {
     char fp_hex[9];
     if (get_mnemonic_fingerprint_hex(fp_hex)) {
-      lv_label_set_text(fingerprint_text, fp_hex);
-      lv_obj_clear_flag(fingerprint_icon, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_clear_flag(fingerprint_text, LV_OBJ_FLAG_HIDDEN);
+      char buf[24];
+      snprintf(buf, sizeof(buf), ICON_FINGERPRINT " %s", fp_hex);
+      lv_label_set_text(fingerprint_label, buf);
+      lv_obj_clear_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
     } else {
-      lv_obj_add_flag(fingerprint_icon, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_add_flag(fingerprint_text, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
     }
   } else {
-    lv_obj_add_flag(fingerprint_icon, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(fingerprint_text, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -611,8 +609,8 @@ static lv_obj_t *create_word_button(lv_obj_t *parent, int index, int height,
 
 static void create_word_grid(void) {
   bool two_columns = (total_words > 12);
-  int screen_width = lv_disp_get_hor_res(NULL);
-  int screen_height = lv_disp_get_ver_res(NULL);
+  int screen_width = theme_get_screen_width();
+  int screen_height = theme_get_screen_height();
   int grid_width = screen_width - (2 * GRID_MARGIN_H);
   int grid_height = screen_height - GRID_TOP_OFFSET - GRID_BOTTOM_OFFSET;
 
@@ -627,12 +625,12 @@ static void create_word_grid(void) {
 
   if (two_columns) {
     // Two columns with chess pattern coloring
-    int col_width = grid_width / 2 - 10;
+    int col_width = grid_width / 2;
     int btn_height = grid_height / 12;
     lv_obj_t *left_col =
         create_column(word_grid_container, 0, col_width, grid_height);
-    lv_obj_t *right_col = create_column(
-        word_grid_container, grid_width / 2 + 10, col_width, grid_height);
+    lv_obj_t *right_col = create_column(word_grid_container, grid_width / 2,
+                                        col_width, grid_height);
 
     for (int i = 0; i < total_words; i++) {
       lv_obj_t *parent_col = (i < 12) ? left_col : right_col;
@@ -656,35 +654,30 @@ static void create_word_grid(void) {
 
 static void create_ui(void) {
   header_container = theme_create_flex_row(mnemonic_editor_screen);
-  lv_obj_set_style_pad_column(header_container, 15, 0);
+  lv_obj_set_style_pad_column(header_container, 8, 0);
   lv_obj_align(header_container, LV_ALIGN_TOP_MID, 0,
                theme_get_default_padding());
 
   lv_obj_t *title = lv_label_create(header_container);
-  lv_label_set_text(title, "Review Mnemonic");
+  lv_label_set_text(title, "Mnemonic");
   lv_obj_set_style_text_font(title, theme_font_small(), 0);
   lv_obj_set_style_text_color(title, main_color(), 0);
 
-  fingerprint_icon = lv_label_create(header_container);
-  lv_label_set_text(fingerprint_icon, ICON_FINGERPRINT);
-  lv_obj_set_style_text_font(fingerprint_icon, &icons_24, 0);
-  lv_obj_set_style_text_color(fingerprint_icon, highlight_color(), 0);
-  lv_obj_add_flag(fingerprint_icon, LV_OBJ_FLAG_HIDDEN);
-
-  fingerprint_text = lv_label_create(header_container);
-  lv_label_set_text(fingerprint_text, "--------");
-  lv_obj_set_style_text_font(fingerprint_text, theme_font_small(), 0);
-  lv_obj_set_style_text_color(fingerprint_text, highlight_color(), 0);
-  lv_obj_add_flag(fingerprint_text, LV_OBJ_FLAG_HIDDEN);
+  fingerprint_label = lv_label_create(header_container);
+  lv_label_set_text(fingerprint_label, "");
+  lv_obj_set_style_text_font(fingerprint_label, theme_font_small(), 0);
+  lv_obj_set_style_text_color(fingerprint_label, highlight_color(), 0);
+  lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
 
   update_fingerprint_display();
 
   grid_back_btn = ui_create_back_button(mnemonic_editor_screen, back_btn_cb);
   create_word_grid();
 
+  int32_t pad = theme_get_default_padding();
   load_btn = lv_btn_create(mnemonic_editor_screen);
   lv_obj_set_size(load_btn, 140, theme_get_min_touch_size());
-  lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+  lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
   theme_apply_touch_button(load_btn, true);
   lv_obj_add_event_cb(load_btn, load_btn_cb, LV_EVENT_CLICKED, NULL);
 
@@ -773,8 +766,7 @@ void mnemonic_editor_page_destroy(void) {
   load_btn = NULL;
   load_label = NULL;
   header_container = NULL;
-  fingerprint_icon = NULL;
-  fingerprint_text = NULL;
+  fingerprint_label = NULL;
   checksum_error_label = NULL;
   is_new_mnemonic = false;
   memset(word_labels, 0, sizeof(word_labels));

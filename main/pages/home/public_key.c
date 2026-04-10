@@ -83,7 +83,7 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     snprintf(key_origin, sizeof(key_origin), "[%s/%s]%s", fingerprint_hex,
              derivation_compact, xpub_str);
 
-    int32_t square_size = lv_disp_get_hor_res(NULL) * 60 / 100;
+    int32_t square_size = theme_get_screen_width() * 60 / 100;
 
     lv_obj_t *qr_container = lv_obj_create(content_wrapper);
     lv_obj_set_size(qr_container, square_size, square_size);

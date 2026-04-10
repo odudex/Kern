@@ -158,7 +158,7 @@ static lv_obj_t *create_btc_value_row(lv_obj_t *parent, const char *prefix,
 
   lv_obj_t *icon_label = lv_label_create(row);
   lv_label_set_text(icon_label, ICON_BITCOIN);
-  lv_obj_set_style_text_font(icon_label, &icons_24, 0);
+  lv_obj_set_style_text_font(icon_label, theme_font_small(), 0);
   lv_obj_set_style_text_color(icon_label, color, 0);
 
   char btc_str[32];

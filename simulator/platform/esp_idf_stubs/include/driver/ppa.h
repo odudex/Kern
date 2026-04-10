@@ -30,6 +30,7 @@ typedef struct {
         void                 *buffer;
         size_t                buffer_size;
         uint32_t              pic_w, pic_h;
+        uint32_t              block_offset_x, block_offset_y;
         ppa_srm_color_mode_t  srm_cm;
     } out;
     ppa_srm_rotation_angle_t  rotation_angle;

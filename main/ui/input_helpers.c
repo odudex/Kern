@@ -3,20 +3,18 @@
 #include "input_helpers.h"
 #include "theme.h"
 
-#define CORNER_BUTTON_WIDTH 120
-#define CORNER_BUTTON_HEIGHT 90
-#define CORNER_BUTTON_PADDING 10
-
 static lv_obj_t *create_top_left_corner_button(lv_obj_t *parent,
                                                const char *symbol,
                                                lv_event_cb_t event_cb) {
   if (!parent)
     return NULL;
 
+  int32_t pad = theme_get_small_padding();
+
   lv_obj_t *btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, CORNER_BUTTON_WIDTH, CORNER_BUTTON_HEIGHT);
-  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, CORNER_BUTTON_PADDING,
-               CORNER_BUTTON_PADDING);
+  lv_obj_set_size(btn, theme_get_corner_button_width(),
+                  theme_get_corner_button_height());
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, pad, pad);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
 
@@ -46,10 +44,12 @@ static lv_obj_t *create_top_right_corner_button(lv_obj_t *parent,
   if (!parent)
     return NULL;
 
+  int32_t pad = theme_get_small_padding();
+
   lv_obj_t *btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, CORNER_BUTTON_WIDTH, CORNER_BUTTON_HEIGHT);
-  lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -CORNER_BUTTON_PADDING,
-               CORNER_BUTTON_PADDING);
+  lv_obj_set_size(btn, theme_get_corner_button_width(),
+                  theme_get_corner_button_height());
+  lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -pad, pad);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_width(btn, 0, 0);
 

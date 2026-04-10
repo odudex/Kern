@@ -87,7 +87,9 @@ static void update_derivation_path(void) {
   char path[48];
   wallet_format_derivation_path(path, sizeof(path), selected_policy,
                                 selected_network, selected_account);
-  lv_label_set_text(derivation_label, path);
+  char buf[64];
+  snprintf(buf, sizeof(buf), ICON_DERIVATION " %s", path);
+  lv_label_set_text(derivation_label, buf);
 }
 
 static void update_account_display(void) {
@@ -469,9 +471,12 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_screen(wallet_settings_screen);
   lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_SCROLLABLE);
 
+  int32_t pad = theme_get_default_padding();
+  int32_t top_h = theme_get_screen_height() * 5 / 36; // 100 @ 720
+
   // Top bar (same as key_confirmation.c)
   lv_obj_t *top = lv_obj_create(wallet_settings_screen);
-  lv_obj_set_size(top, LV_PCT(100), 100);
+  lv_obj_set_size(top, LV_PCT(100), top_h);
   lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_opa(top, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(top, 0, 0);
@@ -496,14 +501,13 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   char deriv_path[48];
   wallet_format_derivation_path(deriv_path, sizeof(deriv_path), selected_policy,
                                 selected_network, selected_account);
-  lv_obj_t *deriv_cont = ui_icon_text_row_create(header_cont, ICON_DERIVATION,
-                                                 deriv_path, secondary_color());
-  derivation_label = lv_obj_get_child(deriv_cont, 1);
+  derivation_label = ui_icon_text_row_create(header_cont, ICON_DERIVATION,
+                                             deriv_path, secondary_color());
 
   // Content container below top bar
   lv_obj_t *content = lv_obj_create(wallet_settings_screen);
-  lv_obj_set_size(content, LV_PCT(100), LV_VER_RES - 100);
-  lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 100);
+  lv_obj_set_size(content, LV_PCT(100), LV_VER_RES - top_h);
+  lv_obj_align(content, LV_ALIGN_TOP_MID, 0, top_h);
   lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(content, 0, 0);
   lv_obj_set_style_pad_all(content, 0, 0);
@@ -515,15 +519,15 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Passphrase + Descriptor row container (side by side)
   lv_obj_t *pp_desc_row = lv_obj_create(content);
-  lv_obj_set_size(pp_desc_row, LV_PCT(90), LV_SIZE_CONTENT);
+  lv_obj_set_size(pp_desc_row, LV_PCT(100), LV_SIZE_CONTENT);
   theme_apply_transparent_container(pp_desc_row);
   lv_obj_set_flex_flow(pp_desc_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(pp_desc_row, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_margin_top(pp_desc_row, 20, 0);
+  lv_obj_set_style_margin_top(pp_desc_row, pad, 0);
 
   passphrase_btn = lv_btn_create(pp_desc_row);
-  lv_obj_set_size(passphrase_btn, LV_PCT(45), theme_get_min_touch_size());
+  lv_obj_set_size(passphrase_btn, LV_PCT(48), theme_get_min_touch_size());
   theme_apply_touch_button(passphrase_btn, false);
   lv_obj_add_event_cb(passphrase_btn, passphrase_btn_cb, LV_EVENT_CLICKED,
                       NULL);
@@ -535,7 +539,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_center(pp_label);
 
   descriptor_btn = lv_btn_create(pp_desc_row);
-  lv_obj_set_size(descriptor_btn, LV_PCT(45), theme_get_min_touch_size());
+  lv_obj_set_size(descriptor_btn, LV_PCT(48), theme_get_min_touch_size());
   theme_apply_touch_button(descriptor_btn, false);
   lv_obj_add_event_cb(descriptor_btn, descriptor_btn_cb, LV_EVENT_CLICKED,
                       NULL);
@@ -548,12 +552,12 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Network + Policy row container (side by side)
   lv_obj_t *net_policy_row = lv_obj_create(content);
-  lv_obj_set_size(net_policy_row, LV_PCT(90), LV_SIZE_CONTENT);
+  lv_obj_set_size(net_policy_row, LV_PCT(100), LV_SIZE_CONTENT);
   theme_apply_transparent_container(net_policy_row);
   lv_obj_set_flex_flow(net_policy_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(net_policy_row, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_margin_top(net_policy_row, 20, 0);
+  lv_obj_set_style_margin_top(net_policy_row, pad, 0);
 
   // Network column (label + dropdown)
   lv_obj_t *net_col = lv_obj_create(net_policy_row);
@@ -602,7 +606,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_label_set_text(acc_label, "Account");
   lv_obj_set_style_text_font(acc_label, theme_font_small(), 0);
   lv_obj_set_style_text_color(acc_label, secondary_color(), 0);
-  lv_obj_set_style_margin_top(acc_label, 20, 0);
+  lv_obj_set_style_margin_top(acc_label, pad, 0);
 
   // Account button
   account_btn = lv_btn_create(content);
@@ -620,8 +624,8 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Apply button
   apply_btn = lv_btn_create(content);
-  lv_obj_set_size(apply_btn, LV_PCT(60), 60);
-  lv_obj_set_style_margin_top(apply_btn, 20, 0);
+  lv_obj_set_size(apply_btn, LV_PCT(60), theme_get_min_touch_size());
+  lv_obj_set_style_margin_top(apply_btn, pad, 0);
   theme_apply_touch_button(apply_btn, false);
   lv_obj_add_event_cb(apply_btn, apply_btn_cb, LV_EVENT_CLICKED, NULL);
   lv_obj_add_state(apply_btn, LV_STATE_DISABLED); // Disabled until changes made

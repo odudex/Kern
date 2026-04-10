@@ -141,8 +141,8 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config,
       .spi_mode = 3,
       .trans_queue_depth = 10,
   };
-  ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(
-      (esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle));
+  ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST,
+                                           &io_config, &io_handle));
 
   ESP_LOGD(TAG, "Install LCD driver");
   const esp_lcd_panel_dev_config_t panel_config = {
@@ -212,8 +212,7 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
 static lv_display_t *bsp_display_lcd_init(const bsp_display_cfg_t *cfg) {
   assert(cfg != NULL);
-  BSP_ERROR_CHECK_RETURN_NULL(
-      bsp_display_new(NULL, &panel_handle, &io_handle));
+  BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new(NULL, &panel_handle, &io_handle));
 
   ESP_LOGD(TAG, "Add LCD screen");
   esp_lv_adapter_display_config_t disp_cfg = {
@@ -262,7 +261,8 @@ lv_display_t *bsp_display_start_with_config(bsp_display_cfg_t *cfg) {
   lv_display_t *disp;
 
   assert(cfg != NULL);
-  cfg->lv_adapter_cfg.stack_in_psram = true;
+  cfg->lv_adapter_cfg.task_stack_size = 16384;
+  cfg->lv_adapter_cfg.stack_in_psram = false;
   BSP_ERROR_CHECK_RETURN_NULL(esp_lv_adapter_init(&cfg->lv_adapter_cfg));
 
   BSP_ERROR_CHECK_RETURN_NULL(bsp_display_brightness_init());

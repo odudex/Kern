@@ -1,4 +1,5 @@
 #include "theme.h"
+#include "assets/icons_16.h"
 #include "assets/icons_24.h"
 #include "assets/icons_36.h"
 
@@ -14,20 +15,52 @@
 #define COLOR_YES lv_color_hex(0x00FF00)      // Green for positive
 #define COLOR_CYAN lv_color_hex(0x00FFFF)     // Cyan accent
 
-// Spacing constants
-#define DEFAULT_PADDING 30
-
 // Mutable font copies with icon fallbacks
 static lv_font_t font_small;
 static lv_font_t font_medium;
 
-void theme_init(void) {
-  // Copy const fonts to mutable structs so we can set fallbacks
-  font_small = lv_font_montserrat_24;
-  font_small.fallback = &icons_24;
+// Cached screen dimensions and derived sizes (set once in theme_init)
+static int32_t scr_w;
+static int32_t scr_h;
+static int sz_button_width;
+static int sz_button_height;
+static int sz_button_spacing;
+static int sz_default_padding;
+static int sz_min_touch;
+static int sz_corner_btn_w;
+static int sz_corner_btn_h;
+static int sz_small_padding;
+static int sz_logo;
 
-  font_medium = lv_font_montserrat_36;
-  font_medium.fallback = &icons_36;
+void theme_init(void) {
+  scr_w = lv_disp_get_hor_res(NULL);
+  scr_h = lv_disp_get_ver_res(NULL);
+
+  // Pre-compute all proportional sizes
+  sz_button_width = scr_w * 5 / 24;  // 150 @ 720
+  sz_button_height = scr_w * 5 / 36; // 100 @ 720
+  sz_button_spacing = scr_w / 36;    //  20 @ 720
+  sz_default_padding = scr_w / 24;   //  30 @ 720
+  sz_min_touch = scr_w / 8;          //  90 @ 720
+  sz_corner_btn_w = scr_w / 6;       // 120 @ 720
+  sz_corner_btn_h = scr_w / 8;       //  90 @ 720
+  sz_small_padding = scr_w / 72;     //  10 @ 720
+  sz_logo = scr_w * 5 / 18;          // 200 @ 720
+
+  // Copy const fonts to mutable structs so we can set fallbacks
+  if (scr_w >= 600) {
+    font_small = lv_font_montserrat_24;
+    font_small.fallback = &icons_24;
+
+    font_medium = lv_font_montserrat_36;
+    font_medium.fallback = &icons_36;
+  } else {
+    font_small = lv_font_montserrat_16;
+    font_small.fallback = &icons_16;
+
+    font_medium = lv_font_montserrat_24;
+    font_medium.fallback = &icons_24;
+  }
 }
 
 lv_color_t bg_color(void) { return COLOR_BG; }
@@ -55,15 +88,18 @@ const lv_font_t *theme_font_small(void) { return &font_small; }
 
 const lv_font_t *theme_font_medium(void) { return &font_medium; }
 
-int theme_get_button_width(void) { return 150; }
+int theme_get_screen_width(void) { return scr_w; }
+int theme_get_screen_height(void) { return scr_h; }
 
-int theme_get_button_height(void) { return 100; }
-
-int theme_get_button_spacing(void) { return 20; }
-
-int theme_get_default_padding(void) { return DEFAULT_PADDING; }
-
-int theme_get_min_touch_size(void) { return 90; }
+int theme_get_button_width(void) { return sz_button_width; }
+int theme_get_button_height(void) { return sz_button_height; }
+int theme_get_button_spacing(void) { return sz_button_spacing; }
+int theme_get_default_padding(void) { return sz_default_padding; }
+int theme_get_min_touch_size(void) { return sz_min_touch; }
+int theme_get_corner_button_width(void) { return sz_corner_btn_w; }
+int theme_get_corner_button_height(void) { return sz_corner_btn_h; }
+int theme_get_small_padding(void) { return sz_small_padding; }
+int theme_get_logo_size(void) { return sz_logo; }
 
 void theme_apply_screen(lv_obj_t *obj) {
   if (!obj)

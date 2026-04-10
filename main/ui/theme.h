@@ -19,12 +19,20 @@ lv_color_t cyan_color(void);
 const lv_font_t *theme_font_small(void);
 const lv_font_t *theme_font_medium(void);
 
-// Theme sizing constants
+// Screen dimensions (cached, never changes at runtime)
+int theme_get_screen_width(void);
+int theme_get_screen_height(void);
+
+// Theme sizing constants (all proportional to screen width)
 int theme_get_button_width(void);
 int theme_get_button_height(void);
 int theme_get_button_spacing(void);
 int theme_get_default_padding(void);
 int theme_get_min_touch_size(void);
+int theme_get_corner_button_width(void);
+int theme_get_corner_button_height(void);
+int theme_get_small_padding(void);
+int theme_get_logo_size(void);
 
 void theme_apply_screen(lv_obj_t *obj);
 lv_obj_t *theme_create_page_container(lv_obj_t *parent);

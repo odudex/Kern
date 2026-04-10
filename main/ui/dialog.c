@@ -109,8 +109,8 @@ static void dialog_fit_overlay(lv_obj_t *dialog, dialog_style_t style,
   if (style != DIALOG_STYLE_OVERLAY)
     return;
   const lv_font_t *font = theme_font_medium();
-  int32_t screen_w = lv_disp_get_hor_res(NULL);
-  int32_t screen_h = lv_disp_get_ver_res(NULL);
+  int32_t screen_w = theme_get_screen_width();
+  int32_t screen_h = theme_get_screen_height();
   int32_t pad_h = lv_obj_get_style_pad_left(dialog, 0) +
                   lv_obj_get_style_pad_right(dialog, 0);
   int32_t pad_v = lv_obj_get_style_pad_top(dialog, 0) +

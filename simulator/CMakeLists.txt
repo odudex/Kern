@@ -95,6 +95,7 @@ set(SIM_SOURCES
     ${APP_UI_DIR}/theme.c
     ${APP_UI_DIR}/assets/kern_logo_lvgl.c
     ${APP_UI_DIR}/assets/kern_logo_font.c
+    ${APP_UI_DIR}/assets/icons_16.c
     ${APP_UI_DIR}/assets/icons_24.c
     ${APP_UI_DIR}/assets/icons_36.c
 )
