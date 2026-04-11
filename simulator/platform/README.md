@@ -50,10 +50,7 @@ backend.
 
 **Display (720x720 default):**
 - `bsp_display_start()` - Creates an SDL2 window via
-  `lv_sdl_window_create()`
-- `bsp_display_start_with_config(cfg)` - Custom resolution
-  via config struct
-- `bsp_display_get_input_dev()` - Returns an `lv_sdl_mouse`
+  `lv_sdl_window_create()` and registers an `lv_sdl_mouse`
   input device
 - Brightness/backlight functions are no-ops
 

@@ -35,23 +35,6 @@ menu "Board Support Package (Waveshare ESP32-P4 4B)"
             help
                 Let DPI LCD driver create a specified number of frame-size buffers.
 
-        config BSP_DISPLAY_LVGL_AVOID_TEAR
-            bool "Avoid tearing effect"
-            depends on BSP_LCD_DPI_BUFFER_NUMS > 1
-            default "n"
-            help
-                Avoid tearing effect through LVGL buffer mode and double frame buffers.
-
-        choice BSP_DISPLAY_LVGL_MODE
-            depends on BSP_DISPLAY_LVGL_AVOID_TEAR
-            prompt "Select LVGL buffer mode"
-            default BSP_DISPLAY_LVGL_FULL_REFRESH
-            config BSP_DISPLAY_LVGL_FULL_REFRESH
-                bool "Full refresh"
-            config BSP_DISPLAY_LVGL_DIRECT_MODE
-                bool "Direct mode"
-        endchoice
-
         config BSP_DISPLAY_BRIGHTNESS_LEDC_CH
             int "LEDC channel index"
             default 1

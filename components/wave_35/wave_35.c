@@ -15,10 +15,6 @@
 
 static const char *TAG = "wave_35";
 
-#if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
-static lv_indev_t *disp_indev = NULL;
-#endif
-
 static bool i2c_initialized = false;
 static esp_lcd_touch_handle_t tp = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
@@ -210,8 +206,7 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
 }
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
-static lv_display_t *bsp_display_lcd_init(const bsp_display_cfg_t *cfg) {
-  assert(cfg != NULL);
+static lv_display_t *bsp_display_lcd_init(void) {
   BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new(NULL, &panel_handle, &io_handle));
 
   ESP_LOGD(TAG, "Add LCD screen");
@@ -251,32 +246,22 @@ static lv_indev_t *bsp_display_indev_init(lv_display_t *disp) {
 }
 
 lv_display_t *bsp_display_start(void) {
-  bsp_display_cfg_t cfg = {
-      .lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG(),
-  };
-  return bsp_display_start_with_config(&cfg);
-}
-
-lv_display_t *bsp_display_start_with_config(bsp_display_cfg_t *cfg) {
-  lv_display_t *disp;
-
-  assert(cfg != NULL);
-  cfg->lv_adapter_cfg.task_stack_size = 16384;
-  cfg->lv_adapter_cfg.stack_in_psram = false;
-  BSP_ERROR_CHECK_RETURN_NULL(esp_lv_adapter_init(&cfg->lv_adapter_cfg));
+  esp_lv_adapter_config_t adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  // Larger task stack: libwally descriptor parsing has deep call chains
+  adapter_cfg.task_stack_size = 16384;
+  adapter_cfg.stack_in_psram = false;
+  BSP_ERROR_CHECK_RETURN_NULL(esp_lv_adapter_init(&adapter_cfg));
 
   BSP_ERROR_CHECK_RETURN_NULL(bsp_display_brightness_init());
 
-  BSP_NULL_CHECK(disp = bsp_display_lcd_init(cfg), NULL);
-
-  BSP_NULL_CHECK(disp_indev = bsp_display_indev_init(disp), NULL);
+  lv_display_t *disp;
+  BSP_NULL_CHECK(disp = bsp_display_lcd_init(), NULL);
+  BSP_NULL_CHECK(bsp_display_indev_init(disp), NULL);
 
   ESP_ERROR_CHECK(esp_lv_adapter_start());
 
   return disp;
 }
-
-lv_indev_t *bsp_display_get_input_dev(void) { return disp_indev; }
 
 bool bsp_display_lock(uint32_t timeout_ms) {
   // esp_lv_adapter_lock treats 0 as "try once, fail immediately",

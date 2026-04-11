@@ -7,7 +7,7 @@
 #include "sdkconfig.h"
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
-#include "esp_lvgl_port.h"
+#include "esp_lv_adapter.h"
 #include "lvgl.h"
 #endif
 
@@ -61,23 +61,7 @@ i2c_master_bus_handle_t bsp_i2c_get_handle(void);
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
 
-#define BSP_LCD_DRAW_BUFF_SIZE (BSP_LCD_H_RES * BSP_LCD_V_RES / 4)
-#define BSP_LCD_DRAW_BUFF_DOUBLE (0)
-
-typedef struct {
-  lvgl_port_cfg_t lvgl_port_cfg;
-  uint32_t buffer_size;
-  bool double_buffer;
-  struct {
-    unsigned int buff_dma : 1;
-    unsigned int buff_spiram : 1;
-    unsigned int sw_rotate : 1;
-  } flags;
-} bsp_display_cfg_t;
-
 lv_display_t *bsp_display_start(void);
-lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg);
-lv_indev_t *bsp_display_get_input_dev(void);
 
 /**
  * @brief Take LVGL mutex

@@ -2,8 +2,9 @@ dependencies:
   idf:
     version: '>=5.4'
   esp_lcd_touch_gt911: ^1
-  espressif/esp_lvgl_port:
-    version: ^2
+  espressif/esp_lvgl_adapter:
+    version: '*'
+    pre_release: true
     public: true
   lvgl/lvgl: '>=8,<10'
   espressif/esp_lcd_st7703:

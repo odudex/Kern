@@ -29,9 +29,6 @@ static void init_lvgl_mutex(void) {
     s_main_thread_set = true;
 }
 
-/* Saved indev for bsp_display_get_input_dev() */
-static lv_indev_t *s_mouse_indev = NULL;
-
 /* ---------- lvgl_port API ---------- */
 
 esp_err_t lvgl_port_init(const lvgl_port_cfg_t *cfg) {
@@ -98,27 +95,12 @@ void __wrap_lv_refr_now(lv_display_t *disp) {
 /* ---------- BSP display stubs ---------- */
 
 lv_display_t *bsp_display_start(void) {
-    bsp_display_cfg_t cfg = {
-        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-        .buffer_size   = BSP_LCD_DRAW_BUFF_SIZE,
-        .double_buffer = BSP_LCD_DRAW_BUFF_DOUBLE,
-        .flags = { .buff_dma = 0, .buff_spiram = 0, .sw_rotate = 0 },
-    };
-    return bsp_display_start_with_config(&cfg);
-}
-
-lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg) {
-    (void)cfg;
     lv_display_t *disp = lv_sdl_window_create(BSP_LCD_H_RES, BSP_LCD_V_RES);
     if (disp) {
         lv_sdl_window_set_title(disp, "Kern Simulator");
     }
-    s_mouse_indev = lv_sdl_mouse_create();
+    (void)lv_sdl_mouse_create();
     return disp;
-}
-
-lv_indev_t *bsp_display_get_input_dev(void) {
-    return s_mouse_indev;
 }
 
 bool bsp_display_lock(uint32_t timeout_ms) {
