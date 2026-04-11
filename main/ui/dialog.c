@@ -151,7 +151,8 @@ void dialog_show_info(const char *title, const char *message,
     lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
     lv_obj_set_style_text_color(title_label, highlight_color(), 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
-    msg_y = lv_font_get_line_height(theme_font_medium()) + 10;
+    lv_obj_update_layout(title_label);
+    msg_y = lv_obj_get_height(title_label) + 10;
   }
 
   lv_obj_t *msg_label = theme_create_label(dialog, message, false);
@@ -292,7 +293,8 @@ lv_obj_t *dialog_show_progress(const char *title, const char *message,
     lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
     lv_obj_set_style_text_color(title_label, highlight_color(), 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
-    msg_y = lv_font_get_line_height(theme_font_medium()) + 10;
+    lv_obj_update_layout(title_label);
+    msg_y = lv_obj_get_height(title_label) + 10;
   }
 
   if (message) {
