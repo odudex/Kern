@@ -1,27 +1,34 @@
-**/squareline/backup/**
-**/squareline/autosave/**
-
-build
-managed_components
+# Build
+build/
 sdkconfig
 sdkconfig.old
+managed_components/
 compile_commands.json
-.cache/
 
-.vscode
+# Release
+release/
 
-CLAUDE.md
+# Simulator
+simulator/build*/
+simulator/sim_data/
 
+# Tests
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/bbqr/test/test_miniz
-
-
 main/core/test/test_derivation_path
 main/core/test/combined.o
 main/core/test/libwally.a
+
+# IDE / tools
+.vscode/
+.cache/
 .cm/logs/
 
-# Simulator build artifacts and runtime data
-simulator/build*/
-simulator/sim_data/
+# SquareLine Studio
+**/squareline/backup/
+**/squareline/autosave/
+
+# Claude Code
+CLAUDE.md
+.claude/

@@ -133,16 +133,35 @@ CONFIG_CAMERA_OV5647_ENABLE_MOTOR_BY_GPIO0=y
 
 Pre-release firmware is provided **for testing purposes only**. Do not use pre-release builds as a signer for real savings.
 
+### Supported Devices
+
+| Device | Board | Display |
+|--------|-------|---------|
+| `wave_4b` | Waveshare ESP32-P4-WiFi6-Touch-LCD-4B | 720x720 MIPI DSI |
+| `wave_35` | Waveshare ESP32-P4-WiFi6-Touch-LCD-3.5 | 320x480 SPI |
+
 ### Requirements
 
 - Python 3
-- USB cable connected to the Waveshare board
+- USB cable connected to the board
 
 ### Steps
 
-1. Download the firmware binary from the [Releases](https://github.com/odudex/Kern/releases) page.
+1. Download the zip for your device from the [Releases](https://github.com/odudex/Kern/releases) page (e.g. `kern-wave_4b-v0.0.3.zip`).
 
-2. Create a Python virtual environment and install esptool:
+2. Unzip the package:
+
+```bash
+unzip kern-wave_4b-v0.0.3.zip
+```
+
+The zip contains:
+- `bootloader.bin` — bootloader
+- `partition-table.bin` — partition table
+- `firmware.bin` — application firmware
+- `kern-v0.0.3.bin` — merged binary (all of the above)
+
+3. Create a Python virtual environment and install esptool:
 
 ```bash
 python3 -m venv venv
@@ -150,10 +169,10 @@ source venv/bin/activate
 pip install esptool
 ```
 
-3. Flash the firmware:
+4. Flash the merged binary (clean install):
 
 ```bash
-esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-<version>.bin
+esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-v0.0.3.bin
 ```
 
 > **Note:** Flashing the merged binary from offset `0x0` erases the entire flash range it covers, including the NVS partition where PIN and settings are stored. To preserve NVS data when updating, flash the individual binaries instead:
