@@ -38,8 +38,10 @@ static const char *kb_map[] = {"q",
                                ""};
 
 static const char btn_to_char[] = {
-    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'a', 's', 'd',  'f',
-    'g', 'h', 'j', 'k', 'l', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '\b', '\n'};
+    'q',     'w', 'e', 'r', 't', 'y', 'u', 'i', 'o',
+    'p',     'a', 's', 'd', 'f', 'g', 'h', 'j', 'k',
+    'l',     'z', 'x', 'c', 'v', 'b', 'n', 'm', UI_KB_BACKSPACE,
+    UI_KB_OK};
 
 #define BTN_COUNT (sizeof(btn_to_char) / sizeof((btn_to_char)[0]))
 
@@ -49,9 +51,9 @@ static int get_key_index_from_btn(uint32_t btn_id) {
   char c = btn_to_char[btn_id];
   if (c >= 'a' && c <= 'z')
     return c - 'a';
-  if (c == '\b')
+  if (c == UI_KB_BACKSPACE)
     return UI_KB_KEY_BACKSPACE;
-  if (c == '\n')
+  if (c == UI_KB_OK)
     return UI_KB_KEY_OK;
   return -1;
 }
