@@ -27,17 +27,11 @@ static lv_obj_t *brightness_screen = NULL;
 static lv_obj_t *brightness_slider = NULL;
 static lv_obj_t *brightness_label = NULL;
 
-// -- Rotation detail page --
-static lv_obj_t *rotation_screen = NULL;
-static lv_obj_t *rotation_dropdown = NULL;
-
 // Forward declarations
 static void show_detail_page(void);
 static void destroy_detail_page(void);
 static void show_brightness_page(void);
 static void destroy_brightness_page(void);
-static void show_rotation_page(void);
-static void destroy_rotation_page(void);
 
 // ── Default Wallet detail page ──
 
@@ -169,45 +163,6 @@ static void destroy_brightness_page(void) {
   brightness_label = NULL;
 }
 
-// ── Screen Rotation detail page ──
-
-static void rotation_dropdown_cb(lv_event_t *e) {
-  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-  lv_display_set_rotation(lv_display_get_default(), sel);
-  settings_set_rotation((uint8_t)sel);
-}
-
-static void rotation_back_cb(lv_event_t *e) {
-  (void)e;
-  destroy_rotation_page();
-  ui_menu_show(settings_menu);
-}
-
-static void show_rotation_page(void) {
-  ui_menu_hide(settings_menu);
-
-  rotation_screen = theme_create_page_container(lv_screen_active());
-
-  ui_create_back_button(rotation_screen, rotation_back_cb);
-  theme_create_page_title(rotation_screen, "Screen Rotation");
-
-  rotation_dropdown = theme_create_dropdown(
-      rotation_screen, "0\xC2\xB0\n90\xC2\xB0\n180\xC2\xB0\n270\xC2\xB0");
-  lv_dropdown_set_selected(rotation_dropdown, settings_get_rotation());
-  lv_obj_set_width(rotation_dropdown, LV_HOR_RES * 35 / 100);
-  lv_obj_align(rotation_dropdown, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_add_event_cb(rotation_dropdown, rotation_dropdown_cb,
-                      LV_EVENT_VALUE_CHANGED, NULL);
-}
-
-static void destroy_rotation_page(void) {
-  if (rotation_screen) {
-    lv_obj_del(rotation_screen);
-    rotation_screen = NULL;
-  }
-  rotation_dropdown = NULL;
-}
-
 // ── PIN setup/settings ──
 
 static void rebuild_menu(void);
@@ -257,7 +212,6 @@ static void pin_settings_cb(void) {
 
 static void default_wallet_cb(void) { show_detail_page(); }
 static void brightness_cb(void) { show_brightness_page(); }
-static void rotation_cb(void) { show_rotation_page(); }
 
 static void settings_back_cb(void) {
   if (return_callback)
@@ -277,7 +231,6 @@ static void rebuild_menu(void) {
   }
   ui_menu_add_entry(settings_menu, "Default Wallet", default_wallet_cb);
   ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
-  ui_menu_add_entry(settings_menu, "Screen Rotation", rotation_cb);
 }
 
 // ── Public lifecycle ──
@@ -302,7 +255,6 @@ void login_settings_page_destroy(void) {
   pin_settings_page_destroy();
   destroy_detail_page();
   destroy_brightness_page();
-  destroy_rotation_page();
   if (settings_menu) {
     ui_menu_destroy(settings_menu);
     settings_menu = NULL;

@@ -3,7 +3,6 @@
 #include "capture_entropy.h"
 
 #include <bsp/esp-bsp.h>
-#include <driver/ppa.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -48,12 +47,6 @@ static uint8_t *current_display_buffer = NULL;
 static volatile bool closing = false;
 static volatile bool is_initialized = false;
 static volatile int active_frame_ops = 0;
-
-// PPA hardware rotation for counter-rotating camera frames
-static ppa_client_handle_t cam_ppa_client = NULL;
-static uint8_t *cam_ppa_buffer = NULL;
-static size_t cam_ppa_buffer_size = 0;
-static ppa_srm_rotation_angle_t cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
 
 static uint8_t captured_entropy[32];
 static volatile bool entropy_captured = false;
@@ -178,34 +171,10 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
 
   horizontal_crop(camera_buf, back_buffer, camera_buf_hes, camera_buf_ves);
 
-  uint8_t *display_src = back_buffer;
-  if (cam_ppa_client && cam_ppa_buffer && !closing) {
-    ppa_srm_oper_config_t srm = {
-        .in.buffer = back_buffer,
-        .in.pic_w = CAMERA_WIDTH,
-        .in.pic_h = CAMERA_HEIGHT,
-        .in.block_w = CAMERA_WIDTH,
-        .in.block_h = CAMERA_HEIGHT,
-        .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-        .out.buffer = cam_ppa_buffer,
-        .out.buffer_size = cam_ppa_buffer_size,
-        .out.pic_w = CAMERA_WIDTH,
-        .out.pic_h = CAMERA_HEIGHT,
-        .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-        .rotation_angle = cam_ppa_angle,
-        .scale_x = 1.0,
-        .scale_y = 1.0,
-        .mode = PPA_TRANS_MODE_BLOCKING,
-    };
-    if (ppa_do_scale_rotate_mirror(cam_ppa_client, &srm) == ESP_OK) {
-      display_src = cam_ppa_buffer;
-    }
-  }
-
   if (!closing && !dialog_showing && bsp_display_lock(0)) {
     if (!closing && camera_img) {
       current_display_buffer = back_buffer;
-      img_dsc.data = display_src;
+      img_dsc.data = back_buffer;
       lv_img_set_src(camera_img, &img_dsc);
       lv_refr_now(NULL);
     }
@@ -257,33 +226,6 @@ static bool camera_init(void) {
 
   if (app_video_stream_task_start(camera_handle, 0) != ESP_OK)
     return false;
-
-  // Set up PPA counter-rotation if display is rotated
-  lv_display_rotation_t rot = lv_display_get_rotation(lv_display_get_default());
-  if (rot != LV_DISPLAY_ROTATION_0) {
-    static const ppa_srm_rotation_angle_t counter_map[] = {
-        [LV_DISPLAY_ROTATION_0] = PPA_SRM_ROTATION_ANGLE_0,
-        [LV_DISPLAY_ROTATION_90] = PPA_SRM_ROTATION_ANGLE_270,
-        [LV_DISPLAY_ROTATION_180] = PPA_SRM_ROTATION_ANGLE_180,
-        [LV_DISPLAY_ROTATION_270] = PPA_SRM_ROTATION_ANGLE_90,
-    };
-    cam_ppa_angle = counter_map[rot];
-
-    ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
-    if (ppa_register_client(&ppa_cfg, &cam_ppa_client) == ESP_OK) {
-      cam_ppa_buffer_size = CAMERA_WIDTH * CAMERA_HEIGHT * 2;
-      cam_ppa_buffer_size =
-          (cam_ppa_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
-          ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
-      cam_ppa_buffer =
-          heap_caps_aligned_calloc(CONFIG_CACHE_L2_CACHE_LINE_SIZE,
-                                   cam_ppa_buffer_size, 1, MALLOC_CAP_SPIRAM);
-      if (!cam_ppa_buffer) {
-        ppa_unregister_client(cam_ppa_client);
-        cam_ppa_client = NULL;
-      }
-    }
-  }
 
   return true;
 }
@@ -413,18 +355,6 @@ void capture_entropy_page_destroy(void) {
     bsp_display_unlock();
 
   free_buffers();
-
-  // Clean up PPA camera rotation resources
-  if (cam_ppa_client) {
-    ppa_unregister_client(cam_ppa_client);
-    cam_ppa_client = NULL;
-  }
-  if (cam_ppa_buffer) {
-    free(cam_ppa_buffer);
-    cam_ppa_buffer = NULL;
-  }
-  cam_ppa_buffer_size = 0;
-  cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
 
   if (video_initialized) {
     app_video_deinit();

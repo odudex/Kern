@@ -24,29 +24,34 @@
 #endif
 
 // Camera preview is a square sized to the smaller display dimension, capped at
-// 640px.  On the 4B (720x720) this gives 640; on the 3.5" (320x480) this gives
-// 320.  The PPA scale factor and crop are derived from it automatically.
+// 640px.  Sensor outputs 1280x960 (binning mode); we take a centered square
+// crop and downscale with the PPA in a single pass.
+//
+// The ESP32-P4 PPA uses Q4.4 fixed-point scaling (fractional scale quantized
+// to 1/16), so an arbitrary scale like 2/3 truncates to 10/16 = 0.625 and
+// leaves the last rows/cols unwritten. We therefore quantize the scale down
+// to the nearest 1/16 and derive the actual preview size from it, so the
+// PPA output exactly fills the widget — no black edges.
+//   wave_4b: crop 960, scale 10/16 -> 600x600 preview
+//   wave_35: crop 640, scale  8/16 -> 320x320 preview
 #define CAMERA_SCREEN_DIM_MIN                                                  \
   ((BSP_LCD_H_RES) < (BSP_LCD_V_RES) ? (BSP_LCD_H_RES) : (BSP_LCD_V_RES))
-#define CAMERA_SCREEN_SIZE                                                     \
+#define CAMERA_TARGET                                                          \
   ((CAMERA_SCREEN_DIM_MIN) < 640 ? (CAMERA_SCREEN_DIM_MIN) : 640)
-#define CAMERA_SCREEN_WIDTH CAMERA_SCREEN_SIZE
-#define CAMERA_SCREEN_HEIGHT CAMERA_SCREEN_SIZE
-// Sensor outputs 1280x960 (binning mode). We take a centered square crop and
-// downscale to CAMERA_SCREEN_SIZE with the PPA in a single pass.
-// The crop is chosen so the scale factor is an exact binary fraction (1/2)
-// when possible, avoiding PPA fixed-point rounding artifacts at the edges.
-// wave_4b: crop 960 -> 640  (scale 2/3)
-// wave_35: crop 640 -> 320  (scale 1/2)
 #define CAMERA_INPUT_WIDTH 1280
 #define CAMERA_INPUT_HEIGHT 960
 #define CAMERA_INPUT_CROP                                                      \
-  ((CAMERA_SCREEN_SIZE * 2 <= 960) ? (CAMERA_SCREEN_SIZE * 2) : 960)
+  ((CAMERA_TARGET * 2 <= 960) ? (CAMERA_TARGET * 2) : 960)
 #define CAMERA_INPUT_CROP_OFFSET_X                                             \
   ((CAMERA_INPUT_WIDTH - CAMERA_INPUT_CROP) / 2)
 #define CAMERA_INPUT_CROP_OFFSET_Y                                             \
   ((CAMERA_INPUT_HEIGHT - CAMERA_INPUT_CROP) / 2)
-#define CAMERA_PPA_SCALE ((float)CAMERA_SCREEN_WIDTH / (float)CAMERA_INPUT_CROP)
+// Largest Q4.4 scale <= target/crop, and the exact preview size it yields.
+#define CAMERA_PPA_FRAG ((CAMERA_TARGET * 16) / CAMERA_INPUT_CROP)
+#define CAMERA_PPA_SCALE ((float)CAMERA_PPA_FRAG / 16.0f)
+#define CAMERA_SCREEN_SIZE ((CAMERA_INPUT_CROP * CAMERA_PPA_FRAG) / 16)
+#define CAMERA_SCREEN_WIDTH CAMERA_SCREEN_SIZE
+#define CAMERA_SCREEN_HEIGHT CAMERA_SCREEN_SIZE
 #define QR_FRAME_QUEUE_SIZE 1
 #define QR_DECODE_TASK_STACK_SIZE 32768
 #define QR_DECODE_TASK_PRIORITY 5
@@ -121,10 +126,8 @@ static lv_obj_t *focus_slider = NULL;
 static bool has_focus_motor = false;
 static volatile bool settings_active = false;
 
-// PPA does centered crop + downscale (1280x960 -> 640x640) and, when the
-// display is rotated, the matching counter-rotation in the same pass.
+// PPA does centered crop + downscale (1280x960 -> 640x640) in a single pass.
 static ppa_client_handle_t cam_ppa_client = NULL;
-static ppa_srm_rotation_angle_t cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
 
 static volatile int active_frame_operations = 0;
 static lv_timer_t *completion_timer = NULL;
@@ -859,7 +862,7 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
         .out.block_offset_x = 0,
         .out.block_offset_y = 0,
         .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-        .rotation_angle = cam_ppa_angle,
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
         .scale_x = sim_scale,
         .scale_y = sim_scale,
         .mode = PPA_TRANS_MODE_BLOCKING,
@@ -979,18 +982,7 @@ static void camera_init(void) {
     ESP_LOGE(TAG, "Failed to initialize QR decoder");
   }
 
-  // PPA does centered crop + downscale on every frame, plus a
-  // counter-rotation when the display itself is rotated (so UI widgets
-  // render correctly while the camera feed stays upright).
-  static const ppa_srm_rotation_angle_t counter_map[] = {
-      [LV_DISPLAY_ROTATION_0] = PPA_SRM_ROTATION_ANGLE_0,
-      [LV_DISPLAY_ROTATION_90] = PPA_SRM_ROTATION_ANGLE_270,
-      [LV_DISPLAY_ROTATION_180] = PPA_SRM_ROTATION_ANGLE_180,
-      [LV_DISPLAY_ROTATION_270] = PPA_SRM_ROTATION_ANGLE_90,
-  };
-  cam_ppa_angle =
-      counter_map[lv_display_get_rotation(lv_display_get_default())];
-
+  // PPA does centered crop + downscale on every frame.
   ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
   if (ppa_register_client(&ppa_cfg, &cam_ppa_client) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register PPA client for camera scaler");
@@ -1147,7 +1139,6 @@ void qr_scanner_page_destroy(void) {
     ppa_unregister_client(cam_ppa_client);
     cam_ppa_client = NULL;
   }
-  cam_ppa_angle = PPA_SRM_ROTATION_ANGLE_0;
 
   if (video_system_initialized) {
     app_video_deinit();

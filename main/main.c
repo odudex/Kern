@@ -62,7 +62,7 @@ void app_main(void) {
   ESP_ERROR_CHECK(ret);
   settings_init();
 
-  lv_display_t *disp = bsp_display_start();
+  bsp_display_start();
   ESP_LOGI(TAG, "Display initialized successfully");
 
   // Initialize PMIC (AXP2101 on wave_35; no-op on wave_4b)
@@ -75,9 +75,6 @@ void app_main(void) {
 
   theme_init();
   bsp_display_lock(0);
-
-  // Apply saved screen rotation
-  lv_display_set_rotation(disp, settings_get_rotation());
 
   // Set up screen theme background
   lv_obj_t *screen = lv_screen_active();
