@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.5] - 2026-04-16
+
+### Added
+- Support for Waveshare ESP32-P4-WiFi6-Touch-LCD-5 (wave_5, 720x1280 MIPI DSI)
+
+### Changed
+- Updated k_quirc submodule
+- Mnemonic storage: show name/ID after saving; larger delete button
+
+### Fixed
+- Entropy capture camera preview too zoomed in on small displays; uses PPA downscale instead of center crop
+- KEF encrypt strength label overlapping keypad on wave_35
+
 ## [0.0.4] - 2026-04-13
 
 ### Fixed
