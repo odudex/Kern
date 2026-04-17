@@ -13,6 +13,7 @@
 
 #include <esp_system.h>
 #include <lvgl.h>
+#include <sdkconfig.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -90,6 +91,11 @@ static lv_draw_buf_t *setup_identicon_draw_buf = NULL; // setup words page
 static lv_obj_t *words_label = NULL;
 static lv_obj_t *words_warning = NULL;
 static bool words_visible = false;
+#ifdef CONFIG_KERN_BOARD_WAVE_35
+// Compact display: persistent reveal dismissed by an explicit Continue press,
+// since the keyboard would otherwise occlude the identicon and words.
+static lv_obj_t *continue_btn = NULL;
+#endif
 static char
     keystroke_cache[PIN_MAX_LENGTH + 1]; // prefix cache for change detection
 static int keystroke_cache_len = 0;
@@ -181,6 +187,9 @@ static void clear_state(void) {
   words_label = NULL;
   words_warning = NULL;
   words_visible = false;
+#ifdef CONFIG_KERN_BOARD_WAVE_35
+  continue_btn = NULL;
+#endif
   secure_memzero(keystroke_cache, sizeof(keystroke_cache));
   keystroke_cache_len = 0;
 }
@@ -432,6 +441,26 @@ static void reveal_restore_cb(lv_timer_t *timer) {
     lv_obj_clear_state(text_input.textarea, LV_STATE_DISABLED);
 }
 
+#ifdef CONFIG_KERN_BOARD_WAVE_35
+static void continue_btn_cb(lv_event_t *e) {
+  (void)e;
+  if (words_container)
+    lv_obj_add_flag(words_container, LV_OBJ_FLAG_HIDDEN);
+  if (words_warning)
+    lv_obj_add_flag(words_warning, LV_OBJ_FLAG_HIDDEN);
+  words_visible = false;
+  // Keep keystroke_cache populated so identical prefix won't retrigger
+  if (continue_btn) {
+    lv_obj_delete(continue_btn);
+    continue_btn = NULL;
+  }
+  if (text_input.keyboard)
+    lv_obj_clear_flag(text_input.keyboard, LV_OBJ_FLAG_HIDDEN);
+  if (text_input.textarea)
+    lv_obj_clear_state(text_input.textarea, LV_STATE_DISABLED);
+}
+#endif
+
 static void pin_keystroke_cb(lv_event_t *e) {
   (void)e;
   if (!text_input.textarea)
@@ -441,9 +470,9 @@ static void pin_keystroke_cb(lv_event_t *e) {
   size_t len = text ? strlen(text) : 0;
 
   if (len >= split_pos && split_pos > 0) {
-    // Check if prefix portion changed since last computation
-    bool prefix_changed = !words_visible ||
-                          keystroke_cache_len != (int)split_pos ||
+    // Check if prefix portion changed since last computation. The cache is
+    // cleared on backspace below threshold, which re-arms first-time display.
+    bool prefix_changed = keystroke_cache_len != (int)split_pos ||
                           memcmp(keystroke_cache, text, split_pos) != 0;
     if (prefix_changed) {
       const char *word1 = NULL;
@@ -460,11 +489,22 @@ static void pin_keystroke_cb(lv_event_t *e) {
         lv_obj_clear_flag(words_container, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(words_warning, LV_OBJ_FLAG_HIDDEN);
         words_visible = true;
-        // Pause: hide keyboard and disable textarea for 2s to draw attention
+        // Hide keyboard and disable textarea while the user verifies
         lv_obj_add_flag(text_input.keyboard, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_state(text_input.textarea, LV_STATE_DISABLED);
+#ifdef CONFIG_KERN_BOARD_WAVE_35
+        if (!continue_btn) {
+          continue_btn = theme_create_button(page_screen, "Continue", true);
+          lv_obj_set_size(continue_btn, LV_PCT(60), theme_get_button_height());
+          lv_obj_align(continue_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+          lv_obj_add_event_cb(continue_btn, continue_btn_cb, LV_EVENT_CLICKED,
+                              NULL);
+        }
+#else
+        // 2s pause auto-restores the keyboard
         reveal_timer = lv_timer_create(reveal_restore_cb, 2000, NULL);
         lv_timer_set_repeat_count(reveal_timer, 1);
+#endif
         // Cache prefix for change detection (separate from prefix_buf)
         memcpy(keystroke_cache, text, split_pos);
         keystroke_cache[split_pos] = '\0';
