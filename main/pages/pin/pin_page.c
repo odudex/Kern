@@ -109,6 +109,8 @@ static void build_entry_state(const char *title_text);
 static void build_unlock_entry_state(void);
 static void build_split_state(void);
 static void build_delay_state(void);
+static void pin_mismatch_dismissed_cb(void);
+static void wrong_pin_dismissed_cb(void);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -266,11 +268,18 @@ static void deferred_verify_cb(lv_timer_t *timer) {
   }
   default:
     clear_buffers();
-    dialog_show_error("Wrong PIN", NULL, 1500);
-    transition_to(STATE_UNLOCK);
+    // Defer the rebuild until the dialog dismisses; rebuilding now would
+    // add the new keyboard above the error modal and hide the message.
+    dialog_show_error("Wrong PIN", wrong_pin_dismissed_cb, 1500);
     break;
   }
 }
+
+static void pin_mismatch_dismissed_cb(void) {
+  transition_to(STATE_SETUP_FULL_PIN);
+}
+
+static void wrong_pin_dismissed_cb(void) { transition_to(STATE_UNLOCK); }
 
 static void input_ready_cb(lv_event_t *e) {
   (void)e;
@@ -314,8 +323,9 @@ static void input_ready_cb(lv_event_t *e) {
       secure_memzero(setup_pin, sizeof(setup_pin));
       setup_pin_len = 0;
       secure_clear_textarea(text_input.textarea);
-      dialog_show_error("PINs don't match", NULL, 1500);
-      transition_to(STATE_SETUP_FULL_PIN);
+      // Defer the rebuild until the dialog dismisses; rebuilding now would
+      // add the new keyboard above the error modal and hide the message.
+      dialog_show_error("PINs don't match", pin_mismatch_dismissed_cb, 1500);
       return;
     }
     secure_clear_textarea(text_input.textarea);
