@@ -208,8 +208,9 @@ static void create_overlay(const char *title, const char *placeholder,
 
   if (password_mode) {
     if (LV_VER_RES <= 480) {
+      // Leave room below textarea for the strength label above the taller keyboard.
       lv_obj_align(text_input.textarea, LV_ALIGN_TOP_LEFT, LV_HOR_RES * 5 / 100,
-                   80);
+                   55);
       if (text_input.eye_btn)
         lv_obj_align_to(text_input.eye_btn, text_input.textarea,
                         LV_ALIGN_OUT_RIGHT_MID, 5, 0);

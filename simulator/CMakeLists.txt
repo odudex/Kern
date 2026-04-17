@@ -294,6 +294,9 @@ target_compile_definitions(kern_simulator PRIVATE
     K_QUIRC_BILINEAR_THRESHOLD
     $<$<BOOL:${SIM_WEBCAM}>:SIM_WEBCAM=1>
     $<$<BOOL:${BSP_HAS_PMIC}>:BSP_HAS_PMIC=1>
+    $<$<STREQUAL:${SIM_BOARD},wave_4b>:CONFIG_KERN_BOARD_WAVE_4B=1>
+    $<$<STREQUAL:${SIM_BOARD},wave_35>:CONFIG_KERN_BOARD_WAVE_35=1>
+    $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
 )
 
 target_compile_options(kern_simulator PRIVATE
