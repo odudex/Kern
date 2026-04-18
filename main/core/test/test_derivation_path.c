@@ -174,16 +174,11 @@ int main(void) {
   }
 
   /* h and H hardened notation */
-  printf("\n--- Hardened h/H notation ---\n");
+  printf("\n--- Hardened h notation ---\n");
 
   {
     uint32_t exp[] = {hardened(0)};
     test_parse_valid("h notation: m/0h", "m/0h", 1, exp);
-  }
-
-  {
-    uint32_t exp[] = {hardened(0)};
-    test_parse_valid("H notation: m/0H", "m/0H", 1, exp);
   }
 
   {
@@ -255,7 +250,6 @@ int main(void) {
   test_parse_invalid("invalid: m/0'' (double hardened)", "m/0''");
   test_parse_invalid("invalid: m/0'h (double hardened mixed)", "m/0'h");
   test_parse_invalid("invalid: m/0h' (double hardened mixed)", "m/0h'");
-  test_parse_invalid("invalid: m/0'H (double hardened mixed)", "m/0'H");
   test_parse_invalid("invalid: m/' (hardened without digits)", "m/'");
   test_parse_invalid("invalid: m/00 (leading zero)", "m/00");
   test_parse_invalid("invalid: m/01 (leading zero)", "m/01");

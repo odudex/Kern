@@ -114,7 +114,7 @@ static bool parse_derivation_path(const char *path, uint32_t *indices_out,
   }
 
   for (const char *c = path; *c; c++) {
-    if (*c != 'm' && *c != '/' && *c != '\'' && *c != 'h' && *c != 'H' &&
+    if (*c != 'm' && *c != '/' && *c != '\'' && *c != 'h' &&
         !(*c >= '0' && *c <= '9')) {
       return false;
     }
@@ -157,7 +157,7 @@ static bool parse_derivation_path(const char *path, uint32_t *indices_out,
       return false;
     }
 
-    if (*p == '\'' || *p == 'h' || *p == 'H') {
+    if (*p == '\'' || *p == 'h') {
       if (value >= BIP32_INITIAL_HARDENED_CHILD) {
         return false;
       }
