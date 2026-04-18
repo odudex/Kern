@@ -5,7 +5,7 @@
 
 set -e
 
-# Usage: ./format.sh [--check]
+# Usage: ./scripts/format.sh [--check]
 #   --check   Dry-run mode: exit 1 if any file needs formatting (for CI)
 
 CHECK_MODE=false
@@ -14,16 +14,17 @@ if [ "${1:-}" = "--check" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DIRS=(
-    "$SCRIPT_DIR/main"
-    "$SCRIPT_DIR/components/bbqr"
-    "$SCRIPT_DIR/components/cUR"
-    "$SCRIPT_DIR/components/k_quirc"
-    "$SCRIPT_DIR/components/sd_card"
-    "$SCRIPT_DIR/components/video"
-    "$SCRIPT_DIR/components/wave_4b"
-    "$SCRIPT_DIR/components/wave_35"
+    "$REPO_ROOT/main"
+    "$REPO_ROOT/components/bbqr"
+    "$REPO_ROOT/components/cUR"
+    "$REPO_ROOT/components/k_quirc"
+    "$REPO_ROOT/components/sd_card"
+    "$REPO_ROOT/components/video"
+    "$REPO_ROOT/components/wave_4b"
+    "$REPO_ROOT/components/wave_35"
 )
 
 if $CHECK_MODE; then

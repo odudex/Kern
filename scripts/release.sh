@@ -2,15 +2,16 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEVICES="wave_4b wave_35 wave_5"
-VERSION=$(cat "$SCRIPT_DIR/version.txt" | tr -d '[:space:]')
+VERSION=$(cat "$REPO_ROOT/version.txt" | tr -d '[:space:]')
 
 if [ -z "$VERSION" ]; then
     echo "Error: version.txt is empty"
     exit 1
 fi
 
-RELEASE_DIR="$SCRIPT_DIR/release/v${VERSION}"
+RELEASE_DIR="$REPO_ROOT/release/v${VERSION}"
 
 echo "Building Kern v${VERSION} release for: ${DEVICES}"
 echo "Output: ${RELEASE_DIR}"
@@ -21,18 +22,20 @@ source ~/esp/esp-idf/export.sh
 
 mkdir -p "$RELEASE_DIR"
 
+cd "$REPO_ROOT"
+
 for DEVICE in $DEVICES; do
     echo "========================================"
     echo "Building for ${DEVICE}..."
     echo "========================================"
 
     # Remove sdkconfig so it regenerates for this device
-    rm -f "$SCRIPT_DIR/sdkconfig"
+    rm -f "$REPO_ROOT/sdkconfig"
 
     # Build
     idf.py -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.${DEVICE}" build
 
-    BUILD_DIR="$SCRIPT_DIR/build"
+    BUILD_DIR="$REPO_ROOT/build"
     DEVICE_DIR="$RELEASE_DIR/${DEVICE}"
     mkdir -p "$DEVICE_DIR"
 

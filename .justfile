@@ -23,10 +23,10 @@ monitor board="wave_4b":
     idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig monitor
 
 format:
-    ./format.sh
+    ./scripts/format.sh
 
 test:
-    ./test.sh
+    ./scripts/test.sh
 
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5

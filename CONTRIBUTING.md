@@ -28,7 +28,7 @@ Do not introduce UI dependencies into core modules. If a core function needs use
 - Keep changes focused, one logical change per commit.
 - Format your code before submitting:
   ```bash
-  ./format.sh
+  ./scripts/format.sh
   ```
   This runs `clang-format` (provided by ESP-IDF) on all `.c` and `.h` files in `main/` and first-party components.
 
