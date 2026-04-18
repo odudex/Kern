@@ -1,0 +1,77 @@
+name: Test each commit
+on:
+  pull_request:
+
+jobs:
+  test-each-commit:
+    # Single-commit PRs are already fully covered by github-actions-test.yml,
+    # so there's nothing new to verify.
+    if: github.event.pull_request.commits > 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      IDF_COMMIT: 44c77cbf46844cd056c923277ece745173cb270d
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          # +1 so rebase can reach the parent of the PR base.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch base branch
+        run: |
+          git fetch --no-tags --prune --depth=1 origin \
+            "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Cache ESP-IDF
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/esp-idf
+            ~/.espressif
+          key: esp-idf-${{ env.IDF_COMMIT }}-esp32p4
+
+      - name: Setup ESP-IDF
+        run: |
+          if [ -f ~/esp-idf/.idf_commit_ok ] && [ "$(cat ~/esp-idf/.idf_commit_ok)" = "$IDF_COMMIT" ]; then
+            echo "ESP-IDF already at $IDF_COMMIT (cached)"
+            exit 0
+          fi
+          if [ ! -d ~/esp-idf ]; then
+            git clone https://github.com/espressif/esp-idf.git ~/esp-idf
+          fi
+          cd ~/esp-idf
+          git fetch origin $IDF_COMMIT
+          git checkout $IDF_COMMIT
+          git submodule update --init --recursive
+          ./install.sh esp32p4
+          echo "$IDF_COMMIT" > .idf_commit_ok
+
+      - name: Configure git identity (required by rebase)
+        run: |
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+
+      - name: Run checks on each commit (excluding PR tip)
+        run: |
+          . ~/esp-idf/export.sh
+          # Stage the CI tooling outside the work tree so it survives the
+          # per-commit checkouts rebase performs -- intermediate commits
+          # predate the introduction of scripts/ci-checks.sh, so an in-tree
+          # --exec path would hit "No such file or directory".
+          mkdir -p "$RUNNER_TEMP/ci-scripts"
+          cp -p scripts/ci-checks.sh scripts/format.sh scripts/test.sh \
+            "$RUNNER_TEMP/ci-scripts/"
+          # HEAD is the PR tip -- already covered by github-actions-test.yml.
+          # Walking the range origin/${GITHUB_BASE_REF}..HEAD~ runs checks on
+          # every intermediate commit. `git rebase --exec CMD BASE` replays
+          # each commit in (BASE..HEAD] chronologically and runs CMD after
+          # each, inheriting the parent shell's env (so idf.py stays on PATH).
+          git checkout HEAD~
+          git rebase --exec "$RUNNER_TEMP/ci-scripts/ci-checks.sh" \
+            "origin/${GITHUB_BASE_REF}"
