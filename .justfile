@@ -83,3 +83,7 @@ sim-build-webcam board="wave_4b":
 # Run simulator with webcam (builds with V4L2 support)
 sim-webcam board="wave_4b": (sim-build-webcam board)
     SDL_VIDEODRIVER=x11 SDL_RENDER_DRIVER=software ./simulator/build/kern_simulator --webcam
+
+# update subrepo dependencies
+dep:
+    git submodule update --init --recursive
