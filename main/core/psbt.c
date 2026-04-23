@@ -650,8 +650,7 @@ bool psbt_format_keypath(const unsigned char *raw_keypath,
   return format_derived_path(comps, n, buf, buf_size);
 }
 
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
-                 psbt_sign_ack_fn_t ack_fn) {
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
   if (!psbt) {
     ESP_LOGE(TAG, "Invalid PSBT");
     return 0;
@@ -681,14 +680,9 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                                       ownership.claim.derived_path_len, path,
                                       sizeof(path));
     } else {
-      /* requires_ack: permissive-signing fallback — fp matched but no verified
-       * claim. */
-      if (!ack_fn)
-        continue;
-      if (!ack_fn(i, ownership.raw_keypath, ownership.raw_keypath_len))
-        continue;
-
-      /* Parse raw_keypath bytes (fp + BIP32 components) into uint32 array. */
+      /* requires_ack: permissive-signing fallback — fp matched but no
+       * verified claim. Permissive is itself the explicit opt-in, so
+       * parse the raw keypath and sign. */
       if (ownership.raw_keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
           (ownership.raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) % 4 != 0)
         continue;
