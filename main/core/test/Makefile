@@ -42,21 +42,51 @@ LIBWALLY = libwally.a
 SRCS_DERIV = test_derivation_path.c
 TARGET_DERIV = test_derivation_path
 
-all: $(TARGET_DERIV)
+SRCS_SS_PARSE = test_ss_whitelist_parse.c
+TARGET_SS_PARSE = test_ss_whitelist_parse
+
+SRCS_SS_WHITELISTED = test_ss_whitelist_is_whitelisted.c
+TARGET_SS_WHITELISTED = test_ss_whitelist_is_whitelisted
+
+SRCS_SS_REGEN = test_ss_whitelist_regen.c
+TARGET_SS_REGEN = test_ss_whitelist_regen
+
+SRCS_PSB = test_purpose_binding.c
+TARGET_PSB = test_purpose_binding
+
+SS_SRC = ../ss_whitelist.c ../ss_whitelist.h
+KEY_SRC = ../key.c ../key.h ../../utils/secure_mem.h
+KEY_STUB_SRC = stubs/key_stub.c
+
+all: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB)
 
 $(LIBWALLY): $(WALLY_SRC)
 	$(CC) $(CFLAGS) $(WALLY_CFLAGS) -c -o combined.o $<
 	ar rcs $@ combined.o
 
-KEY_SRC = ../key.c ../key.h ../../utils/secure_mem.h
-
 $(TARGET_DERIV): $(SRCS_DERIV) $(KEY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DERIV) $(LIBWALLY)
 
-run: $(TARGET_DERIV)
+$(TARGET_SS_PARSE): $(SRCS_SS_PARSE) $(SS_SRC) $(KEY_STUB_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_SS_PARSE) $(KEY_STUB_SRC) $(LIBWALLY)
+
+$(TARGET_SS_WHITELISTED): $(SRCS_SS_WHITELISTED) $(SS_SRC) $(KEY_STUB_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_SS_WHITELISTED) $(KEY_STUB_SRC) $(LIBWALLY)
+
+$(TARGET_SS_REGEN): $(SRCS_SS_REGEN) $(SS_SRC) $(KEY_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_SS_REGEN) $(LIBWALLY)
+
+$(TARGET_PSB): $(SRCS_PSB) $(SS_SRC) $(KEY_STUB_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PSB) $(KEY_STUB_SRC) $(LIBWALLY)
+
+run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB)
 	./$(TARGET_DERIV)
+	./$(TARGET_SS_PARSE)
+	./$(TARGET_SS_WHITELISTED)
+	./$(TARGET_SS_REGEN)
+	./$(TARGET_PSB)
 
 clean:
-	rm -f $(TARGET_DERIV) $(LIBWALLY) combined.o
+	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(LIBWALLY) combined.o
 
 .PHONY: all run clean
