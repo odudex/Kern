@@ -262,6 +262,7 @@ set(APP_PAGE_SOURCES
     # Settings
     ${APP_PAGES_DIR}/settings/descriptor_manager.c
     ${APP_PAGES_DIR}/settings/wallet_settings.c
+    ${APP_PAGES_DIR}/settings/registered_descriptors.c
     # Shared pages
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
