@@ -13,6 +13,7 @@ static const char *KEY_AE_TARGET = "ae_tgt";
 static const char *KEY_FOCUS_POS = "focus";
 static const char *KEY_PERMISSIVE_SIGNING = "perm_sign";
 static const char *KEY_PARTIAL_SIGNING = "part_sign";
+static const char *KEY_EXPECTED_OWNED_SIGNING = "exp_own_sign";
 
 static nvs_handle_t settings_nvs;
 static bool initialized = false;
@@ -154,6 +155,25 @@ esp_err_t settings_set_partial_signing(bool partial) {
     return ESP_ERR_INVALID_STATE;
   uint8_t val = partial ? 1 : 0;
   esp_err_t err = nvs_set_u8(settings_nvs, KEY_PARTIAL_SIGNING, val);
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
+}
+
+bool settings_get_expected_owned_signing(void) {
+  if (!initialized)
+    return false;
+  uint8_t val = 0;
+  if (nvs_get_u8(settings_nvs, KEY_EXPECTED_OWNED_SIGNING, &val) != ESP_OK)
+    return false;
+  return val ? true : false;
+}
+
+esp_err_t settings_set_expected_owned_signing(bool enabled) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  uint8_t val = enabled ? 1 : 0;
+  esp_err_t err = nvs_set_u8(settings_nvs, KEY_EXPECTED_OWNED_SIGNING, val);
   if (err != ESP_OK)
     return err;
   return nvs_commit(settings_nvs);

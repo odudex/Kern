@@ -648,6 +648,433 @@ static void test_psbt_classify_fixture_c(void) {
   PASS();
 }
 
+/* ================================================================
+ * Adversarial classifier tests
+ * ================================================================ */
+
+static void test_psbt_classify_adv_fp_mismatch(void) {
+  TEST("psbt_classify_input: foreign fingerprint -> EXTERNAL");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  /* Same path/spk as fixture A, but fp = deadbeef does not match the
+   * stub fingerprint 00000000. */
+  uint8_t kp_val[] = {
+      0xde, 0xad, 0xbe, 0xef, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    FAIL("expected EXTERNAL for foreign fingerprint");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_classify_adv_keypath_truncated(void) {
+  TEST("psbt_classify_input: keypath shorter than fingerprint -> EXTERNAL");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  /* 3 bytes — below fingerprint length, classifier must skip. */
+  uint8_t kp_val[] = {0x00, 0x00, 0x00};
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    FAIL("expected EXTERNAL for sub-fingerprint keypath");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_classify_adv_keypath_fp_only(void) {
+  TEST(
+      "psbt_classify_input: fp-only keypath (no derivation) -> EXPECTED_OWNED");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  /* 4 bytes: fingerprint matches but no derivation components. fp-match
+   * marks the input as ours, but derive→spk has nothing to derive →
+   * EXPECTED_OWNED (harness state). */
+  uint8_t kp_val[] = {0x00, 0x00, 0x00, 0x00};
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED) {
+    FAIL("expected EXPECTED_OWNED for fp-only keypath");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_classify_adv_mixed_script(void) {
+  TEST("psbt_classify_input: 84' path + P2PKH(same key) -> OWNED_UNSAFE");
+
+  /* Attack: declare a whitelist-shaped path (84') but supply a P2PKH
+   * UTXO derived from the same pubkey. The whitelist match fails
+   * (script-type mismatch on regenerate), but derive_matches_spk tries
+   * all four standard shapes and finds P2PKH(pubkey) matches → falls
+   * through to OWNED_UNSAFE. Locks in: this shape is gated by
+   * permissive_signing, never auto-OWNED_SAFE. */
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  uint8_t pkh20[HASH160_LEN];
+  if (wally_hash160(derived->pub_key, EC_PUBLIC_KEY_LEN, pkh20, HASH160_LEN) !=
+      WALLY_OK) {
+    bip32_key_free(derived);
+    FAIL("hash160");
+    return;
+  }
+  uint8_t spk[25] = {0x76, 0xa9, 0x14};
+  memcpy(spk + 3, pkh20, 20);
+  spk[23] = 0x88;
+  spk[24] = 0xac;
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  struct wally_psbt *psbt =
+      make_test_psbt(spk, sizeof(spk), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE) {
+    FAIL("expected OWNED_UNSAFE (whitelist rejects, derive matches P2PKH)");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_classify_adv_registry_depth_mismatch(void) {
+  TEST("psbt_classify_input: registered desc, keypath missing tail -> "
+       "EXPECTED_OWNED");
+
+  /* Register a 4-deep origin (48'/0'/0'/2') multisig descriptor, then
+   * supply a keypath whose total depth equals the origin (no tail) —
+   * registry_match_keypath requires exactly origin+2 components, so it
+   * must reject. fp matches but derive_matches_spk over the WSH spk
+   * does not match any of the four singlesig shapes → EXPECTED_OWNED. */
+  registry_clear();
+  if (!registry_add_from_string("u",
+                                "wsh(sortedmulti(2,"
+                                "[00000000/48'/0'/0'/2']" XPUB_84 "/0/*,"
+                                "[11111111/48'/0'/0'/2']" XPUB_86 "/0/*"
+                                "))#6nfc46dh",
+                                STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/48'/0'/0'/2'", &derived)) {
+    registry_clear();
+    FAIL("key derivation failed");
+    return;
+  }
+
+  /* No tail components — only fp + 4 origin components. */
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp */
+      0x30, 0x00, 0x00, 0x80, /* 48' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x02, 0x00, 0x00, 0x80, /* 2' */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_WSH_SPK, sizeof(REF_WSH_SPK), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    registry_clear();
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED) {
+    FAIL("expected EXPECTED_OWNED (registry must reject depth mismatch)");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_classify_adv_taproot_foreign_fp(void) {
+  TEST("psbt_classify_input: taproot leaf path with foreign fp -> EXTERNAL");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/86'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK) {
+    bip32_key_free(derived);
+    FAIL("tx alloc");
+    return;
+  }
+  uint8_t txid[32] = {0};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  uint8_t op_return[] = {0x6a};
+  wally_tx_add_raw_output(tx, 0, op_return, sizeof(op_return), 0);
+
+  struct wally_psbt *psbt = NULL;
+  if (wally_psbt_from_tx(tx, 0, 0, &psbt) != WALLY_OK) {
+    wally_tx_free(tx);
+    bip32_key_free(derived);
+    FAIL("psbt from tx");
+    return;
+  }
+  wally_tx_free(tx);
+
+  struct wally_tx_output *utxo = NULL;
+  wally_tx_output_init_alloc(50000, REF_SPK_P2TR, sizeof(REF_SPK_P2TR), &utxo);
+  wally_psbt_set_input_witness_utxo(psbt, 0, utxo);
+  wally_tx_output_free(utxo);
+
+  /* Foreign fp in the taproot_leaf_paths entry. */
+  uint8_t kp_val[] = {
+      0xde, 0xad, 0xbe, 0xef, 0x56, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  /* xonly = drop leading 02/03 byte of the compressed pubkey */
+  wally_map_add(&psbt->inputs[0].taproot_leaf_paths, derived->pub_key + 1,
+                EC_PUBLIC_KEY_LEN - 1, kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    FAIL("expected EXTERNAL for foreign fp in taproot_leaf_paths");
+    return;
+  }
+  PASS();
+}
+
+/* ================================================================
+ * psbt_sign policy-gate tests
+ *
+ * Verify that psbt_sign() refuses to produce signatures for
+ * OWNED_UNSAFE / EXPECTED_OWNED inputs unless the corresponding policy
+ * bit is set, even when libwally signing would succeed.
+ * ================================================================ */
+
+/* Build a single-input PSBT whose input is OWNED_UNSAFE (fp matches,
+ * derive(path) reproduces the spk, but path is not whitelisted).
+ * Mirrors fixture F. */
+static struct wally_psbt *make_unsafe_psbt(void) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/9999'/0'/0'/0/0", &derived))
+    return NULL;
+
+  uint8_t spk[22];
+  size_t spk_len = 0;
+  if (wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                       WALLY_SCRIPT_HASH160, spk, sizeof(spk),
+                                       &spk_len) != WALLY_OK) {
+    bip32_key_free(derived);
+    return NULL;
+  }
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 */
+      0x0F, 0x27, 0x00, 0x80, /* 9999' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(spk, spk_len, derived->pub_key, sizeof(derived->pub_key),
+                     kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return psbt;
+}
+
+/* EXPECTED_OWNED: fp matches but derive doesn't reproduce the spk
+ * (here the path is unknown purpose 99'). Mirrors fixture E. */
+static struct wally_psbt *make_expected_owned_psbt(void) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived))
+    return NULL;
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 */
+      0x63, 0x00, 0x00, 0x80, /* 99' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return psbt;
+}
+
+static void test_psbt_sign_gate_unsafe_blocked(void) {
+  TEST("psbt_sign: OWNED_UNSAFE blocked when allow_unsafe=false");
+
+  struct wally_psbt *psbt = make_unsafe_psbt();
+  if (!psbt) {
+    FAIL("make_unsafe_psbt");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {.allow_unsafe = false,
+                               .allow_expected_owned = false};
+  size_t n = psbt_sign(psbt, false, policy);
+  wally_psbt_free(psbt);
+
+  if (n != 0) {
+    FAIL("expected 0 signatures (policy gate should block)");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_sign_gate_unsafe_allowed(void) {
+  TEST("psbt_sign: OWNED_UNSAFE signed when allow_unsafe=true");
+
+  struct wally_psbt *psbt = make_unsafe_psbt();
+  if (!psbt) {
+    FAIL("make_unsafe_psbt");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {.allow_unsafe = true,
+                               .allow_expected_owned = false};
+  size_t n = psbt_sign(psbt, false, policy);
+  wally_psbt_free(psbt);
+
+  if (n != 1) {
+    FAIL("expected 1 signature when policy allows OWNED_UNSAFE");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_sign_gate_expected_blocked(void) {
+  TEST("psbt_sign: EXPECTED_OWNED blocked when allow_expected_owned=false");
+
+  struct wally_psbt *psbt = make_expected_owned_psbt();
+  if (!psbt) {
+    FAIL("make_expected_owned_psbt");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {.allow_unsafe = false,
+                               .allow_expected_owned = false};
+  size_t n = psbt_sign(psbt, false, policy);
+  wally_psbt_free(psbt);
+
+  if (n != 0) {
+    FAIL("expected 0 signatures (policy gate should block)");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_sign_gate_external_always_skipped(void) {
+  TEST("psbt_sign: EXTERNAL skipped even with all policy bits true");
+
+  /* fp=deadbeef will not match key_get_fingerprint stub (00000000) →
+   * EXTERNAL. Even with both policy bits on, no signatures should be
+   * produced. */
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+  uint8_t kp_val[] = {
+      0xde, 0xad, 0xbe, 0xef, /* foreign fp */
+      0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00,
+      0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {.allow_unsafe = true,
+                               .allow_expected_owned = true};
+  size_t n = psbt_sign(psbt, false, policy);
+  wally_psbt_free(psbt);
+
+  if (n != 0) {
+    FAIL("EXTERNAL must never be signed");
+    return;
+  }
+  PASS();
+}
+
 /* ------------------------------------------------------------------ */
 
 static void test_registry_claim(const char *test_name, const char *desc_str,
@@ -790,6 +1217,22 @@ int main(void) {
 
   test_psbt_classify_fixture_b();
   test_psbt_classify_fixture_c();
+
+  printf("\n=== psbt_classify adversarial tests ===\n\n");
+
+  test_psbt_classify_adv_fp_mismatch();
+  test_psbt_classify_adv_keypath_truncated();
+  test_psbt_classify_adv_keypath_fp_only();
+  test_psbt_classify_adv_mixed_script();
+  test_psbt_classify_adv_registry_depth_mismatch();
+  test_psbt_classify_adv_taproot_foreign_fp();
+
+  printf("\n=== psbt_sign policy-gate tests ===\n\n");
+
+  test_psbt_sign_gate_unsafe_blocked();
+  test_psbt_sign_gate_unsafe_allowed();
+  test_psbt_sign_gate_expected_blocked();
+  test_psbt_sign_gate_external_always_skipped();
 
   key_unload();
 
