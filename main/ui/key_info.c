@@ -1,6 +1,5 @@
 #include "key_info.h"
 #include "../core/key.h"
-#include "../core/wallet.h"
 #include "assets/icons_24.h"
 #include "theme.h"
 #include <stdio.h>
@@ -27,10 +26,9 @@ lv_obj_t *ui_fingerprint_create(lv_obj_t *parent, lv_color_t color) {
 }
 
 lv_obj_t *ui_derivation_create(lv_obj_t *parent, lv_color_t color) {
-  const char *derivation = wallet_get_derivation();
-  if (!derivation)
-    return NULL;
-  return ui_icon_text_row_create(parent, ICON_DERIVATION, derivation, color);
+  (void)parent;
+  (void)color;
+  return NULL;
 }
 
 lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
@@ -46,8 +44,7 @@ lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
   lv_obj_set_style_pad_right(cont, btn_zone, 0);
   lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW_WRAP);
 
-  if (!ui_fingerprint_create(cont, highlight_color()) ||
-      !ui_derivation_create(cont, secondary_color())) {
+  if (!ui_fingerprint_create(cont, highlight_color())) {
     lv_obj_del(cont);
     return NULL;
   }

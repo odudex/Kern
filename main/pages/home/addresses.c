@@ -40,6 +40,7 @@ static void (*return_callback)(void) = NULL;
 
 static bool show_change = false;
 static uint32_t address_offset = 0;
+static uint32_t current_account = 0;
 
 static char stored_addresses[NUM_ADDRESSES][128];
 static uint32_t stored_indices[NUM_ADDRESSES];
@@ -352,7 +353,7 @@ static void refresh_address_list(void) {
 
   uint16_t sel = lv_dropdown_get_selected(source_dropdown);
   bool is_testnet = (wallet_get_network() == WALLET_NETWORK_TESTNET);
-  uint32_t account = wallet_get_account();
+  uint32_t account = current_account;
   uint32_t chain = show_change ? 1 : 0;
 
   static const ss_script_type_t script_map[4] = {
@@ -488,7 +489,7 @@ static void update_account_display(void) {
   if (!account_value_label)
     return;
   char buf[12];
-  snprintf(buf, sizeof(buf), "%u", wallet_get_account());
+  snprintf(buf, sizeof(buf), "%u", current_account);
   lv_label_set_text(account_value_label, buf);
 }
 
@@ -534,7 +535,7 @@ static void account_numpad_event_cb(lv_event_t *e) {
     if (account_input_len > 0) {
       unsigned long val = strtoul(account_input_buffer, NULL, 10);
       if (val < SS_MAX_ACCOUNT) {
-        wallet_set_account((uint32_t)val);
+        current_account = (uint32_t)val;
         update_account_display();
         address_offset = 0;
         refresh_address_list();
@@ -559,7 +560,7 @@ static void account_numpad_event_cb(lv_event_t *e) {
 static void show_account_overlay(void) {
   account_input_len =
       snprintf(account_input_buffer, sizeof(account_input_buffer), "%u",
-               wallet_get_account());
+               current_account);
 
   account_overlay = lv_obj_create(lv_screen_active());
   lv_obj_remove_style_all(account_overlay);
@@ -628,9 +629,7 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_t *header = ui_key_info_create(addresses_screen);
   ui_battery_create(header);
 
-  wallet_policy_t policy = wallet_get_policy();
-  bool needs_descriptor =
-      (policy == WALLET_POLICY_MULTISIG && !wallet_has_descriptor());
+  bool needs_descriptor = false;
 
   // Register Descriptor button (for multisig without descriptor)
   register_descriptor_btn = lv_btn_create(addresses_screen);

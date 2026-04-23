@@ -32,10 +32,10 @@
 - Networks
   - ✅ Mainnet
   - ✅ Testnet
-- ✅ Account
-- Policy types
-  - ✅ Single-sig
-  - ✅ Multisig
+- ✅ Account (any BIP44/49/84/86 account 0–100, no per-session selection required)
+- Signing model
+  - ✅ Single-sig (BIP44/49/84/86 whitelist; no policy setting required)
+  - ✅ Multisig (descriptor registry, auto-loaded from flash + SD at boot)
   - ❌ Miniscript
 - Descriptors
   - ✅ Loading
@@ -43,9 +43,9 @@
   - ✅ Saving
   - ✅ Encrypting/Decrypting
 - Script type
-  - ✅ Native Segwit
-  - ❌ Nested Segwit
-  - ❌ Taproot
+  - ✅ Native Segwit (P2WPKH, BIP84)
+  - ✅ Nested Segwit (P2SH-P2WPKH, BIP49)
+  - ✅ Taproot (P2TR, BIP86)
 
 - Security
   - ✅ KEF encryption
