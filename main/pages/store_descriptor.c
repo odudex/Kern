@@ -1,6 +1,7 @@
 // Store Descriptor Page — save descriptor to flash or SD card
 
 #include "store_descriptor.h"
+#include "../core/registry.h"
 #include "../core/storage.h"
 #include "../core/wallet.h"
 #include "../ui/dialog.h"
@@ -8,9 +9,12 @@
 #include "../ui/theme.h"
 #include "shared/kef_encrypt_page.h"
 
+#include <esp_log.h>
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>
+
+static const char *TAG = "store_descriptor";
 
 static lv_obj_t *main_screen = NULL;
 static lv_obj_t *progress_dialog = NULL;
@@ -50,6 +54,7 @@ static void do_save_encrypted(void) {
       storage_save_descriptor(target_location, pending_id, pending_envelope,
                               pending_envelope_len, true);
 
+  const char *saved_id = pending_id;
   pending_envelope = NULL;
   pending_envelope_len = 0;
   pending_id = NULL;
@@ -61,6 +66,13 @@ static void do_save_encrypted(void) {
   kef_encrypt_page_destroy();
 
   if (ret == ESP_OK) {
+    registry_remove(saved_id);
+    if (!registry_add_from_string(saved_id, descriptor_text, target_location,
+                                  false)) {
+      ESP_LOGW(TAG,
+               "registry_add_from_string failed for '%s'; will retry at boot",
+               saved_id);
+    }
     const char *loc_name =
         (target_location == STORAGE_FLASH) ? "flash" : "SD card";
     char msg[64];
@@ -83,6 +95,13 @@ static void do_save_plaintext(const char *id) {
   }
 
   if (ret == ESP_OK) {
+    registry_remove(id);
+    if (!registry_add_from_string(id, descriptor_text, target_location,
+                                  false)) {
+      ESP_LOGW(TAG,
+               "registry_add_from_string failed for '%s'; will retry at boot",
+               id);
+    }
     const char *loc_name =
         (target_location == STORAGE_FLASH) ? "flash" : "SD card";
     char msg[64];
