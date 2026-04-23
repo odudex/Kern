@@ -8,7 +8,6 @@
 static const char *TAG = "SETTINGS";
 static const char *NVS_NAMESPACE = "settings";
 static const char *KEY_DEFAULT_NET = "def_net";
-static const char *KEY_DEFAULT_POL = "def_pol";
 static const char *KEY_BRIGHTNESS = "bright";
 static const char *KEY_AE_TARGET = "ae_tgt";
 static const char *KEY_FOCUS_POS = "focus";
@@ -24,6 +23,18 @@ esp_err_t settings_init(void) {
     return err;
   }
   initialized = true;
+
+  /* Drop legacy "def_pol" (default wallet policy) key — superseded by the
+   * per-state permissive/partial/expected-owned toggles. Inert if absent. */
+  esp_err_t mig = nvs_erase_key(settings_nvs, "def_pol");
+  if (mig == ESP_OK) {
+    ESP_LOGI(TAG, "migrated: erased legacy 'def_pol' key");
+    nvs_commit(settings_nvs);
+  } else if (mig != ESP_ERR_NVS_NOT_FOUND) {
+    ESP_LOGW(TAG, "migration: erase 'def_pol' returned %s",
+             esp_err_to_name(mig));
+  }
+
   return ESP_OK;
 }
 
@@ -41,25 +52,6 @@ esp_err_t settings_set_default_network(wallet_network_t network) {
   if (!initialized)
     return ESP_ERR_INVALID_STATE;
   esp_err_t err = nvs_set_u8(settings_nvs, KEY_DEFAULT_NET, (uint8_t)network);
-  if (err != ESP_OK)
-    return err;
-  return nvs_commit(settings_nvs);
-}
-
-wallet_policy_t settings_get_default_policy(void) {
-  if (!initialized)
-    return WALLET_POLICY_SINGLESIG;
-  uint8_t val = 0;
-  if (nvs_get_u8(settings_nvs, KEY_DEFAULT_POL, &val) != ESP_OK)
-    return WALLET_POLICY_SINGLESIG;
-  return (val <= WALLET_POLICY_MULTISIG) ? (wallet_policy_t)val
-                                         : WALLET_POLICY_SINGLESIG;
-}
-
-esp_err_t settings_set_default_policy(wallet_policy_t policy) {
-  if (!initialized)
-    return ESP_ERR_INVALID_STATE;
-  esp_err_t err = nvs_set_u8(settings_nvs, KEY_DEFAULT_POL, (uint8_t)policy);
   if (err != ESP_OK)
     return err;
   return nvs_commit(settings_nvs);
