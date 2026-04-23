@@ -50,30 +50,17 @@ static void menu_addresses_cb(void) {
 }
 
 static char saved_fingerprint[9];
-static char saved_derivation[48];
 
 static void save_key_snapshot(void) {
   if (!key_get_fingerprint_hex(saved_fingerprint))
     saved_fingerprint[0] = '\0';
-  const char *deriv = wallet_get_derivation();
-  if (deriv)
-    strncpy(saved_derivation, deriv, sizeof(saved_derivation) - 1);
-  else
-    saved_derivation[0] = '\0';
 }
 
 static bool key_snapshot_changed(void) {
   char current_fp[9];
   if (!key_get_fingerprint_hex(current_fp))
     current_fp[0] = '\0';
-  if (strcmp(saved_fingerprint, current_fp) != 0)
-    return true;
-  const char *current_deriv = wallet_get_derivation();
-  if (!current_deriv)
-    current_deriv = "";
-  if (strcmp(saved_derivation, current_deriv) != 0)
-    return true;
-  return false;
+  return strcmp(saved_fingerprint, current_fp) != 0;
 }
 
 static void menu_scan_cb(void) {

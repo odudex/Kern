@@ -58,19 +58,7 @@ void storage_free_file_list(char **files, int count) {
 }
 
 /* --- Wallet stubs --- */
-uint32_t wallet_get_account(void) { return 0; }
 wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
-bool wallet_has_descriptor(void) { return false; }
-bool wallet_get_multisig_receive_address(uint32_t i, char **a) {
-  (void)i;
-  (void)a;
-  return false;
-}
-bool wallet_get_multisig_change_address(uint32_t i, char **a) {
-  (void)i;
-  (void)a;
-  return false;
-}
 
 /* --- Settings stub: permissive signing disabled in tests --- */
 #include "core/settings.h"
@@ -241,14 +229,14 @@ static const uint8_t REF_SHMU_REDEEM[] = {
     0xf6, 0x70, 0xf7, 0xa8, 0xba, 0x0b, 0x38, 0x67, 0x79, 0x10, 0x6c, 0xf1,
     0x22, 0x3c, 0x6f, 0xc5, 0xd7, 0xcd, 0x6f, 0xc1, 0x15, 0x52, 0xae};
 
-/* tr([00000000/86'/0'/0']XPUB_86/0/*) child_num=0: P2TR SPK, no redeem, no
+/* tr([00000000/86'/0'/0']XPUB_86/0/ *) child_num=0: P2TR SPK, no redeem, no
  * witness */
 static const uint8_t REF_TR_SPK[] = {
     0x51, 0x20, 0xa6, 0x08, 0x69, 0xf0, 0xdb, 0xcf, 0x1d, 0xc6, 0x59, 0xc9,
     0xce, 0xcb, 0xaf, 0x80, 0x50, 0x13, 0x5e, 0xa9, 0xe8, 0xcd, 0xc4, 0x87,
     0x05, 0x3f, 0x1d, 0xc6, 0x88, 0x09, 0x49, 0xdc, 0x68, 0x4c};
 
-/* sh(wsh(pkh([00000000/49'/0'/0']XPUB_84/0/*))) child_num=0:
+/* sh(wsh(pkh([00000000/49'/0'/0']XPUB_84/0/ *))) child_num=0:
  * P2SH SPK, P2WSH redeem, P2PKH witness script.
  * wsh(wpkh()) is rejected by this libwally build (BUILD_MINIMAL);
  * sh(wsh(pkh())) exercises the identical claim_regenerate code path. */
