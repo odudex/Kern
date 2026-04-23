@@ -6,6 +6,7 @@
 
 /* Wally types needed by stubs */
 #include <wally_bip32.h>
+#include <wally_script.h>
 
 /* Project headers for stub type declarations */
 #include "core/key.h"
@@ -371,16 +372,21 @@ static void test_psbt_classify_fixture_d(void) {
   input_ownership_t r = psbt_classify_input(psbt, 0, false);
   wally_psbt_free(psbt);
 
-  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
-    FAIL("must be EXTERNAL when UTXO script mismatches");
+  /* Attacker swapped the spk to REF_SPK_P2PKH which is hash of
+   * derive(m/44'/0'/0'/0/0).pub_key — a different key than the one at
+   * m/84'/0'/0'/0/0 advertised in the keypath. derive→spk fails for
+   * every shape → EXPECTED_OWNED (the harness state that prevents
+   * silently signing for an attacker's key). */
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED) {
+    FAIL("must be EXPECTED_OWNED (derive doesn't reach the swapped spk)");
     return;
   }
   PASS();
 }
 
 static void test_psbt_classify_fixture_e(void) {
-  TEST("psbt_classify_input: fixture E (fp match, unknown path, "
-       "permissive=off)");
+  TEST("psbt_classify_input: fixture E (fp match, unknown path, derive "
+       "mismatch)");
 
   struct ext_key *derived = NULL;
   if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
@@ -410,9 +416,62 @@ static void test_psbt_classify_fixture_e(void) {
   input_ownership_t r = psbt_classify_input(psbt, 0, false);
   wally_psbt_free(psbt);
 
-  /* seen_our_fp=true, but no whitelist/registry claim; permissive stub=false */
-  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
-    FAIL("must be EXTERNAL (permissive=off, unknown path)");
+  /* fp matches but the path (99') derives to a pubkey other than the
+   * one whose p2wpkh produced REF_SPK_P2WPKH, so derive→spk fails →
+   * EXPECTED_OWNED (harness state). */
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED) {
+    FAIL("must be EXPECTED_OWNED (fp matches, derive doesn't reach spk)");
+    return;
+  }
+  PASS();
+}
+
+static void test_psbt_classify_fixture_f(void) {
+  TEST("psbt_classify_input: fixture F (fp + non-standard path, derive "
+       "verifies)");
+
+  /* Path m/9999'/0'/0'/0/0 — purpose 9999 isn't on the whitelist and
+   * isn't in the registry, but the spk in the PSBT IS the p2wpkh of
+   * derive(that path). Classifier should return OWNED_UNSAFE. */
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/9999'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  uint8_t spk[22];
+  size_t spk_len = 0;
+  if (wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                       WALLY_SCRIPT_HASH160, spk, sizeof(spk),
+                                       &spk_len) != WALLY_OK) {
+    bip32_key_free(derived);
+    FAIL("witness program build");
+    return;
+  }
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fingerprint = 00000000 (matches stub) */
+      0x0F, 0x27, 0x00, 0x80, /* 9999' = 0x8000270F LE                 */
+      0x00, 0x00, 0x00, 0x80, /* 0'                                    */
+      0x00, 0x00, 0x00, 0x80, /* 0'                                    */
+      0x00, 0x00, 0x00, 0x00, /* 0                                     */
+      0x00, 0x00, 0x00, 0x00, /* 0                                     */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(spk, spk_len, derived->pub_key, sizeof(derived->pub_key),
+                     kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE) {
+    FAIL("must be OWNED_UNSAFE (fp + derive verifies on non-whitelisted path)");
     return;
   }
   PASS();
@@ -725,6 +784,7 @@ int main(void) {
   test_psbt_classify_fixture_a();
   test_psbt_classify_fixture_d();
   test_psbt_classify_fixture_e();
+  test_psbt_classify_fixture_f();
 
   printf("\n=== psbt_classify_output tests ===\n\n");
 
