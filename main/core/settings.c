@@ -12,6 +12,7 @@ static const char *KEY_BRIGHTNESS = "bright";
 static const char *KEY_AE_TARGET = "ae_tgt";
 static const char *KEY_FOCUS_POS = "focus";
 static const char *KEY_PERMISSIVE_SIGNING = "perm_sign";
+static const char *KEY_PARTIAL_SIGNING = "part_sign";
 
 static nvs_handle_t settings_nvs;
 static bool initialized = false;
@@ -134,6 +135,25 @@ esp_err_t settings_set_permissive_signing(bool permissive) {
     return ESP_ERR_INVALID_STATE;
   uint8_t val = permissive ? 1 : 0;
   esp_err_t err = nvs_set_u8(settings_nvs, KEY_PERMISSIVE_SIGNING, val);
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
+}
+
+bool settings_get_partial_signing(void) {
+  if (!initialized)
+    return false;
+  uint8_t val = 0;
+  if (nvs_get_u8(settings_nvs, KEY_PARTIAL_SIGNING, &val) != ESP_OK)
+    return false;
+  return val ? true : false;
+}
+
+esp_err_t settings_set_partial_signing(bool partial) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  uint8_t val = partial ? 1 : 0;
+  esp_err_t err = nvs_set_u8(settings_nvs, KEY_PARTIAL_SIGNING, val);
   if (err != ESP_OK)
     return err;
   return nvs_commit(settings_nvs);

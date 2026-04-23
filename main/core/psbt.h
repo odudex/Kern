@@ -77,6 +77,12 @@ bool try_match_whitelist(const unsigned char *keypath, size_t keypath_len,
 bool try_match_registry(const unsigned char *keypath, size_t keypath_len,
                         size_t *cursor, claim_t *claim_out);
 
+// Format a raw keypath (4 fp bytes + N little-endian u32 components) into
+// the "m/44'/0'/100'/0/0" form. Returns false if the buffer is too small or
+// the input is malformed.
+bool psbt_format_keypath(const unsigned char *raw_keypath,
+                         size_t raw_keypath_len, char *buf, size_t buf_size);
+
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 
