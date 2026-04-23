@@ -1,6 +1,7 @@
 // Descriptor Manager — menu-based hub for load/save/export/delete
 
 #include "descriptor_manager.h"
+#include "../../core/registry.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -12,6 +13,7 @@
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
 #include "../store_descriptor.h"
+#include "registered_descriptors.h"
 #include <bbqr.h>
 #include <lvgl.h>
 #include <stdlib.h>
@@ -56,6 +58,7 @@ static ui_menu_t *save_type_menu = NULL;
 static storage_location_t pending_save_location;
 
 /* Menu entry indices (set during build) */
+static int idx_registered = -1;
 static int idx_load = -1;
 static int idx_save_flash = -1;
 static int idx_save_sd = -1;
@@ -431,6 +434,18 @@ static void main_menu_back_cb(void) {
     return_callback();
 }
 
+static void registered_desc_return_cb(void) {
+  registered_descriptors_page_destroy();
+  descriptor_manager_page_show();
+}
+
+static void registered_desc_cb(void) {
+  descriptor_manager_page_hide();
+  registered_descriptors_page_create(lv_screen_active(),
+                                     registered_desc_return_cb);
+  registered_descriptors_page_show();
+}
+
 static void build_main_menu(void) {
   if (main_menu) {
     ui_menu_destroy(main_menu);
@@ -442,24 +457,28 @@ static void build_main_menu(void) {
   if (!main_menu)
     return;
 
-  bool has_desc = wallet_has_descriptor();
+  bool has_desc = registry_count() > 0;
+
+  ui_menu_add_entry(main_menu, "Registered Descriptors", registered_desc_cb);
+  idx_registered = 0;
 
   ui_menu_add_entry(main_menu,
                     has_desc ? "Load Other Descriptor" : "Load Descriptor",
                     load_descriptor_cb);
-  idx_load = 0;
+  idx_load = 1;
 
   ui_menu_add_entry(main_menu, "Save to Flash", save_to_flash_cb);
-  idx_save_flash = 1;
+  idx_save_flash = 2;
 
   ui_menu_add_entry(main_menu, "Save to SD Card", save_to_sd_cb);
-  idx_save_sd = 2;
+  idx_save_sd = 3;
 
   ui_menu_add_entry(main_menu, "Export QR Code", export_qr_cb);
-  idx_export_qr = 3;
+  idx_export_qr = 4;
 
-  /* Hide save/export entries when no descriptor is loaded */
+  /* Disable registered/save/export entries when no descriptor is loaded */
   if (!has_desc) {
+    ui_menu_set_entry_enabled(main_menu, idx_registered, false);
     ui_menu_set_entry_enabled(main_menu, idx_save_flash, false);
     ui_menu_set_entry_enabled(main_menu, idx_save_sd, false);
     ui_menu_set_entry_enabled(main_menu, idx_export_qr, false);
@@ -469,7 +488,7 @@ static void build_main_menu(void) {
 }
 
 static void refresh_menu_visibility(void) {
-  bool has_desc = wallet_has_descriptor();
+  bool has_desc = registry_count() > 0;
 
   if (main_menu) {
     /* Update Load entry label */
@@ -480,7 +499,8 @@ static void refresh_menu_visibility(void) {
                                           : "Load Descriptor");
     }
 
-    /* Toggle save/export visibility */
+    /* Toggle registered/save/export visibility */
+    ui_menu_set_entry_enabled(main_menu, idx_registered, has_desc);
     ui_menu_set_entry_enabled(main_menu, idx_save_flash, has_desc);
     ui_menu_set_entry_enabled(main_menu, idx_save_sd, has_desc);
     ui_menu_set_entry_enabled(main_menu, idx_export_qr, has_desc);
@@ -496,7 +516,7 @@ void descriptor_manager_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
   current_format = FORMAT_PLAINTEXT_DESC;
 
-  if (wallet_has_descriptor())
+  if (registry_count())
     wallet_get_descriptor_string(&descriptor_string);
 
   manager_screen = theme_create_page_container(parent);
@@ -554,6 +574,7 @@ void descriptor_manager_page_destroy(void) {
     manager_screen = NULL;
   }
 
+  idx_registered = -1;
   idx_load = -1;
   idx_save_flash = -1;
   idx_save_sd = -1;
