@@ -34,6 +34,9 @@ static const char *PERMISSIVE_HELP =
 static const char *PARTIAL_HELP =
     "Allow signing PSBTs where some inputs are not yours (e.g. "
     "CoinJoin). Default off -- safer.";
+static const char *EXPECTED_OWNED_HELP =
+    "Allow signing when our fingerprint appears but derivation can't "
+    "be verified (e.g. software-wallet bug). Default off -- safer.";
 
 static lv_obj_t *wallet_settings_screen = NULL;
 static lv_obj_t *back_button = NULL;
@@ -76,6 +79,12 @@ static void network_dropdown_cb(lv_event_t *e) {
 static void permissive_signing_cb(lv_event_t *e) {
   lv_obj_t *target = lv_event_get_target(e);
   settings_set_permissive_signing(lv_obj_has_state(target, LV_STATE_CHECKED));
+}
+
+static void expected_owned_signing_cb(lv_event_t *e) {
+  lv_obj_t *target = lv_event_get_target(e);
+  settings_set_expected_owned_signing(
+      lv_obj_has_state(target, LV_STATE_CHECKED));
 }
 
 static void partial_signing_cb(lv_event_t *e) {
@@ -308,6 +317,10 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   settings_row_toggle(content, "Partial signing",
                       settings_get_partial_signing(), partial_signing_cb,
                       "Partial signing", PARTIAL_HELP);
+
+  settings_row_toggle(
+      content, "Expected-owned signing", settings_get_expected_owned_signing(),
+      expected_owned_signing_cb, "Expected-owned signing", EXPECTED_OWNED_HELP);
 
   /* Registered Descriptors moved into the Descriptors sub-page
    * (descriptor_manager_page). This page is one level shallower. */

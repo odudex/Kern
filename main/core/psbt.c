@@ -797,7 +797,8 @@ bool psbt_format_keypath(const unsigned char *raw_keypath,
   return format_derived_path(comps, n, buf, buf_size);
 }
 
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
+                 psbt_sign_policy_t policy) {
   if (!psbt) {
     ESP_LOGE(TAG, "Invalid PSBT");
     return 0;
@@ -816,6 +817,20 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
 
     if (ownership.ownership == PSBT_OWNERSHIP_EXTERNAL)
       continue;
+    if (ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE &&
+        !policy.allow_unsafe) {
+      ESP_LOGW(TAG,
+               "Skipping input %zu: OWNED_UNSAFE without permissive policy", i);
+      continue;
+    }
+    if (ownership.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED &&
+        !policy.allow_expected_owned) {
+      ESP_LOGW(
+          TAG,
+          "Skipping input %zu: EXPECTED_OWNED without expected-owned policy",
+          i);
+      continue;
+    }
 
     char path[128];
     bool have_path = false;
@@ -827,8 +842,8 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
                                       ownership.claim.derived_path_len, path,
                                       sizeof(path));
     } else {
-      /* OWNED_UNSAFE / EXPECTED_OWNED — the scan.c policy gate has already
-       * cleared the relevant setting; here we just derive from the raw path. */
+      /* OWNED_UNSAFE / EXPECTED_OWNED — policy already vetted above; derive
+       * from the raw path supplied in the PSBT. */
       if (ownership.raw_keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
           (ownership.raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) % 4 != 0)
         continue;
