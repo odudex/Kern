@@ -1,4 +1,5 @@
 file(GLOB_RECURSE SOURCES "*.c")
+list(FILTER SOURCES EXCLUDE REGEX ".*/core/test/.*")
 
 # Select touch driver based on board
 if(CONFIG_KERN_BOARD_WAVE_4B)
