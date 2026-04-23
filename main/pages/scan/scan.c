@@ -10,6 +10,7 @@
 #include "../../core/message_sign.h"
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
+#include "../../core/settings.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -91,6 +92,7 @@ static void message_sign_button_cb(lv_event_t *e);
 static void handle_descriptor_content(const char *descriptor_str);
 static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
+static void descriptor_loaded_info_cb(void *user_data);
 
 // Format satoshis as Bitcoin with visual grouping: "1.00 000 000"
 static void format_btc(char *buf, size_t buf_size, uint64_t sats) {
@@ -370,6 +372,66 @@ static void return_from_qr_scanner_cb(void) {
       create_message_sign_display();
     } else {
       scanned_qr_format = detected_format;
+
+      /* Policy-gate the sign flow:
+       *   - none signable         → refuse outright (confusing UX if we
+       *                             let the user hit Confirm for "0 sigs
+       *                             added").
+       *   - some inputs not ours  → refuse unless Partial signing is
+       *                             explicitly enabled in Settings
+       *                             (default off; mixed-input PSBTs are
+       *                             a classic splice-attack shape).
+       *   - otherwise             → normal review + confirm.
+       * "owned" here means classifier approved either via verified claim
+       * or via permissive-mode requires_ack (handled inside psbt_sign). */
+      bool any_signable = false;
+      bool all_owned = true;
+      size_t num_inputs = 0;
+      char first_rejected_path[80] = {0};
+      size_t first_rejected_input = 0;
+      if (wally_psbt_get_num_inputs(current_psbt, &num_inputs) == WALLY_OK) {
+        for (size_t i = 0; i < num_inputs; i++) {
+          input_ownership_t own =
+              psbt_classify_input(current_psbt, i, is_testnet);
+          if (own.owned && (own.verified || own.requires_ack)) {
+            any_signable = true;
+          } else {
+            all_owned = false;
+            if (first_rejected_path[0] == '\0' && own.raw_keypath_len > 0) {
+              first_rejected_input = i;
+              psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
+                                  first_rejected_path,
+                                  sizeof(first_rejected_path));
+            }
+          }
+        }
+      } else {
+        all_owned = false;
+      }
+      if (!any_signable) {
+        char body[256];
+        if (first_rejected_path[0]) {
+          snprintf(body, sizeof(body),
+                   "Input %zu's path %s isn't on this wallet's signing "
+                   "policy (account/index out of range, non-standard "
+                   "purpose, or missing descriptor).",
+                   first_rejected_input, first_rejected_path);
+        } else {
+          snprintf(body, sizeof(body),
+                   "No inputs match this wallet's signing policy.");
+        }
+        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
+                         NULL, DIALOG_STYLE_FULLSCREEN);
+        return;
+      }
+      if (!all_owned && !settings_get_partial_signing()) {
+        dialog_show_info("Cannot sign PSBT",
+                         "Not all inputs belong to this wallet. Enable "
+                         "'Partial signing' in Settings > Wallet to proceed.",
+                         descriptor_loaded_info_cb, NULL,
+                         DIALOG_STYLE_FULLSCREEN);
+        return;
+      }
 
       if (!create_psbt_info_display()) {
         dialog_show_error("Invalid PSBT data", return_callback, 0);
