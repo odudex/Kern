@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "storage.h"
+
 typedef enum {
   VALIDATION_SUCCESS = 0,
   VALIDATION_FINGERPRINT_NOT_FOUND,
@@ -41,6 +43,13 @@ typedef void (*validation_info_confirm_cb)(const descriptor_info_t *info,
                                            void (*proceed)(bool confirmed,
                                                            void *user_data));
 
+// Called after info-confirm to collect the registry ID and storage location.
+// Implementation shows a text-input prompt, then calls proceed(id, loc, NULL).
+typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
+                                                     storage_location_t loc,
+                                                     void *user_data),
+                                     void *user_data);
+
 // Validate descriptor against wallet key and load if valid.
 // Checks fingerprint, derivation path attributes, and xpub match.
 // If settings mismatch, uses confirm_cb to prompt (NULL = auto-decline).
@@ -51,6 +60,7 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
                                   validation_info_confirm_cb info_confirm_cb,
+                                  validation_id_loc_cb id_loc_cb,
                                   void *user_data);
 
 #endif // DESCRIPTOR_VALIDATOR_H

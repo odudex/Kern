@@ -2,10 +2,12 @@
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/output.h"
 #include "../../core/key.h"
+#include "../../core/registry.h"
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
 #include "../../ui/assets/icons_24.h"
 #include "../../ui/dialog.h"
+#include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
@@ -195,6 +197,53 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   }
 }
 
+typedef struct {
+  void (*proceed)(const char *id, storage_location_t loc, void *user_data);
+  ui_text_input_t input;
+} id_prompt_ctx_t;
+
+static id_prompt_ctx_t *g_id_prompt_ctx = NULL;
+
+static void id_prompt_ready_cb(lv_event_t *e) {
+  (void)e;
+  if (!g_id_prompt_ctx)
+    return;
+  const char *text = lv_textarea_get_text(g_id_prompt_ctx->input.textarea);
+  if (!text || strlen(text) == 0) {
+    dialog_show_error("Please enter a name", NULL, 2000);
+    return;
+  }
+
+  char id_copy[REGISTRY_ID_MAX_LEN];
+  strncpy(id_copy, text, sizeof(id_copy) - 1);
+  id_copy[sizeof(id_copy) - 1] = '\0';
+
+  void (*proceed)(const char *, storage_location_t, void *) =
+      g_id_prompt_ctx->proceed;
+  ui_text_input_destroy(&g_id_prompt_ctx->input);
+  free(g_id_prompt_ctx);
+  g_id_prompt_ctx = NULL;
+
+  proceed(id_copy, STORAGE_FLASH, NULL);
+}
+
+static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
+                                                      storage_location_t loc,
+                                                      void *user_data),
+                                      void *user_data) {
+  (void)user_data;
+  id_prompt_ctx_t *ctx = malloc(sizeof(id_prompt_ctx_t));
+  if (!ctx) {
+    proceed(NULL, STORAGE_FLASH, NULL);
+    return;
+  }
+  ctx->proceed = proceed;
+  memset(&ctx->input, 0, sizeof(ctx->input));
+  g_id_prompt_ctx = ctx;
+  ui_text_input_create(&ctx->input, lv_screen_active(), "Descriptor name",
+                       false, id_prompt_ready_cb);
+}
+
 // UI confirmation wrapper: bridges validation_confirm_cb to dialog_show_confirm
 static void descriptor_confirm_wrapper(const char *message,
                                        void (*proceed)(bool confirmed,
@@ -357,7 +406,8 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
     char *unambiguous = descriptor_to_unambiguous(to_process);
     descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                  validation_cb, descriptor_confirm_wrapper,
-                                 descriptor_info_confirm_wrapper, user_data);
+                                 descriptor_info_confirm_wrapper,
+                                 descriptor_id_loc_wrapper, user_data);
     free(unambiguous);
     free(converted);
     free(descriptor_str);
@@ -383,7 +433,8 @@ void descriptor_loader_process_string(const char *descriptor_str,
   char *unambiguous = descriptor_to_unambiguous(to_process);
   descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                validation_cb, descriptor_confirm_wrapper,
-                               descriptor_info_confirm_wrapper, user_data);
+                               descriptor_info_confirm_wrapper,
+                               descriptor_id_loc_wrapper, user_data);
   free(unambiguous);
   free(converted);
 }
