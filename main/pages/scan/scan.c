@@ -9,6 +9,7 @@
 #include "../../core/key.h"
 #include "../../core/message_sign.h"
 #include "../../core/psbt.h"
+#include "../../core/registry.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -55,7 +56,6 @@ typedef struct {
 static lv_obj_t *scan_screen = NULL;
 static lv_obj_t *psbt_info_container = NULL;
 static sankey_diagram_t *tx_diagram = NULL;
-static ui_menu_t *multisig_menu = NULL;
 static void (*return_callback)(void) = NULL;
 static void (*saved_return_callback)(void) = NULL;
 
@@ -65,7 +65,6 @@ static char *psbt_base64 = NULL;
 static char *signed_psbt_base64 = NULL;
 static bool is_testnet = false;
 static int scanned_qr_format = FORMAT_NONE;
-static bool skip_verification = false;
 
 // Message signing data
 static parsed_sign_message_t current_message = {0};
@@ -81,14 +80,11 @@ static bool parse_and_display_psbt(const char *base64_data);
 static void cleanup_psbt_data(void);
 static bool create_psbt_info_display(void);
 static output_type_t classify_output(size_t output_index,
-                                     const struct wally_tx_output *tx_output,
-                                     const struct wally_tx *global_tx,
                                      uint32_t *address_index_out);
 static void sign_button_cb(lv_event_t *e);
 static void return_from_qr_viewer_cb(void);
 static bool check_psbt_mismatch(void);
 static void mismatch_dialog_cb(void *user_data);
-static void show_multisig_options_menu(void);
 static void return_from_descriptor_scanner_cb(void);
 static void create_message_sign_display(void);
 static void message_sign_button_cb(lv_event_t *e);
@@ -173,39 +169,21 @@ static lv_obj_t *create_btc_value_row(lv_obj_t *parent, const char *prefix,
 
 // Classify output as self-transfer, change, or spend
 static output_type_t classify_output(size_t output_index,
-                                     const struct wally_tx_output *tx_output,
-                                     const struct wally_tx *global_tx,
                                      uint32_t *address_index_out) {
   bool is_change = false;
   uint32_t address_index = 0;
 
-  if (skip_verification) {
+  output_ownership_t ownership =
+      psbt_classify_output(current_psbt, output_index, is_testnet);
+  if (!ownership.owned) {
     return OUTPUT_TYPE_SPEND;
   }
-
-  if (psbt_is_multisig(current_psbt) && wallet_has_descriptor()) {
-    if (psbt_verify_output_with_descriptor(current_psbt, output_index,
-                                           global_tx, &is_change,
-                                           &address_index)) {
-      *address_index_out = address_index;
-      return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
-    }
-    return OUTPUT_TYPE_SPEND;
-  }
-
-  if (!psbt_get_output_derivation(current_psbt, output_index, is_testnet,
-                                  &is_change, &address_index)) {
-    return OUTPUT_TYPE_SPEND;
-  }
-
-  unsigned char expected_script[WALLY_WITNESSSCRIPT_MAX_LEN];
-  size_t expected_script_len;
-
-  if (!wallet_get_scriptpubkey(is_change, address_index, expected_script,
-                               &expected_script_len) ||
-      tx_output->script_len != expected_script_len ||
-      memcmp(tx_output->script, expected_script, expected_script_len) != 0) {
-    return OUTPUT_TYPE_SPEND;
+  if (ownership.source.kind == CLAIM_WHITELIST) {
+    is_change = (ownership.source.whitelist.chain == 1);
+    address_index = ownership.source.whitelist.index;
+  } else {
+    is_change = (ownership.source.registry.multi_index == 1);
+    address_index = ownership.source.registry.child_num;
   }
 
   *address_index_out = address_index;
@@ -393,12 +371,8 @@ static void return_from_qr_scanner_cb(void) {
     } else {
       scanned_qr_format = detected_format;
 
-      if (psbt_is_multisig(current_psbt) && !wallet_has_descriptor()) {
-        show_multisig_options_menu();
-      } else {
-        if (!create_psbt_info_display()) {
-          dialog_show_error("Invalid PSBT data", return_callback, 0);
-        }
+      if (!create_psbt_info_display()) {
+        dialog_show_error("Invalid PSBT data", return_callback, 0);
       }
     }
   } else {
@@ -706,8 +680,7 @@ static bool create_psbt_info_display(void) {
         global_tx->outputs[i].script, global_tx->outputs[i].script_len,
         is_testnet);
     classified_outputs[i].type =
-        classify_output(i, &global_tx->outputs[i], global_tx,
-                        &classified_outputs[i].address_index);
+        classify_output(i, &classified_outputs[i].address_index);
   }
 
   size_t diagram_idx = 0;
@@ -985,7 +958,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  size_t signatures_added = psbt_sign(current_psbt, is_testnet);
+  size_t signatures_added = psbt_sign(current_psbt, is_testnet, NULL);
 
   if (signatures_added == 0) {
     dismiss_sign_progress();
@@ -1077,134 +1050,6 @@ static void cleanup_psbt_data(void) {
 
   is_testnet = false;
   scanned_qr_format = FORMAT_NONE;
-  skip_verification = false;
-}
-
-// Multisig menu callbacks
-static void multisig_menu_back_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
-  cleanup_psbt_data();
-  if (return_callback) {
-    return_callback();
-  }
-}
-
-static void show_multisig_menu_on_error(void) {
-  if (multisig_menu)
-    ui_menu_show(multisig_menu);
-}
-
-static void descriptor_validation_cb(descriptor_validation_result_t result,
-                                     void *user_data) {
-  (void)user_data;
-
-  if (result == VALIDATION_SUCCESS) {
-    descriptor_loader_destroy_source_menu();
-    if (multisig_menu) {
-      ui_menu_destroy(multisig_menu);
-      multisig_menu = NULL;
-    }
-    if (!create_psbt_info_display()) {
-      dialog_show_error("Invalid PSBT data", return_callback, 0);
-    }
-    return;
-  }
-
-  descriptor_loader_show_error(result);
-  show_multisig_menu_on_error();
-}
-
-static void return_from_descriptor_scanner_cb(void) {
-  descriptor_loader_process_scanner(descriptor_validation_cb, NULL,
-                                    show_multisig_menu_on_error);
-}
-
-static void return_from_descriptor_storage(void) {
-  load_descriptor_storage_page_destroy();
-  show_multisig_menu_on_error();
-}
-
-static void success_from_descriptor_storage(void) {
-  load_descriptor_storage_page_destroy();
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
-  if (!create_psbt_info_display()) {
-    dialog_show_error("Invalid PSBT data", return_callback, 0);
-  }
-}
-
-static void load_desc_from_qr_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu)
-    ui_menu_hide(multisig_menu);
-  qr_scanner_page_create(NULL, return_from_descriptor_scanner_cb);
-  qr_scanner_page_show();
-}
-
-static void load_desc_from_flash_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu)
-    ui_menu_hide(multisig_menu);
-  load_descriptor_storage_page_create(
-      lv_screen_active(), return_from_descriptor_storage,
-      success_from_descriptor_storage, STORAGE_FLASH);
-  load_descriptor_storage_page_show();
-}
-
-static void load_desc_from_sd_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu)
-    ui_menu_hide(multisig_menu);
-  load_descriptor_storage_page_create(
-      lv_screen_active(), return_from_descriptor_storage,
-      success_from_descriptor_storage, STORAGE_SD);
-  load_descriptor_storage_page_show();
-}
-
-static void load_desc_source_back_cb(void) {
-  descriptor_loader_destroy_source_menu();
-}
-
-static void load_descriptor_menu_cb(void) {
-  descriptor_loader_show_source_menu(
-      scan_screen, load_desc_from_qr_cb, load_desc_from_flash_cb,
-      load_desc_from_sd_cb, load_desc_source_back_cb);
-}
-
-static void sign_without_verification_cb(void) {
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
-  skip_verification = true;
-  if (!create_psbt_info_display()) {
-    dialog_show_error("Invalid PSBT data", return_callback, 0);
-  }
-}
-
-static void show_multisig_options_menu(void) {
-  if (!scan_screen) {
-    return;
-  }
-
-  multisig_menu = ui_menu_create(scan_screen, "Multisig PSBT Detected",
-                                 multisig_menu_back_cb);
-  if (!multisig_menu) {
-    dialog_show_error("Failed to create menu", return_callback, 0);
-    return;
-  }
-
-  ui_menu_add_entry(multisig_menu, "Load Descriptor", load_descriptor_menu_cb);
-  ui_menu_add_entry(multisig_menu, "Sign Without Verification",
-                    sign_without_verification_cb);
-  ui_menu_show(multisig_menu);
 }
 
 static void create_message_sign_display(void) {
@@ -1359,11 +1204,6 @@ void scan_page_destroy(void) {
   cleanup_psbt_data();
 
   SECURE_FREE_STRING(scanned_mnemonic);
-
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
 
   if (tx_diagram) {
     sankey_diagram_destroy(tx_diagram);
