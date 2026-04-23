@@ -25,6 +25,8 @@ bool settings_get_permissive_signing(void);
 esp_err_t settings_set_permissive_signing(bool permissive);
 bool settings_get_partial_signing(void);
 esp_err_t settings_set_partial_signing(bool partial);
+bool settings_get_expected_owned_signing(void);
+esp_err_t settings_set_expected_owned_signing(bool enabled);
 esp_err_t settings_reset_all(void);
 
 #endif // SETTINGS_H

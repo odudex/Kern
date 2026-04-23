@@ -114,11 +114,23 @@ int32_t psbt_detect_account(const struct wally_psbt *psbt);
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet);
 
+// Per-call signing policy. Mirrors the user-facing settings toggles
+// (Settings > Wallet) and is enforced inside `psbt_sign()` per-input,
+// so a forgotten UI gate cannot leak signatures on UNSAFE/EXPECTED_OWNED
+// inputs. EXTERNAL inputs are always skipped.
+typedef struct {
+  bool allow_unsafe;         // OWNED_UNSAFE — non-standard derivation path
+  bool allow_expected_owned; // EXPECTED_OWNED — fp matches but derive doesn't
+} psbt_sign_policy_t;
+
 // Sign PSBT inputs with loaded key.
+// `policy` gates which non-SAFE ownership categories may be signed; see
+// `psbt_sign_policy_t`. Callers must still check `partial_signing` upstream
+// (it gates whether to proceed at all when external inputs exist), since
+// that's a UX decision rather than a per-input one.
 // Returns number of signatures added (0 if none).
-// Permissive-mode (requires_ack) inputs are signed directly — the
-// Permissive-signing setting is itself the opt-in.
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet);
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
+                 psbt_sign_policy_t policy);
 
 // Create a trimmed PSBT containing only signatures and minimal validation data
 // Returns new PSBT on success (caller must free), NULL on failure
