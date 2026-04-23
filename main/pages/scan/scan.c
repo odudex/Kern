@@ -177,7 +177,7 @@ static output_type_t classify_output(size_t output_index,
 
   output_ownership_t ownership =
       psbt_classify_output(current_psbt, output_index, is_testnet);
-  if (!ownership.owned) {
+  if (ownership.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
     return OUTPUT_TYPE_SPEND;
   }
   if (ownership.source.kind == CLAIM_WHITELIST) {
@@ -382,8 +382,9 @@ static void return_from_qr_scanner_cb(void) {
        *                             (default off; mixed-input PSBTs are
        *                             a classic splice-attack shape).
        *   - otherwise             → normal review + confirm.
-       * "owned" here means classifier approved either via verified claim
-       * or via permissive-mode requires_ack (handled inside psbt_sign). */
+       * "signable" means the classifier returned any non-EXTERNAL
+       * ownership (the per-state policy checks happen further down or
+       * inside psbt_sign). */
       bool any_signable = false;
       bool all_owned = true;
       size_t num_inputs = 0;
@@ -393,7 +394,7 @@ static void return_from_qr_scanner_cb(void) {
         for (size_t i = 0; i < num_inputs; i++) {
           input_ownership_t own =
               psbt_classify_input(current_psbt, i, is_testnet);
-          if (own.owned && (own.verified || own.requires_ack)) {
+          if (own.ownership != PSBT_OWNERSHIP_EXTERNAL) {
             any_signable = true;
           } else {
             all_owned = false;
