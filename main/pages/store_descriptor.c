@@ -1,6 +1,7 @@
 // Store Descriptor Page — save descriptor to flash or SD card
 
 #include "store_descriptor.h"
+#include "../core/descriptor_checksum.h"
 #include "../core/registry.h"
 #include "../core/storage.h"
 #include "../core/wallet.h"
@@ -218,7 +219,7 @@ static void id_input_ready_cb(lv_event_t *e) {
 
 void store_descriptor_page_create(lv_obj_t *parent, void (*return_cb)(void),
                                   storage_location_t location, bool encrypted) {
-  if (!parent || !wallet_has_descriptor())
+  if (!parent || !registry_count())
     return;
 
   return_callback = return_cb;

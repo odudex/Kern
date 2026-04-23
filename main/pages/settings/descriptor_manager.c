@@ -1,6 +1,7 @@
 // Descriptor Manager — menu-based hub for load/save/export/delete
 
 #include "descriptor_manager.h"
+#include "../../core/descriptor_checksum.h"
 #include "../../core/registry.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
