@@ -1001,7 +1001,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  size_t signatures_added = psbt_sign(current_psbt, is_testnet, NULL);
+  size_t signatures_added = psbt_sign(current_psbt, is_testnet);
 
   if (signatures_added == 0) {
     dismiss_sign_progress();
