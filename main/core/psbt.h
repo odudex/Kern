@@ -44,18 +44,34 @@ typedef struct {
   size_t witness_len;
 } expected_scripts_t;
 
+typedef enum {
+  /* fp doesn't match our master key (or no derivation info present) */
+  PSBT_OWNERSHIP_EXTERNAL,
+  /* fp + derive(path) reproduces the spk + path matches a whitelist or
+   * registry claim — safe to sign without further opt-in */
+  PSBT_OWNERSHIP_OWNED_SAFE,
+  /* fp + derive(path) reproduces the spk but path is non-standard;
+   * gated by `permissive_signing` setting */
+  PSBT_OWNERSHIP_OWNED_UNSAFE,
+  /* fp matches but derivation could not be verified (no path supplied,
+   * derived spk differs from the spk in the PSBT, or derivation failed);
+   * gated by `expected_owned_signing` setting (harness against
+   * software-wallet derivation bugs and UTXO-swap attacks) */
+  PSBT_OWNERSHIP_EXPECTED_OWNED,
+} psbt_ownership_t;
+
 typedef struct {
-  bool owned;
-  bool verified;
+  psbt_ownership_t ownership;
   claim_t claim;
-  bool requires_ack;
   uint8_t raw_keypath[MAX_KEYPATH_TOTAL_DEPTH * 4 + 4];
   size_t raw_keypath_len;
 } input_ownership_t;
 
 typedef struct {
-  bool owned;
+  psbt_ownership_t ownership;
   claim_t source;
+  uint8_t raw_keypath[MAX_KEYPATH_TOTAL_DEPTH * 4 + 4];
+  size_t raw_keypath_len;
 } output_ownership_t;
 
 input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
