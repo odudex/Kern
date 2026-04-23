@@ -634,6 +634,22 @@ static bool format_derived_path(const uint32_t *comps, size_t n, char *buf,
   return true;
 }
 
+bool psbt_format_keypath(const unsigned char *raw_keypath,
+                         size_t raw_keypath_len, char *buf, size_t buf_size) {
+  if (!raw_keypath || !buf || buf_size == 0)
+    return false;
+  if (raw_keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
+      (raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) % 4 != 0)
+    return false;
+  size_t n = (raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) / 4;
+  if (n > MAX_KEYPATH_TOTAL_DEPTH)
+    return false;
+  uint32_t comps[MAX_KEYPATH_TOTAL_DEPTH];
+  for (size_t k = 0; k < n; k++)
+    comps[k] = ss_u32_le(raw_keypath + BIP32_KEY_FINGERPRINT_LEN + k * 4);
+  return format_derived_path(comps, n, buf, buf_size);
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_ack_fn_t ack_fn) {
   if (!psbt) {
