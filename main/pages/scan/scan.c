@@ -423,14 +423,6 @@ static void address_not_found_cb(void) {
 }
 
 static void handle_address_content(const char *content) {
-  // For multisig without descriptor, we can't verify addresses
-  if (wallet_get_policy() == WALLET_POLICY_MULTISIG &&
-      !wallet_has_descriptor()) {
-    dialog_show_error("Load a descriptor first to verify multisig addresses",
-                      return_callback, 0);
-    return;
-  }
-
   address_checker_check(content, address_found_cb, address_not_found_cb);
 }
 
@@ -565,17 +557,13 @@ static bool check_psbt_mismatch(void) {
   }
 
   is_testnet = psbt_detect_network(current_psbt);
-  int32_t psbt_account = psbt_detect_account(current_psbt);
 
   wallet_network_t wallet_net = wallet_get_network();
   bool wallet_is_testnet = (wallet_net == WALLET_NETWORK_TESTNET);
-  uint32_t wallet_account = wallet_get_account();
 
   bool network_mismatch = (is_testnet != wallet_is_testnet);
-  bool account_mismatch =
-      (psbt_account >= 0 && (uint32_t)psbt_account != wallet_account);
 
-  if (!network_mismatch && !account_mismatch) {
+  if (!network_mismatch) {
     return false;
   }
 
@@ -585,17 +573,10 @@ static bool check_psbt_mismatch(void) {
       message + offset, sizeof(message) - offset,
       "PSBT requires different settings for proper change detection:\n\n");
 
-  if (network_mismatch) {
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "  Network:  %s -> %s\n",
-                       wallet_is_testnet ? "Testnet" : "Mainnet",
-                       is_testnet ? "Testnet" : "Mainnet");
-  }
-
-  if (account_mismatch) {
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "  Account:  %u -> %d\n", wallet_account, psbt_account);
-  }
+  offset += snprintf(message + offset, sizeof(message) - offset,
+                     "  Network:  %s -> %s\n",
+                     wallet_is_testnet ? "Testnet" : "Mainnet",
+                     is_testnet ? "Testnet" : "Mainnet");
 
   snprintf(message + offset, sizeof(message) - offset,
            "\nGo to Settings " LV_SYMBOL_SETTINGS

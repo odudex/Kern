@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Registered descriptors are now loaded automatically at device boot.
+- Permissive signing mode (opt-in in settings): allows signing PSBTs whose key paths are not matched by any registered descriptor.
+
+### Changed
+- Removed the policy-selection step from the signing flow. Any BIP-44/49/84/86 account that matches a whitelisted descriptor is accepted directly.
+- Account derivation is now inferred from the PSBT key path rather than a manual user setting. Existing PSBTs continue to sign correctly.
+
+### Migration notes
+- Devices upgrading in-place have their legacy `def_pol` NVS key (the old default-wallet-policy setting) automatically erased on first boot. No user action required.
+
 ## [0.0.6] - 2026-04-25
 
 ### Changed

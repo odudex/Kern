@@ -277,8 +277,21 @@ static void verify_xpub_and_show_info(void) {
     return;
   }
 
+  char *origin_path_str = NULL;
+  char full_path[72];
+  if (wally_descriptor_get_key_origin_path_str(descriptor, (uint32_t)key_index,
+                                               &origin_path_str) != WALLY_OK ||
+      !origin_path_str) {
+    free(descriptor_xpub);
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+  snprintf(full_path, sizeof(full_path), "m/%s", origin_path_str);
+  wally_free_string(origin_path_str);
+
   char *wallet_xpub = NULL;
-  if (!wallet_get_account_xpub(&wallet_xpub)) {
+  if (!key_get_xpub(full_path, &wallet_xpub)) {
     free(descriptor_xpub);
     wally_descriptor_free(descriptor);
     complete_validation(VALIDATION_INTERNAL_ERROR);
