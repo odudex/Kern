@@ -92,30 +92,20 @@ int32_t psbt_detect_account(const struct wally_psbt *psbt);
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet);
 
-// Verify output belongs to our wallet and extract derivation info
-bool psbt_get_output_derivation(const struct wally_psbt *psbt,
-                                size_t output_index, bool is_testnet,
-                                bool *is_change, uint32_t *address_index);
+// Callback for permissive-signing ACK (settings_get_permissive_signing() path).
+// Called when an input carries our fingerprint but no verifiable claim.
+// Return true to allow signing with the raw keypath; false to skip.
+typedef bool (*psbt_sign_ack_fn_t)(size_t input_i, const uint8_t *raw_keypath,
+                                   size_t raw_keypath_len);
 
-// Sign PSBT inputs with loaded key
-// Returns number of signatures added (0 if none)
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet);
+// Sign PSBT inputs with loaded key.
+// Returns number of signatures added (0 if none).
+// ack_fn: callback for requires_ack inputs; NULL treats them as denied.
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
+                 psbt_sign_ack_fn_t ack_fn);
 
 // Create a trimmed PSBT containing only signatures and minimal validation data
 // Returns new PSBT on success (caller must free), NULL on failure
 struct wally_psbt *psbt_trim(const struct wally_psbt *psbt);
-
-// Check if PSBT is a multisig transaction
-// Returns true if any input has witness script and multiple keypaths
-bool psbt_is_multisig(const struct wally_psbt *psbt);
-
-// Verify output belongs to loaded descriptor and extract derivation info
-// Returns true if output matches descriptor, sets is_change and address_index
-// If global_tx is provided, it is used directly; otherwise allocated internally
-bool psbt_verify_output_with_descriptor(const struct wally_psbt *psbt,
-                                        size_t output_index,
-                                        const struct wally_tx *global_tx,
-                                        bool *is_change,
-                                        uint32_t *address_index);
 
 #endif // PSBT_H

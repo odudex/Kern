@@ -614,71 +614,30 @@ char *psbt_scriptpubkey_to_address(const unsigned char *script,
   return address;
 }
 
-bool psbt_get_output_derivation(const struct wally_psbt *psbt,
-                                size_t output_index, bool is_testnet,
-                                bool *is_change, uint32_t *address_index) {
-  if (!psbt || !is_change || !address_index) {
+/* Format a BIP32 path from uint32 components (hardened = high bit set) into
+ * the "m/44'/0'/0'/0/5" form consumed by key_get_derived_key(). */
+static bool format_derived_path(const uint32_t *comps, size_t n, char *buf,
+                                size_t buf_size) {
+  int w = snprintf(buf, buf_size, "m");
+  if (w < 0 || (size_t)w >= buf_size)
     return false;
+  size_t pos = (size_t)w;
+  for (size_t k = 0; k < n; k++) {
+    int written =
+        ss_is_hardened(comps[k])
+            ? snprintf(buf + pos, buf_size - pos, "/%u'", ss_unharden(comps[k]))
+            : snprintf(buf + pos, buf_size - pos, "/%u", comps[k]);
+    if (written < 0 || pos + (size_t)written >= buf_size)
+      return false;
+    pos += (size_t)written;
   }
-
-  size_t keypaths_size = 0;
-  if (wally_psbt_get_output_keypaths_size(psbt, output_index, &keypaths_size) !=
-          WALLY_OK ||
-      keypaths_size == 0) {
-    return false;
-  }
-
-  unsigned char our_fingerprint[BIP32_KEY_FINGERPRINT_LEN];
-  if (!key_get_fingerprint(our_fingerprint)) {
-    return false;
-  }
-
-  for (size_t i = 0; i < keypaths_size; i++) {
-    unsigned char keypath[100];
-    size_t keypath_len = 0;
-
-    if (wally_psbt_get_output_keypath(psbt, output_index, i, keypath,
-                                      sizeof(keypath),
-                                      &keypath_len) != WALLY_OK ||
-        keypath_len < 24) {
-      continue;
-    }
-
-    if (memcmp(keypath, our_fingerprint, BIP32_KEY_FINGERPRINT_LEN) != 0) {
-      continue;
-    }
-
-    uint32_t purpose, coin_type, account, change_val, index_val;
-    memcpy(&purpose, keypath + 4, sizeof(uint32_t));
-    memcpy(&coin_type, keypath + 8, sizeof(uint32_t));
-    memcpy(&account, keypath + 12, sizeof(uint32_t));
-    memcpy(&change_val, keypath + 16, sizeof(uint32_t));
-    memcpy(&index_val, keypath + 20, sizeof(uint32_t));
-
-    uint32_t expected_coin = is_testnet ? (0x80000000 | 1) : 0x80000000;
-    uint32_t expected_account = 0x80000000 | wallet_get_account();
-
-    if (purpose == (0x80000000 | 84) && coin_type == expected_coin &&
-        account == expected_account && !(change_val & 0x80000000) &&
-        !(index_val & 0x80000000)) {
-      *is_change = (change_val == 1);
-      *address_index = index_val;
-      return true;
-    }
-  }
-
-  return false;
+  return true;
 }
 
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
+                 psbt_sign_ack_fn_t ack_fn) {
   if (!psbt) {
     ESP_LOGE(TAG, "Invalid PSBT");
-    return 0;
-  }
-
-  unsigned char our_fingerprint[BIP32_KEY_FINGERPRINT_LEN];
-  if (!key_get_fingerprint(our_fingerprint)) {
-    ESP_LOGE(TAG, "Failed to get key fingerprint");
     return 0;
   }
 
@@ -691,80 +650,62 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
   size_t signatures_added = 0;
 
   for (size_t i = 0; i < num_inputs; i++) {
-    size_t keypaths_size = 0;
-    if (wally_psbt_get_input_keypaths_size(psbt, i, &keypaths_size) !=
-            WALLY_OK ||
-        keypaths_size == 0) {
+    input_ownership_t ownership = psbt_classify_input(psbt, i, is_testnet);
+
+    if (!ownership.owned)
+      continue;
+
+    char path[128];
+    bool have_path = false;
+
+    if (ownership.verified) {
+      /* Both CLAIM_WHITELIST and CLAIM_REGISTRY populate derived_path with
+       * the raw BIP32 uint32 components; format directly into a path string. */
+      have_path = format_derived_path(ownership.claim.derived_path,
+                                      ownership.claim.derived_path_len, path,
+                                      sizeof(path));
+    } else {
+      /* requires_ack: permissive-signing fallback — fp matched but no verified
+       * claim. */
+      if (!ack_fn)
+        continue;
+      if (!ack_fn(i, ownership.raw_keypath, ownership.raw_keypath_len))
+        continue;
+
+      /* Parse raw_keypath bytes (fp + BIP32 components) into uint32 array. */
+      if (ownership.raw_keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
+          (ownership.raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) % 4 != 0)
+        continue;
+      size_t n_comps =
+          (ownership.raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) / 4;
+      if (n_comps > MAX_KEYPATH_TOTAL_DEPTH)
+        continue;
+      uint32_t raw_comps[MAX_KEYPATH_TOTAL_DEPTH];
+      for (size_t k = 0; k < n_comps; k++)
+        raw_comps[k] = ss_u32_le(ownership.raw_keypath +
+                                 BIP32_KEY_FINGERPRINT_LEN + k * 4);
+      have_path = format_derived_path(raw_comps, n_comps, path, sizeof(path));
+    }
+
+    if (!have_path) {
+      ESP_LOGE(TAG, "Failed to format signing path for input %zu", i);
       continue;
     }
 
-    for (size_t j = 0; j < keypaths_size; j++) {
-      unsigned char keypath[100];
-      size_t keypath_len = 0;
+    struct ext_key *derived_key = NULL;
+    if (!key_get_derived_key(path, &derived_key)) {
+      ESP_LOGE(TAG, "Failed to derive key for path: %s", path);
+      continue;
+    }
 
-      if (wally_psbt_get_input_keypath(psbt, i, j, keypath, sizeof(keypath),
-                                       &keypath_len) != WALLY_OK) {
-        continue;
-      }
+    int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
+                              EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
+    bip32_key_free(derived_key);
 
-      if (memcmp(keypath, our_fingerprint, BIP32_KEY_FINGERPRINT_LEN) != 0) {
-        continue;
-      }
-
-      uint32_t purpose, coin_type, account;
-      memcpy(&purpose, keypath + 4, sizeof(uint32_t));
-      memcpy(&coin_type, keypath + 8, sizeof(uint32_t));
-      memcpy(&account, keypath + 12, sizeof(uint32_t));
-
-      uint32_t expected_account = 0x80000000 | wallet_get_account();
-      uint32_t coin_value = coin_type & 0x7FFFFFFF;
-      uint32_t purpose_value = purpose & 0x7FFFFFFF;
-
-      char path_str[64];
-
-      // BIP84 single-sig: m/84'/coin'/account'/change/index (24 bytes keypath)
-      // BIP48 multisig: m/48'/coin'/account'/script_type'/change/index (28
-      // bytes keypath)
-      if (purpose_value == 84 && keypath_len >= 24 &&
-          account == expected_account) {
-        uint32_t change_val, index_val;
-        memcpy(&change_val, keypath + 16, sizeof(uint32_t));
-        memcpy(&index_val, keypath + 20, sizeof(uint32_t));
-
-        snprintf(path_str, sizeof(path_str), "m/84'/%u'/%u'/%u/%u", coin_value,
-                 wallet_get_account(), change_val, index_val);
-      } else if (purpose_value == 48 && keypath_len >= 28 &&
-                 account == expected_account) {
-        uint32_t script_type, change_val, index_val;
-        memcpy(&script_type, keypath + 16, sizeof(uint32_t));
-        memcpy(&change_val, keypath + 20, sizeof(uint32_t));
-        memcpy(&index_val, keypath + 24, sizeof(uint32_t));
-
-        uint32_t script_type_value = script_type & 0x7FFFFFFF;
-        snprintf(path_str, sizeof(path_str), "m/48'/%u'/%u'/%u'/%u/%u",
-                 coin_value, wallet_get_account(), script_type_value,
-                 change_val, index_val);
-      } else {
-        continue;
-      }
-
-      struct ext_key *derived_key = NULL;
-      if (!key_get_derived_key(path_str, &derived_key)) {
-        ESP_LOGE(TAG, "Failed to derive key for path: %s", path_str);
-        continue;
-      }
-
-      int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
-                                EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
-
-      bip32_key_free(derived_key);
-
-      if (ret == WALLY_OK) {
-        signatures_added++;
-        break;
-      } else {
-        ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
-      }
+    if (ret == WALLY_OK) {
+      signatures_added++;
+    } else {
+      ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
     }
   }
 
@@ -899,152 +840,4 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
   }
 
   return trimmed;
-}
-
-bool psbt_is_multisig(const struct wally_psbt *psbt) {
-  if (!psbt) {
-    return false;
-  }
-
-  size_t num_inputs = 0;
-  if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK ||
-      num_inputs == 0) {
-    return false;
-  }
-
-  // Check first input for multisig indicators
-  for (size_t i = 0; i < num_inputs; i++) {
-    // Check for witness script (P2WSH - used by native segwit multisig)
-    size_t witness_script_len = 0;
-    bool has_witness_script = (wally_psbt_get_input_witness_script_len(
-                                   psbt, i, &witness_script_len) == WALLY_OK &&
-                               witness_script_len > 0);
-
-    // Check for multiple keypaths (indicates multiple signers)
-    size_t keypaths_size = 0;
-    bool has_multiple_keypaths = (wally_psbt_get_input_keypaths_size(
-                                      psbt, i, &keypaths_size) == WALLY_OK &&
-                                  keypaths_size > 1);
-
-    // Multisig if has witness script AND multiple keypaths
-    if (has_witness_script && has_multiple_keypaths) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool psbt_verify_output_with_descriptor(const struct wally_psbt *psbt,
-                                        size_t output_index,
-                                        const struct wally_tx *global_tx,
-                                        bool *is_change,
-                                        uint32_t *address_index) {
-  if (!psbt || !is_change || !address_index || !wallet_has_descriptor()) {
-    return false;
-  }
-
-  // Check if output has derivation paths
-  size_t keypaths_size = 0;
-  if (wally_psbt_get_output_keypaths_size(psbt, output_index, &keypaths_size) !=
-          WALLY_OK ||
-      keypaths_size == 0) {
-    return false; // No derivation info, can't verify
-  }
-
-  // Get our fingerprint
-  unsigned char our_fingerprint[BIP32_KEY_FINGERPRINT_LEN];
-  if (!key_get_fingerprint(our_fingerprint)) {
-    return false;
-  }
-
-  // Find a keypath that matches our fingerprint and extract derivation info
-  uint32_t change_val = 0, index_val = 0;
-  bool found_our_key = false;
-
-  for (size_t i = 0; i < keypaths_size; i++) {
-    unsigned char keypath[100];
-    size_t keypath_len = 0;
-
-    if (wally_psbt_get_output_keypath(psbt, output_index, i, keypath,
-                                      sizeof(keypath),
-                                      &keypath_len) != WALLY_OK) {
-      continue;
-    }
-
-    // Check fingerprint match
-    if (keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
-        memcmp(keypath, our_fingerprint, BIP32_KEY_FINGERPRINT_LEN) != 0) {
-      continue;
-    }
-
-    // BIP48 multisig path: m/48'/coin'/account'/script'/change/index
-    // Keypath: [fingerprint(4)] [purpose(4)] [coin(4)] [account(4)]
-    // [script(4)] [change(4)] [index(4)] = 28 bytes
-    if (keypath_len >= 28) {
-      memcpy(&change_val, keypath + 20, sizeof(uint32_t));
-      memcpy(&index_val, keypath + 24, sizeof(uint32_t));
-      found_our_key = true;
-      break;
-    }
-  }
-
-  if (!found_our_key) {
-    return false; // Our key not in this output's derivation
-  }
-
-  // Use provided global_tx or allocate if not provided
-  struct wally_tx *allocated_tx = NULL;
-  const struct wally_tx *tx = global_tx;
-  if (!tx) {
-    if (wally_psbt_get_global_tx_alloc(psbt, &allocated_tx) != WALLY_OK ||
-        !allocated_tx) {
-      return false;
-    }
-    tx = allocated_tx;
-  }
-
-  if (output_index >= tx->num_outputs) {
-    if (allocated_tx)
-      wally_tx_free(allocated_tx);
-    return false;
-  }
-
-  const unsigned char *output_script = tx->outputs[output_index].script;
-  size_t output_script_len = tx->outputs[output_index].script_len;
-
-  // Generate address at the specific index from descriptor
-  char *address = NULL;
-  bool success = (change_val == 0)
-                     ? wallet_get_multisig_receive_address(index_val, &address)
-                     : wallet_get_multisig_change_address(index_val, &address);
-
-  if (!success || !address) {
-    if (allocated_tx)
-      wally_tx_free(allocated_tx);
-    return false;
-  }
-
-  // Convert address to scriptPubKey and compare
-  unsigned char script[100];
-  size_t script_len = 0;
-  bool is_testnet = (wallet_get_network() == WALLET_NETWORK_TESTNET);
-  const char *hrp = is_testnet ? "tb" : "bc";
-
-  int ret = wally_addr_segwit_to_bytes(address, hrp, 0, script, sizeof(script),
-                                       &script_len);
-  wally_free_string(address);
-
-  if (ret != WALLY_OK || script_len != output_script_len ||
-      memcmp(script, output_script, script_len) != 0) {
-    if (allocated_tx)
-      wally_tx_free(allocated_tx);
-    return false; // Script mismatch - output doesn't match descriptor
-  }
-
-  *is_change = (change_val == 1);
-  *address_index = index_val;
-  if (allocated_tx)
-    wally_tx_free(allocated_tx);
-  return true;
 }
