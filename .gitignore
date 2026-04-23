@@ -27,6 +27,7 @@ main/core/test/test_ss_whitelist_regen
 main/core/test/test_purpose_binding
 main/core/test/test_registry_match
 main/core/test/test_registry_parse
+main/core/test/test_psbt_classify
 main/core/test/combined.o
 main/core/test/libwally.a
 
