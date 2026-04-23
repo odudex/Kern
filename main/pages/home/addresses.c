@@ -1,6 +1,8 @@
 // Addresses Page - Displays receive and change addresses
 
 #include "addresses.h"
+#include "../../core/registry.h"
+#include "../../core/ss_whitelist.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/scanner.h"
@@ -24,13 +26,13 @@
 #define NUM_ADDRESSES 8
 
 static lv_obj_t *addresses_screen = NULL;
-static lv_obj_t *type_dropdown = NULL;
+static lv_obj_t *source_dropdown = NULL;
 static lv_obj_t *prev_button = NULL;
 static lv_obj_t *next_button = NULL;
 static lv_obj_t *back_button = NULL;
 static lv_obj_t *settings_button = NULL;
 static lv_obj_t *address_list_container = NULL;
-static lv_obj_t *load_descriptor_btn = NULL;
+static lv_obj_t *register_descriptor_btn = NULL;
 static lv_obj_t *btn_cont = NULL;
 static lv_obj_t *detail_container = NULL;
 static lv_obj_t *detail_back_button = NULL;
@@ -44,6 +46,31 @@ static uint32_t stored_indices[NUM_ADDRESSES];
 static int stored_count = 0;
 
 static lv_obj_t *scan_button = NULL;
+
+static lv_obj_t *account_btn = NULL;
+static lv_obj_t *account_value_label = NULL;
+static lv_obj_t *account_overlay = NULL;
+static lv_obj_t *account_numpad = NULL;
+static lv_obj_t *account_input_label = NULL;
+static char account_input_buffer[12];
+static int account_input_len = 0;
+
+static const char *numpad_map[] = {"1",
+                                   "2",
+                                   "3",
+                                   "\n",
+                                   "4",
+                                   "5",
+                                   "6",
+                                   "\n",
+                                   "7",
+                                   "8",
+                                   "9",
+                                   "\n",
+                                   LV_SYMBOL_BACKSPACE,
+                                   "0",
+                                   LV_SYMBOL_OK,
+                                   ""};
 
 static void refresh_address_list(void);
 static void scan_button_cb(lv_event_t *e);
@@ -99,10 +126,20 @@ static void settings_button_cb(lv_event_t *e) {
   wallet_settings_page_show();
 }
 
-static void type_dropdown_cb(lv_event_t *e) {
-  lv_obj_t *dd = lv_event_get_target(e);
-  show_change = (lv_dropdown_get_selected(dd) == 1);
+static void update_account_button_visibility(void) {
+  if (!account_btn)
+    return;
+  uint16_t sel = lv_dropdown_get_selected(source_dropdown);
+  if (sel >= 4)
+    lv_obj_add_flag(account_btn, LV_OBJ_FLAG_HIDDEN);
+  else
+    lv_obj_clear_flag(account_btn, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void source_dropdown_cb(lv_event_t *e) {
+  (void)e;
   address_offset = 0;
+  update_account_button_visibility();
   refresh_address_list();
 }
 
@@ -120,11 +157,9 @@ static void next_button_cb(lv_event_t *e) {
   refresh_address_list();
 }
 
-static void on_descriptor_loaded(void) {
-  if (load_descriptor_btn)
-    lv_obj_add_flag(load_descriptor_btn, LV_OBJ_FLAG_HIDDEN);
-  if (btn_cont)
-    lv_obj_clear_flag(btn_cont, LV_OBJ_FLAG_HIDDEN);
+static void on_descriptor_registered(void) {
+  if (register_descriptor_btn)
+    lv_obj_add_flag(register_descriptor_btn, LV_OBJ_FLAG_HIDDEN);
   refresh_address_list();
 }
 
@@ -133,7 +168,7 @@ static void descriptor_validation_cb(descriptor_validation_result_t result,
   (void)user_data;
 
   if (result == VALIDATION_SUCCESS) {
-    on_descriptor_loaded();
+    on_descriptor_registered();
     return;
   }
 
@@ -153,17 +188,17 @@ static void return_from_descriptor_storage(void) {
 static void success_from_descriptor_storage(void) {
   load_descriptor_storage_page_destroy();
   addresses_page_show();
-  on_descriptor_loaded();
+  on_descriptor_registered();
 }
 
-static void load_desc_qr_cb(void) {
+static void reg_desc_qr_cb(void) {
   descriptor_loader_destroy_source_menu();
   addresses_page_hide();
   qr_scanner_page_create(NULL, return_from_descriptor_scanner_cb);
   qr_scanner_page_show();
 }
 
-static void load_desc_flash_cb(void) {
+static void reg_desc_flash_cb(void) {
   descriptor_loader_destroy_source_menu();
   addresses_page_hide();
   load_descriptor_storage_page_create(
@@ -172,7 +207,7 @@ static void load_desc_flash_cb(void) {
   load_descriptor_storage_page_show();
 }
 
-static void load_desc_sd_cb(void) {
+static void reg_desc_sd_cb(void) {
   descriptor_loader_destroy_source_menu();
   addresses_page_hide();
   load_descriptor_storage_page_create(
@@ -181,17 +216,17 @@ static void load_desc_sd_cb(void) {
   load_descriptor_storage_page_show();
 }
 
-static void load_desc_source_back_cb(void) {
+static void reg_desc_source_back_cb(void) {
   descriptor_loader_destroy_source_menu();
   addresses_page_show();
 }
 
-static void load_descriptor_btn_cb(lv_event_t *e) {
+static void register_descriptor_btn_cb(lv_event_t *e) {
   (void)e;
   addresses_page_hide();
-  descriptor_loader_show_source_menu(lv_screen_active(), load_desc_qr_cb,
-                                     load_desc_flash_cb, load_desc_sd_cb,
-                                     load_desc_source_back_cb);
+  descriptor_loader_show_source_menu(lv_screen_active(), reg_desc_qr_cb,
+                                     reg_desc_flash_cb, reg_desc_sd_cb,
+                                     reg_desc_source_back_cb);
 }
 
 static void truncate_address_middle(char *dest, size_t dest_size,
@@ -310,72 +345,81 @@ static void refresh_address_list(void) {
   lv_obj_clean(address_list_container);
   stored_count = 0;
 
-  wallet_policy_t policy = wallet_get_policy();
-
-  // For multisig without descriptor, show message
-  if (policy == WALLET_POLICY_MULTISIG && !wallet_has_descriptor()) {
-    lv_obj_t *msg = theme_create_label(
-        address_list_container,
-        "Multisig addresses require a wallet descriptor.\n\n"
-        "Scan your wallet descriptor QR code to view addresses.",
-        false);
-    lv_obj_set_width(msg, LV_PCT(100));
-    lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
-    return;
-  }
-
   if (address_offset == 0)
     lv_obj_add_state(prev_button, LV_STATE_DISABLED);
   else
     lv_obj_clear_state(prev_button, LV_STATE_DISABLED);
 
+  uint16_t sel = lv_dropdown_get_selected(source_dropdown);
+  bool is_testnet = (wallet_get_network() == WALLET_NETWORK_TESTNET);
+  uint32_t account = wallet_get_account();
+  uint32_t chain = show_change ? 1 : 0;
+
+  static const ss_script_type_t script_map[4] = {
+      SS_SCRIPT_P2WPKH,      /* 0 Native SegWit  */
+      SS_SCRIPT_P2TR,        /* 1 Taproot        */
+      SS_SCRIPT_P2PKH,       /* 2 Legacy         */
+      SS_SCRIPT_P2SH_P2WPKH, /* 3 Wrapped SegWit */
+  };
+
+  const registry_entry_t *reg_entry = NULL;
+  if (sel >= 4) {
+    reg_entry = registry_get((size_t)(sel - 4));
+    if (!reg_entry)
+      return;
+  }
+
   for (uint32_t i = 0; i < NUM_ADDRESSES; i++) {
     uint32_t idx = address_offset + i;
-    char *address = NULL;
-    bool success;
+    char addr_buf[SS_ADDRESS_MAX_LEN];
+    char *dynamic_addr = NULL;
+    bool success = false;
 
-    if (policy == WALLET_POLICY_MULTISIG) {
-      success = show_change
-                    ? wallet_get_multisig_change_address(idx, &address)
-                    : wallet_get_multisig_receive_address(idx, &address);
+    if (reg_entry) {
+      uint32_t mp = (reg_entry->num_paths <= 1) ? 0 : chain;
+      int ret = wally_descriptor_to_address(reg_entry->desc, 0, mp, idx, 0,
+                                            &dynamic_addr);
+      success = (ret == WALLY_OK) && dynamic_addr;
     } else {
-      success = show_change ? wallet_get_change_address(idx, &address)
-                            : wallet_get_receive_address(idx, &address);
+      success = ss_address(script_map[sel], account, chain, idx, is_testnet,
+                           addr_buf, sizeof(addr_buf));
     }
 
-    if (!success || !address)
+    if (!success)
       continue;
 
-    // Store address for detail view access
+    /* Store address for detail view */
     int si = stored_count;
-    snprintf(stored_addresses[si], sizeof(stored_addresses[si]), "%s", address);
+    snprintf(stored_addresses[si], sizeof(stored_addresses[si]), "%s",
+             dynamic_addr ? dynamic_addr : addr_buf);
     stored_indices[si] = idx;
     stored_count++;
 
-    // Create truncated display text — fit to available width
-    // Estimate chars that fit: screen width / avg char width, minus index
-    // prefix
+    if (dynamic_addr) {
+      wally_free_string(dynamic_addr);
+      dynamic_addr = NULL;
+    }
+
+    /* Build truncated display label from the stored copy */
     const lv_font_t *font = theme_font_small();
     int avg_char_w = lv_font_get_glyph_width(font, '0', '0');
     int32_t usable_w =
         theme_get_screen_width() - 2 * theme_get_default_padding();
-    int max_chars = usable_w / avg_char_w - 4; // subtract "N: " prefix
-    int prefix = max_chars * 55 / 100;         // 55% prefix
-    int suffix = max_chars - prefix - 3;       // 3 for "..."
+    int max_chars = usable_w / avg_char_w - 4;
+    int prefix = max_chars * 55 / 100;
+    int suffix = max_chars - prefix - 3;
     if (prefix < 6)
       prefix = 6;
     if (suffix < 4)
       suffix = 4;
     char truncated[64];
-    truncate_address_middle(truncated, sizeof(truncated), address, prefix,
-                            suffix);
+    truncate_address_middle(truncated, sizeof(truncated), stored_addresses[si],
+                            prefix, suffix);
 
     char btn_text[80];
     snprintf(btn_text, sizeof(btn_text), "%u: %s", idx, truncated);
 
-    wally_free_string(address);
-
-    // Create clickable button
+    /* Create clickable button */
     lv_obj_t *btn = lv_btn_create(address_list_container);
     lv_obj_set_size(btn, LV_PCT(100), LV_SIZE_CONTENT);
     theme_apply_touch_button(btn, false);
@@ -438,6 +482,130 @@ static void scan_button_cb(lv_event_t *e) {
   qr_scanner_page_show();
 }
 
+// --- Account numpad overlay ---
+
+static void update_account_display(void) {
+  if (!account_value_label)
+    return;
+  char buf[12];
+  snprintf(buf, sizeof(buf), "%u", wallet_get_account());
+  lv_label_set_text(account_value_label, buf);
+}
+
+static void update_account_input_display(void) {
+  if (!account_input_label)
+    return;
+  char display[14];
+  if (account_input_len == 0)
+    snprintf(display, sizeof(display), "_");
+  else
+    snprintf(display, sizeof(display), "%s_", account_input_buffer);
+  lv_label_set_text(account_input_label, display);
+}
+
+static void update_numpad_buttons(void) {
+  if (!account_numpad)
+    return;
+  bool empty = (account_input_len == 0);
+  if (empty) {
+    lv_btnmatrix_set_btn_ctrl(account_numpad, 12, LV_BTNMATRIX_CTRL_DISABLED);
+    lv_btnmatrix_set_btn_ctrl(account_numpad, 14, LV_BTNMATRIX_CTRL_DISABLED);
+  } else {
+    lv_btnmatrix_clear_btn_ctrl(account_numpad, 12, LV_BTNMATRIX_CTRL_DISABLED);
+    lv_btnmatrix_clear_btn_ctrl(account_numpad, 14, LV_BTNMATRIX_CTRL_DISABLED);
+  }
+}
+
+static void close_account_overlay(void) {
+  if (account_overlay) {
+    lv_obj_del(account_overlay);
+    account_overlay = NULL;
+    account_numpad = NULL;
+    account_input_label = NULL;
+  }
+}
+
+static void account_numpad_event_cb(lv_event_t *e) {
+  lv_obj_t *btnm = lv_event_get_target(e);
+  uint32_t btn_id = lv_btnmatrix_get_selected_btn(btnm);
+  const char *txt = lv_btnmatrix_get_btn_text(btnm, btn_id);
+
+  if (strcmp(txt, LV_SYMBOL_OK) == 0) {
+    if (account_input_len > 0) {
+      unsigned long val = strtoul(account_input_buffer, NULL, 10);
+      if (val < SS_MAX_ACCOUNT) {
+        wallet_set_account((uint32_t)val);
+        update_account_display();
+        address_offset = 0;
+        refresh_address_list();
+      }
+    }
+    close_account_overlay();
+  } else if (strcmp(txt, LV_SYMBOL_BACKSPACE) == 0) {
+    if (account_input_len > 0) {
+      account_input_len--;
+      account_input_buffer[account_input_len] = '\0';
+      update_account_input_display();
+      update_numpad_buttons();
+    }
+  } else if (account_input_len < 10) {
+    account_input_buffer[account_input_len++] = txt[0];
+    account_input_buffer[account_input_len] = '\0';
+    update_account_input_display();
+    update_numpad_buttons();
+  }
+}
+
+static void show_account_overlay(void) {
+  account_input_len =
+      snprintf(account_input_buffer, sizeof(account_input_buffer), "%u",
+               wallet_get_account());
+
+  account_overlay = lv_obj_create(lv_screen_active());
+  lv_obj_remove_style_all(account_overlay);
+  lv_obj_set_size(account_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_color(account_overlay, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(account_overlay, LV_OPA_50, 0);
+  lv_obj_add_flag(account_overlay, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t *modal = lv_obj_create(account_overlay);
+  lv_obj_set_size(modal, LV_PCT(80), LV_PCT(80));
+  lv_obj_center(modal);
+  theme_apply_frame(modal);
+  lv_obj_set_style_bg_opa(modal, LV_OPA_90, 0);
+  lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(modal, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(modal, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(modal, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_gap(modal, 15, 0);
+
+  lv_obj_t *title = lv_label_create(modal);
+  lv_label_set_text(title, "Account");
+  lv_obj_set_style_text_font(title, theme_font_medium(), 0);
+  lv_obj_set_style_text_color(title, main_color(), 0);
+
+  account_input_label = lv_label_create(modal);
+  lv_obj_set_style_text_font(account_input_label, theme_font_medium(), 0);
+  lv_obj_set_style_text_color(account_input_label, highlight_color(), 0);
+  update_account_input_display();
+
+  account_numpad = lv_btnmatrix_create(modal);
+  lv_btnmatrix_set_map(account_numpad, numpad_map);
+  lv_obj_set_size(account_numpad, LV_PCT(100), LV_PCT(70));
+  lv_obj_set_flex_grow(account_numpad, 1);
+  theme_apply_btnmatrix(account_numpad);
+  lv_obj_add_event_cb(account_numpad, account_numpad_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  update_numpad_buttons();
+}
+
+static void account_btn_cb(lv_event_t *e) {
+  (void)e;
+  show_account_overlay();
+}
+
 void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   if (!parent || !wallet_is_initialized())
     return;
@@ -464,18 +632,18 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   bool needs_descriptor =
       (policy == WALLET_POLICY_MULTISIG && !wallet_has_descriptor());
 
-  // Load Descriptor button (for multisig without descriptor)
-  load_descriptor_btn = lv_btn_create(addresses_screen);
-  lv_obj_set_size(load_descriptor_btn, LV_PCT(70), LV_SIZE_CONTENT);
-  theme_apply_touch_button(load_descriptor_btn, false);
-  lv_obj_t *load_label = lv_label_create(load_descriptor_btn);
-  lv_label_set_text(load_label, "Load Descriptor");
+  // Register Descriptor button (for multisig without descriptor)
+  register_descriptor_btn = lv_btn_create(addresses_screen);
+  lv_obj_set_size(register_descriptor_btn, LV_PCT(70), LV_SIZE_CONTENT);
+  theme_apply_touch_button(register_descriptor_btn, false);
+  lv_obj_t *load_label = lv_label_create(register_descriptor_btn);
+  lv_label_set_text(load_label, "Register Descriptor");
   lv_obj_center(load_label);
   theme_apply_button_label(load_label, false);
-  lv_obj_add_event_cb(load_descriptor_btn, load_descriptor_btn_cb,
+  lv_obj_add_event_cb(register_descriptor_btn, register_descriptor_btn_cb,
                       LV_EVENT_CLICKED, NULL);
   if (!needs_descriptor) {
-    lv_obj_add_flag(load_descriptor_btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(register_descriptor_btn, LV_OBJ_FLAG_HIDDEN);
   }
 
   // Button container
@@ -486,17 +654,30 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_align(btn_cont, LV_FLEX_ALIGN_SPACE_BETWEEN,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-  type_dropdown = theme_create_dropdown(btn_cont, "Receive\nChange");
-  lv_obj_set_width(type_dropdown, LV_PCT(40));
-  lv_obj_add_event_cb(type_dropdown, type_dropdown_cb, LV_EVENT_VALUE_CHANGED,
-                      NULL);
-  prev_button = create_nav_button(btn_cont, "<", LV_PCT(15), prev_button_cb);
-  next_button = create_nav_button(btn_cont, ">", LV_PCT(15), next_button_cb);
+  char source_opts[600];
+  size_t written =
+      (size_t)snprintf(source_opts, sizeof(source_opts),
+                       "Native SegWit\nTaproot\nLegacy\nWrapped SegWit");
+  size_t reg_count = registry_count();
+  for (size_t ri = 0; ri < reg_count && written < sizeof(source_opts) - 1;
+       ri++) {
+    const registry_entry_t *entry = registry_get(ri);
+    int n = snprintf(source_opts + written, sizeof(source_opts) - written,
+                     "\n%s", entry->id);
+    if (n > 0)
+      written += (size_t)n;
+  }
+  source_dropdown = theme_create_dropdown(btn_cont, source_opts);
+  lv_obj_set_width(source_dropdown, LV_PCT(35));
+  lv_obj_add_event_cb(source_dropdown, source_dropdown_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  prev_button = create_nav_button(btn_cont, "<", LV_PCT(13), prev_button_cb);
+  next_button = create_nav_button(btn_cont, ">", LV_PCT(13), next_button_cb);
   lv_obj_add_state(prev_button, LV_STATE_DISABLED);
 
   // Scan address button with QR icon
   scan_button = lv_btn_create(btn_cont);
-  lv_obj_set_size(scan_button, LV_PCT(22), LV_SIZE_CONTENT);
+  lv_obj_set_size(scan_button, LV_PCT(13), LV_SIZE_CONTENT);
   theme_apply_touch_button(scan_button, false);
   lv_obj_t *scan_label = lv_label_create(scan_button);
   lv_label_set_text(scan_label, ICON_QRCODE_36);
@@ -504,10 +685,16 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_center(scan_label);
   lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
 
-  // Hide navigation buttons if multisig without descriptor
-  if (needs_descriptor) {
-    lv_obj_add_flag(btn_cont, LV_OBJ_FLAG_HIDDEN);
-  }
+  // Account button
+  account_btn = lv_btn_create(btn_cont);
+  lv_obj_set_size(account_btn, LV_PCT(13), LV_SIZE_CONTENT);
+  theme_apply_touch_button(account_btn, false);
+  account_value_label = lv_label_create(account_btn);
+  lv_obj_set_style_text_font(account_value_label, theme_font_small(), 0);
+  lv_obj_center(account_value_label);
+  lv_obj_add_event_cb(account_btn, account_btn_cb, LV_EVENT_CLICKED, NULL);
+  update_account_display();
+  update_account_button_visibility();
 
   // Address list container
   address_list_container = lv_obj_create(addresses_screen);
@@ -541,6 +728,13 @@ void addresses_page_destroy(void) {
   load_descriptor_storage_page_destroy();
   descriptor_loader_destroy_source_menu();
 
+  if (account_overlay) {
+    lv_obj_del(account_overlay);
+    account_overlay = NULL;
+    account_numpad = NULL;
+    account_input_label = NULL;
+  }
+
   if (detail_back_button) {
     lv_obj_del(detail_back_button);
     detail_back_button = NULL;
@@ -561,13 +755,18 @@ void addresses_page_destroy(void) {
     lv_obj_del(addresses_screen);
     addresses_screen = NULL;
   }
-  type_dropdown = NULL;
+  source_dropdown = NULL;
   prev_button = NULL;
   next_button = NULL;
   scan_button = NULL;
-  load_descriptor_btn = NULL;
+  register_descriptor_btn = NULL;
   btn_cont = NULL;
   address_list_container = NULL;
+  account_btn = NULL;
+  account_value_label = NULL;
+  account_numpad = NULL;
+  account_input_label = NULL;
+  account_input_len = 0;
   return_callback = NULL;
   show_change = false;
   address_offset = 0;
