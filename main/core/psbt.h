@@ -98,17 +98,11 @@ int32_t psbt_detect_account(const struct wally_psbt *psbt);
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet);
 
-// Callback for permissive-signing ACK (settings_get_permissive_signing() path).
-// Called when an input carries our fingerprint but no verifiable claim.
-// Return true to allow signing with the raw keypath; false to skip.
-typedef bool (*psbt_sign_ack_fn_t)(size_t input_i, const uint8_t *raw_keypath,
-                                   size_t raw_keypath_len);
-
 // Sign PSBT inputs with loaded key.
 // Returns number of signatures added (0 if none).
-// ack_fn: callback for requires_ack inputs; NULL treats them as denied.
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
-                 psbt_sign_ack_fn_t ack_fn);
+// Permissive-mode (requires_ack) inputs are signed directly — the
+// Permissive-signing setting is itself the opt-in.
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet);
 
 // Create a trimmed PSBT containing only signatures and minimal validation data
 // Returns new PSBT on success (caller must free), NULL on failure
