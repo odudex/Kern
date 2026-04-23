@@ -254,8 +254,7 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
                memcmp(buf, exp.witness, exp.witness_len) == 0;
         }
         if (ok) {
-          result.owned = true;
-          result.verified = true;
+          result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
           result.claim = claim;
           return result;
         }
@@ -297,8 +296,7 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
              memcmp(buf, exp.witness, exp.witness_len) == 0;
       }
       if (ok) {
-        result.owned = true;
-        result.verified = true;
+        result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
         result.claim = claim;
         return result;
       }
@@ -335,8 +333,7 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
           memcmp(exp.spk, utxo_script, utxo_script_len) == 0) {
         /* P2TR has no redeem/witness script, so no extra byte-compare needed.
          */
-        result.owned = true;
-        result.verified = true;
+        result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
         result.claim = claim;
         return result;
       }
@@ -354,19 +351,18 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
       if (claim_regenerate(&claim, is_testnet, &exp) &&
           exp.spk_len == utxo_script_len &&
           memcmp(exp.spk, utxo_script, utxo_script_len) == 0) {
-        result.owned = true;
-        result.verified = true;
+        result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
         result.claim = claim;
         return result;
       }
     }
   }
 
-  /* Permissive fallback: fp matched but no verifiable claim */
+  /* fp matched but no verifiable claim. Permissive setting still gates
+   * here (commit 2 will lift this gate up to scan.c and split the case
+   * into OWNED_UNSAFE vs EXPECTED_OWNED based on derive verification). */
   if (seen_our_fp && settings_get_permissive_signing()) {
-    result.owned = true;
-    result.verified = false;
-    result.requires_ack = true;
+    result.ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
     return result;
   }
 
@@ -409,13 +405,21 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
         memcmp(keypath, our_fp, BIP32_KEY_FINGERPRINT_LEN) != 0)
       continue;
 
+    if (result.raw_keypath_len == 0) {
+      size_t copy = keypath_len <= sizeof(result.raw_keypath)
+                        ? keypath_len
+                        : sizeof(result.raw_keypath);
+      memcpy(result.raw_keypath, keypath, copy);
+      result.raw_keypath_len = copy;
+    }
+
     claim_t claim = {0};
     if (try_match_whitelist(keypath, keypath_len, is_testnet, &claim)) {
       expected_scripts_t exp = {0};
       if (claim_regenerate(&claim, is_testnet, &exp) &&
           exp.spk_len == out_script_len &&
           memcmp(exp.spk, out_script, out_script_len) == 0) {
-        result.owned = true;
+        result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
         result.source = claim;
         wally_tx_free(global_tx);
         return result;
@@ -431,7 +435,7 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
       if (claim_regenerate(&claim, is_testnet, &exp) &&
           exp.spk_len == out_script_len &&
           memcmp(exp.spk, out_script, out_script_len) == 0) {
-        result.owned = true;
+        result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
         result.source = claim;
         wally_tx_free(global_tx);
         return result;
@@ -667,22 +671,21 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet) {
   for (size_t i = 0; i < num_inputs; i++) {
     input_ownership_t ownership = psbt_classify_input(psbt, i, is_testnet);
 
-    if (!ownership.owned)
+    if (ownership.ownership == PSBT_OWNERSHIP_EXTERNAL)
       continue;
 
     char path[128];
     bool have_path = false;
 
-    if (ownership.verified) {
+    if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
       /* Both CLAIM_WHITELIST and CLAIM_REGISTRY populate derived_path with
        * the raw BIP32 uint32 components; format directly into a path string. */
       have_path = format_derived_path(ownership.claim.derived_path,
                                       ownership.claim.derived_path_len, path,
                                       sizeof(path));
     } else {
-      /* requires_ack: permissive-signing fallback — fp matched but no
-       * verified claim. Permissive is itself the explicit opt-in, so
-       * parse the raw keypath and sign. */
+      /* OWNED_UNSAFE / EXPECTED_OWNED — the scan.c policy gate has already
+       * cleared the relevant setting; here we just derive from the raw path. */
       if (ownership.raw_keypath_len < BIP32_KEY_FINGERPRINT_LEN ||
           (ownership.raw_keypath_len - BIP32_KEY_FINGERPRINT_LEN) % 4 != 0)
         continue;

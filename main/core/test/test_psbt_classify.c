@@ -316,16 +316,8 @@ static void test_psbt_classify_fixture_a(void) {
   input_ownership_t r = psbt_classify_input(psbt, 0, false);
   wally_psbt_free(psbt);
 
-  if (!r.owned) {
-    FAIL("expected owned=true");
-    return;
-  }
-  if (!r.verified) {
-    FAIL("expected verified=true");
-    return;
-  }
-  if (r.requires_ack) {
-    FAIL("requires_ack must be false");
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("expected OWNED_SAFE");
     return;
   }
   if (r.claim.kind != CLAIM_WHITELIST) {
@@ -379,8 +371,8 @@ static void test_psbt_classify_fixture_d(void) {
   input_ownership_t r = psbt_classify_input(psbt, 0, false);
   wally_psbt_free(psbt);
 
-  if (r.owned) {
-    FAIL("must NOT be owned when UTXO script mismatches");
+  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    FAIL("must be EXTERNAL when UTXO script mismatches");
     return;
   }
   PASS();
@@ -419,8 +411,8 @@ static void test_psbt_classify_fixture_e(void) {
   wally_psbt_free(psbt);
 
   /* seen_our_fp=true, but no whitelist/registry claim; permissive stub=false */
-  if (r.owned) {
-    FAIL("must NOT be owned (permissive=off, unknown path)");
+  if (r.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    FAIL("must be EXTERNAL (permissive=off, unknown path)");
     return;
   }
   PASS();
@@ -479,8 +471,8 @@ static void test_psbt_classify_fixture_b(void) {
   /* output 1: no keypath added — external destination */
 
   output_ownership_t r0 = psbt_classify_output(psbt, 0, false);
-  if (!r0.owned) {
-    FAIL("output 0: expected owned=true");
+  if (r0.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("output 0: expected OWNED_SAFE");
     wally_psbt_free(psbt);
     return;
   }
@@ -501,8 +493,8 @@ static void test_psbt_classify_fixture_b(void) {
   }
 
   output_ownership_t r1 = psbt_classify_output(psbt, 1, false);
-  if (r1.owned) {
-    FAIL("output 1: must NOT be owned (external)");
+  if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    FAIL("output 1: must be EXTERNAL");
     wally_psbt_free(psbt);
     return;
   }
@@ -578,8 +570,8 @@ static void test_psbt_classify_fixture_c(void) {
   wally_psbt_free(psbt);
   registry_clear();
 
-  if (!r.owned) {
-    FAIL("expected owned=true");
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("expected OWNED_SAFE");
     return;
   }
   if (r.source.kind != CLAIM_REGISTRY) {
