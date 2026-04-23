@@ -240,6 +240,25 @@ esp_err_t nvs_erase_all(nvs_handle_t handle) {
     return ESP_OK;
 }
 
+esp_err_t nvs_erase_key(nvs_handle_t handle, const char *key) {
+    int idx = (int)handle - 1;
+    if (idx < 0 || idx >= NVS_MAX_HANDLES || !s_handles[idx].used)
+        return ESP_ERR_NVS_INVALID_HANDLE;
+    if (!key) return ESP_ERR_INVALID_ARG;
+    nvs_handle_impl_t *h = &s_handles[idx];
+    nvs_entry_t **prev = &h->entries;
+    for (nvs_entry_t *e = h->entries; e; prev = &e->next, e = e->next) {
+        if (strncmp(e->key, key, NVS_MAX_KEY_LEN) == 0) {
+            *prev = e->next;
+            free(e->value);
+            free(e);
+            h->dirty = 1;
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_NVS_NOT_FOUND;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Generic set / get helpers                                                   */
 /* -------------------------------------------------------------------------- */
