@@ -185,6 +185,130 @@ bool claim_regenerate(const claim_t *claim, bool is_testnet,
   return true;
 }
 
+/* Format a BIP32 path from raw `fp(4) | path(4*depth)` bytes into the
+ * "m/.../...'/.../..." form consumed by key_get_derived_key. Mirrors
+ * the public psbt_format_keypath helper but keeps it inlined here so
+ * the classifier doesn't depend on call ordering. */
+static bool raw_keypath_to_string(const unsigned char *raw, size_t raw_len,
+                                  char *buf, size_t buf_size) {
+  if (!raw || !buf || buf_size == 0)
+    return false;
+  if (raw_len < BIP32_KEY_FINGERPRINT_LEN ||
+      (raw_len - BIP32_KEY_FINGERPRINT_LEN) % 4 != 0)
+    return false;
+  size_t n = (raw_len - BIP32_KEY_FINGERPRINT_LEN) / 4;
+  if (n > MAX_KEYPATH_TOTAL_DEPTH)
+    return false;
+  int w = snprintf(buf, buf_size, "m");
+  if (w < 0 || (size_t)w >= buf_size)
+    return false;
+  size_t pos = (size_t)w;
+  for (size_t k = 0; k < n; k++) {
+    uint32_t c = ss_u32_le(raw + BIP32_KEY_FINGERPRINT_LEN + k * 4);
+    int written =
+        ss_is_hardened(c)
+            ? snprintf(buf + pos, buf_size - pos, "/%u'", ss_unharden(c))
+            : snprintf(buf + pos, buf_size - pos, "/%u", c);
+    if (written < 0 || pos + (size_t)written >= buf_size)
+      return false;
+    pos += (size_t)written;
+  }
+  return true;
+}
+
+/* Derive a key from raw_keypath, then check whether any of the four
+ * standard spk shapes (p2pkh, p2sh-p2wpkh, p2wpkh, p2tr) over that
+ * pubkey reproduces target_spk. Returns true on a match.
+ *
+ * Used by the classifier to distinguish OWNED_UNSAFE (fp + derive
+ * verifies) from EXPECTED_OWNED (fp matches but derive doesn't reach
+ * the spk — harness state). */
+static bool derive_matches_spk(const unsigned char *raw_keypath,
+                               size_t raw_keypath_len,
+                               const unsigned char *target_spk,
+                               size_t target_spk_len) {
+  if (!target_spk || target_spk_len == 0)
+    return false;
+
+  char path[128];
+  if (!raw_keypath_to_string(raw_keypath, raw_keypath_len, path, sizeof(path)))
+    return false;
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key(path, &derived))
+    return false;
+
+  bool match = false;
+  uint8_t cand[34];
+  size_t cand_len = 0;
+
+  /* P2WPKH: OP_0 <hash160(pub)> */
+  if (!match &&
+      wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                       WALLY_SCRIPT_HASH160, cand, sizeof(cand),
+                                       &cand_len) == WALLY_OK &&
+      cand_len == target_spk_len && memcmp(cand, target_spk, cand_len) == 0)
+    match = true;
+
+  /* P2TR: OP_1 <push 32> <bip341-tweaked xonly> */
+  if (!match) {
+    uint8_t tweaked[EC_PUBLIC_KEY_LEN];
+    if (wally_ec_public_key_bip341_tweak(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                         NULL, 0, 0, tweaked,
+                                         sizeof(tweaked)) == WALLY_OK) {
+      cand[0] = 0x51;
+      cand[1] = 0x20;
+      memcpy(cand + 2, tweaked + 1, 32);
+      cand_len = 34;
+      if (cand_len == target_spk_len && memcmp(cand, target_spk, cand_len) == 0)
+        match = true;
+    }
+  }
+
+  /* P2PKH: OP_DUP OP_HASH160 <push 20> <hash160(pub)> OP_EQUALVERIFY
+   * OP_CHECKSIG */
+  if (!match) {
+    uint8_t pkh20[HASH160_LEN];
+    if (wally_hash160(derived->pub_key, EC_PUBLIC_KEY_LEN, pkh20,
+                      HASH160_LEN) == WALLY_OK) {
+      cand[0] = 0x76;
+      cand[1] = 0xa9;
+      cand[2] = 0x14;
+      memcpy(cand + 3, pkh20, 20);
+      cand[23] = 0x88;
+      cand[24] = 0xac;
+      cand_len = 25;
+      if (cand_len == target_spk_len && memcmp(cand, target_spk, cand_len) == 0)
+        match = true;
+    }
+  }
+
+  /* P2SH-P2WPKH: OP_HASH160 <push 20> <hash160(witness_program)> OP_EQUAL */
+  if (!match) {
+    uint8_t witprog[22];
+    size_t witprog_len = 0;
+    if (wally_witness_program_from_bytes(
+            derived->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, witprog,
+            sizeof(witprog), &witprog_len) == WALLY_OK &&
+        witprog_len == 22) {
+      uint8_t sh20[HASH160_LEN];
+      if (wally_hash160(witprog, witprog_len, sh20, HASH160_LEN) == WALLY_OK) {
+        cand[0] = 0xa9;
+        cand[1] = 0x14;
+        memcpy(cand + 2, sh20, 20);
+        cand[22] = 0x87;
+        cand_len = 23;
+        if (cand_len == target_spk_len &&
+            memcmp(cand, target_spk, cand_len) == 0)
+          match = true;
+      }
+    }
+  }
+
+  bip32_key_free(derived);
+  return match;
+}
+
 input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
                                       bool is_testnet) {
   input_ownership_t result = {0};
@@ -358,11 +482,19 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
     }
   }
 
-  /* fp matched but no verifiable claim. Permissive setting still gates
-   * here (commit 2 will lift this gate up to scan.c and split the case
-   * into OWNED_UNSAFE vs EXPECTED_OWNED based on derive verification). */
-  if (seen_our_fp && settings_get_permissive_signing()) {
-    result.ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
+  /* fp matched but no whitelist/registry claim verified. Distinguish:
+   *   OWNED_UNSAFE   — derive(raw_keypath) reproduces the spk; factually
+   *                     ours, just on a non-standard path
+   *   EXPECTED_OWNED — derive doesn't (or can't) reproduce the spk;
+   *                     harness state. The signing-policy gate in scan.c
+   *                     uses the matching settings to decide whether to
+   *                     allow signing. */
+  if (seen_our_fp) {
+    if (derive_matches_spk(result.raw_keypath, result.raw_keypath_len,
+                           utxo_script, utxo_script_len))
+      result.ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+    else
+      result.ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
     return result;
   }
 
@@ -441,6 +573,17 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
         return result;
       }
     }
+  }
+
+  /* fp matched but no whitelist/registry claim verified. Same harness
+   * split as the input classifier: OWNED_UNSAFE if derive verifies,
+   * EXPECTED_OWNED otherwise. */
+  if (result.raw_keypath_len > 0) {
+    if (derive_matches_spk(result.raw_keypath, result.raw_keypath_len,
+                           out_script, out_script_len))
+      result.ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+    else
+      result.ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
   }
 
   wally_tx_free(global_tx);
