@@ -1,5 +1,6 @@
 #include "key_confirmation.h"
 #include "../../core/key.h"
+#include "../../core/registry.h"
 #include "../../core/settings.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -30,14 +31,13 @@ static void loading_timer_cb(lv_timer_t *timer) {
   }
 
   wallet_network_t net = settings_get_default_network();
-  wallet_policy_t pol = settings_get_default_policy();
-  wallet_set_policy(pol);
   if (key_load_from_mnemonic(mnemonic_content, NULL,
                              net == WALLET_NETWORK_TESTNET)) {
     if (!wallet_init(net)) {
       dialog_show_error("Failed to initialize wallet", return_callback, 0);
       return;
     }
+    registry_init(net == WALLET_NETWORK_TESTNET);
     if (success_callback)
       success_callback();
   } else {
