@@ -95,8 +95,8 @@ static void update_derivation_path(void) {
 static void update_account_display(void) {
   if (!account_value_label)
     return;
-  char buf[12];
-  snprintf(buf, sizeof(buf), "%u", selected_account);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "Account: %u", selected_account);
   lv_label_set_text(account_value_label, buf);
 }
 
@@ -471,7 +471,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_screen(wallet_settings_screen);
   lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-  int32_t pad = theme_get_default_padding();
   int32_t top_h = theme_get_screen_height() * 5 / 36; // 100 @ 720
 
   // Top bar (same as key_confirmation.c)
@@ -513,9 +512,8 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_style_pad_all(content, 0, 0);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(content, theme_get_default_padding(), 0);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_EVENLY,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   // Passphrase + Descriptor row container (side by side)
   lv_obj_t *pp_desc_row = lv_obj_create(content);
@@ -524,7 +522,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_flow(pp_desc_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(pp_desc_row, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_margin_top(pp_desc_row, pad, 0);
 
   passphrase_btn = lv_btn_create(pp_desc_row);
   lv_obj_set_size(passphrase_btn, LV_PCT(48), theme_get_min_touch_size());
@@ -557,7 +554,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_flow(net_policy_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(net_policy_row, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_margin_top(net_policy_row, pad, 0);
 
   // Network column (label + dropdown)
   lv_obj_t *net_col = lv_obj_create(net_policy_row);
@@ -601,22 +597,15 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_add_event_cb(policy_dropdown, policy_dropdown_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
 
-  // Account label
-  lv_obj_t *acc_label = lv_label_create(content);
-  lv_label_set_text(acc_label, "Account");
-  lv_obj_set_style_text_font(acc_label, theme_font_small(), 0);
-  lv_obj_set_style_text_color(acc_label, secondary_color(), 0);
-  lv_obj_set_style_margin_top(acc_label, pad, 0);
-
-  // Account button
+  // Account button (label lives on the button itself)
   account_btn = lv_btn_create(content);
   lv_obj_set_size(account_btn, LV_PCT(50), theme_get_min_touch_size());
   theme_apply_touch_button(account_btn, false);
   lv_obj_add_event_cb(account_btn, account_btn_cb, LV_EVENT_CLICKED, NULL);
 
   account_value_label = lv_label_create(account_btn);
-  char acc_buf[12];
-  snprintf(acc_buf, sizeof(acc_buf), "%u", selected_account);
+  char acc_buf[24];
+  snprintf(acc_buf, sizeof(acc_buf), "Account: %u", selected_account);
   lv_label_set_text(account_value_label, acc_buf);
   lv_obj_set_style_text_font(account_value_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(account_value_label, main_color(), 0);
@@ -625,7 +614,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // Apply button
   apply_btn = lv_btn_create(content);
   lv_obj_set_size(apply_btn, LV_PCT(60), theme_get_min_touch_size());
-  lv_obj_set_style_margin_top(apply_btn, pad, 0);
   theme_apply_touch_button(apply_btn, false);
   lv_obj_add_event_cb(apply_btn, apply_btn_cb, LV_EVENT_CLICKED, NULL);
   lv_obj_add_state(apply_btn, LV_STATE_DISABLED); // Disabled until changes made
