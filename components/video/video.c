@@ -5,13 +5,48 @@
 #include <sys/mman.h>
 #include <sys/param.h>
 
+#include "driver/i2c_master.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_sccb_i2c.h"
+#include "esp_sccb_intf.h"
 #include "esp_video_init.h"
-#include "esp_video_isp_ioctl.h"
 #include "video.h"
 
 static const char *TAG = "video";
+
+// OV5647 SCCB handle used to widen on-sensor AE hysteresis past the ±8%
+// window the managed sensor driver writes. The sensor's hunting response to
+// that narrow band made luminance visibly pulse under high-contrast scenes.
+#define OV5647_SCCB_ADDR 0x36
+#define OV5647_SCCB_FREQ_HZ 100000
+#define OV5647_AE_HYST_NUM_LOW 7   // BPT = target * 7/10
+#define OV5647_AE_HYST_NUM_HIGH 13 // WPT = target * 13/10
+#define OV5647_AE_HYST_DEN 10
+// Gain ceiling (register pair 0x3a18/0x3a19). Sensor default is 0x03FF (~64x)
+// which enables a digital-gain multiplier stage; that stage produces discrete
+// ~2x jumps as AE steps in/out of it, appearing as square-wave luminance.
+// 0x01FF (~32x) stays entirely in the analog-gain range.
+#define OV5647_MAX_GAIN_HI 0x01
+#define OV5647_MAX_GAIN_LO 0xFF
+
+static i2c_master_bus_handle_t s_i2c_bus = NULL;
+static esp_sccb_io_handle_t s_sensor_sccb = NULL;
+
+static esp_err_t ensure_sensor_sccb(void) {
+  if (s_sensor_sccb)
+    return ESP_OK;
+  if (!s_i2c_bus)
+    return ESP_ERR_INVALID_STATE;
+  sccb_i2c_config_t cfg = {
+      .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+      .device_address = OV5647_SCCB_ADDR,
+      .scl_speed_hz = OV5647_SCCB_FREQ_HZ,
+      .addr_bits_width = 16,
+      .val_bits_width = 8,
+  };
+  return sccb_new_i2c_io(s_i2c_bus, &cfg, &s_sensor_sccb);
+}
 
 #define MAX_BUFFER_COUNT 6
 #define MIN_BUFFER_COUNT 2
@@ -81,6 +116,8 @@ esp_err_t app_video_main(i2c_master_bus_handle_t i2c_bus_handle) {
   }
 
   esp_err_t ret;
+
+  s_i2c_bus = i2c_bus_handle;
 
   if (i2c_bus_handle) {
     static esp_video_init_csi_config_t csi_config;
@@ -436,13 +473,47 @@ esp_err_t app_video_close(int fd) {
 }
 
 esp_err_t app_video_set_ae_target(int fd, uint32_t level) {
-  struct v4l2_ext_controls controls = {.ctrl_class = V4L2_CTRL_CLASS_USER,
-                                       .count = 1};
-  struct v4l2_ext_control control = {.id = V4L2_CID_EXPOSURE, .value = level};
-  controls.controls = &control;
-  if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &controls)) {
-    ESP_LOGW(TAG, "Set AE target level failed");
+  (void)fd;
+  // Bypass V4L2_CID_EXPOSURE: the OV5647 driver's ov5647_set_AE_target() writes
+  // a ±8% stable band, which causes AE to hunt on small luma shifts under
+  // high-contrast scenes. Write the same target registers here with ±20%.
+  if (ensure_sensor_sccb() != ESP_OK) {
+    ESP_LOGW(TAG, "Set AE target: SCCB handle unavailable");
     return ESP_FAIL;
+  }
+  if (level == 0)
+    level = 1;
+  if (level > 255)
+    level = 255;
+  uint32_t low = (level * OV5647_AE_HYST_NUM_LOW) / OV5647_AE_HYST_DEN;
+  uint32_t high = (level * OV5647_AE_HYST_NUM_HIGH) / OV5647_AE_HYST_DEN;
+  if (high > 255)
+    high = 255;
+  uint32_t fast_high = high * 2;
+  if (fast_high > 255)
+    fast_high = 255;
+  uint32_t fast_low = low / 2;
+
+  const struct {
+    uint16_t reg;
+    uint8_t val;
+  } writes[] = {
+      {0x3a0f, (uint8_t)high},      // WPT  (stable window high)
+      {0x3a10, (uint8_t)low},       // BPT  (stable window low)
+      {0x3a1b, (uint8_t)high},      // WPT2
+      {0x3a1e, (uint8_t)low},       // BPT2
+      {0x3a11, (uint8_t)fast_high}, // VPT  (fast-step high)
+      {0x3a1f, (uint8_t)fast_low},  // fast-step low
+      {0x3a18, OV5647_MAX_GAIN_HI}, // AE gain ceiling high
+      {0x3a19, OV5647_MAX_GAIN_LO}, // AE gain ceiling low
+  };
+  for (size_t i = 0; i < sizeof(writes) / sizeof(writes[0]); i++) {
+    if (esp_sccb_transmit_reg_a16v8(s_sensor_sccb, writes[i].reg,
+                                    writes[i].val) != ESP_OK) {
+      ESP_LOGW(TAG, "Set AE target: SCCB write to 0x%04x failed",
+               writes[i].reg);
+      return ESP_FAIL;
+    }
   }
   return ESP_OK;
 }
@@ -460,36 +531,6 @@ esp_err_t app_video_set_focus(int fd, uint32_t position) {
   return ESP_OK;
 }
 
-esp_err_t app_video_disable_af(void) {
-  // AF control must go to the ISP device, not the camera sensor device
-  int isp_fd = open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
-  if (isp_fd < 0) {
-    ESP_LOGW(TAG, "Failed to open ISP device for AF disable");
-    return ESP_FAIL;
-  }
-
-  esp_video_isp_af_t af_cfg = {.enable = false};
-  struct v4l2_ext_control control = {
-      .id = V4L2_CID_USER_ESP_ISP_AF,
-      .size = sizeof(af_cfg),
-      .p_u8 = (uint8_t *)&af_cfg,
-  };
-  struct v4l2_ext_controls controls = {
-      .ctrl_class = V4L2_CTRL_CLASS_USER,
-      .count = 1,
-      .controls = &control,
-  };
-  esp_err_t ret = ESP_OK;
-  if (ioctl(isp_fd, VIDIOC_S_EXT_CTRLS, &controls)) {
-    ESP_LOGW(TAG, "Disable AF failed");
-    ret = ESP_FAIL;
-  } else {
-    ESP_LOGI(TAG, "ISP auto-focus disabled");
-  }
-  close(isp_fd);
-  return ret;
-}
-
 bool app_video_has_focus_motor(int fd) {
   struct v4l2_query_ext_ctrl qctrl = {.id = V4L2_CID_FOCUS_ABSOLUTE};
   return (ioctl(fd, VIDIOC_QUERY_EXT_CTRL, &qctrl) == 0);
@@ -500,6 +541,12 @@ esp_err_t app_video_deinit(void) {
     ESP_LOGW(TAG, "Not initialized");
     return ESP_OK;
   }
+
+  if (s_sensor_sccb) {
+    esp_sccb_del_i2c_io(s_sensor_sccb);
+    s_sensor_sccb = NULL;
+  }
+  s_i2c_bus = NULL;
 
   esp_err_t ret = esp_video_deinit();
   if (ret != ESP_OK) {
