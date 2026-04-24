@@ -421,8 +421,7 @@ static void create_settings_overlay(void) {
   settings_overlay = lv_obj_create(qr_scanner_screen);
   lv_obj_remove_style_all(settings_overlay);
   lv_obj_set_size(settings_overlay, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(settings_overlay, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(settings_overlay, LV_OPA_10, 0);
+  lv_obj_set_style_bg_opa(settings_overlay, LV_OPA_TRANSP, 0);
   lv_obj_add_flag(settings_overlay, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_clear_flag(settings_overlay, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -431,7 +430,7 @@ static void create_settings_overlay(void) {
   lv_obj_set_size(panel, LV_PCT(85), LV_SIZE_CONTENT);
   lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, -12);
   theme_apply_frame(panel);
-  lv_obj_set_style_bg_opa(panel, LV_OPA_70, 0);
+  lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
   lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
@@ -475,6 +474,7 @@ static void create_settings_overlay(void) {
   lv_obj_t *close_btn = theme_create_button(panel, "Close", true);
   lv_obj_set_width(close_btn, LV_PCT(60));
   lv_obj_set_style_bg_opa(close_btn, LV_OPA_COVER, 0);
+  lv_obj_set_style_margin_top(close_btn, 16, 0);
   lv_obj_add_event_cb(close_btn, settings_close_cb, LV_EVENT_CLICKED, NULL);
 }
 
@@ -939,8 +939,11 @@ static void camera_init(void) {
     return;
   }
 
-  // Detect focus motor before streaming starts
+#if BSP_CAM_HAS_MOTOR
   has_focus_motor = app_video_has_focus_motor(camera_ctlr_handle);
+#else
+  has_focus_motor = false;
+#endif
 
   ESP_ERROR_CHECK(
       app_video_register_frame_operation_cb(camera_video_frame_operation));
@@ -970,11 +973,10 @@ static void camera_init(void) {
     return;
   }
 
-  // Apply camera settings after stream starts (ISP pipeline must be active).
-  // Disable AF so manual focus isn't overridden by the IPA pipeline.
+  // Apply camera settings after stream starts (V4L2 controls register with the
+  // sensor device only once streaming).
   app_video_set_ae_target(camera_ctlr_handle, settings_get_ae_target());
   if (has_focus_motor) {
-    app_video_disable_af();
     app_video_set_focus(camera_ctlr_handle, settings_get_focus_position());
   }
 

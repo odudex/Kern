@@ -1,5 +1,4 @@
-menu "Board Support Package (Waveshare ESP32-P4 5-inch)"
-    depends on KERN_BOARD_WAVE_5
+menu "Board Support Package"
 
     config BSP_ERROR_CHECK
         bool "Enable error check in BSP"
@@ -28,13 +27,6 @@ menu "Board Support Package (Waveshare ESP32-P4 5-inch)"
     endmenu
 
     menu "Display"
-        config BSP_LCD_DPI_BUFFER_NUMS
-            int "Set number of frame buffers"
-            default 1
-            range 1 3
-            help
-                Let DPI LCD driver create a specified number of frame-size buffers.
-
         config BSP_DISPLAY_BRIGHTNESS_LEDC_CH
             int "LEDC channel index"
             default 1
@@ -42,18 +34,26 @@ menu "Board Support Package (Waveshare ESP32-P4 5-inch)"
             help
                 LEDC channel is used to generate PWM signal that controls display brightness.
 
+        config BSP_LCD_DPI_BUFFER_NUMS
+            int "Set number of frame buffers"
+            default 1
+            range 1 3
+            help
+                Let DPI LCD driver create a specified number of frame-size buffers.
+                Only used by MIPI DSI boards (wave_4b, wave_5).
+
         choice BSP_LCD_COLOR_FORMAT
             prompt "Select LCD color format"
             default BSP_LCD_COLOR_FORMAT_RGB565
             help
                 Select the LCD color format RGB565/RGB888.
+                Only used by MIPI DSI boards (wave_4b, wave_5).
 
             config BSP_LCD_COLOR_FORMAT_RGB565
                 bool "RGB565"
             config BSP_LCD_COLOR_FORMAT_RGB888
                 bool "RGB888"
         endchoice
-
     endmenu
 
 endmenu

@@ -281,6 +281,11 @@ static bool camera_init(void) {
   if (app_video_stream_task_start(camera_handle, 0) != ESP_OK)
     return false;
 
+  // Apply the wider AE hysteresis + gain cap — without this, the sensor keeps
+  // its init-time ±8% window and uncapped gain ceiling, which causes
+  // square-wave luminance pulsing under low-light, high-contrast scenes.
+  app_video_set_ae_target(camera_handle, 80);
+
   ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
   if (ppa_register_client(&ppa_cfg, &cam_ppa_client) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register PPA client");

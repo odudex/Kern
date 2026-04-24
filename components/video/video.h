@@ -214,16 +214,6 @@ esp_err_t app_video_set_focus(int video_fd, uint32_t position);
 bool app_video_has_focus_motor(int video_fd);
 
 /**
- * @brief Disable the ISP auto-focus algorithm.
- *
- * Opens the ISP device internally. Must be called after streaming
- * starts to prevent the IPA pipeline from overriding the focus position.
- *
- * @return ESP_OK on success, or ESP_FAIL on failure.
- */
-esp_err_t app_video_disable_af(void);
-
-/**
  * @brief Deinitialize the video system.
  *
  * Calls esp_video_deinit() to clean up all video hardware resources.
