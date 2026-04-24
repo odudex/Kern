@@ -65,6 +65,15 @@ void app_main(void) {
   bsp_display_start();
   ESP_LOGI(TAG, "Display initialized successfully");
 
+  // Paint screen black early to overwrite stale framebuffer on warm reset.
+  bsp_display_lock(0);
+  lv_obj_t *screen = lv_screen_active();
+  lv_obj_set_style_bg_color(screen, bg_color(), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+  lv_obj_invalidate(screen);
+  lv_refr_now(NULL);
+  bsp_display_unlock();
+
   // Initialize PMIC (AXP2101 on wave_35; no-op on wave_4b)
   esp_err_t pmic_ret = bsp_pmic_init();
   if (pmic_ret == ESP_OK) {
@@ -77,7 +86,6 @@ void app_main(void) {
   bsp_display_lock(0);
 
   // Set up screen theme background
-  lv_obj_t *screen = lv_screen_active();
   theme_apply_screen(screen);
   // Force LVGL to render framebuffer
   lv_refr_now(NULL);
