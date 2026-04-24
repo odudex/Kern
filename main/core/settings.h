@@ -23,6 +23,8 @@ uint8_t settings_get_ae_target(void);
 esp_err_t settings_set_ae_target(uint8_t level);
 uint16_t settings_get_focus_position(void);
 esp_err_t settings_set_focus_position(uint16_t position);
+bool settings_get_permissive_signing(void);
+esp_err_t settings_set_permissive_signing(bool permissive);
 esp_err_t settings_reset_all(void);
 
 #endif // SETTINGS_H
