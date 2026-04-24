@@ -61,6 +61,16 @@ static int idx_save_flash = -1;
 static int idx_save_sd = -1;
 static int idx_export_qr = -1;
 
+/* Set when a descriptor is loaded; read (and cleared) by callers via
+ * descriptor_manager_was_changed(). */
+static bool descriptor_changed = false;
+
+bool descriptor_manager_was_changed(void) {
+  bool result = descriptor_changed;
+  descriptor_changed = false;
+  return result;
+}
+
 /* Forward declarations */
 static void build_main_menu(void);
 static void refresh_menu_visibility(void);
@@ -291,6 +301,7 @@ static void descriptor_validation_cb(descriptor_validation_result_t result,
       descriptor_string = NULL;
     }
     wallet_get_descriptor_string(&descriptor_string);
+    descriptor_changed = true;
     refresh_menu_visibility();
     return;
   }
@@ -322,6 +333,7 @@ static void success_from_load_storage(void) {
     descriptor_string = NULL;
   }
   wallet_get_descriptor_string(&descriptor_string);
+  descriptor_changed = true;
   descriptor_manager_page_show();
   refresh_menu_visibility();
 }

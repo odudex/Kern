@@ -357,7 +357,11 @@ static void refresh_wallet_attributes(void) {
 static void descriptor_return_cb(void) {
   descriptor_manager_page_destroy();
   wallet_settings_page_show();
-  refresh_wallet_attributes();
+  // Descriptor loading can overwrite wallet attributes, in which case pending
+  // page edits are no longer meaningful and we must resync from the wallet.
+  if (descriptor_manager_was_changed()) {
+    refresh_wallet_attributes();
+  }
 }
 
 static void descriptor_btn_cb(lv_event_t *e) {
