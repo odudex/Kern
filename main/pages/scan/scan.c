@@ -76,16 +76,16 @@ typedef struct {
   char policy[64];
 } classified_input_t;
 
-static const char *ss_purpose_name(ss_script_type_t script) {
+static const char *ss_script_label(ss_script_type_t script) {
   switch (script) {
   case SS_SCRIPT_P2PKH:
-    return "BIP44 (Legacy)";
+    return "Legacy";
   case SS_SCRIPT_P2SH_P2WPKH:
-    return "BIP49 (Wrapped SegWit)";
+    return "Nested SegWit";
   case SS_SCRIPT_P2WPKH:
-    return "BIP84 (Native SegWit)";
+    return "Native SegWit";
   case SS_SCRIPT_P2TR:
-    return "BIP86 (Taproot)";
+    return "Taproot";
   default:
     return "Single-sig";
   }
@@ -97,8 +97,8 @@ static void format_input_policy(const input_ownership_t *own, char *out,
   if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE)
     return;
   if (own->claim.kind == CLAIM_WHITELIST) {
-    snprintf(out, out_size, "%s acct %u",
-             ss_purpose_name(own->claim.whitelist.script),
+    snprintf(out, out_size, "%s @ account %u",
+             ss_script_label(own->claim.whitelist.script),
              (unsigned)own->claim.whitelist.account);
   } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
     snprintf(out, out_size, "%s", own->claim.registry.entry->id);
@@ -1048,50 +1048,49 @@ static bool create_psbt_info_display(void) {
   free(output_amounts);
   free(output_colors);
 
-  char prefix_text[64];
-  snprintf(prefix_text, sizeof(prefix_text), "Inputs(%zu): ", num_inputs);
-  lv_obj_t *inputs_row = create_btc_value_row(psbt_info_container, prefix_text,
-                                              total_input_value, main_color());
-  lv_obj_set_width(inputs_row, LV_PCT(100));
-
-  /* "Signing with:" — surface the policy each owned input is signed
-   * under so the user knows whether they're authorising a single-sig
-   * spend or a registered multisig. Distinct policies are de-duplicated
-   * (a 5-input PSBT all on `BIP84 acct 0` should render one line, not
-   * five). UNSAFE / EXPECTED_OWNED inputs surface their raw paths in
-   * their own warning sections below — those don't have a "policy"
-   * label per se, so they're skipped here. */
-  bool any_policy = false;
+  /* Group owned-safe inputs by their signing policy and render one
+   * "Inputs(N): <amount> from <policy>" row per distinct source.
+   * UNSAFE / EXPECTED / External inputs keep their dedicated warning
+   * sections below — those carry the count + amount + path/address
+   * inline so they don't need a top-level breakdown. */
   for (size_t i = 0; i < num_inputs; i++) {
-    if (classified_inputs[i].policy[0] == '\0')
+    const char *policy = classified_inputs[i].policy;
+    if (policy[0] == '\0')
       continue;
-    bool already_shown = false;
+
+    bool already = false;
     for (size_t j = 0; j < i; j++) {
-      if (strcmp(classified_inputs[j].policy, classified_inputs[i].policy) ==
-          0) {
-        already_shown = true;
+      if (strcmp(classified_inputs[j].policy, policy) == 0) {
+        already = true;
         break;
       }
     }
-    if (already_shown)
+    if (already)
       continue;
 
-    if (!any_policy) {
-      lv_obj_t *title =
-          theme_create_label(psbt_info_container, "Signing with:", false);
-      theme_apply_label(title, true);
-      lv_obj_set_style_text_color(title, secondary_color(), 0);
-      lv_obj_set_style_margin_top(title, 8, 0);
-      lv_obj_set_width(title, LV_PCT(100));
-      any_policy = true;
+    size_t count = 0;
+    uint64_t total = 0;
+    for (size_t k = i; k < num_inputs; k++) {
+      if (strcmp(classified_inputs[k].policy, policy) == 0) {
+        count++;
+        total += classified_inputs[k].value;
+      }
     }
 
-    lv_obj_t *row = theme_create_label(psbt_info_container,
-                                       classified_inputs[i].policy, false);
+    char prefix[32];
+    snprintf(prefix, sizeof(prefix), "Inputs(%zu): ", count);
+    lv_obj_t *row =
+        create_btc_value_row(psbt_info_container, prefix, total, main_color());
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_style_pad_left(row, 20, 0);
-    lv_obj_set_style_text_color(row, main_color(), 0);
+
+    /* Append " from <policy>" as a fourth label on the same flex row —
+     * create_btc_value_row builds [prefix][BTC icon][amount]. */
+    lv_obj_t *src = lv_label_create(row);
+    lv_label_set_text_fmt(src, " from %s", policy);
+    lv_obj_set_style_text_font(src, theme_font_small(), 0);
+    lv_obj_set_style_text_color(src, secondary_color(), 0);
   }
+  (void)total_input_value; /* now distributed across per-policy rows */
 
   /* External inputs warning section. The Partial-signing gate has already
    * passed (otherwise we wouldn't reach the review screen with externals
