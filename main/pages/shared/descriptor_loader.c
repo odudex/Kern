@@ -176,6 +176,7 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   switch (result) {
   case VALIDATION_SUCCESS:
   case VALIDATION_USER_DECLINED:
+  case VALIDATION_DUPLICATE: /* validator already showed a named dialog */
     return false;
 
   case VALIDATION_FINGERPRINT_NOT_FOUND:

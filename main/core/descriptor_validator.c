@@ -450,5 +450,26 @@ void descriptor_validate_and_load(const char *descriptor_str,
   }
 
   wally_descriptor_free(descriptor);
+
+  /* Stage 1.5: dedup against persisted descriptors. Walks
+   * STORAGE_FLASH + STORAGE_SD via registry_storage_has_duplicate, so
+   * the answer reflects what's actually on disk rather than the
+   * in-memory registry cache. Show a dialog naming the existing entry
+   * before completing — descriptor_loader_show_error treats DUPLICATE
+   * as "dialog already shown". */
+  char existing_id[REGISTRY_ID_MAX_LEN];
+  if (registry_storage_has_duplicate(current_ctx->descriptor_str, existing_id,
+                                     sizeof(existing_id))) {
+    char msg[96];
+    if (existing_id[0])
+      snprintf(msg, sizeof(msg), "Descriptor already loaded as '%s'",
+               existing_id);
+    else
+      snprintf(msg, sizeof(msg), "Descriptor already loaded");
+    dialog_show_error(msg, NULL, 2500);
+    complete_validation(VALIDATION_DUPLICATE);
+    return;
+  }
+
   verify_xpub_and_show_info();
 }
