@@ -2,10 +2,16 @@
  * Storage stub for desktop simulator
  *
  * Mnemonic storage stays no-op (the sim loads via QR each session).
- * Descriptor storage is file-backed under simulator/sim_data/descriptors/
+ * Descriptor storage is file-backed under simulator/sim_data/{spiffs,sd}/
  * so the registry persists across reboots — matching the real firmware's
- * SPIFFS-backed behaviour just enough for the §5/§9 register-and-test
- * flows. `just sim-reset` removes simulator/sim_data/ wholesale.
+ * two-location split (SPIFFS vs SD) so that registry_init's per-location
+ * scan doesn't double-load the same file.
+ *
+ * Layout mirrors the real firmware paths from main/core/storage.h:
+ *   STORAGE_FLASH → simulator/sim_data/spiffs/<id>.txt
+ *   STORAGE_SD    → simulator/sim_data/sd/kern/descriptors/<id>.txt
+ *
+ * `just sim-reset` removes simulator/sim_data/ wholesale.
  */
 
 #include "core/storage.h"
@@ -20,17 +26,35 @@
 
 static const char *TAG = "STORAGE_STUB";
 
-#define DESC_DIR "simulator/sim_data/descriptors"
+#define DESC_DIR_FLASH "simulator/sim_data/spiffs"
+#define DESC_DIR_SD    "simulator/sim_data/sd/kern/descriptors"
 
-static esp_err_t ensure_desc_dir(void) {
-    mkdir("simulator", 0775);
-    mkdir("simulator/sim_data", 0775);
-    if (mkdir(DESC_DIR, 0775) != 0) {
-        struct stat st;
-        if (stat(DESC_DIR, &st) != 0 || !S_ISDIR(st.st_mode))
-            return ESP_FAIL;
+static const char *desc_dir_for(storage_location_t loc) {
+    return (loc == STORAGE_FLASH) ? DESC_DIR_FLASH : DESC_DIR_SD;
+}
+
+static esp_err_t mkdir_p(const char *path) {
+    /* Best-effort recursive mkdir, mirroring `mkdir -p`. Ignores
+     * EEXIST. Returns ESP_OK iff the final path is a directory. */
+    char buf[256];
+    size_t n = strlen(path);
+    if (n >= sizeof(buf)) return ESP_ERR_INVALID_ARG;
+    memcpy(buf, path, n + 1);
+    for (size_t i = 1; i < n; i++) {
+        if (buf[i] == '/') {
+            buf[i] = '\0';
+            mkdir(buf, 0775);
+            buf[i] = '/';
+        }
     }
+    mkdir(buf, 0775);
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) return ESP_FAIL;
     return ESP_OK;
+}
+
+static esp_err_t ensure_desc_dir(storage_location_t loc) {
+    return mkdir_p(desc_dir_for(loc));
 }
 
 esp_err_t storage_init(void) {
@@ -97,12 +121,12 @@ esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
                                   bool encrypted) {
     /* Sim stores plaintext .txt only; the encrypted flag is accepted but
      * ignored (no KEF crypto path here). */
-    (void)loc; (void)encrypted;
+    (void)encrypted;
     if (!id || !data || len == 0) return ESP_ERR_INVALID_ARG;
-    if (ensure_desc_dir() != ESP_OK) return ESP_FAIL;
+    if (ensure_desc_dir(loc) != ESP_OK) return ESP_FAIL;
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s.txt", DESC_DIR, id);
+    snprintf(path, sizeof(path), "%s/%s.txt", desc_dir_for(loc), id);
     FILE *f = fopen(path, "wb");
     if (!f) return ESP_FAIL;
     size_t written = fwrite(data, 1, len, f);
@@ -113,14 +137,13 @@ esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
 esp_err_t storage_load_descriptor(storage_location_t loc, const char *fn,
                                   uint8_t **out, size_t *len_out,
                                   bool *encrypted_out) {
-    (void)loc;
     if (!fn || !out || !len_out) return ESP_ERR_INVALID_ARG;
     *out = NULL;
     *len_out = 0;
     if (encrypted_out) *encrypted_out = false;
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", DESC_DIR, fn);
+    snprintf(path, sizeof(path), "%s/%s", desc_dir_for(loc), fn);
     FILE *f = fopen(path, "rb");
     if (!f) return ESP_ERR_NOT_FOUND;
 
@@ -143,12 +166,11 @@ esp_err_t storage_load_descriptor(storage_location_t loc, const char *fn,
 
 esp_err_t storage_list_descriptors(storage_location_t loc, char ***names,
                                    int *count) {
-    (void)loc;
     if (!names || !count) return ESP_ERR_INVALID_ARG;
     *names = NULL;
     *count = 0;
 
-    DIR *d = opendir(DESC_DIR);
+    DIR *d = opendir(desc_dir_for(loc));
     if (!d) return ESP_OK; /* no dir yet → empty list */
 
     char **list = NULL;
@@ -174,19 +196,18 @@ esp_err_t storage_list_descriptors(storage_location_t loc, char ***names,
 }
 
 esp_err_t storage_delete_descriptor(storage_location_t loc, const char *fn) {
-    (void)loc;
     if (!fn) return ESP_ERR_INVALID_ARG;
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", DESC_DIR, fn);
+    snprintf(path, sizeof(path), "%s/%s", desc_dir_for(loc), fn);
     return (unlink(path) == 0) ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
 bool storage_descriptor_exists(storage_location_t loc, const char *id,
                                bool encrypted) {
-    (void)loc; (void)encrypted;
+    (void)encrypted;
     if (!id) return false;
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s.txt", DESC_DIR, id);
+    snprintf(path, sizeof(path), "%s/%s.txt", desc_dir_for(loc), id);
     struct stat st;
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
