@@ -334,15 +334,23 @@ static void return_from_qr_scanner_cb(void) {
       }
     }
   } else if (detected_format == FORMAT_BBQR) {
-    // BBQr returns raw binary PSBT data
+    /* BBQr can carry any payload type — file_type 'P' for raw PSBT
+     * bytes, 'U' for UTF-8 text (descriptor / mnemonic / address /
+     * signed-message). Try the binary-PSBT path first; on failure,
+     * keep qr_content alive so layer 2's text-mode detectors get a
+     * shot at it. The decoded payload from qr_parser_result is
+     * NUL-terminated (parser.c:301), so it's safe to treat as a C
+     * string in the layer-2 detectors. */
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
       cleanup_psbt_data();
       parse_success =
           (wally_psbt_from_bytes((const uint8_t *)qr_content, qr_content_len, 0,
                                  &current_psbt) == WALLY_OK);
-      free(qr_content);
-      qr_content = NULL;
+      if (parse_success) {
+        free(qr_content);
+        qr_content = NULL;
+      }
     }
   } else {
     // Other formats (PMOFN, NONE) — get content with length for binary formats
