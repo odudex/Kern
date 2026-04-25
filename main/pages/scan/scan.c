@@ -68,7 +68,42 @@ typedef struct {
   psbt_ownership_t ownership;
   uint64_t value;
   char *address; /* heap-allocated, may be NULL if spk can't be decoded */
+  /* Human-readable policy this input is signed under, e.g. "BIP84 (Native
+   * SegWit) acct 0" for whitelisted singlesig or the registered
+   * descriptor's id ("ms_2of2") for registry matches. Empty for inputs
+   * that aren't OWNED_SAFE — UNSAFE / EXPECTED_OWNED inputs surface the
+   * raw path in their own warning sections. */
+  char policy[64];
 } classified_input_t;
+
+static const char *ss_purpose_name(ss_script_type_t script) {
+  switch (script) {
+  case SS_SCRIPT_P2PKH:
+    return "BIP44 (Legacy)";
+  case SS_SCRIPT_P2SH_P2WPKH:
+    return "BIP49 (Wrapped SegWit)";
+  case SS_SCRIPT_P2WPKH:
+    return "BIP84 (Native SegWit)";
+  case SS_SCRIPT_P2TR:
+    return "BIP86 (Taproot)";
+  default:
+    return "Single-sig";
+  }
+}
+
+static void format_input_policy(const input_ownership_t *own, char *out,
+                                size_t out_size) {
+  out[0] = '\0';
+  if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE)
+    return;
+  if (own->claim.kind == CLAIM_WHITELIST) {
+    snprintf(out, out_size, "%s acct %u",
+             ss_purpose_name(own->claim.whitelist.script),
+             (unsigned)own->claim.whitelist.account);
+  } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
+    snprintf(out, out_size, "%s", own->claim.registry.entry->id);
+  }
+}
 
 // UI components
 static lv_obj_t *scan_screen = NULL;
@@ -838,6 +873,8 @@ static bool create_psbt_info_display(void) {
     classified_inputs[i].index = i;
     classified_inputs[i].ownership = own.ownership;
     classified_inputs[i].value = input_amounts[i];
+    format_input_policy(&own, classified_inputs[i].policy,
+                        sizeof(classified_inputs[i].policy));
 
     /* External inputs need their address rendered in the warning section.
      * Skip address decoding for owned inputs — they're not displayed. */
@@ -1016,6 +1053,45 @@ static bool create_psbt_info_display(void) {
   lv_obj_t *inputs_row = create_btc_value_row(psbt_info_container, prefix_text,
                                               total_input_value, main_color());
   lv_obj_set_width(inputs_row, LV_PCT(100));
+
+  /* "Signing with:" — surface the policy each owned input is signed
+   * under so the user knows whether they're authorising a single-sig
+   * spend or a registered multisig. Distinct policies are de-duplicated
+   * (a 5-input PSBT all on `BIP84 acct 0` should render one line, not
+   * five). UNSAFE / EXPECTED_OWNED inputs surface their raw paths in
+   * their own warning sections below — those don't have a "policy"
+   * label per se, so they're skipped here. */
+  bool any_policy = false;
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (classified_inputs[i].policy[0] == '\0')
+      continue;
+    bool already_shown = false;
+    for (size_t j = 0; j < i; j++) {
+      if (strcmp(classified_inputs[j].policy, classified_inputs[i].policy) ==
+          0) {
+        already_shown = true;
+        break;
+      }
+    }
+    if (already_shown)
+      continue;
+
+    if (!any_policy) {
+      lv_obj_t *title =
+          theme_create_label(psbt_info_container, "Signing with:", false);
+      theme_apply_label(title, true);
+      lv_obj_set_style_text_color(title, secondary_color(), 0);
+      lv_obj_set_style_margin_top(title, 8, 0);
+      lv_obj_set_width(title, LV_PCT(100));
+      any_policy = true;
+    }
+
+    lv_obj_t *row = theme_create_label(psbt_info_container,
+                                       classified_inputs[i].policy, false);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_style_pad_left(row, 20, 0);
+    lv_obj_set_style_text_color(row, main_color(), 0);
+  }
 
   /* External inputs warning section. The Partial-signing gate has already
    * passed (otherwise we wouldn't reach the review screen with externals
