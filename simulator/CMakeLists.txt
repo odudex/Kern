@@ -181,6 +181,7 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
     ${APP_UI_DIR}/sankey.c
+    ${APP_UI_DIR}/settings_row.c
 )
 
 # --- PIN pages ---
