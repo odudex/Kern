@@ -200,6 +200,12 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
 typedef struct {
   void (*proceed)(const char *id, storage_location_t loc, void *user_data);
   ui_text_input_t input;
+  /* Wrapper screen owning the textarea + eye-btn so they cascade-delete
+   * with the screen on teardown (ui_text_input_destroy only kills the
+   * keyboard + input_group). Without this container the textarea kept
+   * its parent — whichever screen was active at create time — and
+   * stayed rendered on top of the home menu after the success dialog. */
+  lv_obj_t *screen;
 } id_prompt_ctx_t;
 
 static id_prompt_ctx_t *g_id_prompt_ctx = NULL;
@@ -221,6 +227,10 @@ static void id_prompt_ready_cb(lv_event_t *e) {
   void (*proceed)(const char *, storage_location_t, void *) =
       g_id_prompt_ctx->proceed;
   ui_text_input_destroy(&g_id_prompt_ctx->input);
+  if (g_id_prompt_ctx->screen) {
+    lv_obj_del(g_id_prompt_ctx->screen);
+    g_id_prompt_ctx->screen = NULL;
+  }
   free(g_id_prompt_ctx);
   g_id_prompt_ctx = NULL;
 
@@ -239,9 +249,13 @@ static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
   }
   ctx->proceed = proceed;
   memset(&ctx->input, 0, sizeof(ctx->input));
+  ctx->screen = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ctx->screen, LV_PCT(100), LV_PCT(100));
+  theme_apply_screen(ctx->screen);
+  lv_obj_clear_flag(ctx->screen, LV_OBJ_FLAG_SCROLLABLE);
   g_id_prompt_ctx = ctx;
-  ui_text_input_create(&ctx->input, lv_screen_active(), "Descriptor name",
-                       false, id_prompt_ready_cb);
+  ui_text_input_create(&ctx->input, ctx->screen, "Descriptor name", false,
+                       id_prompt_ready_cb);
 }
 
 // UI confirmation wrapper: bridges validation_confirm_cb to dialog_show_confirm
