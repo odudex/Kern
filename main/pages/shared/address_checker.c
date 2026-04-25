@@ -9,13 +9,24 @@
 #include <wally_address.h>
 #include <wally_core.h>
 
+#define SEARCH_BATCH 100
+
 static char *checked_address = NULL;
 static uint32_t search_start = 0;
-static uint32_t search_limit = 50;
+static uint32_t search_limit = SEARCH_BATCH;
 static void (*on_found)(void) = NULL;
 static void (*on_not_found)(void) = NULL;
+static lv_obj_t *progress_dialog = NULL;
 
 static void perform_sweep(void);
+static void perform_sweep_deferred(lv_timer_t *timer);
+
+static void dismiss_progress(void) {
+  if (progress_dialog) {
+    lv_obj_delete(progress_dialog);
+    progress_dialog = NULL;
+  }
+}
 
 static void invalid_address_cb(void) {
   if (on_not_found)
@@ -38,7 +49,18 @@ static void not_found_confirm_cb(bool confirmed, void *user_data) {
     on_not_found();
 }
 
+// Sweeping up to SEARCH_BATCH receive + change addresses derives many keys
+// (especially for multisig) and blocks the LVGL loop. Show a progress overlay
+// first, then defer the work via a one-shot timer so LVGL can render it.
 static void perform_sweep(void) {
+  progress_dialog = dialog_show_progress("Verifying", "Checking addresses...",
+                                         DIALOG_STYLE_FULLSCREEN);
+  lv_timer_t *t = lv_timer_create(perform_sweep_deferred, 50, NULL);
+  lv_timer_set_repeat_count(t, 1);
+}
+
+static void perform_sweep_deferred(lv_timer_t *timer) {
+  (void)timer;
   wallet_policy_t policy = wallet_get_policy();
 
   // Search receive addresses
@@ -56,6 +78,7 @@ static void perform_sweep(void) {
 
     if (strcasecmp(address, checked_address) == 0) {
       wally_free_string(address);
+      dismiss_progress();
       char msg[64];
       snprintf(msg, sizeof(msg), "Receive #%u", i);
       dialog_show_info("Address Verified", msg, found_info_cb, NULL,
@@ -80,6 +103,7 @@ static void perform_sweep(void) {
 
     if (strcasecmp(address, checked_address) == 0) {
       wally_free_string(address);
+      dismiss_progress();
       char msg[64];
       snprintf(msg, sizeof(msg), "Change #%u", i);
       dialog_show_info("Address Verified", msg, found_info_cb, NULL,
@@ -89,13 +113,15 @@ static void perform_sweep(void) {
     wally_free_string(address);
   }
 
+  dismiss_progress();
+
   // Not found
   char msg[192];
   snprintf(msg, sizeof(msg),
            "Address not found in first %u addresses.\n\n"
            "(Check if loaded wallet settings match coordinator's)\n\n"
-           "Search 50 more?",
-           search_limit);
+           "Search %u more?",
+           search_limit, SEARCH_BATCH);
   dialog_show_confirm(msg, not_found_confirm_cb, NULL, DIALOG_STYLE_FULLSCREEN);
 }
 
@@ -140,7 +166,7 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
 
   checked_address = content;
   search_start = 0;
-  search_limit = 50;
+  search_limit = SEARCH_BATCH;
   on_found = found_cb;
   on_not_found = not_found_cb;
   perform_sweep();
@@ -148,17 +174,18 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
 
 void address_checker_search_more(void) {
   search_start = search_limit;
-  search_limit += 50;
+  search_limit += SEARCH_BATCH;
   perform_sweep();
 }
 
 void address_checker_destroy(void) {
+  dismiss_progress();
   if (checked_address) {
     free(checked_address);
     checked_address = NULL;
   }
   search_start = 0;
-  search_limit = 50;
+  search_limit = SEARCH_BATCH;
   on_found = NULL;
   on_not_found = NULL;
 }
