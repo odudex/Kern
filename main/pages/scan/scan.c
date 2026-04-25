@@ -59,6 +59,17 @@ typedef struct {
   char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
 } classified_output_t;
 
+/* Input classification for the review screen. We only need a subset of
+ * the policy-gate state here — enough to render an "External inputs"
+ * warning section when the PSBT has any non-owned inputs and the user
+ * has Partial signing enabled. */
+typedef struct {
+  size_t index;
+  psbt_ownership_t ownership;
+  uint64_t value;
+  char *address; /* heap-allocated, may be NULL if spk can't be decoded */
+} classified_input_t;
+
 // UI components
 static lv_obj_t *scan_screen = NULL;
 static lv_obj_t *psbt_info_container = NULL;
@@ -427,6 +438,13 @@ static void return_from_qr_scanner_cb(void) {
       if (wally_psbt_get_num_outputs(current_psbt, &num_outputs) != WALLY_OK)
         num_outputs = 0;
 
+      /* Track up to EXTERNAL_INPUT_LIST_CAP external-input indices for
+       * the partial-signing dialog body. Larger PSBTs append "..." instead
+       * of expanding the list — keeps the message bounded. */
+#define EXTERNAL_INPUT_LIST_CAP 4
+      size_t external_inputs[EXTERNAL_INPUT_LIST_CAP];
+      size_t external_count = 0;
+
       for (size_t i = 0; i < num_inputs; i++) {
         input_ownership_t own =
             psbt_classify_input(current_psbt, i, is_testnet);
@@ -457,6 +475,9 @@ static void return_from_qr_scanner_cb(void) {
           break;
         case PSBT_OWNERSHIP_EXTERNAL:
           any_input_external = true;
+          if (external_count < EXTERNAL_INPUT_LIST_CAP)
+            external_inputs[external_count] = i;
+          external_count++;
           break;
         }
       }
@@ -524,11 +545,30 @@ static void return_from_qr_scanner_cb(void) {
         return;
       }
       if (any_input_external && !settings_get_partial_signing()) {
-        dialog_show_info("Cannot sign PSBT",
-                         "Not all inputs belong to this wallet. Enable "
-                         "'Partial signing' in Settings > Wallet to proceed.",
-                         descriptor_loaded_info_cb, NULL,
-                         DIALOG_STYLE_FULLSCREEN);
+        char body[384];
+        char idx_list[96];
+        size_t idx_pos = 0;
+        idx_list[0] = '\0';
+        size_t shown = external_count < EXTERNAL_INPUT_LIST_CAP
+                           ? external_count
+                           : EXTERNAL_INPUT_LIST_CAP;
+        for (size_t k = 0; k < shown; k++) {
+          int w = snprintf(idx_list + idx_pos, sizeof(idx_list) - idx_pos,
+                           "%s%zu", k == 0 ? "" : ", ", external_inputs[k]);
+          if (w < 0 || (size_t)w >= sizeof(idx_list) - idx_pos)
+            break;
+          idx_pos += (size_t)w;
+        }
+        if (external_count > EXTERNAL_INPUT_LIST_CAP) {
+          snprintf(idx_list + idx_pos, sizeof(idx_list) - idx_pos, ", ...");
+        }
+        snprintf(body, sizeof(body),
+                 "Input%s %s %s not from this wallet. Enable 'Partial "
+                 "signing' in Settings > Wallet to proceed.",
+                 external_count == 1 ? "" : "s", idx_list,
+                 external_count == 1 ? "is" : "are");
+        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
+                         NULL, DIALOG_STYLE_FULLSCREEN);
         return;
       }
 
@@ -774,15 +814,42 @@ static bool create_psbt_info_display(void) {
   if (!input_amounts) {
     return false;
   }
+  classified_input_t *classified_inputs =
+      calloc(num_inputs, sizeof(classified_input_t));
+  if (!classified_inputs) {
+    free(input_amounts);
+    return false;
+  }
   uint64_t total_input_value = 0;
+  size_t external_input_count = 0;
   for (size_t i = 0; i < num_inputs; i++) {
     input_amounts[i] = psbt_get_input_value(current_psbt, i);
     total_input_value += input_amounts[i];
+
+    input_ownership_t own = psbt_classify_input(current_psbt, i, is_testnet);
+    classified_inputs[i].index = i;
+    classified_inputs[i].ownership = own.ownership;
+    classified_inputs[i].value = input_amounts[i];
+
+    /* External inputs need their address rendered in the warning section.
+     * Skip address decoding for owned inputs — they're not displayed. */
+    if (own.ownership == PSBT_OWNERSHIP_EXTERNAL) {
+      external_input_count++;
+      unsigned char spk[34];
+      size_t spk_len = 0;
+      if (psbt_input_utxo_script(current_psbt, i, spk, sizeof(spk), &spk_len)) {
+        classified_inputs[i].address =
+            psbt_scriptpubkey_to_address(spk, spk_len, is_testnet);
+      }
+    }
   }
 
   struct wally_tx *global_tx = NULL;
   int tx_ret = wally_psbt_get_global_tx_alloc(current_psbt, &global_tx);
   if (tx_ret != WALLY_OK || !global_tx) {
+    for (size_t i = 0; i < num_inputs; i++)
+      free(classified_inputs[i].address);
+    free(classified_inputs);
     free(input_amounts);
     return false;
   }
@@ -790,6 +857,9 @@ static bool create_psbt_info_display(void) {
   classified_output_t *classified_outputs =
       calloc(num_outputs, sizeof(classified_output_t));
   if (!classified_outputs) {
+    for (size_t i = 0; i < num_inputs; i++)
+      free(classified_inputs[i].address);
+    free(classified_inputs);
     free(input_amounts);
     wally_tx_free(global_tx);
     return false;
@@ -939,11 +1009,48 @@ static bool create_psbt_info_display(void) {
                                               total_input_value, main_color());
   lv_obj_set_width(inputs_row, LV_PCT(100));
 
+  /* External inputs warning section. The Partial-signing gate has already
+   * passed (otherwise we wouldn't reach the review screen with externals
+   * present), but the user must still see what they're co-signing — we
+   * sign our inputs only, leaving externals to whoever holds those keys.
+   * Render each external input's amount + address so the user can spot a
+   * forgery (an attacker tricking us into co-signing their address). */
+  if (external_input_count > 0) {
+    lv_obj_t *warn_title = theme_create_label(
+        psbt_info_container,
+        "External inputs (NOT YOURS) -- you are co-signing:", false);
+    theme_apply_label(warn_title, true);
+    lv_obj_set_style_text_color(warn_title, error_color(), 0);
+    lv_obj_set_style_margin_top(warn_title, 15, 0);
+    lv_obj_set_width(warn_title, LV_PCT(100));
+    lv_label_set_long_mode(warn_title, LV_LABEL_LONG_WRAP);
+
+    for (size_t i = 0; i < num_inputs; i++) {
+      if (classified_inputs[i].ownership != PSBT_OWNERSHIP_EXTERNAL)
+        continue;
+      char text[64];
+      snprintf(text, sizeof(text), "Input %zu: ", classified_inputs[i].index);
+      lv_obj_t *row = create_btc_value_row(
+          psbt_info_container, text, classified_inputs[i].value, main_color());
+      lv_obj_set_width(row, LV_PCT(100));
+      lv_obj_set_style_pad_left(row, 20, 0);
+
+      if (classified_inputs[i].address) {
+        lv_obj_t *addr = create_address_label(
+            psbt_info_container, classified_inputs[i].address, error_color());
+        lv_obj_set_width(addr, LV_PCT(100));
+        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_pad_left(addr, 20, 0);
+      }
+    }
+  }
+
   lv_obj_t *separator1 = lv_obj_create(psbt_info_container);
   lv_obj_set_size(separator1, LV_PCT(100), 2);
   lv_obj_set_style_bg_color(separator1, main_color(), 0);
   lv_obj_set_style_bg_opa(separator1, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(separator1, 0, 0);
+  lv_obj_set_style_margin_top(separator1, 15, 0);
 
   /* Count self-transfers up-front so we can collapse to a totals row when
    * the list would otherwise scroll-fatigue the review screen. */
@@ -1125,6 +1232,16 @@ static bool create_psbt_info_display(void) {
     }
   }
   free(classified_outputs);
+
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (classified_inputs[i].address) {
+      if (strcmp(classified_inputs[i].address, "OP_RETURN") == 0)
+        free(classified_inputs[i].address);
+      else
+        wally_free_string(classified_inputs[i].address);
+    }
+  }
+  free(classified_inputs);
 
   if (global_tx) {
     wally_tx_free(global_tx);
