@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.6] - 2026-04-25
+
+### Changed
+- Address scan: progress dialog during sweep; per-round batch raised from 50 to 100
+- Compact keypad layout on wave_35
+- `just`: isolated per-board build dirs (`build_<board>/`); new `submodules` command
+- CI runs on every commit of a PR
+- Updated cUR submodule
+
+### Fixed
+- Camera luminance pulsing (disable ESP32-P4 ISP AE loop; widen OV5647 stable band)
+- Scanner settings overlay caused white flashes on wave_5
+- Focus-motor V4L2 probe spammed logs on boards without DW9714
+- Splash screen artifact on warm reset (stale framebuffer)
+- Wallet settings: Apply button cropped; pending edits preserved across descriptor manager trip
+- PIN error modal disappearing on mismatch / wrong PIN
+- PIN anti-phishing reveal hidden behind keyboard on wave_35; now requires explicit Continue
+- Derivation path parser rejects `H` as hardened marker
+
 ## [0.0.5] - 2026-04-16
 
 ### Added
