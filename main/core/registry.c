@@ -126,6 +126,101 @@ void registry_init(bool is_testnet) {
   ESP_LOGI(TAG, "Registry: %zu entries loaded", registry_len);
 }
 
+/* Compute the BIP-380 checksum of a descriptor string by parsing it on
+ * either network. Caller frees via wally_free_string. NULL on failure. */
+static char *descriptor_checksum_alloc(const char *descriptor_str) {
+  if (!descriptor_str)
+    return NULL;
+  uint32_t net = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                     ? WALLY_NETWORK_BITCOIN_MAINNET
+                     : WALLY_NETWORK_BITCOIN_TESTNET;
+  struct wally_descriptor *desc = NULL;
+  if (wally_descriptor_parse(descriptor_str, NULL, net, 0, &desc) != WALLY_OK) {
+    net = (net == WALLY_NETWORK_BITCOIN_MAINNET)
+              ? WALLY_NETWORK_BITCOIN_TESTNET
+              : WALLY_NETWORK_BITCOIN_MAINNET;
+    if (wally_descriptor_parse(descriptor_str, NULL, net, 0, &desc) != WALLY_OK)
+      return NULL;
+  }
+  char *cksum = NULL;
+  int ret = wally_descriptor_get_checksum(desc, 0, &cksum);
+  wally_descriptor_free(desc);
+  return (ret == WALLY_OK) ? cksum : NULL;
+}
+
+static bool storage_loc_has_descriptor_checksum(storage_location_t loc,
+                                                const char *target_cksum,
+                                                char *out_id,
+                                                size_t out_id_size) {
+  char **files = NULL;
+  int count = 0;
+  if (storage_list_descriptors(loc, &files, &count) != ESP_OK)
+    return false;
+
+  bool found = false;
+  for (int i = 0; i < count && !found; i++) {
+    const char *fname = files[i];
+    size_t flen = strlen(fname);
+    /* Mirror registry_init_scan's filter: only plaintext .txt entries
+     * have parseable descriptor strings. */
+    if (flen < 4 || strcmp(fname + flen - 4, ".txt") != 0)
+      continue;
+
+    uint8_t *data = NULL;
+    size_t data_len = 0;
+    bool encrypted = false;
+    if (storage_load_descriptor(loc, fname, &data, &data_len, &encrypted) !=
+        ESP_OK)
+      continue;
+    if (encrypted) {
+      free(data);
+      continue;
+    }
+    char *desc_str = malloc(data_len + 1);
+    if (desc_str) {
+      memcpy(desc_str, data, data_len);
+      desc_str[data_len] = '\0';
+      char *cksum = descriptor_checksum_alloc(desc_str);
+      if (cksum) {
+        if (strcmp(cksum, target_cksum) == 0) {
+          found = true;
+          if (out_id && out_id_size > 0) {
+            size_t id_len = flen - 4;
+            if (id_len >= out_id_size)
+              id_len = out_id_size - 1;
+            memcpy(out_id, fname, id_len);
+            out_id[id_len] = '\0';
+          }
+        }
+        wally_free_string(cksum);
+      }
+      free(desc_str);
+    }
+    free(data);
+  }
+  storage_free_file_list(files, count);
+  return found;
+}
+
+bool registry_storage_has_duplicate(const char *descriptor_str, char *out_id,
+                                    size_t out_id_size) {
+  if (out_id && out_id_size > 0)
+    out_id[0] = '\0';
+  if (!descriptor_str)
+    return false;
+
+  char *target = descriptor_checksum_alloc(descriptor_str);
+  if (!target)
+    return false;
+
+  bool found = storage_loc_has_descriptor_checksum(STORAGE_FLASH, target,
+                                                   out_id, out_id_size) ||
+               storage_loc_has_descriptor_checksum(STORAGE_SD, target, out_id,
+                                                   out_id_size);
+  wally_free_string(target);
+  return found;
+}
+
 registry_entry_t *registry_match_keypath(const uint8_t *keypath,
                                          size_t keypath_len, size_t *cursor) {
   if (!keypath || !cursor)

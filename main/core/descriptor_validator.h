@@ -14,6 +14,10 @@ typedef enum {
   VALIDATION_XPUB_MISMATCH,
   VALIDATION_PARSE_ERROR,
   VALIDATION_INTERNAL_ERROR,
+  /* Same descriptor (BIP-380 checksum match) is already persisted on
+   * disk. The validator already showed a dialog naming the existing
+   * entry — see descriptor_loader_show_error. */
+  VALIDATION_DUPLICATE,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,
