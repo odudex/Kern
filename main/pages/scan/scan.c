@@ -945,17 +945,42 @@ static bool create_psbt_info_display(void) {
   lv_obj_set_style_bg_opa(separator1, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(separator1, 0, 0);
 
-  bool has_self_transfers = false;
+  /* Count self-transfers up-front so we can collapse to a totals row when
+   * the list would otherwise scroll-fatigue the review screen. */
+#define SELF_TRANSFER_INLINE_THRESHOLD 4
+  size_t self_transfer_count = 0;
+  uint64_t total_self_transfer = 0;
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
-      if (!has_self_transfers) {
-        lv_obj_t *title =
-            theme_create_label(psbt_info_container, "Self-Transfer: ", false);
-        theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, cyan_color(), 0);
-        lv_obj_set_width(title, LV_PCT(100));
-        has_self_transfers = true;
-      }
+      self_transfer_count++;
+      total_self_transfer += classified_outputs[i].value;
+    }
+  }
+
+  if (self_transfer_count > SELF_TRANSFER_INLINE_THRESHOLD) {
+    char title_text[48];
+    snprintf(title_text, sizeof(title_text),
+             "Self-Transfer (%zu): ", self_transfer_count);
+    lv_obj_t *title =
+        theme_create_label(psbt_info_container, title_text, false);
+    theme_apply_label(title, true);
+    lv_obj_set_style_text_color(title, cyan_color(), 0);
+    lv_obj_set_width(title, LV_PCT(100));
+
+    lv_obj_t *row = create_btc_value_row(
+        psbt_info_container, "Total: ", total_self_transfer, main_color());
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_style_pad_left(row, 20, 0);
+  } else if (self_transfer_count > 0) {
+    lv_obj_t *title =
+        theme_create_label(psbt_info_container, "Self-Transfer: ", false);
+    theme_apply_label(title, true);
+    lv_obj_set_style_text_color(title, cyan_color(), 0);
+    lv_obj_set_width(title, LV_PCT(100));
+
+    for (size_t i = 0; i < num_outputs; i++) {
+      if (classified_outputs[i].type != OUTPUT_TYPE_SELF_TRANSFER)
+        continue;
 
       char text[64];
       snprintf(text, sizeof(text),
@@ -975,35 +1000,24 @@ static bool create_psbt_info_display(void) {
     }
   }
 
-  bool has_change = false;
+  /* Change is verified-owned (derive reproduces the spk on chain=1); the
+   * specific addresses don't need user review. Collapse to a single total
+   * row so the review screen stays focused on outgoing spends. Outputs we
+   * can't verify (fp matches but derive fails) classify as
+   * EXPECTED_OWNED, not CHANGE, and render in their own warning section. */
+  uint64_t total_change = 0;
+  size_t change_count = 0;
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
-      if (!has_change) {
-        lv_obj_t *title =
-            theme_create_label(psbt_info_container, "Change: ", false);
-        theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, yes_color(), 0);
-        lv_obj_set_style_margin_top(title, 15, 0);
-        lv_obj_set_width(title, LV_PCT(100));
-        has_change = true;
-      }
-
-      char text[64];
-      snprintf(text, sizeof(text),
-               "Change #%u: ", classified_outputs[i].address_index);
-      lv_obj_t *row = create_btc_value_row(
-          psbt_info_container, text, classified_outputs[i].value, main_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-
-      if (classified_outputs[i].address) {
-        lv_obj_t *addr = create_address_label(
-            psbt_info_container, classified_outputs[i].address, yes_color());
-        lv_obj_set_width(addr, LV_PCT(100));
-        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_pad_left(addr, 20, 0);
-      }
+      total_change += classified_outputs[i].value;
+      change_count++;
     }
+  }
+  if (change_count > 0) {
+    lv_obj_t *row = create_btc_value_row(psbt_info_container,
+                                         "Change: ", total_change, yes_color());
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_style_margin_top(row, 15, 0);
   }
 
   bool has_owned_unsafe = false;
