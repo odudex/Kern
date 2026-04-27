@@ -290,6 +290,26 @@ set(QR_SOURCES
 file(GLOB KQUIRC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src/*.c)
 file(GLOB_RECURSE CUR_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src/*.c)
 
+add_library(lvgl STATIC
+    ${LVGL_SOURCES}
+)
+target_include_directories(lvgl PUBLIC
+    ${LVGL_DIR}
+    ${LVGL_DIR}/src
+)
+target_include_directories(lvgl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(lvgl PRIVATE
+    LV_CONF_INCLUDE_SIMPLE
+    SIM_LCD_H_RES=${SIM_LCD_H_RES}
+    SIM_LCD_V_RES=${SIM_LCD_V_RES}
+    lv_refr_now=kern_lv_refr_now_real
+)
+target_link_libraries(lvgl PUBLIC
+    SDL2
+)
+
 add_executable(kern_simulator
     ${SIM_SOURCES}
     ${STUB_SOURCES}
@@ -302,7 +322,6 @@ add_executable(kern_simulator
     ${PLATFORM_SIM_SOURCES}
     ${KQUIRC_SOURCES}
     ${CUR_SOURCES}
-    ${LVGL_SOURCES}
 )
 
 # Include paths — order matters: simulator headers shadow ESP-IDF
@@ -363,11 +382,6 @@ set_target_properties(kern_simulator PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(APPLE)
 else()
     target_link_options(kern_simulator PRIVATE
-        # Redirect lv_refr_now() to a no-op wrapper in bsp_sim.c.
-        # Background threads (camera stream) call lv_refr_now() which clears
-        # LVGL's dirty state without rendering (SDL2 requires the main thread).
-        # The wrapper keeps widgets dirty so lv_timer_handler() renders them.
-        -Wl,--wrap=lv_refr_now
         # Hardening linker flags
         -pie
         -Wl,-z,relro
@@ -377,6 +391,7 @@ else()
 endif()
 
 target_link_libraries(kern_simulator PRIVATE
+    lvgl
     SDL2
     Threads::Threads
     m
