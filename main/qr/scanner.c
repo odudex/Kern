@@ -807,18 +807,10 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
-#ifndef SIMULATOR
-  if (camera_buf_hes != CAMERA_INPUT_WIDTH ||
-      camera_buf_ves != CAMERA_INPUT_HEIGHT) {
-    ESP_LOGE(TAG,
-             "Unexpected camera resolution %" PRIu32 "x%" PRIu32
-             ", expected %dx%d",
-             camera_buf_hes, camera_buf_ves, CAMERA_INPUT_WIDTH,
-             CAMERA_INPUT_HEIGHT);
+  if (camera_buf_hes == 0 || camera_buf_ves == 0) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
-#endif
 
   uint8_t *back_buffer = (current_display_buffer == display_buffer_a)
                              ? display_buffer_b
@@ -828,24 +820,15 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   // counter-rotation
   uint8_t *display_src = back_buffer;
   if (cam_ppa_client && !closing) {
-#ifdef SIMULATOR
-    // Simulator webcam can be any resolution; derive crop from actual frame
     uint32_t in_w = camera_buf_hes;
     uint32_t in_h = camera_buf_ves;
     uint32_t crop = (in_w < in_h) ? in_w : in_h;
-    if (crop > (uint32_t)(CAMERA_SCREEN_SIZE * 2))
-      crop = CAMERA_SCREEN_SIZE * 2;
+    if (crop > CAMERA_INPUT_CROP) {
+      crop = CAMERA_INPUT_CROP;
+    }
     uint32_t crop_ox = (in_w - crop) / 2;
     uint32_t crop_oy = (in_h - crop) / 2;
     float sim_scale = (float)CAMERA_SCREEN_WIDTH / (float)crop;
-#else
-    uint32_t in_w = CAMERA_INPUT_WIDTH;
-    uint32_t in_h = CAMERA_INPUT_HEIGHT;
-    uint32_t crop = CAMERA_INPUT_CROP;
-    uint32_t crop_ox = CAMERA_INPUT_CROP_OFFSET_X;
-    uint32_t crop_oy = CAMERA_INPUT_CROP_OFFSET_Y;
-    float sim_scale = CAMERA_PPA_SCALE;
-#endif
     ppa_srm_oper_config_t srm = {
         .in.buffer = camera_buf,
         .in.pic_w = in_w,

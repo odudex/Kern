@@ -29,9 +29,22 @@ find_package(Threads REQUIRED)
 find_library(MBEDTLS_LIB    mbedtls)
 find_library(MBEDCRYPTO_LIB mbedcrypto)
 find_library(MBEDX509_LIB   mbedx509)
+find_path(MBEDTLS_INCLUDE_DIR NAMES mbedtls/pkcs5.h mbedtls/private/pkcs5.h)
 if(NOT MBEDTLS_LIB OR NOT MBEDCRYPTO_LIB)
   message(FATAL_ERROR
     "mbedTLS not found. Install with: sudo apt install libmbedtls-dev")
+endif()
+if(NOT MBEDTLS_INCLUDE_DIR AND MBEDTLS_LIB)
+  get_filename_component(_mbedtls_lib_dir "${MBEDTLS_LIB}" DIRECTORY)
+  get_filename_component(_mbedtls_prefix "${_mbedtls_lib_dir}" DIRECTORY)
+  set(MBEDTLS_INCLUDE_DIR "${_mbedtls_prefix}/include")
+endif()
+
+set(MBEDTLS_COMPAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/mbedtls_compat)
+set(MBEDTLS_INCLUDE_DIRS ${MBEDTLS_INCLUDE_DIR})
+if(EXISTS "${MBEDTLS_INCLUDE_DIR}/mbedtls/private/pkcs5.h"
+   AND NOT EXISTS "${MBEDTLS_INCLUDE_DIR}/mbedtls/pkcs5.h")
+  list(PREPEND MBEDTLS_INCLUDE_DIRS ${MBEDTLS_COMPAT_DIR})
 endif()
 
 # --- libwally-core (native desktop build) ---
@@ -93,7 +106,20 @@ target_link_libraries(wally PUBLIC
 )
 
 # --- LVGL ---
+include(FetchContent)
 set(LVGL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/lvgl__lvgl)
+if(NOT EXISTS "${LVGL_DIR}/src/lvgl.h")
+  FetchContent_Declare(
+    lvgl_upstream
+    GIT_REPOSITORY https://github.com/lvgl/lvgl.git
+    GIT_TAG        v9.3.0
+  )
+  FetchContent_GetProperties(lvgl_upstream)
+  if(NOT lvgl_upstream_POPULATED)
+    FetchContent_Populate(lvgl_upstream)
+  endif()
+  set(LVGL_DIR ${lvgl_upstream_SOURCE_DIR})
+endif()
 file(GLOB_RECURSE LVGL_SOURCES ${LVGL_DIR}/src/*.c)
 
 set(APP_UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/ui)
@@ -164,7 +190,7 @@ set(PIN_PAGE_SOURCES
 )
 
 # --- Platform simulators (BSP, SD card, video/camera) ---
-option(SIM_WEBCAM "Enable webcam capture via V4L2" OFF)
+option(SIM_WEBCAM "Enable webcam capture" OFF)
 
 set(PLATFORM_SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/bsp_sim/bsp_sim.c
@@ -177,9 +203,26 @@ set(PLATFORM_SIM_SOURCES
 if(SIM_WEBCAM)
     # v4l2_capture uses real kernel V4L2 headers (not the ESP-IDF stubs),
     # so it is compiled as a separate library without the stubs include path.
-    add_library(v4l2_capture STATIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture.c
-    )
+    if(APPLE)
+        enable_language(OBJCXX)
+        add_library(v4l2_capture STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture_macos.mm
+        )
+        find_library(AVFOUNDATION_FRAMEWORK AVFoundation)
+        find_library(COREMEDIA_FRAMEWORK CoreMedia)
+        find_library(COREVIDEO_FRAMEWORK CoreVideo)
+        find_library(FOUNDATION_FRAMEWORK Foundation)
+        target_link_libraries(v4l2_capture PRIVATE
+            ${AVFOUNDATION_FRAMEWORK}
+            ${COREMEDIA_FRAMEWORK}
+            ${COREVIDEO_FRAMEWORK}
+            ${FOUNDATION_FRAMEWORK}
+        )
+    else()
+        add_library(v4l2_capture STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture.c
+        )
+    endif()
     target_include_directories(v4l2_capture PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/include
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim
@@ -247,6 +290,26 @@ set(QR_SOURCES
 file(GLOB KQUIRC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src/*.c)
 file(GLOB_RECURSE CUR_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src/*.c)
 
+add_library(lvgl STATIC
+    ${LVGL_SOURCES}
+)
+target_include_directories(lvgl PUBLIC
+    ${LVGL_DIR}
+    ${LVGL_DIR}/src
+)
+target_include_directories(lvgl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(lvgl PRIVATE
+    LV_CONF_INCLUDE_SIMPLE
+    SIM_LCD_H_RES=${SIM_LCD_H_RES}
+    SIM_LCD_V_RES=${SIM_LCD_V_RES}
+    lv_refr_now=kern_lv_refr_now_real
+)
+target_link_libraries(lvgl PUBLIC
+    SDL2
+)
+
 add_executable(kern_simulator
     ${SIM_SOURCES}
     ${STUB_SOURCES}
@@ -259,7 +322,6 @@ add_executable(kern_simulator
     ${PLATFORM_SIM_SOURCES}
     ${KQUIRC_SOURCES}
     ${CUR_SOURCES}
-    ${LVGL_SOURCES}
 )
 
 # Include paths — order matters: simulator headers shadow ESP-IDF
@@ -271,6 +333,7 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/include
     ${CMAKE_CURRENT_SOURCE_DIR}/platform               # sdkconfig.h
     ${CMAKE_CURRENT_SOURCE_DIR}                         # lv_conf.h
+    ${MBEDTLS_INCLUDE_DIRS}
     # Application source tree
     ${CMAKE_CURRENT_SOURCE_DIR}/../main                 # ui/theme.h, core/, utils/, pages/
     # Component headers (for kef.c -> bbqr/miniz, cUR, k_quirc, video)
@@ -316,20 +379,19 @@ target_compile_options(kern_simulator PRIVATE
 )
 set_target_properties(kern_simulator PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_options(kern_simulator PRIVATE
-    # Redirect lv_refr_now() to a no-op wrapper in bsp_sim.c.
-    # Background threads (camera stream) call lv_refr_now() which clears
-    # LVGL's dirty state without rendering (SDL2 requires the main thread).
-    # The wrapper keeps widgets dirty so lv_timer_handler() renders them.
-    -Wl,--wrap=lv_refr_now
-    # Hardening linker flags
-    -pie
-    -Wl,-z,relro
-    -Wl,-z,now
-    -Wl,-z,noexecstack
-)
+if(APPLE)
+else()
+    target_link_options(kern_simulator PRIVATE
+        # Hardening linker flags
+        -pie
+        -Wl,-z,relro
+        -Wl,-z,now
+        -Wl,-z,noexecstack
+    )
+endif()
 
 target_link_libraries(kern_simulator PRIVATE
+    lvgl
     SDL2
     Threads::Threads
     m

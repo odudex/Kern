@@ -1,5 +1,5 @@
 #include "encoder.h"
-#include "../managed_components/lvgl__lvgl/src/libs/qrcode/qrcodegen.h"
+#include "src/libs/qrcode/qrcodegen.h"
 #include <ctype.h>
 #include <lvgl.h>
 #include <stdio.h>
