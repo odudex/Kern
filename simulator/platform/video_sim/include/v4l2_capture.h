@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct v4l2_capture v4l2_capture_t;
 
 /**
@@ -34,3 +38,7 @@ size_t v4l2_capture_read_rgb565(v4l2_capture_t *cap,
  * Stop streaming, unmap buffers, close device, free handle.
  */
 void v4l2_capture_close(v4l2_capture_t *cap);
+
+#ifdef __cplusplus
+}
+#endif

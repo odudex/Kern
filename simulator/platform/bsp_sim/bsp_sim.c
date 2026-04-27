@@ -9,6 +9,7 @@
 #include "src/drivers/sdl/lv_sdl_window.h"
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <time.h>
 
@@ -18,6 +19,32 @@ static pthread_mutex_t s_lvgl_mutex;
 static pthread_once_t s_lvgl_mutex_once = PTHREAD_ONCE_INIT;
 static pthread_t s_main_thread;
 static volatile bool s_main_thread_set = false;
+
+static int kern_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *abs_timeout) {
+#if defined(__APPLE__)
+    for (;;) {
+        int ret = pthread_mutex_trylock(mutex);
+        if (ret == 0) {
+            return 0;
+        }
+        if (ret != EBUSY) {
+            return ret;
+        }
+
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        if (now.tv_sec > abs_timeout->tv_sec ||
+            (now.tv_sec == abs_timeout->tv_sec && now.tv_nsec >= abs_timeout->tv_nsec)) {
+            return ETIMEDOUT;
+        }
+
+        struct timespec sleep_ts = {0, 1000000L};
+        nanosleep(&sleep_ts, NULL);
+    }
+#else
+    return pthread_mutex_timedlock(mutex, abs_timeout);
+#endif
+}
 
 static void init_lvgl_mutex(void) {
     pthread_mutexattr_t attr;
@@ -64,7 +91,7 @@ bool lvgl_port_lock(uint32_t timeout_ms) {
         ts.tv_sec++;
         ts.tv_nsec -= 1000000000L;
     }
-    return pthread_mutex_timedlock(&s_lvgl_mutex, &ts) == 0;
+    return kern_mutex_timedlock(&s_lvgl_mutex, &ts) == 0;
 }
 
 void lvgl_port_unlock(void) {

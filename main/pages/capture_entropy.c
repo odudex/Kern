@@ -230,7 +230,9 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
       current_display_buffer = back_buffer;
       img_dsc.data = back_buffer;
       lv_img_set_src(camera_img, &img_dsc);
+#ifndef SIMULATOR
       lv_refr_now(NULL);
+#endif
     }
     bsp_display_unlock();
   }
