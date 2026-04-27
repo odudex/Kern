@@ -1,9 +1,5 @@
 #include "encoder.h"
-#ifdef SIMULATOR
-#include <libs/qrcode/qrcodegen.h>
-#else
-#include "../managed_components/lvgl__lvgl/src/libs/qrcode/qrcodegen.h"
-#endif
+#include "src/libs/qrcode/qrcodegen.h"
 #include <ctype.h>
 #include <lvgl.h>
 #include <stdio.h>

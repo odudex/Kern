@@ -183,21 +183,12 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
                              ? display_buffer_b
                              : display_buffer_a;
 
-#ifdef SIMULATOR
-  uint32_t in_w = camera_buf_hes;
-  uint32_t in_h = camera_buf_ves;
+  uint32_t in_w = camera_buf_hes ? camera_buf_hes : CAMERA_INPUT_WIDTH;
+  uint32_t in_h = camera_buf_ves ? camera_buf_ves : CAMERA_INPUT_HEIGHT;
   uint32_t crop = (in_w < in_h) ? in_w : in_h;
   uint32_t crop_ox = (in_w - crop) / 2;
   uint32_t crop_oy = (in_h - crop) / 2;
   float scale = (float)CAMERA_WIDTH / (float)crop;
-#else
-  uint32_t in_w = CAMERA_INPUT_WIDTH;
-  uint32_t in_h = CAMERA_INPUT_HEIGHT;
-  uint32_t crop = CAMERA_INPUT_CROP;
-  uint32_t crop_ox = CAMERA_INPUT_CROP_OFFSET_X;
-  uint32_t crop_oy = CAMERA_INPUT_CROP_OFFSET_Y;
-  float scale = CAMERA_PPA_SCALE;
-#endif
 
   ppa_srm_oper_config_t srm = {
       .in.buffer = camera_buf,
@@ -230,9 +221,7 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
       current_display_buffer = back_buffer;
       img_dsc.data = back_buffer;
       lv_img_set_src(camera_img, &img_dsc);
-#ifndef SIMULATOR
       lv_refr_now(NULL);
-#endif
     }
     bsp_display_unlock();
   }
