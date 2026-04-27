@@ -15,16 +15,35 @@ your main workstation.
 
 ## Prerequisites
 
+### Linux (Debian/Ubuntu)
+
 ```bash
 sudo apt install build-essential cmake libsdl2-dev libmbedtls-dev
 ```
 
+### macOS
+
+```bash
+brew install cmake sdl2 mbedtls
+```
+
 ## Build
+
+### Linux
 
 ```bash
 cd simulator \
   && cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug \
   && cmake --build build -- -j$(nproc)
+```
+
+### macOS
+
+```bash
+cd simulator \
+  && cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug \
+       -DCMAKE_PREFIX_PATH="$(brew --prefix mbedtls);$(brew --prefix sdl2)" \
+  && cmake --build build -- -j"$(sysctl -n hw.ncpu)"
 ```
 
 Or with just (from the repo root):
@@ -35,6 +54,16 @@ just sim-build
 
 ## Run
 
+### Linux
+
+```bash
+./simulator/build/kern_simulator
+# or, from the repo root:
+just sim
+```
+
+### macOS
+
 ```bash
 ./simulator/build/kern_simulator
 # or, from the repo root:
@@ -43,16 +72,16 @@ just sim
 
 ## CLI Options
 
-| Option              | Description                                |
-|---------------------|--------------------------------------------|
-| `--qr-image <path>` | Load a single QR image for camera sim      |
-| `--qr-dir <path>`   | Load QR images from dir (cycled through)   |
-| `--data-dir <path>` | Base data directory (default: `sim_data/`) |
-| `--width <N>`       | Display width in pixels (default: 720)     |
-| `--height <N>`      | Display height in pixels (default: 720)    |
+| Option              | Description                                                           |
+| ------------------- | --------------------------------------------------------------------- |
+| `--qr-image <path>` | Load a single QR image for camera sim                                 |
+| `--qr-dir <path>`   | Load QR images from dir (cycled through)                              |
+| `--data-dir <path>` | Base data directory (default: `sim_data/`)                            |
+| `--width <N>`       | Display width in pixels (default: 720)                                |
+| `--height <N>`      | Display height in pixels (default: 720)                               |
 | `--webcam [device]` | Use webcam (default: `/dev/video0`). Requires `-DSIM_WEBCAM=ON` build |
-| `--verbose`         | Enable DEBUG-level logging                 |
-| `--help`            | Show usage and exit                        |
+| `--verbose`         | Enable DEBUG-level logging                                            |
+| `--help`            | Show usage and exit                                                   |
 
 ## Examples
 
@@ -98,8 +127,10 @@ factory state.
 
 ## Webcam Support (Optional)
 
-Build with V4L2 webcam capture to scan real QR codes and generate
-real entropy:
+Build with real webcam capture to scan QR codes and generate
+real entropy (V4L2 on Linux, AVFoundation on macOS):
+
+### Linux
 
 ```bash
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DSIM_WEBCAM=ON
@@ -114,6 +145,23 @@ Your user must be in the `video` group to access the webcam device:
 ```bash
 sudo usermod -aG video $USER   # then log out/in
 ```
+
+### macOS
+
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DSIM_WEBCAM=ON \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix mbedtls);$(brew --prefix sdl2)"
+cmake --build build -- -j"$(sysctl -n hw.ncpu)"
+./build/kern_simulator --webcam
+# Or specify a device by index:
+./build/kern_simulator --webcam 0
+```
+
+On macOS, the first run will prompt for Camera permission. If the
+permission dialog does not appear, enable camera access for your
+terminal in:
+
+- System Settings → Privacy & Security → Camera
 
 When `--webcam` is passed but the device cannot be opened, the
 simulator falls back to blank-frame mode.
@@ -138,7 +186,7 @@ Forcing the software renderer works around this.
 ## Known Limitations
 
 - Camera simulation is file-based by default (build with
-  `-DSIM_WEBCAM=ON` for real webcam support via V4L2)
+  `-DSIM_WEBCAM=ON` for real webcam support)
 - eFuse HMAC uses a hardcoded test key (anti-phishing
   words differ from real device, and PIN-derived keys are
   trivially recoverable from `sim_data/`)
@@ -150,4 +198,4 @@ Forcing the software renderer works around this.
   hashes, or any other cryptographic output produced by the
   simulator will round-trip on a physical Kern device.
 - PPA rotation may not match hardware exactly
-- Linux only (SDL2 backend)
+- Webcam support differs by OS (V4L2 on Linux, AVFoundation on macOS)

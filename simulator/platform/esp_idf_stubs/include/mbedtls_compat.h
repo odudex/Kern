@@ -11,6 +11,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(__has_include)
+#if __has_include(<mbedtls/private_access.h>)
+#define MBEDTLS_ALLOW_PRIVATE_ACCESS
+#endif
+#endif
+
 #include <mbedtls/md.h>
 #include <mbedtls/pkcs5.h>
 #include <mbedtls/sha256.h>

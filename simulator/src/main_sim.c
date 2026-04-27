@@ -30,7 +30,9 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
+#endif
 #include <sys/stat.h>
 #include "esp_log.h"
 
@@ -123,7 +125,9 @@ int main(int argc, char *argv[]) {
      * accidentally typed into the simulator does not hit disk.  Both calls
      * are non-fatal — typical desktops cap RLIMIT_MEMLOCK low. */
     (void)mlockall(MCL_CURRENT | MCL_FUTURE);
+#if defined(__linux__)
     (void)prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+#endif
 
     fprintf(stderr,
         "\n"
