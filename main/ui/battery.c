@@ -1,4 +1,5 @@
 #include "battery.h"
+#include "assets/icons_24.h"
 #include "theme.h"
 #include <bsp/pmic.h>
 #include <stdio.h>
@@ -12,14 +13,29 @@ static void battery_update(lv_obj_t *label) {
   bsp_pmic_chg_t chg = BSP_PMIC_CHG_DISCHARGING;
   bsp_pmic_get_charge_status(&chg);
 
-  char buf[16];
+  const char *icon;
+  lv_color_t color;
   if (chg == BSP_PMIC_CHG_CHARGING) {
-    snprintf(buf, sizeof(buf), "%u%% " LV_SYMBOL_CHARGE, pct);
+    icon = ICON_BATTERY_CHARGING_BOLT;
+    color = yes_color();
+  } else if (pct >= 76) {
+    icon = ICON_BATTERY_FULL;
+    color = yes_color();
+  } else if (pct >= 40) {
+    icon = ICON_BATTERY_HALF;
+    color = main_color();
+  } else if (pct >= 20) {
+    icon = ICON_BATTERY_QUARTER;
+    color = highlight_color();
   } else {
-    snprintf(buf, sizeof(buf), "%u%%", pct);
+    icon = ICON_BATTERY_EMPTY;
+    color = error_color();
   }
+
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%s %u%%", icon, pct);
   lv_label_set_text(label, buf);
-  lv_obj_set_style_text_color(label, pct > 20 ? yes_color() : error_color(), 0);
+  lv_obj_set_style_text_color(label, color, 0);
 }
 
 static void battery_timer_cb(lv_timer_t *t) {
