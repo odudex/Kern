@@ -33,17 +33,12 @@ An OV5647 camera module is required for both boards.
 
 ## Prerequisites
 
-- [esp-idf v6.0](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32p4/get-started/index.html)
-
-### Checkout ESP-IDF to Commit
-
-Checkout to an early 6.1 version which has bugfixes we need for Kern
+Kern targets [ESP-IDF v6.0.1](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32p4/get-started/index.html). Install it for the `esp32p4` target:
 
 ```bash
-cd <your ESP-IDF installation dir>
-git checkout 44c77cbf46844cd056c923277ece745173cb270d
-git submodule update --recursive
-./install.sh esp32p4
+git clone --depth 1 --recurse-submodules --shallow-submodules -b v6.0.1 https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+~/esp/esp-idf/install.sh esp32p4
+. ~/esp/esp-idf/export.sh
 ```
 
 ## Build

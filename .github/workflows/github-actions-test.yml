@@ -26,36 +26,14 @@ jobs:
   build:
     needs: [format-check, test]
     runs-on: ubuntu-latest
-    env:
-      IDF_COMMIT: 44c77cbf46844cd056c923277ece745173cb270d
+    container: espressif/idf:v6.0.1
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
       with:
         submodules: 'recursive'
-    - name: Cache ESP-IDF
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/esp-idf
-          ~/.espressif
-        key: esp-idf-${{ env.IDF_COMMIT }}-esp32p4
-    - name: Setup ESP-IDF
-      run: |
-        if [ -f ~/esp-idf/.idf_commit_ok ] && [ "$(cat ~/esp-idf/.idf_commit_ok)" = "$IDF_COMMIT" ]; then
-          echo "ESP-IDF already at $IDF_COMMIT (cached)"
-          exit 0
-        fi
-        if [ ! -d ~/esp-idf ]; then
-          git clone https://github.com/espressif/esp-idf.git ~/esp-idf
-        fi
-        cd ~/esp-idf
-        git fetch origin $IDF_COMMIT
-        git checkout $IDF_COMMIT
-        git submodule update --init --recursive
-        ./install.sh esp32p4
-        echo "$IDF_COMMIT" > .idf_commit_ok
     - name: Build
       run: |
-        . ~/esp-idf/export.sh
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        . $IDF_PATH/export.sh
         idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_4b' build all size-components size
