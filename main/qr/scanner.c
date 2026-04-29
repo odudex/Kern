@@ -42,13 +42,8 @@
 #define CAMERA_INPUT_HEIGHT 960
 #define CAMERA_INPUT_CROP                                                      \
   ((CAMERA_TARGET * 2 <= 960) ? (CAMERA_TARGET * 2) : 960)
-#define CAMERA_INPUT_CROP_OFFSET_X                                             \
-  ((CAMERA_INPUT_WIDTH - CAMERA_INPUT_CROP) / 2)
-#define CAMERA_INPUT_CROP_OFFSET_Y                                             \
-  ((CAMERA_INPUT_HEIGHT - CAMERA_INPUT_CROP) / 2)
 // Largest Q4.4 scale <= target/crop, and the exact preview size it yields.
 #define CAMERA_PPA_FRAG ((CAMERA_TARGET * 16) / CAMERA_INPUT_CROP)
-#define CAMERA_PPA_SCALE ((float)CAMERA_PPA_FRAG / 16.0f)
 #define CAMERA_SCREEN_SIZE ((CAMERA_INPUT_CROP * CAMERA_PPA_FRAG) / 16)
 #define CAMERA_SCREEN_WIDTH CAMERA_SCREEN_SIZE
 #define CAMERA_SCREEN_HEIGHT CAMERA_SCREEN_SIZE
@@ -810,6 +805,17 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   if (camera_buf_hes == 0 || camera_buf_ves == 0) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
+  }
+
+  static bool resolution_mismatch_logged = false;
+  if (!resolution_mismatch_logged && (camera_buf_hes != CAMERA_INPUT_WIDTH ||
+                                      camera_buf_ves != CAMERA_INPUT_HEIGHT)) {
+    ESP_LOGW(TAG,
+             "Camera resolution %" PRIu32 "x%" PRIu32
+             " differs from expected %dx%d; cropping dynamically",
+             camera_buf_hes, camera_buf_ves, CAMERA_INPUT_WIDTH,
+             CAMERA_INPUT_HEIGHT);
+    resolution_mismatch_logged = true;
   }
 
   uint8_t *back_buffer = (current_display_buffer == display_buffer_a)

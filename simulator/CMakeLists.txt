@@ -218,6 +218,10 @@ if(SIM_WEBCAM)
             ${COREVIDEO_FRAMEWORK}
             ${FOUNDATION_FRAMEWORK}
         )
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture_macos.mm
+            PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+        )
     else()
         add_library(v4l2_capture STATIC
             ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture.c

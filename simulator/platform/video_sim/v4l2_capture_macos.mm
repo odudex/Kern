@@ -112,8 +112,8 @@ static uint16_t rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
 static bool parse_device_index(const char *device, int *out_index) {
   if (!device || !out_index)
     return false;
-  if (strncmp(device, "/dev/video", 9) == 0) {
-    device += 9;
+  if (strncmp(device, "/dev/video", 10) == 0) {
+    device += 10;
   }
   char *end = NULL;
   long idx = strtol(device, &end, 10);
@@ -292,6 +292,7 @@ void v4l2_capture_close(v4l2_capture_t *cap) {
     }
     cap->output = nil;
     cap->delegate = nil;
+    cap->queue = nil;
 
     free(cap->rgb565);
     cap->rgb565 = NULL;
