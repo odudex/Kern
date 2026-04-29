@@ -31,13 +31,9 @@ static const char *TAG = "capture_entropy";
 #define CAMERA_INPUT_WIDTH 1280
 #define CAMERA_INPUT_HEIGHT 960
 #define CAMERA_INPUT_CROP CAMERA_INPUT_HEIGHT
-#define CAMERA_INPUT_CROP_OFFSET_X                                             \
-  ((CAMERA_INPUT_WIDTH - CAMERA_INPUT_CROP) / 2)
-#define CAMERA_INPUT_CROP_OFFSET_Y 0
 #define CAMERA_DIM_MIN                                                         \
   ((BSP_LCD_H_RES) < (BSP_LCD_V_RES) ? (BSP_LCD_H_RES) : (BSP_LCD_V_RES))
 #define CAMERA_PPA_FRAG ((CAMERA_DIM_MIN * 16) / CAMERA_INPUT_CROP)
-#define CAMERA_PPA_SCALE ((float)CAMERA_PPA_FRAG / 16.0f)
 #define CAMERA_SIZE ((CAMERA_INPUT_CROP * CAMERA_PPA_FRAG) / 16)
 #define CAMERA_WIDTH CAMERA_SIZE
 #define CAMERA_HEIGHT CAMERA_SIZE
