@@ -452,6 +452,10 @@ static void return_from_qr_scanner_cb(void) {
     } else {
       scanned_qr_format = detected_format;
 
+      if (check_psbt_mismatch()) {
+        return;
+      }
+
       /* Policy-gate the sign flow. Walk inputs + outputs, classify each,
        * and refuse with a specific explanation if any element triggers
        * a setting-gated condition.
