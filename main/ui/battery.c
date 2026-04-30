@@ -1,5 +1,4 @@
 #include "battery.h"
-#include "assets/icons_24.h"
 #include "theme.h"
 #include <bsp/pmic.h>
 #include <stdio.h>
@@ -13,27 +12,32 @@ static void battery_update(lv_obj_t *label) {
   bsp_pmic_chg_t chg = BSP_PMIC_CHG_DISCHARGING;
   bsp_pmic_get_charge_status(&chg);
 
-  const char *icon;
+  const char *battery_icon;
   lv_color_t color;
-  if (chg == BSP_PMIC_CHG_CHARGING) {
-    icon = ICON_BATTERY_CHARGING_BOLT;
-    color = yes_color();
-  } else if (pct >= 76) {
-    icon = ICON_BATTERY_FULL;
+  if (pct >= 76) {
+    battery_icon = LV_SYMBOL_BATTERY_FULL;
     color = yes_color();
   } else if (pct >= 40) {
-    icon = ICON_BATTERY_HALF;
+    battery_icon = LV_SYMBOL_BATTERY_3;
     color = main_color();
   } else if (pct >= 20) {
-    icon = ICON_BATTERY_QUARTER;
+    battery_icon = LV_SYMBOL_BATTERY_2;
     color = highlight_color();
+  } else if (pct >= 5) {
+    battery_icon = LV_SYMBOL_BATTERY_1;
+    color = error_color();
   } else {
-    icon = ICON_BATTERY_EMPTY;
+    battery_icon = LV_SYMBOL_BATTERY_EMPTY;
     color = error_color();
   }
 
   char buf[32];
-  snprintf(buf, sizeof(buf), "%s %u%%", icon, pct);
+  if (chg == BSP_PMIC_CHG_CHARGING) {
+    snprintf(buf, sizeof(buf), "%s%s %u%%", LV_SYMBOL_CHARGE, battery_icon, pct);
+    color = yes_color();
+  } else {
+    snprintf(buf, sizeof(buf), "%s %u%%", battery_icon, pct);
+  }
   lv_label_set_text(label, buf);
   lv_obj_set_style_text_color(label, color, 0);
 }

@@ -5,7 +5,10 @@
 
 /**
  * Create a battery percentage label with auto-refresh timer.
- * Color is green above 20%, red otherwise. Shows a charge symbol when charging.
+ * Displays a battery-level icon (LV_SYMBOL_BATTERY_*) alongside the charge
+ * percentage. Colour reflects charge state: green (>=76%), white (>=40%),
+ * orange (>=20%), red (<20%). When charging, LV_SYMBOL_CHARGE is prepended
+ * to the battery icon and the whole label turns green.
  * Returns NULL if PMIC is unavailable. The refresh timer is automatically
  * deleted when the label is destroyed.
  *
