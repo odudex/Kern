@@ -3,6 +3,7 @@
 #include "../../../components/cUR/src/types/output.h"
 #include "../../core/key.h"
 #include "../../core/registry.h"
+#include "../../core/wallet.h"
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
 #include "../../ui/assets/icons_24.h"
@@ -190,6 +191,17 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   case VALIDATION_PARSE_ERROR:
     dialog_show_error("Invalid descriptor format", NULL, 2000);
     return true;
+
+  case VALIDATION_NETWORK_MISMATCH: {
+    const char *expected = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                               ? "Testnet"
+                               : "Mainnet";
+    char msg[80];
+    snprintf(msg, sizeof(msg),
+             "Descriptor is for %s. Switch network in Settings.", expected);
+    dialog_show_error(msg, NULL, 3000);
+    return true;
+  }
 
   case VALIDATION_INTERNAL_ERROR:
   default:

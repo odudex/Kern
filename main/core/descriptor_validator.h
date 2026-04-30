@@ -14,6 +14,9 @@ typedef enum {
   VALIDATION_XPUB_MISMATCH,
   VALIDATION_PARSE_ERROR,
   VALIDATION_INTERNAL_ERROR,
+  /* Descriptor parses on the other network only (wallet mainnet vs
+   * descriptor tpub, or vice versa). */
+  VALIDATION_NETWORK_MISMATCH,
   /* Same descriptor (BIP-380 checksum match) is already persisted on
    * disk. The validator already showed a dialog naming the existing
    * entry — see descriptor_loader_show_error. */
