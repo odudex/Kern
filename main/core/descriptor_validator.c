@@ -416,7 +416,9 @@ void descriptor_validate_and_load(const char *descriptor_str,
   current_ctx->id_loc_cb = id_loc_cb;
   current_ctx->user_data = user_data;
 
-  // Parse descriptor
+  // Parse on the wallet's network; if that fails, probe the other
+  // network so we can return NETWORK_MISMATCH instead of a generic
+  // parse error.
   uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
                                ? WALLY_NETWORK_BITCOIN_MAINNET
                                : WALLY_NETWORK_BITCOIN_TESTNET;
@@ -425,16 +427,17 @@ void descriptor_validate_and_load(const char *descriptor_str,
   int ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
                                    &descriptor);
 
-  // If parsing fails with current network, try the other network
   if (ret != WALLY_OK) {
-    wally_network = (wally_network == WALLY_NETWORK_BITCOIN_MAINNET)
-                        ? WALLY_NETWORK_BITCOIN_TESTNET
-                        : WALLY_NETWORK_BITCOIN_MAINNET;
-    ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
-                                 &descriptor);
-  }
-
-  if (ret != WALLY_OK) {
+    uint32_t other_network = (wally_network == WALLY_NETWORK_BITCOIN_MAINNET)
+                                 ? WALLY_NETWORK_BITCOIN_TESTNET
+                                 : WALLY_NETWORK_BITCOIN_MAINNET;
+    struct wally_descriptor *other_desc = NULL;
+    if (wally_descriptor_parse(descriptor_str, NULL, other_network, 0,
+                               &other_desc) == WALLY_OK) {
+      wally_descriptor_free(other_desc);
+      complete_validation(VALIDATION_NETWORK_MISMATCH);
+      return;
+    }
     ESP_LOGE(TAG, "Failed to parse descriptor: %d", ret);
     complete_validation(VALIDATION_PARSE_ERROR);
     return;
