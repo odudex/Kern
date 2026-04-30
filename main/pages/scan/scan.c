@@ -481,9 +481,9 @@ static void return_from_qr_scanner_cb(void) {
       if (wally_psbt_get_num_outputs(current_psbt, &num_outputs) != WALLY_OK)
         num_outputs = 0;
 
-      /* Track up to EXTERNAL_INPUT_LIST_CAP external-input indices for
-       * the partial-signing dialog body. Larger PSBTs append "..." instead
-       * of expanding the list — keeps the message bounded. */
+        /* Track up to EXTERNAL_INPUT_LIST_CAP external-input indices for
+         * the partial-signing dialog body. Larger PSBTs append "..." instead
+         * of expanding the list — keeps the message bounded. */
 #define EXTERNAL_INPUT_LIST_CAP 4
       size_t external_inputs[EXTERNAL_INPUT_LIST_CAP];
       size_t external_count = 0;
