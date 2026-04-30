@@ -33,7 +33,7 @@ static void battery_update(lv_obj_t *label) {
 
   char buf[32];
   if (chg == BSP_PMIC_CHG_CHARGING) {
-    snprintf(buf, sizeof(buf), "%s%s %u%%", LV_SYMBOL_CHARGE, battery_icon, pct);
+    snprintf(buf, sizeof(buf), "%s%s %u%%", battery_icon, LV_SYMBOL_CHARGE, pct);
     color = yes_color();
   } else {
     snprintf(buf, sizeof(buf), "%s %u%%", battery_icon, pct);
