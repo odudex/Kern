@@ -3,6 +3,7 @@
 
 #include "wallet_settings.h"
 #include "../../core/key.h"
+#include "../../core/registry.h"
 #include "../../core/wallet.h"
 #include "../../ui/assets/icons_24.h"
 #include "../../ui/dialog.h"
@@ -67,12 +68,35 @@ static void back_btn_cb(lv_event_t *e) {
     return_callback();
 }
 
+/* Re-derive the live key+wallet from the current mnemonic, passphrase
+ * and selected network. With the Apply button gone, network and
+ * passphrase edits must take effect at the moment they're made. */
+static bool apply_wallet_changes(void) {
+  if (!mnemonic_content)
+    return false;
+  bool is_testnet = (selected_network == WALLET_NETWORK_TESTNET);
+  wallet_unload();
+  if (!key_load_from_mnemonic(mnemonic_content, stored_passphrase,
+                              is_testnet)) {
+    dialog_show_error("Failed to reload key", return_callback, 0);
+    return false;
+  }
+  if (!wallet_init(selected_network)) {
+    dialog_show_error("Failed to initialize wallet", return_callback, 0);
+    return false;
+  }
+  registry_init(is_testnet);
+  g_settings_applied = true;
+  return true;
+}
+
 static void network_dropdown_cb(lv_event_t *e) {
   uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
   wallet_network_t new_network =
       (sel == 0) ? WALLET_NETWORK_MAINNET : WALLET_NETWORK_TESTNET;
   if (new_network != selected_network) {
     selected_network = new_network;
+    apply_wallet_changes();
   }
 }
 
@@ -165,6 +189,8 @@ static void passphrase_success_cb(const char *passphrase) {
 
   passphrase_page_destroy();
   wallet_settings_page_show();
+
+  apply_wallet_changes();
 
   // Update title to show both fingerprints
   update_title_with_passphrase(stored_passphrase);
@@ -324,7 +350,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   /* Registered Descriptors moved into the Descriptors sub-page
    * (descriptor_manager_page). This page is one level shallower. */
-
 }
 
 void wallet_settings_page_show(void) {
