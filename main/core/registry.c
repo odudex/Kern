@@ -315,18 +315,14 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
     return false;
   }
 
+  /* Wallet's network only. Wrong-network descriptors are skipped on
+   * boot scan; the validator blocks them on the user load path. */
   uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
                                ? WALLY_NETWORK_BITCOIN_MAINNET
                                : WALLY_NETWORK_BITCOIN_TESTNET;
   struct wally_descriptor *desc = NULL;
   int ret =
       wally_descriptor_parse(descriptor_str, NULL, wally_network, 0, &desc);
-  if (ret != WALLY_OK) {
-    wally_network = (wally_network == WALLY_NETWORK_BITCOIN_MAINNET)
-                        ? WALLY_NETWORK_BITCOIN_TESTNET
-                        : WALLY_NETWORK_BITCOIN_MAINNET;
-    ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0, &desc);
-  }
   if (ret != WALLY_OK) {
     ESP_LOGE(TAG, "failed to parse descriptor: %d", ret);
     return false;
