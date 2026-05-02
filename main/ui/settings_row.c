@@ -25,7 +25,8 @@ static void help_btn_cb(lv_event_t *e) {
  * flex-grows; the item slot is fixed-width. */
 static lv_obj_t *make_row(lv_obj_t *parent) {
   lv_obj_t *row = lv_obj_create(parent);
-  lv_obj_set_size(row, LV_PCT(100), theme_get_min_touch_size());
+  lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_style_min_height(row, theme_get_min_touch_size(), 0);
   theme_apply_transparent_container(row);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
