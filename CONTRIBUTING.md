@@ -36,7 +36,7 @@ Do not introduce UI dependencies into core modules. If a core function needs use
 
 The project uses two static analysis tools to catch bugs early. Both are available after sourcing ESP-IDF (`source ~/esp/esp-idf/export.sh`), except `cppcheck` which is installed separately.
 
-Both tools cover `main/` and first-party components (`bbqr`, `cUR`, `k_quirc`, `sd_card`, `video`, `wave_4b`, `wave_35`). `libwally-core` is excluded (third-party upstream).
+Both tools cover `main/` and first-party components (`bbqr`, `cUR`, `k_quirc`, `sd_card`, `video`, `wave_4b`, `wave_35`, `wave_43`). `libwally-core` and `wave_5` are excluded (third-party upstream code: libwally-core is the original; wave_5 ships a vendored ST-style HX8394 driver).
 
 **clang-tidy** (recommended — catches real bugs):
 ```bash
@@ -48,7 +48,8 @@ clang-tidy -p build/compile_commands.json main/core/wallet.c
 
 # Run on all project source files (excluding libwally-core)
 find main components/bbqr components/cUR components/k_quirc \
-     components/sd_card components/video components/wave_4b components/wave_35 \
+     components/sd_card components/video \
+     components/wave_4b components/wave_35 components/wave_43 \
      -name '*.c' -not -path '*/build/*' 2>/dev/null | \
   xargs -P$(nproc) -I{} clang-tidy -p build/compile_commands.json {}
 ```
@@ -61,7 +62,8 @@ The project `.clang-tidy` config enables bug-finding and security checks tuned f
 
 # Run on project source directories
 cppcheck main/ components/bbqr components/cUR components/k_quirc \
-  components/sd_card components/video components/wave_4b components/wave_35 \
+  components/sd_card components/video \
+  components/wave_4b components/wave_35 components/wave_43 \
   --enable=warning,style,performance \
   --suppress=missingIncludeSystem \
   --suppress=missingInclude \

@@ -1,8 +1,8 @@
 export IDF_PATH := env_var("HOME") + "/esp/esp-idf"
 export IDF_PATH_FORCE := "1"
 
-# Board parameter: "wave_4b" (default), "wave_35", or "wave_5"
-# Usage: just build wave_35, just flash wave_4b, just build wave_5
+# Board parameter: "wave_4b" (default), "wave_35", "wave_5", or "wave_43"
+# Usage: just build wave_35, just flash wave_4b, just build wave_5, just build wave_43
 # Each board builds into its own build_<board>/ directory, so switching
 # boards is instant (no clean required) and per-board builds stay incremental.
 
@@ -29,7 +29,7 @@ test:
     ./scripts/test.sh
 
 clean:
-    rm -fRd build build_wave_4b build_wave_35 build_wave_5
+    rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43
     rm -f sdkconfig
     rm -fRd compile_commands.json
     rm -fRd .cache/
@@ -38,14 +38,14 @@ clean:
     make -C main/core/test clean
 
 # Simulator board resolution mapping
-# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280
+# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800
 _sim_h_res board:
     #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; *) echo 720;; esac
+    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; wave_43) echo 480;; *) echo 720;; esac
 
 _sim_v_res board:
     #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; *) echo 720;; esac
+    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; wave_43) echo 800;; *) echo 720;; esac
 
 # Build the desktop simulator
 sim-build board="wave_4b":

@@ -25,6 +25,7 @@ DIRS=(
     "$REPO_ROOT/components/video"
     "$REPO_ROOT/components/wave_4b"
     "$REPO_ROOT/components/wave_35"
+    "$REPO_ROOT/components/wave_43"
 )
 
 if $CHECK_MODE; then

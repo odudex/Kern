@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEVICES="wave_4b wave_35 wave_5"
+DEVICES="wave_4b wave_35 wave_5 wave_43"
 VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/version.txt")
 
 if [ -z "$VERSION" ]; then
