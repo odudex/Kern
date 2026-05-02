@@ -272,6 +272,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/shared/key_confirmation.c
     ${APP_PAGES_DIR}/shared/mnemonic_editor.c
     ${APP_PAGES_DIR}/shared/storage_browser.c
+    ${APP_PAGES_DIR}/shared/wallet_source_picker.c
     ${APP_PAGES_DIR}/shared/wipe_flash_dialog.c
     # Top-level pages
     ${APP_PAGES_DIR}/capture_entropy.c
