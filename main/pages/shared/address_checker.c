@@ -43,7 +43,7 @@ static const ss_script_type_t ac_script_map[4] = {
     SS_SCRIPT_P2WPKH,      /* 0 Native SegWit  */
     SS_SCRIPT_P2TR,        /* 1 Taproot        */
     SS_SCRIPT_P2PKH,       /* 2 Legacy         */
-    SS_SCRIPT_P2SH_P2WPKH, /* 3 Wrapped SegWit */
+    SS_SCRIPT_P2SH_P2WPKH, /* 3 Nested SegWit */
 };
 
 static const char *ac_numpad_map[] = {"1",
@@ -252,7 +252,7 @@ static void show_source_picker(void) {
   char source_opts[600];
   size_t written =
       (size_t)snprintf(source_opts, sizeof(source_opts),
-                       "Native SegWit\nTaproot\nLegacy\nWrapped SegWit");
+                       "Native SegWit\nTaproot\nLegacy\nNested SegWit");
   size_t reg_count = registry_count();
   for (size_t ri = 0; ri < reg_count && written < sizeof(source_opts) - 1;
        ri++) {

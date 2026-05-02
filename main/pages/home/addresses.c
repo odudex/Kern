@@ -12,10 +12,8 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/theme.h"
-#include "../load_descriptor_storage.h"
 #include "../settings/wallet_settings.h"
 #include "../shared/address_checker.h"
-#include "../shared/descriptor_loader.h"
 #include <lvgl.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,8 +30,6 @@ static lv_obj_t *next_button = NULL;
 static lv_obj_t *back_button = NULL;
 static lv_obj_t *settings_button = NULL;
 static lv_obj_t *address_list_container = NULL;
-static lv_obj_t *register_descriptor_btn = NULL;
-static lv_obj_t *btn_cont = NULL;
 static lv_obj_t *detail_container = NULL;
 static lv_obj_t *detail_back_button = NULL;
 static void (*return_callback)(void) = NULL;
@@ -156,78 +152,6 @@ static void next_button_cb(lv_event_t *e) {
   (void)e;
   address_offset += NUM_ADDRESSES;
   refresh_address_list();
-}
-
-static void on_descriptor_registered(void) {
-  if (register_descriptor_btn)
-    lv_obj_add_flag(register_descriptor_btn, LV_OBJ_FLAG_HIDDEN);
-  refresh_address_list();
-}
-
-static void descriptor_validation_cb(descriptor_validation_result_t result,
-                                     void *user_data) {
-  (void)user_data;
-
-  if (result == VALIDATION_SUCCESS) {
-    on_descriptor_registered();
-    return;
-  }
-
-  descriptor_loader_show_error(result);
-}
-
-static void return_from_descriptor_scanner_cb(void) {
-  descriptor_loader_process_scanner(descriptor_validation_cb, NULL, NULL);
-  addresses_page_show();
-}
-
-static void return_from_descriptor_storage(void) {
-  load_descriptor_storage_page_destroy();
-  addresses_page_show();
-}
-
-static void success_from_descriptor_storage(void) {
-  load_descriptor_storage_page_destroy();
-  addresses_page_show();
-  on_descriptor_registered();
-}
-
-static void reg_desc_qr_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  addresses_page_hide();
-  qr_scanner_page_create(NULL, return_from_descriptor_scanner_cb);
-  qr_scanner_page_show();
-}
-
-static void reg_desc_flash_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  addresses_page_hide();
-  load_descriptor_storage_page_create(
-      lv_screen_active(), return_from_descriptor_storage,
-      success_from_descriptor_storage, STORAGE_FLASH);
-  load_descriptor_storage_page_show();
-}
-
-static void reg_desc_sd_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  addresses_page_hide();
-  load_descriptor_storage_page_create(
-      lv_screen_active(), return_from_descriptor_storage,
-      success_from_descriptor_storage, STORAGE_SD);
-  load_descriptor_storage_page_show();
-}
-
-static void reg_desc_source_back_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  addresses_page_show();
-}
-
-static void register_descriptor_btn_cb(lv_event_t *e) {
-  (void)e;
-  addresses_page_hide();
-  descriptor_loader_show_source_menu(lv_screen_active(), reg_desc_qr_cb,
-                                     reg_desc_flash_cb, reg_desc_sd_cb,
-                                     reg_desc_source_back_cb);
 }
 
 static void truncate_address_middle(char *dest, size_t dest_size,
@@ -360,7 +284,7 @@ static void refresh_address_list(void) {
       SS_SCRIPT_P2WPKH,      /* 0 Native SegWit  */
       SS_SCRIPT_P2TR,        /* 1 Taproot        */
       SS_SCRIPT_P2PKH,       /* 2 Legacy         */
-      SS_SCRIPT_P2SH_P2WPKH, /* 3 Wrapped SegWit */
+      SS_SCRIPT_P2SH_P2WPKH, /* 3 Nested SegWit */
   };
 
   const registry_entry_t *reg_entry = NULL;
@@ -488,8 +412,8 @@ static void scan_button_cb(lv_event_t *e) {
 static void update_account_display(void) {
   if (!account_value_label)
     return;
-  char buf[12];
-  snprintf(buf, sizeof(buf), "%u", current_account);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "acc:%u", current_account);
   lv_label_set_text(account_value_label, buf);
 }
 
@@ -629,34 +553,19 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_t *header = ui_key_info_create(addresses_screen);
   ui_battery_create(header);
 
-  bool needs_descriptor = false;
-
-  // Register Descriptor button (for multisig without descriptor)
-  register_descriptor_btn = lv_btn_create(addresses_screen);
-  lv_obj_set_size(register_descriptor_btn, LV_PCT(70), LV_SIZE_CONTENT);
-  theme_apply_touch_button(register_descriptor_btn, false);
-  lv_obj_t *load_label = lv_label_create(register_descriptor_btn);
-  lv_label_set_text(load_label, "Register Descriptor");
-  lv_obj_center(load_label);
-  theme_apply_button_label(load_label, false);
-  lv_obj_add_event_cb(register_descriptor_btn, register_descriptor_btn_cb,
-                      LV_EVENT_CLICKED, NULL);
-  if (!needs_descriptor) {
-    lv_obj_add_flag(register_descriptor_btn, LV_OBJ_FLAG_HIDDEN);
-  }
-
-  // Button container
-  btn_cont = lv_obj_create(addresses_screen);
-  lv_obj_set_size(btn_cont, LV_PCT(100), LV_SIZE_CONTENT);
-  theme_apply_transparent_container(btn_cont);
-  lv_obj_set_flex_flow(btn_cont, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(btn_cont, LV_FLEX_ALIGN_SPACE_BETWEEN,
+  // Top row: script/source dropdown + account button (shared concept with
+  // public-key page — keep widths/order in sync if/when extracted).
+  lv_obj_t *top_row = lv_obj_create(addresses_screen);
+  lv_obj_set_size(top_row, LV_PCT(100), LV_SIZE_CONTENT);
+  theme_apply_transparent_container(top_row);
+  lv_obj_set_flex_flow(top_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(top_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   char source_opts[600];
   size_t written =
       (size_t)snprintf(source_opts, sizeof(source_opts),
-                       "Native SegWit\nTaproot\nLegacy\nWrapped SegWit");
+                       "Native SegWit\nTaproot\nLegacy\nNested SegWit");
   size_t reg_count = registry_count();
   for (size_t ri = 0; ri < reg_count && written < sizeof(source_opts) - 1;
        ri++) {
@@ -666,27 +575,13 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     if (n > 0)
       written += (size_t)n;
   }
-  source_dropdown = theme_create_dropdown(btn_cont, source_opts);
-  lv_obj_set_width(source_dropdown, LV_PCT(35));
+  source_dropdown = theme_create_dropdown(top_row, source_opts);
+  lv_obj_set_width(source_dropdown, LV_PCT(72));
   lv_obj_add_event_cb(source_dropdown, source_dropdown_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
-  prev_button = create_nav_button(btn_cont, "<", LV_PCT(13), prev_button_cb);
-  next_button = create_nav_button(btn_cont, ">", LV_PCT(13), next_button_cb);
-  lv_obj_add_state(prev_button, LV_STATE_DISABLED);
 
-  // Scan address button with QR icon
-  scan_button = lv_btn_create(btn_cont);
-  lv_obj_set_size(scan_button, LV_PCT(13), LV_SIZE_CONTENT);
-  theme_apply_touch_button(scan_button, false);
-  lv_obj_t *scan_label = lv_label_create(scan_button);
-  lv_label_set_text(scan_label, ICON_QRCODE_36);
-  lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
-  lv_obj_center(scan_label);
-  lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
-
-  // Account button
-  account_btn = lv_btn_create(btn_cont);
-  lv_obj_set_size(account_btn, LV_PCT(13), LV_SIZE_CONTENT);
+  account_btn = lv_btn_create(top_row);
+  lv_obj_set_size(account_btn, LV_PCT(25), LV_SIZE_CONTENT);
   theme_apply_touch_button(account_btn, false);
   account_value_label = lv_label_create(account_btn);
   lv_obj_set_style_text_font(account_value_label, theme_font_small(), 0);
@@ -694,6 +589,27 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_add_event_cb(account_btn, account_btn_cb, LV_EVENT_CLICKED, NULL);
   update_account_display();
   update_account_button_visibility();
+
+  // Bottom row: prev / next / scan — actions specific to the address list.
+  lv_obj_t *nav_row = lv_obj_create(addresses_screen);
+  lv_obj_set_size(nav_row, LV_PCT(100), LV_SIZE_CONTENT);
+  theme_apply_transparent_container(nav_row);
+  lv_obj_set_flex_flow(nav_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(nav_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  prev_button = create_nav_button(nav_row, "<", LV_PCT(30), prev_button_cb);
+  next_button = create_nav_button(nav_row, ">", LV_PCT(30), next_button_cb);
+  lv_obj_add_state(prev_button, LV_STATE_DISABLED);
+
+  scan_button = lv_btn_create(nav_row);
+  lv_obj_set_size(scan_button, LV_PCT(30), LV_SIZE_CONTENT);
+  theme_apply_touch_button(scan_button, false);
+  lv_obj_t *scan_label = lv_label_create(scan_button);
+  lv_label_set_text(scan_label, ICON_QRCODE_36);
+  lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
+  lv_obj_center(scan_label);
+  lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
 
   // Address list container
   address_list_container = lv_obj_create(addresses_screen);
@@ -724,9 +640,6 @@ void addresses_page_hide(void) {
 }
 
 void addresses_page_destroy(void) {
-  load_descriptor_storage_page_destroy();
-  descriptor_loader_destroy_source_menu();
-
   if (account_overlay) {
     lv_obj_del(account_overlay);
     account_overlay = NULL;
@@ -758,8 +671,6 @@ void addresses_page_destroy(void) {
   prev_button = NULL;
   next_button = NULL;
   scan_button = NULL;
-  register_descriptor_btn = NULL;
-  btn_cont = NULL;
   address_list_container = NULL;
   account_btn = NULL;
   account_value_label = NULL;
