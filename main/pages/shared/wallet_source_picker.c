@@ -288,8 +288,12 @@ void wallet_source_picker_destroy(wallet_source_picker_t *picker) {
   if (!picker)
     return;
   close_overlay(picker);
-  // The dropdown and account button live under the parent the caller passed
-  // in; deleting that parent (or its screen) cleans them up. We only own the
-  // overlay and the struct.
+  // Explicitly delete the widgets so callers can recreate the picker into the
+  // same parent row (e.g. the public-key page's multisig toggle). Otherwise
+  // the new dropdown / account button would stack on top of the old ones.
+  if (picker->dropdown)
+    lv_obj_del(picker->dropdown);
+  if (picker->account_btn)
+    lv_obj_del(picker->account_btn);
   free(picker);
 }
