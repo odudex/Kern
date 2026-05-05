@@ -1088,13 +1088,14 @@ static bool create_psbt_info_display(void) {
     lv_obj_t *row =
         create_btc_value_row(psbt_info_container, prefix, total, main_color());
     lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
 
-    /* Append " from <policy>" as a fourth label on the same flex row —
-     * create_btc_value_row builds [prefix][BTC icon][amount]. */
     lv_obj_t *src = lv_label_create(row);
     lv_label_set_text_fmt(src, " from %s", policy);
     lv_obj_set_style_text_font(src, theme_font_small(), 0);
     lv_obj_set_style_text_color(src, secondary_color(), 0);
+    lv_label_set_long_mode(src, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_max_width(src, LV_PCT(100), 0);
   }
   (void)total_input_value; /* now distributed across per-policy rows */
 
