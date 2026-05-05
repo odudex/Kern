@@ -1007,7 +1007,9 @@ static bool create_psbt_info_display(void) {
 
   lv_obj_update_layout(psbt_info_container);
   int32_t diagram_width = lv_obj_get_width(scan_screen) - 20;
-  tx_diagram = sankey_diagram_create(psbt_info_container, diagram_width, 160);
+  int32_t diagram_height = lv_obj_get_height(scan_screen) / 4;
+  tx_diagram =
+      sankey_diagram_create(psbt_info_container, diagram_width, diagram_height);
   if (tx_diagram) {
     sankey_diagram_set_inputs(tx_diagram, input_amounts, num_inputs);
     sankey_diagram_set_outputs(tx_diagram, output_amounts, diagram_output_count,
