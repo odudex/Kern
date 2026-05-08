@@ -863,9 +863,15 @@ static bool create_psbt_info_display(void) {
   if (!input_amounts) {
     return false;
   }
+  lv_color_t *input_colors = malloc(num_inputs * sizeof(lv_color_t));
+  if (!input_colors) {
+    free(input_amounts);
+    return false;
+  }
   classified_input_t *classified_inputs =
       calloc(num_inputs, sizeof(classified_input_t));
   if (!classified_inputs) {
+    free(input_colors);
     free(input_amounts);
     return false;
   }
@@ -879,6 +885,8 @@ static bool create_psbt_info_display(void) {
     classified_inputs[i].index = i;
     classified_inputs[i].ownership = own.ownership;
     classified_inputs[i].value = input_amounts[i];
+    input_colors[i] = (own.ownership == PSBT_OWNERSHIP_EXTERNAL) ? error_color()
+                                                                 : main_color();
     format_input_policy(&own, classified_inputs[i].policy,
                         sizeof(classified_inputs[i].policy));
 
@@ -901,6 +909,7 @@ static bool create_psbt_info_display(void) {
     for (size_t i = 0; i < num_inputs; i++)
       free(classified_inputs[i].address);
     free(classified_inputs);
+    free(input_colors);
     free(input_amounts);
     return false;
   }
@@ -911,6 +920,7 @@ static bool create_psbt_info_display(void) {
     for (size_t i = 0; i < num_inputs; i++)
       free(classified_inputs[i].address);
     free(classified_inputs);
+    free(input_colors);
     free(input_amounts);
     wally_tx_free(global_tx);
     return false;
@@ -928,6 +938,10 @@ static bool create_psbt_info_display(void) {
   uint64_t *output_amounts = malloc(diagram_output_count * sizeof(uint64_t));
   lv_color_t *output_colors = malloc(diagram_output_count * sizeof(lv_color_t));
   if (!output_amounts || !output_colors) {
+    for (size_t i = 0; i < num_inputs; i++)
+      free(classified_inputs[i].address);
+    free(classified_inputs);
+    free(input_colors);
     free(input_amounts);
     free(output_amounts);
     free(output_colors);
@@ -1011,7 +1025,8 @@ static bool create_psbt_info_display(void) {
   tx_diagram =
       sankey_diagram_create(psbt_info_container, diagram_width, diagram_height);
   if (tx_diagram) {
-    sankey_diagram_set_inputs(tx_diagram, input_amounts, num_inputs);
+    sankey_diagram_set_inputs(tx_diagram, input_amounts, num_inputs,
+                              input_colors);
     sankey_diagram_set_outputs(tx_diagram, output_amounts, diagram_output_count,
                                output_colors);
     sankey_diagram_render(tx_diagram);
@@ -1053,6 +1068,7 @@ static bool create_psbt_info_display(void) {
   }
 
   free(input_amounts);
+  free(input_colors);
   free(output_amounts);
   free(output_colors);
 
