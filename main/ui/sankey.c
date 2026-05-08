@@ -225,7 +225,8 @@ void sankey_diagram_destroy(sankey_diagram_t *diagram) {
 }
 
 void sankey_diagram_set_inputs(sankey_diagram_t *diagram,
-                               const uint64_t *amounts, size_t count) {
+                               const uint64_t *amounts, size_t count,
+                               const lv_color_t *colors) {
   if (!diagram || !amounts || count == 0)
     return;
 
@@ -237,7 +238,7 @@ void sankey_diagram_set_inputs(sankey_diagram_t *diagram,
     diagram->total_input += amounts[i];
   for (size_t i = 0; i < diagram->input_count; i++) {
     diagram->inputs[i].amount = amounts[i];
-    diagram->inputs[i].color = lv_color_hex(0xFFFFFF);
+    diagram->inputs[i].color = colors ? colors[i] : lv_color_hex(0xFFFFFF);
   }
 }
 
@@ -333,14 +334,14 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
 
   for (size_t i = 0; i < diagram->input_count; i++) {
     float half = diagram->inputs[i].thickness / 2.0f;
-    draw_gradient_rect(diagram, 0, (int32_t)fade_width,
-                       diagram->inputs[i].y_center - half,
-                       diagram->inputs[i].y_center + half, bg, white);
+    draw_gradient_rect(
+        diagram, 0, (int32_t)fade_width, diagram->inputs[i].y_center - half,
+        diagram->inputs[i].y_center + half, bg, diagram->inputs[i].color);
     draw_bezier_ribbon(diagram, fade_width, diagram->inputs[i].y_center - half,
                        diagram->inputs[i].y_center + half, rect_left,
                        input_center_positions[i] - half,
                        input_center_positions[i] + half,
-                       diagram->inputs[i].color, diagram->inputs[i].color);
+                       diagram->inputs[i].color, white);
   }
 
   for (size_t i = 0; i < diagram->output_count; i++) {
