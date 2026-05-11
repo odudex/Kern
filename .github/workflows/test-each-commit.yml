@@ -19,6 +19,9 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Trust workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Fetch base branch
         run: |
           git fetch --no-tags --prune --depth=1 origin \
@@ -29,7 +32,6 @@ jobs:
 
       - name: Configure git identity (required by rebase)
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.email "ci@example.com"
           git config user.name "CI"
 
