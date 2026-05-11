@@ -19,5 +19,11 @@ idf_component_register(
                   esp_hw_support esp_app_format mbedtls_compat esp_driver_ppa
 )
 
+if(CONFIG_KERN_BOARD_WAVE_4B OR CONFIG_KERN_BOARD_WAVE_5)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE ICONS_16=0)
+elseif(CONFIG_KERN_BOARD_WAVE_35 OR CONFIG_KERN_BOARD_WAVE_43)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE ICONS_36=0)
+endif()
+
 # Uncomment to enable Developer Tools menu (snapshot capture, decode testing)
 # target_compile_definitions(${COMPONENT_LIB} PRIVATE DEV_TOOLS_ENABLED)

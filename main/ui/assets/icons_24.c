@@ -189,7 +189,7 @@ static const lv_font_fmt_txt_cmap_t cmaps[] = {
      .glyph_id_start = 1,
      .unicode_list = unicode_list_0,
      .glyph_id_ofs_list = NULL,
-     .list_length = 4,
+     .list_length = sizeof(unicode_list_0) / sizeof(unicode_list_0[0]),
      .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY}};
 
 /*--------------------

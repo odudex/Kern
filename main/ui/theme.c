@@ -1,7 +1,13 @@
 #include "theme.h"
+#if !defined(ICONS_16) || ICONS_16
 #include "assets/icons_16.h"
+#endif
+#if !defined(ICONS_24) || ICONS_24
 #include "assets/icons_24.h"
+#endif
+#if !defined(ICONS_36) || ICONS_36
 #include "assets/icons_36.h"
+#endif
 
 // Minimalist theme colors
 #define COLOR_BG lv_color_hex(0x000000)       // Black background
@@ -47,7 +53,22 @@ void theme_init(void) {
   sz_small_padding = scr_w / 72;     //  10 @ 720
   sz_logo = scr_w * 5 / 18;          // 200 @ 720
 
-  // Copy const fonts to mutable structs so we can set fallbacks
+  // Copy const fonts to mutable structs so we can set fallbacks.
+  // Firmware builds compile only the board's reachable icon sizes. Simulator
+  // builds keep the runtime width check because resolution can be overridden.
+#if defined(CONFIG_KERN_BOARD_WAVE_4B) || defined(CONFIG_KERN_BOARD_WAVE_5)
+  font_small = lv_font_montserrat_24;
+  font_small.fallback = &icons_24;
+
+  font_medium = lv_font_montserrat_36;
+  font_medium.fallback = &icons_36;
+#elif defined(CONFIG_KERN_BOARD_WAVE_35) || defined(CONFIG_KERN_BOARD_WAVE_43)
+  font_small = lv_font_montserrat_16;
+  font_small.fallback = &icons_16;
+
+  font_medium = lv_font_montserrat_24;
+  font_medium.fallback = &icons_24;
+#else
   if (scr_w >= 600) {
     font_small = lv_font_montserrat_24;
     font_small.fallback = &icons_24;
@@ -61,6 +82,7 @@ void theme_init(void) {
     font_medium = lv_font_montserrat_24;
     font_medium.fallback = &icons_24;
   }
+#endif
 }
 
 lv_color_t bg_color(void) { return COLOR_BG; }
