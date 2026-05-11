@@ -29,6 +29,10 @@ main/core/test/libwally.a
 .cache/
 .cm/logs/
 
+# Python
+__pycache__/
+*.py[cod]
+
 # SquareLine Studio
 **/squareline/backup/
 **/squareline/autosave/

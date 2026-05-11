@@ -128,6 +128,7 @@ set(APP_UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/ui)
 set(SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
+    ${APP_UI_DIR}/font_policy.c
     ${APP_UI_DIR}/theme.c
     ${APP_UI_DIR}/assets/kern_logo_lvgl.c
     ${APP_UI_DIR}/assets/kern_logo_font.c

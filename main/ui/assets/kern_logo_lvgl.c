@@ -14,6 +14,14 @@
  */
 #define TEXT_GAP_PCT 21
 
+static int32_t scale_for_height(int32_t source_h, int32_t target_h) {
+  return LV_MAX((target_h * LV_SCALE_NONE + source_h / 2) / source_h, 1);
+}
+
+static int32_t scale_value(int32_t value, int32_t scale) {
+  return (value * scale + LV_SCALE_NONE - 1) / LV_SCALE_NONE;
+}
+
 static lv_obj_t *create_circle(lv_obj_t *parent, int32_t diameter,
                                int32_t border) {
   lv_obj_t *obj = lv_obj_create(parent);
@@ -33,19 +41,30 @@ static lv_obj_t *create_circle(lv_obj_t *parent, int32_t diameter,
   return obj;
 }
 
-static const lv_font_t *logo_font(void) {
-  return theme_get_screen_width() >= 600 ? &kern_logo_100
-                                         : &lv_font_montserrat_36;
-}
+static lv_obj_t *create_label(lv_obj_t *parent, int32_t logo_size) {
+  const lv_font_t *font = &kern_logo_100;
+  int32_t target_h = logo_size * INNER_RING_PCT / 120;
+  int32_t scale = scale_for_height(lv_font_get_line_height(font), target_h);
 
-static lv_obj_t *create_label(lv_obj_t *parent) {
-  lv_obj_t *label = lv_label_create(parent);
+  lv_obj_t *label_box = lv_obj_create(parent);
+  lv_obj_remove_style_all(label_box);
+  lv_obj_clear_flag(label_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(label_box, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+  lv_obj_t *label = lv_label_create(label_box);
   lv_label_set_text(label, "KERN");
-  const lv_font_t *font = logo_font();
   lv_obj_set_style_text_font(label, font, 0);
   lv_obj_set_style_text_color(label, main_color(), 0);
-  lv_obj_set_style_text_letter_space(label, font == &kern_logo_100 ? -1 : 0, 0);
-  return label;
+  lv_obj_set_style_text_letter_space(label, -1, 0);
+  lv_obj_update_layout(label);
+
+  lv_obj_set_style_transform_pivot_x(label, 0, 0);
+  lv_obj_set_style_transform_pivot_y(label, 0, 0);
+  lv_obj_set_style_transform_scale(label, scale, 0);
+  lv_obj_set_size(label_box, scale_value(lv_obj_get_width(label), scale),
+                  target_h);
+
+  return label_box;
 }
 
 static lv_obj_t *create_flex_container(lv_obj_t *parent, lv_align_t align,
@@ -101,7 +120,7 @@ lv_obj_t *kern_logo_with_text(lv_obj_t *parent, int32_t x, int32_t y) {
       create_flex_container(parent, LV_ALIGN_TOP_MID, sz * TEXT_GAP_PCT / 100);
   lv_obj_align(c, LV_ALIGN_TOP_MID, x, y);
   kern_logo_create(c, 0, 0, sz);
-  create_label(c);
+  create_label(c, sz);
   return c;
 }
 
@@ -117,7 +136,7 @@ lv_obj_t *kern_logo_with_text_inline(lv_obj_t *parent) {
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(c, sz * TEXT_GAP_PCT / 100, 0);
   kern_logo_create(c, 0, 0, sz);
-  create_label(c);
+  create_label(c, sz);
   return c;
 }
 
@@ -133,7 +152,7 @@ void kern_logo_animated(lv_obj_t *parent) {
   lv_obj_remove_style_all(logo);
   lv_obj_set_size(logo, size, size);
 
-  lv_obj_t *label = create_label(c);
+  lv_obj_t *label = create_label(c, size);
 
   lv_obj_t *outer = create_circle(logo, size, t);
   lv_obj_t *inner = create_circle(logo, size * INNER_RING_PCT / 100, t * 2);
