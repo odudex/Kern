@@ -39,6 +39,7 @@ jobs:
       with:
         submodules: 'recursive'
     - name: Build (${{ matrix.board }})
+      shell: bash
       run: |
         git config --global --add safe.directory "$GITHUB_WORKSPACE"
         . $IDF_PATH/export.sh
@@ -47,6 +48,7 @@ jobs:
                -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.${{ matrix.board }}' \
                build all size-components size
     - name: Stage flashable firmware (${{ matrix.board }})
+      shell: bash
       run: |
         STAGE="firmware_${{ matrix.board }}"
         BUILD="build_${{ matrix.board }}"
