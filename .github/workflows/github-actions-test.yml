@@ -1,6 +1,7 @@
 name: GitHub Actions test
 on:
   push:
+    branches: [master]
   pull_request:
 jobs:
   format-check:
