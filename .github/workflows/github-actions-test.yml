@@ -27,13 +27,29 @@ jobs:
     needs: [format-check, test]
     runs-on: ubuntu-latest
     container: espressif/idf:v6.0.1
+    strategy:
+      matrix:
+        board: [wave_4b, wave_35, wave_5, wave_43]
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
       with:
         submodules: 'recursive'
-    - name: Build
+    - name: Build ${{ matrix.board }}
       run: |
         git config --global --add safe.directory "$GITHUB_WORKSPACE"
         . $IDF_PATH/export.sh
-        idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_4b' build all size-components size
+        idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.${{ matrix.board }}' build
+    - name: Stage firmware artifacts
+      run: |
+        mkdir -p firmware_${{ matrix.board }}
+        cp build/bootloader/bootloader.bin firmware_${{ matrix.board }}/
+        cp build/partition_table/partition-table.bin firmware_${{ matrix.board }}/
+        cp build/flasher_args.json firmware_${{ matrix.board }}/
+        cp build/kern.bin firmware_${{ matrix.board }}/
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-${{ matrix.board }}
+        path: firmware_${{ matrix.board }}/
+        retention-days: 30
