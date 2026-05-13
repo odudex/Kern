@@ -53,8 +53,8 @@ jobs:
         cp "$BUILD"/bootloader/bootloader.bin "$STAGE"/
         cp "$BUILD"/partition_table/partition-table.bin "$STAGE"/
         cp "$BUILD"/flasher_args.json "$STAGE"/
+        cp "$BUILD"/kern.bin "$STAGE"/
         cp "$BUILD"/flash_args "$STAGE"/ 2>/dev/null || true
-        cp "$BUILD"/*.bin "$STAGE"/ 2>/dev/null || true
         cp "$BUILD"/*.elf "$STAGE"/ 2>/dev/null || true
         cp "$BUILD"/*.map "$STAGE"/ 2>/dev/null || true
     - name: Upload firmware artifact (${{ matrix.board }})
