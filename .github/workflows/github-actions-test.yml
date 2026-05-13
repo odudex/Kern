@@ -53,6 +53,7 @@ jobs:
         cp "$BUILD"/bootloader/bootloader.bin "$STAGE"/
         cp "$BUILD"/partition_table/partition-table.bin "$STAGE"/
         cp "$BUILD"/flasher_args.json "$STAGE"/
+        cp "$BUILD"/ota_data_initial.bin "$STAGE"/
         cp "$BUILD"/kern.bin "$STAGE"/
         cp "$BUILD"/flash_args "$STAGE"/ 2>/dev/null || true
         cp "$BUILD"/*.elf "$STAGE"/ 2>/dev/null || true
