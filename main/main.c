@@ -1,5 +1,4 @@
 #include "core/pin.h"
-#include "core/session.h"
 #include "core/settings.h"
 #include "core/wallet.h"
 #include "pages/login/login.h"
@@ -8,6 +7,7 @@
 #include "ui/assets/kern_logo_lvgl.h"
 #include "ui/theme.h"
 #include "utils/bip39_filter.h"
+#include "utils/session.h"
 #include <bsp/display.h>
 #include <bsp/esp-bsp.h>
 #include <bsp/pmic.h>

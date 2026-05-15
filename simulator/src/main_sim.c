@@ -12,7 +12,7 @@
 #include "ui/assets/kern_logo_lvgl.h"
 #include "core/settings.h"
 #include "core/pin.h"
-#include "core/session.h"
+#include "utils/session.h"
 #include "pages/pin/pin_page.h"
 #include "pages/login/login.h"
 #include "ui/nav.h"

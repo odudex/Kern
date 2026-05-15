@@ -2,11 +2,11 @@
 
 #include "login_settings.h"
 #include "../../core/pin.h"
-#include "../../core/session.h"
 #include "../../core/settings.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
+#include "../../utils/session.h"
 #include "../pin/pin_page.h"
 #include "../pin/pin_settings.h"
 #include <bsp/display.h>

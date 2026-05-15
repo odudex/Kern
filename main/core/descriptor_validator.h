@@ -18,15 +18,17 @@ typedef enum {
    * descriptor tpub, or vice versa). */
   VALIDATION_NETWORK_MISMATCH,
   /* Same descriptor (h-normalized BIP-380 checksum match) is already loaded in
-   * the current session. The validator already showed a dialog naming the
-   * existing entry — see descriptor_loader_show_error. */
+   * the current session. Use descriptor_validator_get_duplicate_id() to fetch
+   * the name of the existing entry. */
   VALIDATION_DUPLICATE,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,
                                        void *user_data);
 
-// UI-agnostic confirmation callback: show message, call proceed() with result.
+/* UI-agnostic warning-confirmation callback: render `message` as a danger-style
+ * confirmation (e.g. purpose/script binding mismatch) and call `proceed` with
+ * the user's choice. NULL means auto-decline. */
 typedef void (*validation_confirm_cb)(const char *message,
                                       void (*proceed)(bool confirmed,
                                                       void *user_data));
@@ -60,7 +62,8 @@ typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
 
 // Validate descriptor against wallet key and load if valid.
 // Checks fingerprint, derivation path attributes, and xpub match.
-// If settings mismatch, uses confirm_cb to prompt (NULL = auto-decline).
+// On purpose/script binding mismatch, uses confirm_cb to prompt the user
+// (NULL = auto-decline).
 // After xpub match, uses info_confirm_cb to show descriptor info
 // (NULL = auto-confirm).
 // Calls callback with result (may be async if user confirmation needed).
@@ -70,5 +73,12 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_info_confirm_cb info_confirm_cb,
                                   validation_id_loc_cb id_loc_cb,
                                   void *user_data);
+
+/* When a VALIDATION_DUPLICATE result has just been delivered, copy the ID of
+ * the existing registry entry into `out` and return true. Returns false if no
+ * duplicate ID is pending (e.g. result was not DUPLICATE, or the buffer is
+ * too small). The pending ID is reset on the next descriptor_validate_and_load
+ * call. */
+bool descriptor_validator_get_duplicate_id(char *out, size_t out_len);
 
 #endif // DESCRIPTOR_VALIDATOR_H

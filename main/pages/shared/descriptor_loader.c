@@ -177,8 +177,19 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   switch (result) {
   case VALIDATION_SUCCESS:
   case VALIDATION_USER_DECLINED:
-  case VALIDATION_DUPLICATE: /* validator already showed a named dialog */
     return false;
+
+  case VALIDATION_DUPLICATE: {
+    char existing_id[REGISTRY_ID_MAX_LEN];
+    char msg[96];
+    if (descriptor_validator_get_duplicate_id(existing_id, sizeof(existing_id)))
+      snprintf(msg, sizeof(msg), "Descriptor already loaded as '%s'",
+               existing_id);
+    else
+      snprintf(msg, sizeof(msg), "Descriptor already loaded");
+    dialog_show_error(msg, NULL, 2500);
+    return true;
+  }
 
   case VALIDATION_FINGERPRINT_NOT_FOUND:
     dialog_show_error("Key not found in descriptor", NULL, 2000);
@@ -271,11 +282,13 @@ static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
                        id_prompt_ready_cb);
 }
 
-// UI confirmation wrapper: bridges validation_confirm_cb to dialog_show_confirm
+// UI confirmation wrapper: validator's confirm_cb fires on danger-style
+// warnings (e.g. purpose/script binding mismatch) — render as overlay danger
+// confirm.
 static void descriptor_confirm_wrapper(const char *message,
                                        void (*proceed)(bool confirmed,
                                                        void *user_data)) {
-  dialog_show_confirm(message, proceed, NULL, DIALOG_STYLE_FULLSCREEN);
+  dialog_show_danger_confirm(message, proceed, NULL, DIALOG_STYLE_OVERLAY);
 }
 
 // Context for descriptor info confirmation dialog

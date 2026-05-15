@@ -148,6 +148,7 @@ set(STUB_SOURCES
 # --- Application utilities ---
 set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
 )
 
 # --- Core application modules ---
@@ -155,7 +156,6 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/session.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/error.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c

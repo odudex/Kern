@@ -11,7 +11,6 @@
 #include <wally_core.h>
 #include <wally_descriptor.h>
 
-#include "../ui/dialog.h"
 #include "descriptor_checksum.h"
 #include "registry.h"
 #include "ss_whitelist.h"
@@ -35,6 +34,12 @@ typedef struct {
 } validation_context_t;
 
 static validation_context_t *current_ctx = NULL;
+
+/* Last duplicate descriptor ID stashed by descriptor_validate_and_load before
+ * delivering VALIDATION_DUPLICATE. The page layer fetches this via
+ * descriptor_validator_get_duplicate_id() and renders the toast itself, so
+ * core stays UI-free. Cleared at the start of each validate_and_load call. */
+static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
 
 static void cleanup_context(void) {
   if (current_ctx) {
@@ -444,10 +449,15 @@ static void verify_xpub_and_show_info(void) {
                           &current_ctx->info);
   wally_descriptor_free(descriptor);
 
-  // If purpose-script binding mismatch: gate behind a WARN dialog.
+  // If purpose-script binding mismatch: gate behind a WARN confirmation
+  // rendered by the page layer.
   if (psb_result == PSB_WARN) {
-    dialog_show_danger_confirm(psb_msg, psb_warn_confirm_cb, NULL,
-                               DIALOG_STYLE_OVERLAY);
+    if (current_ctx->confirm_cb) {
+      current_ctx->confirm_cb(psb_msg, psb_warn_confirm_cb);
+    } else {
+      // No way to prompt the user: treat as declined.
+      complete_validation(VALIDATION_USER_DECLINED);
+    }
     return;
   }
 
@@ -467,6 +477,7 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   void *user_data) {
   // Clean up any previous context
   cleanup_context();
+  last_duplicate_id[0] = '\0';
 
   if (!descriptor_str || !callback) {
     if (callback) {
@@ -545,16 +556,21 @@ void descriptor_validate_and_load(const char *descriptor_str,
   char existing_id[REGISTRY_ID_MAX_LEN];
   if (registry_session_has_duplicate(current_ctx->descriptor_str, existing_id,
                                      sizeof(existing_id))) {
-    char msg[96];
-    if (existing_id[0])
-      snprintf(msg, sizeof(msg), "Descriptor already loaded as '%s'",
-               existing_id);
-    else
-      snprintf(msg, sizeof(msg), "Descriptor already loaded");
-    dialog_show_error(msg, NULL, 2500);
+    strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
+    last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
     complete_validation(VALIDATION_DUPLICATE);
     return;
   }
 
   verify_xpub_and_show_info();
+}
+
+bool descriptor_validator_get_duplicate_id(char *out, size_t out_len) {
+  if (!out || out_len == 0 || last_duplicate_id[0] == '\0')
+    return false;
+  if (strlen(last_duplicate_id) >= out_len)
+    return false;
+  strncpy(out, last_duplicate_id, out_len);
+  out[out_len - 1] = '\0';
+  return true;
 }
