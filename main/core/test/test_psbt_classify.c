@@ -344,6 +344,186 @@ static void test_psbt_classify_fixture_a(void) {
   PASS();
 }
 
+static void test_psbt_classify_fixture_a_p2sh_p2wpkh(void) {
+  TEST("psbt_classify_input: P2SH-P2WPKH BIP49 verified-owned");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/49'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  /* The redeem script for P2SH-P2WPKH is the P2WPKH witness program of the
+   * same key: OP_0 <hash160(pubkey)>, 22 bytes. The classifier byte-compares
+   * this against the PSBT input's redeem_script. */
+  uint8_t redeem[22];
+  size_t redeem_len = 0;
+  if (wally_witness_program_from_bytes(
+          derived->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, redeem,
+          sizeof(redeem), &redeem_len) != WALLY_OK) {
+    bip32_key_free(derived);
+    FAIL("redeem build");
+    return;
+  }
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fingerprint */
+      0x31, 0x00, 0x00, 0x80, /* 49' */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x00, /* 0   */
+      0x00, 0x00, 0x00, 0x00, /* 0   */
+  };
+
+  struct wally_psbt *psbt = make_test_psbt(
+      REF_SPK_P2SH_P2WPKH, sizeof(REF_SPK_P2SH_P2WPKH), derived->pub_key,
+      sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+  if (wally_psbt_set_input_redeem_script(psbt, 0, redeem, redeem_len) !=
+      WALLY_OK) {
+    wally_psbt_free(psbt);
+    FAIL("set redeem_script");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("expected OWNED_SAFE");
+    return;
+  }
+  if (r.claim.kind != CLAIM_WHITELIST) {
+    FAIL("expected CLAIM_WHITELIST");
+    return;
+  }
+  if (r.claim.whitelist.script != SS_SCRIPT_P2SH_P2WPKH) {
+    FAIL("wrong script type");
+    return;
+  }
+  if (r.claim.whitelist.purpose != 49) {
+    FAIL("wrong purpose");
+    return;
+  }
+  PASS();
+}
+
+/* Build a P2WPKH PSBT for the testnet keypath m/84'/1'/0'/0/0 and classify it
+ * with is_testnet=true. Catches the d49f923-class regression where a stale
+ * is_testnet flag would cause the whitelist (coin pinned to network) to
+ * reject a legitimately owned testnet input. */
+static void test_psbt_classify_fixture_a_testnet(void) {
+  TEST("psbt_classify_input: BIP84 testnet verified-owned (is_testnet=true)");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/1'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  uint8_t spk[22];
+  size_t spk_len = 0;
+  if (wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                       WALLY_SCRIPT_HASH160, spk, sizeof(spk),
+                                       &spk_len) != WALLY_OK) {
+    bip32_key_free(derived);
+    FAIL("witness program build");
+    return;
+  }
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fingerprint     */
+      0x54, 0x00, 0x00, 0x80, /* 84'             */
+      0x01, 0x00, 0x00, 0x80, /* 1' (testnet)    */
+      0x00, 0x00, 0x00, 0x80, /* 0'              */
+      0x00, 0x00, 0x00, 0x00, /* 0               */
+      0x00, 0x00, 0x00, 0x00, /* 0               */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(spk, spk_len, derived->pub_key, sizeof(derived->pub_key),
+                     kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, true);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("expected OWNED_SAFE on testnet keypath");
+    return;
+  }
+  if (r.claim.kind != CLAIM_WHITELIST) {
+    FAIL("expected CLAIM_WHITELIST");
+    return;
+  }
+  if (r.claim.whitelist.coin != 1) {
+    FAIL("expected whitelist coin == 1");
+    return;
+  }
+  PASS();
+}
+
+/* Same testnet PSBT as above but classify with is_testnet=false. The
+ * whitelist must reject (coin=1 vs expected coin=0); derive→spk still
+ * succeeds against the keypath-supplied path so the result drops from
+ * OWNED_SAFE to OWNED_UNSAFE -- the user must now opt into permissive
+ * signing instead of getting a silent OWNED_SAFE pass. */
+static void test_psbt_classify_adv_testnet_flag_mismatch(void) {
+  TEST("psbt_classify_input: testnet keypath classified as mainnet -> "
+       "OWNED_UNSAFE");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/1'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  uint8_t spk[22];
+  size_t spk_len = 0;
+  if (wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                       WALLY_SCRIPT_HASH160, spk, sizeof(spk),
+                                       &spk_len) != WALLY_OK) {
+    bip32_key_free(derived);
+    FAIL("witness program build");
+    return;
+  }
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(spk, spk_len, derived->pub_key, sizeof(derived->pub_key),
+                     kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_test_psbt");
+    return;
+  }
+
+  /* Classify as mainnet -- the whitelist coin (0) won't match the testnet
+   * keypath's coin (1), so the whitelist rejects. derive→spk still succeeds
+   * against the path the PSBT supplied (84'/1'/0'/0/0), so the result is
+   * OWNED_UNSAFE rather than the safer OWNED_SAFE. */
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE) {
+    FAIL("expected OWNED_UNSAFE on testnet keypath read as mainnet");
+    return;
+  }
+  PASS();
+}
+
 static void test_psbt_classify_fixture_d(void) {
   TEST(
       "psbt_classify_input: fixture D (attack -- correct keypath, wrong UTXO)");
@@ -1209,6 +1389,8 @@ int main(void) {
   PASS();
 
   test_psbt_classify_fixture_a();
+  test_psbt_classify_fixture_a_p2sh_p2wpkh();
+  test_psbt_classify_fixture_a_testnet();
   test_psbt_classify_fixture_d();
   test_psbt_classify_fixture_e();
   test_psbt_classify_fixture_f();
@@ -1226,6 +1408,7 @@ int main(void) {
   test_psbt_classify_adv_mixed_script();
   test_psbt_classify_adv_registry_depth_mismatch();
   test_psbt_classify_adv_taproot_foreign_fp();
+  test_psbt_classify_adv_testnet_flag_mismatch();
 
   printf("\n=== psbt_sign policy-gate tests ===\n\n");
 
