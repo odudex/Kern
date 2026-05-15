@@ -18,13 +18,17 @@ elseif(CONFIG_KERN_BOARD_WAVE_43)
     set(TOUCH_DRIVER esp_lcd_touch_gt911)
     set(FONT_POLICY_WIDTH 480)
     set(FONT_POLICY_HEIGHT 800)
+elseif(CONFIG_KERN_BOARD_CROWPANEL_101)
+    set(TOUCH_DRIVER esp_lcd_touch_gt911)
+    set(FONT_POLICY_WIDTH 1024)
+    set(FONT_POLICY_HEIGHT 600)
 endif()
 
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS .
     PRIV_REQUIRES lvgl ${TOUCH_DRIVER} k_quirc esp_timer wave_4b wave_35 wave_5 wave_43
-                  libwally-core cUR sd_card bbqr video spiffs nvs_flash efuse
+                  crowpanel_101 libwally-core cUR sd_card bbqr video spiffs nvs_flash efuse
                   esp_hw_support esp_app_format mbedtls_compat esp_driver_ppa
 )
 

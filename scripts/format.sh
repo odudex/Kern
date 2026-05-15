@@ -26,6 +26,7 @@ DIRS=(
     "$REPO_ROOT/components/wave_4b"
     "$REPO_ROOT/components/wave_35"
     "$REPO_ROOT/components/wave_43"
+    "$REPO_ROOT/components/crowpanel_101"
 )
 
 if $CHECK_MODE; then

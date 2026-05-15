@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [wave_4b, wave_35, wave_5, wave_43]
+        board: [wave_4b, wave_35, wave_5, wave_43, crowpanel_101]
     name: build (${{ matrix.board }})
     steps:
     - name: Checkout repo

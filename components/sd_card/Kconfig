@@ -1,0 +1,40 @@
+menu "SD Card"
+
+    config SD_CLK_GPIO
+        int "CLK GPIO number (-1 = hardware IOMUX default)"
+        default -1
+        help
+            GPIO number to use for SDMMC CLK via the GPIO matrix.
+            Set to -1 to rely on the hardware IOMUX default pin assignment
+            for the selected SDMMC slot.
+
+    config SD_CMD_GPIO
+        int "CMD GPIO number (-1 = hardware IOMUX default)"
+        default -1
+        help
+            GPIO number to use for SDMMC CMD via the GPIO matrix.
+            Set to -1 to rely on the hardware IOMUX default pin assignment.
+
+    config SD_D0_GPIO
+        int "D0 GPIO number (-1 = hardware IOMUX default)"
+        default -1
+        help
+            GPIO number to use for SDMMC D0 via the GPIO matrix.
+            Set to -1 to rely on the hardware IOMUX default pin assignment.
+
+    config SD_BUS_WIDTH
+        int "Bus width (1 or 4)"
+        default 4
+        help
+            SDMMC bus width. Use 1 for single-wire SDIO (only D0 connected),
+            or 4 for full 4-bit mode.
+
+    config SD_INTERNAL_PULLUP
+        bool "Enable internal pull-up resistors on SDMMC lines"
+        default n
+        help
+            Enable the internal pull-up resistors on the SDMMC signal lines.
+            Useful when the board does not provide external pull-ups on the
+            SD card signals.
+
+endmenu
