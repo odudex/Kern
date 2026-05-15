@@ -57,13 +57,11 @@ static int current_part_index = 0;
 /* Save type selection menu */
 static ui_menu_t *save_type_menu = NULL;
 static storage_location_t pending_save_location;
+static int pending_save_descriptor_index = -1;
 
 /* Menu entry indices (set during build) */
 static int idx_registered = -1;
 static int idx_load = -1;
-static int idx_save_flash = -1;
-static int idx_save_sd = -1;
-static int idx_export_qr = -1;
 
 /* Set when a descriptor is loaded; read (and cleared) by callers via
  * descriptor_manager_was_changed(). */
@@ -300,11 +298,6 @@ static void descriptor_validation_cb(descriptor_validation_result_t result,
   (void)user_data;
 
   if (result == VALIDATION_SUCCESS) {
-    if (descriptor_string) {
-      free(descriptor_string);
-      descriptor_string = NULL;
-    }
-    wallet_get_descriptor_string(&descriptor_string);
     descriptor_changed = true;
     refresh_menu_visibility();
     return;
@@ -332,11 +325,6 @@ static void return_from_load_storage(void) {
 
 static void success_from_load_storage(void) {
   load_descriptor_storage_page_destroy();
-  if (descriptor_string) {
-    free(descriptor_string);
-    descriptor_string = NULL;
-  }
-  wallet_get_descriptor_string(&descriptor_string);
   descriptor_changed = true;
   descriptor_manager_page_show();
   refresh_menu_visibility();
@@ -374,6 +362,7 @@ static void load_descriptor_cb(void) {
 
 static void return_from_store_descriptor(void) {
   store_descriptor_page_destroy();
+  pending_save_descriptor_index = -1;
   descriptor_manager_page_show();
 }
 
@@ -382,9 +371,17 @@ static void save_encrypted_cb(void) {
     ui_menu_destroy(save_type_menu);
     save_type_menu = NULL;
   }
+  const registry_entry_t *entry =
+      registry_get((size_t)pending_save_descriptor_index);
+  if (!entry) {
+    dialog_show_error("No descriptor selected", NULL, 2000);
+    descriptor_manager_page_show();
+    return;
+  }
   descriptor_manager_page_hide();
-  store_descriptor_page_create(lv_screen_active(), return_from_store_descriptor,
-                               pending_save_location, true);
+  store_descriptor_page_create_for_descriptor(
+      lv_screen_active(), return_from_store_descriptor, pending_save_location,
+      true, entry->desc);
   store_descriptor_page_show();
 }
 
@@ -393,9 +390,17 @@ static void save_plaintext_cb(void) {
     ui_menu_destroy(save_type_menu);
     save_type_menu = NULL;
   }
+  const registry_entry_t *entry =
+      registry_get((size_t)pending_save_descriptor_index);
+  if (!entry) {
+    dialog_show_error("No descriptor selected", NULL, 2000);
+    descriptor_manager_page_show();
+    return;
+  }
   descriptor_manager_page_hide();
-  store_descriptor_page_create(lv_screen_active(), return_from_store_descriptor,
-                               pending_save_location, false);
+  store_descriptor_page_create_for_descriptor(
+      lv_screen_active(), return_from_store_descriptor, pending_save_location,
+      false, entry->desc);
   store_descriptor_page_show();
 }
 
@@ -404,6 +409,7 @@ static void save_type_back_cb(void) {
     ui_menu_destroy(save_type_menu);
     save_type_menu = NULL;
   }
+  pending_save_descriptor_index = -1;
 }
 
 static void show_save_type_menu(storage_location_t loc) {
@@ -420,14 +426,6 @@ static void show_save_type_menu(storage_location_t loc) {
   ui_menu_show(save_type_menu);
 }
 
-static void save_to_flash_cb(void) { show_save_type_menu(STORAGE_FLASH); }
-
-static void save_to_sd_cb(void) { show_save_type_menu(STORAGE_SD); }
-
-/* ---------- Export QR callback ---------- */
-
-static void export_qr_cb(void) { show_qr_export(); }
-
 /* ---------- Main menu ---------- */
 
 static void main_menu_back_cb(void) {
@@ -438,12 +436,48 @@ static void main_menu_back_cb(void) {
 static void registered_desc_return_cb(void) {
   registered_descriptors_page_destroy();
   descriptor_manager_page_show();
+  refresh_menu_visibility();
+}
+
+static void registered_desc_action_cb(size_t index,
+                                      registered_descriptor_action_t action) {
+  const registry_entry_t *entry = registry_get(index);
+  if (!entry)
+    return;
+
+  if (descriptor_string) {
+    free(descriptor_string);
+    descriptor_string = NULL;
+  }
+
+  registered_descriptors_page_destroy();
+
+  switch (action) {
+  case REGISTERED_DESCRIPTOR_ACTION_EXPORT_QR:
+    if (!descriptor_string_from_descriptor(entry->desc, &descriptor_string)) {
+      dialog_show_error("Failed to export descriptor", NULL, 2000);
+      descriptor_manager_page_show();
+      return;
+    }
+    show_qr_export();
+    break;
+  case REGISTERED_DESCRIPTOR_ACTION_SAVE_FLASH:
+    pending_save_descriptor_index = (int)index;
+    descriptor_manager_page_show();
+    show_save_type_menu(STORAGE_FLASH);
+    break;
+  case REGISTERED_DESCRIPTOR_ACTION_SAVE_SD:
+    pending_save_descriptor_index = (int)index;
+    descriptor_manager_page_show();
+    show_save_type_menu(STORAGE_SD);
+    break;
+  }
 }
 
 static void registered_desc_cb(void) {
   descriptor_manager_page_hide();
-  registered_descriptors_page_create(lv_screen_active(),
-                                     registered_desc_return_cb);
+  registered_descriptors_page_create(
+      lv_screen_active(), registered_desc_return_cb, registered_desc_action_cb);
   registered_descriptors_page_show();
 }
 
@@ -468,21 +502,9 @@ static void build_main_menu(void) {
                     load_descriptor_cb);
   idx_load = 1;
 
-  ui_menu_add_entry(main_menu, "Save to Flash", save_to_flash_cb);
-  idx_save_flash = 2;
-
-  ui_menu_add_entry(main_menu, "Save to SD Card", save_to_sd_cb);
-  idx_save_sd = 3;
-
-  ui_menu_add_entry(main_menu, "Export QR Code", export_qr_cb);
-  idx_export_qr = 4;
-
-  /* Disable registered/save/export entries when no descriptor is loaded */
+  /* Disable session descriptor entries when no descriptor is loaded */
   if (!has_desc) {
     ui_menu_set_entry_enabled(main_menu, idx_registered, false);
-    ui_menu_set_entry_enabled(main_menu, idx_save_flash, false);
-    ui_menu_set_entry_enabled(main_menu, idx_save_sd, false);
-    ui_menu_set_entry_enabled(main_menu, idx_export_qr, false);
   }
 
   ui_menu_show(main_menu);
@@ -500,11 +522,8 @@ static void refresh_menu_visibility(void) {
                                           : "Load Descriptor");
     }
 
-    /* Toggle registered/save/export visibility */
+    /* Toggle session descriptor actions */
     ui_menu_set_entry_enabled(main_menu, idx_registered, has_desc);
-    ui_menu_set_entry_enabled(main_menu, idx_save_flash, has_desc);
-    ui_menu_set_entry_enabled(main_menu, idx_save_sd, has_desc);
-    ui_menu_set_entry_enabled(main_menu, idx_export_qr, has_desc);
   }
 }
 
@@ -516,9 +535,6 @@ void descriptor_manager_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
   current_format = FORMAT_PLAINTEXT_DESC;
-
-  if (registry_count())
-    wallet_get_descriptor_string(&descriptor_string);
 
   manager_screen = theme_create_page_container(parent);
 
@@ -577,9 +593,7 @@ void descriptor_manager_page_destroy(void) {
 
   idx_registered = -1;
   idx_load = -1;
-  idx_save_flash = -1;
-  idx_save_sd = -1;
-  idx_export_qr = -1;
+  pending_save_descriptor_index = -1;
   return_callback = NULL;
   current_format = FORMAT_PLAINTEXT_DESC;
 }

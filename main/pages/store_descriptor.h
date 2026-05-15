@@ -12,8 +12,13 @@
 #include "../core/storage.h"
 #include <lvgl.h>
 
+struct wally_descriptor;
+
 void store_descriptor_page_create(lv_obj_t *parent, void (*return_cb)(void),
                                   storage_location_t location, bool encrypted);
+void store_descriptor_page_create_for_descriptor(
+    lv_obj_t *parent, void (*return_cb)(void), storage_location_t location,
+    bool encrypted, const struct wally_descriptor *descriptor);
 void store_descriptor_page_show(void);
 void store_descriptor_page_hide(void);
 void store_descriptor_page_destroy(void);
