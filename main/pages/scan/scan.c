@@ -569,12 +569,13 @@ static void return_from_qr_scanner_cb(void) {
       if (need_exp && !settings_get_expected_owned_signing()) {
         char body[384];
         snprintf(body, sizeof(body),
-                 "%s %zu's path %s matches our fingerprint but cannot be "
-                 "verified. This could be a wallet bug or a malicious "
-                 "script.\n"
+                 "%s %zu's path %s matches our fingerprint but the script "
+                 "cannot be re-derived from it -- wallet bug or "
+                 "attacker-crafted input.\n"
                  "If multisig: Load the wallet descriptor.\n"
                  "To sign anyway: Enable 'Expected-owned signing' in "
-                 "wallet settings",
+                 "Wallet settings. The device will then trust the PSBT's "
+                 "keypath without verification.",
                  flagged_is_input ? "Input" : "Output", flagged_index,
                  flagged_path[0] ? flagged_path : "(unknown)");
         dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,

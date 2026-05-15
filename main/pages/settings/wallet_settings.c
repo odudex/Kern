@@ -36,8 +36,10 @@ static const char *PARTIAL_HELP =
     "Allow signing PSBTs where some inputs are not yours (e.g. "
     "CoinJoin). Default off -- safer.";
 static const char *EXPECTED_OWNED_HELP =
-    "Allow signing when our fingerprint appears but derivation can't "
-    "be verified (e.g. software-wallet bug). Default off -- safer.";
+    "Sign inputs where our fingerprint matches but the script cannot be "
+    "re-derived from the keypath. The device trusts the PSBT's keypath "
+    "claim without cryptographic verification -- risky if your coordinator "
+    "is compromised. Default off -- safer.";
 
 static lv_obj_t *wallet_settings_screen = NULL;
 static lv_obj_t *back_button = NULL;
