@@ -625,6 +625,74 @@ int main(void) {
     }
   }
 
+  /* --- Group 15: uppercase 'H' hardened marker is rejected --- */
+  printf("\n--- Group 15: uppercase 'H' hardened marker is rejected ---\n");
+  {
+    TEST("helper: detects '/0H/' as hardened marker");
+    if (descriptor_text_has_uppercase_hardened("[abcd1234/84H/0H/0H]")) {
+      PASS();
+    } else {
+      FAIL("uppercase H not detected");
+    }
+
+    TEST("helper: detects 'H' in derivation suffix '/<0H;1>/*'");
+    if (descriptor_text_has_uppercase_hardened("xpub.../<0H;1>/*")) {
+      PASS();
+    } else {
+      FAIL("H in multipath not detected");
+    }
+
+    TEST("helper: ignores lowercase 'h' hardened");
+    if (!descriptor_text_has_uppercase_hardened("[abcd1234/84h/0h/0h]")) {
+      PASS();
+    } else {
+      FAIL("h misclassified as uppercase");
+    }
+
+    TEST("helper: ignores apostrophe hardened");
+    if (!descriptor_text_has_uppercase_hardened("[abcd1234/84'/0'/0']")) {
+      PASS();
+    } else {
+      FAIL("apostrophe misclassified");
+    }
+
+    TEST("helper: 'H' inside base58 xpub body is not a marker");
+    /* XPUB_84 contains 'H' after letters (e.g. ...4RHwCD...), not after a
+     * digit-run preceded by /<;, so the base58 H must not trigger. */
+    if (!descriptor_text_has_uppercase_hardened(
+            "wpkh([00000000/84h/0h/0h]" XPUB_84 "/<0;1>/*)")) {
+      PASS();
+    } else {
+      FAIL("xpub H misclassified as hardened marker");
+    }
+
+    TEST("helper: NULL input returns false");
+    if (!descriptor_text_has_uppercase_hardened(NULL)) {
+      PASS();
+    } else {
+      FAIL("NULL not handled");
+    }
+
+    registry_clear();
+    bool added = registry_add_from_string(
+        "h_marker", "wpkh([00000000/84H/0H/0H]" XPUB_84 "/<0;1>/*)",
+        STORAGE_FLASH, false);
+
+    TEST("registry_add_from_string: rejects 'H'-marker descriptor");
+    if (!added) {
+      PASS();
+    } else {
+      FAIL("uppercase H descriptor was accepted");
+    }
+
+    TEST("registry_add_from_string: no entry added after H rejection");
+    if (registry_count() == 0) {
+      PASS();
+    } else {
+      FAIL("registry not empty after rejection");
+    }
+  }
+
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,
          tests_failed);
   return tests_failed > 0 ? 1 : 0;

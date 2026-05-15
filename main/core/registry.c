@@ -365,6 +365,10 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
                               storage_location_t loc, bool persist) {
   if (!id || !descriptor_str)
     return false;
+  if (descriptor_text_has_uppercase_hardened(descriptor_str)) {
+    ESP_LOGE(TAG, "descriptor uses 'H' hardened marker (not accepted)");
+    return false;
+  }
   if (registry_len >= REGISTRY_MAX_ENTRIES) {
     ESP_LOGE(TAG, "registry full (%d entries)", REGISTRY_MAX_ENTRIES);
     return false;

@@ -203,6 +203,11 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     dialog_show_error("Invalid descriptor format", NULL, 2000);
     return true;
 
+  case VALIDATION_INVALID_HARDENED_NOTATION:
+    dialog_show_error("Descriptor uses 'H'. Use ' or h for hardened.", NULL,
+                      3000);
+    return true;
+
   case VALIDATION_NETWORK_MISMATCH: {
     const char *expected = (wallet_get_network() == WALLET_NETWORK_MAINNET)
                                ? "Testnet"

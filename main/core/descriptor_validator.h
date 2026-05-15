@@ -21,6 +21,10 @@ typedef enum {
    * the current session. Use descriptor_validator_get_duplicate_id() to fetch
    * the name of the existing entry. */
   VALIDATION_DUPLICATE,
+  /* Descriptor uses uppercase 'H' as the hardened-derivation marker. Only
+   * '\'' and 'h' are accepted; coordinators emitting 'H' must be reconfigured.
+   */
+  VALIDATION_INVALID_HARDENED_NOTATION,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,

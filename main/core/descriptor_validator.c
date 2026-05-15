@@ -491,6 +491,11 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
+  if (descriptor_text_has_uppercase_hardened(descriptor_str)) {
+    callback(VALIDATION_INVALID_HARDENED_NOTATION, user_data);
+    return;
+  }
+
   // Allocate context
   current_ctx = malloc(sizeof(validation_context_t));
   if (!current_ctx) {

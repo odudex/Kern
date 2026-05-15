@@ -75,6 +75,26 @@ static bool desc_compute_checksum(const char *str, size_t len, char out[9]) {
   return true;
 }
 
+bool descriptor_text_has_uppercase_hardened(const char *s) {
+  if (!s)
+    return false;
+  while (*s) {
+    char c = *s;
+    if (c == '/' || c == '<' || c == ';') {
+      s++;
+      const char *p = s;
+      while (*p >= '0' && *p <= '9')
+        p++;
+      if (p != s && *p == 'H')
+        return true;
+      s = p;
+    } else {
+      s++;
+    }
+  }
+  return false;
+}
+
 bool descriptor_checksum_from_descriptor(const struct wally_descriptor *desc,
                                          char out[9]) {
   if (!desc || !out)
