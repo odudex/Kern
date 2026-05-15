@@ -6,6 +6,10 @@ static bool wallet_initialized = false;
 static wallet_network_t wallet_network = WALLET_NETWORK_MAINNET;
 
 bool wallet_init(wallet_network_t network) {
+  /* Module-enforced invariant: wallet_is_initialized() implies a master key
+   * is loaded. Callers must call key_load_from_mnemonic() first. */
+  if (!key_is_loaded())
+    return false;
   wallet_network = network;
   wallet_initialized = true;
   return true;
