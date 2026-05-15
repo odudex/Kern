@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kern Web Flasher</title>
+  <style>
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --accent:  #f97316;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --success: #3fb950;
+      --error:   #f85149;
+      --warn:    #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+    .container { width: 100%; max-width: 720px; }
+
+    header { text-align: center; margin-bottom: 2rem; }
+    header img { height: 56px; margin-bottom: 0.5rem; }
+    header h1 { font-size: 1.5rem; font-weight: 700; }
+    header p  { color: var(--muted); font-size: 0.875rem; margin-top: 0.25rem; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .card-title {
+      font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted); margin-bottom: 1rem;
+    }
+
+    .banner {
+      border-radius: 6px; padding: 0.75rem 1rem;
+      font-size: 0.85rem; margin-bottom: 1rem;
+    }
+    .banner-warn  { background: rgba(210,153,34,0.1);  border: 1px solid var(--warn);  color: var(--warn); }
+    .banner-error { background: rgba(248,81,73,0.1);   border: 1px solid var(--error); color: var(--error); display: none; }
+
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .tab {
+      flex: 1; padding: 0.5rem; border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      border-radius: 6px; cursor: pointer; font-size: 0.875rem; font-weight: 500;
+      transition: all 0.15s;
+    }
+    .tab.active { border-color: var(--accent); color: var(--accent); background: rgba(249,115,22,0.08); }
+
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; }
+    select {
+      width: 100%; padding: 0.5rem 0.75rem;
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; font-size: 0.9rem;
+    }
+    select:focus { outline: none; border-color: var(--accent); }
+
+    .file-list { margin-top: 1rem; }
+    .file-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.45rem 0; border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .file-item:last-child { border-bottom: none; }
+    .file-item .name { color: var(--text); font-family: monospace; }
+    .file-item .addr { color: var(--accent); font-family: monospace; font-size: 0.8rem; }
+    .file-item .size { color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem; }
+
+    .drop-zone {
+      border: 2px dashed var(--border); border-radius: 8px;
+      padding: 2rem 1.5rem; text-align: center; cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); color: var(--text); }
+    .drop-zone input { display: none; }
+    .zip-name { margin-top: 0.5rem; color: var(--success); font-size: 0.85rem; }
+
+    .actions { display: flex; gap: 0.75rem; }
+    .btn {
+      flex: 1; padding: 0.7rem 1.25rem;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-connect { background: var(--bg); color: var(--text); }
+    .btn-connect:hover:not(:disabled) { border-color: var(--text); }
+    .btn-connect.connected { border-color: var(--success); color: var(--success); }
+    .btn-flash  { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-flash:hover:not(:disabled) { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .progress-wrap { margin-top: 1rem; display: none; }
+    .progress-wrap.visible { display: block; }
+    .progress-bg   { background: var(--border); border-radius: 4px; height: 8px; overflow: hidden; }
+    .progress-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.2s; }
+    .progress-lbl  { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; text-align: right; }
+
+    .console {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.75rem 1rem; height: 220px; overflow-y: auto;
+      font-family: monospace; font-size: 0.8rem; margin-top: 1rem;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .l-info { color: var(--muted); }
+    .l-ok   { color: var(--success); }
+    .l-err  { color: var(--error); }
+
+    footer { margin-top: 2rem; font-size: 0.8rem; color: var(--muted); text-align: center; }
+    footer a { color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <img src="https://raw.githubusercontent.com/3rdIteration/Kern/master/branding/kern_logo_with_text_dark_bg.png"
+         alt="Kern logo" onerror="this.style.display='none'">
+    <h1>Web Flasher</h1>
+    <p>Flash Kern firmware to your ESP32-P4 device directly from the browser</p>
+  </header>
+
+  <div class="banner banner-error" id="compatBanner">
+    ⚠ Your browser does not support the Web Serial API.
+    Please use <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> version 89 or later.
+  </div>
+
+  <div class="banner banner-warn">
+    ⚠ <strong>Warning:</strong> CI builds are unvetted development snapshots from a project in an initial development stage.
+    Secure boot is not enabled; do <strong>not</strong> use flashed firmware to manage real savings.
+  </div>
+
+  <!-- Firmware source card -->
+  <div class="card">
+    <div class="card-title">Firmware Source</div>
+
+    <div class="tabs">
+      <button class="tab active" id="tabCI"     onclick="setMode('ci')">📦 Latest CI Build</button>
+      <button class="tab"        id="tabCustom" onclick="setMode('custom')">📁 Custom ZIP Bundle</button>
+    </div>
+
+    <!-- CI mode -->
+    <div id="ciPanel">
+      <label for="boardSelect">Board</label>
+      <select id="boardSelect" onchange="updateCIFileList()">
+        <option value="wave_4b">Waveshare ESP32-P4 4B (720×720 MIPI DSI)</option>
+        <option value="wave_35">Waveshare ESP32-P4 3.5&quot; (320×480 SPI)</option>
+        <option value="wave_5">Waveshare ESP32-P4 5&quot; (720×1280 MIPI DSI)</option>
+        <option value="wave_43">Waveshare ESP32-P4 4.3&quot; (480×800 MIPI DSI)</option>
+      </select>
+      <div class="file-list" id="ciFileList"></div>
+    </div>
+
+    <!-- Custom ZIP mode -->
+    <div id="customPanel" style="display:none">
+      <div class="drop-zone" id="dropZone"
+           onclick="document.getElementById('zipInput').click()">
+        <div>Drop firmware ZIP here or <strong>click to browse</strong></div>
+        <div style="font-size:0.75rem;margin-top:0.3rem;color:var(--muted)">
+          e.g. <code>firmware-wave_4b.zip</code> downloaded from GitHub Actions Artifacts
+        </div>
+        <div class="zip-name" id="zipName"></div>
+        <input type="file" id="zipInput" accept=".zip"
+               onchange="handleZipSelect(this.files[0])">
+      </div>
+      <div class="file-list" id="customFileList" style="margin-top:0.75rem"></div>
+    </div>
+  </div>
+
+  <!-- Flash card -->
+  <div class="card">
+    <div class="card-title">Flash</div>
+    <div class="actions">
+      <button class="btn btn-connect" id="connectBtn" onclick="toggleConnect()">🔌 Connect</button>
+      <button class="btn btn-flash"   id="flashBtn"   onclick="startFlash()" disabled>⚡ Flash</button>
+    </div>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bg"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-lbl" id="progressLbl">0%</div>
+    </div>
+    <div class="console" id="console"></div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/3rdIteration/Kern" target="_blank">Kern on GitHub</a> ·
+    Powered by <a href="https://github.com/espressif/esptool-js" target="_blank">esptool-js</a>
+  </footer>
+
+</div>
+
+<!-- JSZip for extracting custom zip bundles -->
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"
+        integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG"
+        crossorigin="anonymous"></script>
+
+<!-- Preload esptool-js with SRI verification before the inline module imports it -->
+<link rel="modulepreload"
+      href="https://unpkg.com/esptool-js@0.6.0/bundle.js"
+      integrity="sha384-w6aOfygkgbl9ehV88LT6557lncD9H6dGDe+0oOFgHI3YeAiRIqp2h0MTz5pkjUet"
+      crossorigin="anonymous">
+
+<script type="module">
+import { ESPLoader, Transport } from 'https://unpkg.com/esptool-js@0.6.0/bundle.js';
+
+// ── Flash layout (consistent across all Kern boards) ─────────────────────────
+const FLASH_FILES = [
+  { name: 'bootloader.bin',      offset: 0x2000  },
+  { name: 'partition-table.bin', offset: 0x8000  },
+  { name: 'ota_data_initial.bin',offset: 0xf000  },
+  { name: 'kern.bin',            offset: 0x20000 },
+];
+
+const FLASH_MODE = 'dio';
+const FLASH_FREQ = '80m';
+const FLASH_SIZE = '16MB';
+const BAUD       = 460800;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentMode  = 'ci';
+let transport    = null;
+let esploader    = null;
+let customFiles  = null; // [{name, offset, data:Uint8Array}]
+
+// ── Browser compatibility ─────────────────────────────────────────────────────
+if (!('serial' in navigator)) {
+  document.getElementById('compatBanner').style.display = 'block';
+  document.getElementById('connectBtn').disabled = true;
+}
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+function log(msg, cls = 'l-info') {
+  const c    = document.getElementById('console');
+  const line = document.createElement('div');
+  line.className   = cls;
+  line.textContent = msg;
+  c.appendChild(line);
+  c.scrollTop = c.scrollHeight;
+}
+
+// ── Progress ──────────────────────────────────────────────────────────────────
+function setProgress(pct, label) {
+  const wrap = document.getElementById('progressWrap');
+  wrap.classList.add('visible');
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLbl').textContent  = label || pct + '%';
+}
+
+function clearProgress() {
+  document.getElementById('progressWrap').classList.remove('visible');
+  document.getElementById('progressFill').style.width = '0%';
+}
+
+// ── Mode switching ────────────────────────────────────────────────────────────
+window.setMode = function (m) {
+  currentMode = m;
+  document.getElementById('tabCI').classList.toggle('active', m === 'ci');
+  document.getElementById('tabCustom').classList.toggle('active', m === 'custom');
+  document.getElementById('ciPanel').style.display     = m === 'ci'     ? '' : 'none';
+  document.getElementById('customPanel').style.display = m === 'custom' ? '' : 'none';
+};
+
+// ── CI file list ──────────────────────────────────────────────────────────────
+window.updateCIFileList = function () {
+  document.getElementById('ciFileList').innerHTML = FLASH_FILES.map(f =>
+    `<div class="file-item">
+       <span class="name">${f.name}</span>
+       <span class="addr">@ 0x${f.offset.toString(16).padStart(5, '0')}</span>
+     </div>`
+  ).join('');
+};
+window.updateCIFileList();
+
+// ── Drag & Drop / custom ZIP ──────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) window.handleZipSelect(f);
+});
+
+window.handleZipSelect = async function (file) {
+  if (!file || !file.name.toLowerCase().endsWith('.zip')) {
+    log('Please select a .zip file.', 'l-err');
+    return;
+  }
+  document.getElementById('zipName').textContent = '📦 ' + file.name;
+  document.getElementById('zipInput').value      = '';
+  customFiles = null;
+
+  try {
+    const zip = await JSZip.loadAsync(file);
+
+    // Try to parse flash offsets from flasher_args.json
+    let offsetMap = null;
+    const argsEntry = zip.file('flasher_args.json');
+    if (argsEntry) {
+      try {
+        const args = JSON.parse(await argsEntry.async('string'));
+        if (args.flash_files) {
+          offsetMap = {};
+          for (const [addrHex, filePath] of Object.entries(args.flash_files)) {
+            offsetMap[filePath.split('/').pop()] = parseInt(addrHex, 16);
+          }
+        }
+      } catch { /* fall back to defaults */ }
+    }
+
+    const loaded = [];
+    const listEl = document.getElementById('customFileList');
+    listEl.innerHTML = '';
+
+    for (const ff of FLASH_FILES) {
+      const entry = zip.file(ff.name);
+      if (!entry) {
+        log(`Warning: ${ff.name} not found in zip — skipping.`, 'l-err');
+        continue;
+      }
+      const data   = new Uint8Array(await entry.async('arraybuffer'));
+      const offset = (offsetMap && offsetMap[ff.name] !== undefined)
+        ? offsetMap[ff.name]
+        : ff.offset;
+      loaded.push({ name: ff.name, offset, data });
+      const kb = (data.length / 1024).toFixed(1);
+      listEl.innerHTML +=
+        `<div class="file-item">
+           <span class="name">${ff.name}</span>
+           <span class="addr">@ 0x${offset.toString(16).padStart(5, '0')}</span>
+           <span class="size">${kb} KB</span>
+         </div>`;
+    }
+
+    if (loaded.length === 0) {
+      log('No recognised firmware files found in the zip.', 'l-err');
+    } else {
+      customFiles = loaded;
+      log(`Loaded ${loaded.length} file(s) from ${file.name}.`, 'l-ok');
+    }
+  } catch (e) {
+    log('Error reading zip: ' + e.message, 'l-err');
+  }
+};
+
+// ── Connect / Disconnect ──────────────────────────────────────────────────────
+window.toggleConnect = async function () {
+  if (esploader) {
+    await doDisconnect();
+  } else {
+    await doConnect();
+  }
+};
+
+async function doConnect() {
+  const connectBtn = document.getElementById('connectBtn');
+  connectBtn.disabled = true;
+  log('Requesting serial port…');
+  try {
+    const port = await navigator.serial.requestPort();
+    transport  = new Transport(port, true);
+
+    const terminal = {
+      clean:     ()  => {},
+      writeLine: s   => log(s),
+      write:     s   => log(s),
+    };
+
+    esploader   = new ESPLoader({ transport, baudrate: BAUD, terminal });
+    const chip  = await esploader.main();
+    log(`Connected to: ${chip}`, 'l-ok');
+
+    connectBtn.textContent = '⏏ Disconnect';
+    connectBtn.classList.add('connected');
+    document.getElementById('flashBtn').disabled = false;
+  } catch (e) {
+    log('Connection failed: ' + e.message, 'l-err');
+    transport = null;
+    esploader = null;
+  }
+  connectBtn.disabled = false;
+}
+
+async function doDisconnect() {
+  const connectBtn = document.getElementById('connectBtn');
+  connectBtn.disabled = true;
+  try {
+    if (transport) await transport.disconnect();
+  } catch { /* ignore */ }
+  transport = null;
+  esploader = null;
+  connectBtn.textContent = '🔌 Connect';
+  connectBtn.classList.remove('connected');
+  document.getElementById('flashBtn').disabled = true;
+  connectBtn.disabled = false;
+  log('Disconnected.');
+}
+
+// ── Flash ───────────────────────────────────────────────────────────────────
+window.startFlash = async function () {
+  if (!esploader) { log('Not connected.', 'l-err'); return; }
+
+  const connectBtn = document.getElementById('connectBtn');
+  const flashBtn   = document.getElementById('flashBtn');
+  connectBtn.disabled = true;
+  flashBtn.disabled   = true;
+  clearProgress();
+
+  try {
+    let fileArray;
+    let fileNames;
+
+    if (currentMode === 'ci') {
+      const board = document.getElementById('boardSelect').value;
+      log(`Downloading firmware for ${board}…`);
+      fileArray = [];
+      fileNames = [];
+      for (const ff of FLASH_FILES) {
+        const url  = `./firmware/${board}/${ff.name}`;
+        log(`  Fetching ${ff.name}…`);
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          log(`Firmware not available - has the flasher been deployed to GitHub Pages?`, 'l-err');
+          throw new Error(`Failed to fetch ${ff.name} (HTTP ${resp.status})`);
+        }
+        const data = new Uint8Array(await resp.arrayBuffer());
+        fileArray.push({ data, address: ff.offset });
+        fileNames.push(ff.name);
+        log(`  ✓ ${ff.name} (${(data.length / 1024).toFixed(1)} KB)`, 'l-ok');
+      }
+    } else {
+      if (!customFiles || customFiles.length === 0) {
+        throw new Error('Please load a firmware ZIP bundle first.');
+      }
+      fileArray = customFiles.map(f => ({ data: f.data, address: f.offset }));
+      fileNames = customFiles.map(f => f.name);
+    }
+
+    log(`Flashing ${fileArray.length} file(s)…`);
+    setProgress(0, 'Preparing…');
+
+    await esploader.writeFlash({
+      fileArray,
+      flashMode: FLASH_MODE,
+      flashFreq: FLASH_FREQ,
+      flashSize: FLASH_SIZE,
+      eraseAll:  false,
+      compress:  true,
+      reportProgress: (fileIndex, written, total) => {
+        const pct  = Math.round((written / total) * 100);
+        const name = fileNames[fileIndex] || '';
+        setProgress(pct, `${name}: ${pct}%`);
+      },
+    });
+
+    setProgress(100, 'Done!');
+    log('Flash complete — resetting device…', 'l-ok');
+    await esploader.after('hard_reset');
+    log('Device reset. Flash successful! ✓', 'l-ok');
+
+  } catch (e) {
+    log('Flash error: ' + e.message, 'l-err');
+    clearProgress();
+  }
+
+  connectBtn.disabled = false;
+  flashBtn.disabled   = false;
+};
+</script>
+</body>
+</html>
