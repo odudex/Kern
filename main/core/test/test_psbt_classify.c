@@ -1255,6 +1255,234 @@ static void test_psbt_sign_gate_external_always_skipped(void) {
   PASS();
 }
 
+/* Two-input PSBT helper. Each input gets a witness_utxo + a single keypath
+ * entry. Distinct prev-tx txids prevent the inputs from being treated as
+ * duplicates. */
+static struct wally_psbt *
+make_two_input_psbt(const uint8_t *spk1, size_t spk1_len, const uint8_t *pk1,
+                    size_t pk1_len, const uint8_t *kp1, size_t kp1_len,
+                    const uint8_t *spk2, size_t spk2_len, const uint8_t *pk2,
+                    size_t pk2_len, const uint8_t *kp2, size_t kp2_len) {
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 2, 1, &tx) != WALLY_OK)
+    return NULL;
+
+  uint8_t txid_a[32] = {0};
+  uint8_t txid_b[32] = {0};
+  txid_b[0] = 0x01; /* distinct prevout */
+  wally_tx_add_raw_input(tx, txid_a, sizeof(txid_a), 0, 0xffffffff, NULL, 0,
+                         NULL, 0);
+  wally_tx_add_raw_input(tx, txid_b, sizeof(txid_b), 0, 0xffffffff, NULL, 0,
+                         NULL, 0);
+  uint8_t op_return[] = {0x6a};
+  wally_tx_add_raw_output(tx, 0, op_return, sizeof(op_return), 0);
+
+  struct wally_psbt *psbt = NULL;
+  if (wally_psbt_from_tx(tx, 0, 0, &psbt) != WALLY_OK) {
+    wally_tx_free(tx);
+    return NULL;
+  }
+  wally_tx_free(tx);
+
+  struct wally_tx_output *u1 = NULL;
+  wally_tx_output_init_alloc(100000, spk1, spk1_len, &u1);
+  wally_psbt_set_input_witness_utxo(psbt, 0, u1);
+  wally_tx_output_free(u1);
+  wally_map_add(&psbt->inputs[0].keypaths, pk1, pk1_len, kp1, kp1_len);
+
+  struct wally_tx_output *u2 = NULL;
+  wally_tx_output_init_alloc(50000, spk2, spk2_len, &u2);
+  wally_psbt_set_input_witness_utxo(psbt, 1, u2);
+  wally_tx_output_free(u2);
+  wally_map_add(&psbt->inputs[1].keypaths, pk2, pk2_len, kp2, kp2_len);
+
+  return psbt;
+}
+
+#define WSH_REGISTRY_DESC                                                      \
+  "wsh(sortedmulti(2,"                                                         \
+  "[00000000/48'/0'/0'/2']" XPUB_84 "/0/*,"                                    \
+  "[11111111/48'/0'/0'/2']" XPUB_86 "/0/*"                                     \
+  "))#6nfc46dh"
+
+/* Build a PSBT input that matches the WSH_REGISTRY_DESC entry at
+ * multi_index=0, child_num=0. The returned PSBT has the correct spk +
+ * witness_script wired in; caller is responsible for any tampering before
+ * classification. */
+static struct wally_psbt *make_wsh_registry_psbt(const uint8_t *witness_script,
+                                                 size_t witness_script_len) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/48'/0'/0'/2'/0/0", &derived))
+    return NULL;
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 (matches stub) */
+      0x30, 0x00, 0x00, 0x80, /* 48' */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x02, 0x00, 0x00, 0x80, /* 2'  */
+      0x00, 0x00, 0x00, 0x00, /* chain 0 */
+      0x00, 0x00, 0x00, 0x00, /* index 0 */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_WSH_SPK, sizeof(REF_WSH_SPK), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  if (!psbt)
+    return NULL;
+  if (wally_psbt_set_input_witness_script(psbt, 0, witness_script,
+                                          witness_script_len) != WALLY_OK) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  return psbt;
+}
+
+/* Positive case for the wsh(sortedmulti) registry path: SPK matches,
+ * witness_script matches -> OWNED_SAFE via CLAIM_REGISTRY. */
+static void test_psbt_classify_registry_wsh_owned(void) {
+  TEST("psbt_classify_input: wsh(sortedmulti) registry-matched -> OWNED_SAFE");
+
+  registry_clear();
+  if (!registry_add_from_string("t", WSH_REGISTRY_DESC, STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  struct wally_psbt *psbt =
+      make_wsh_registry_psbt(REF_WSH_WITNESS, sizeof(REF_WSH_WITNESS));
+  if (!psbt) {
+    FAIL("make_wsh_registry_psbt");
+    registry_clear();
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("expected OWNED_SAFE");
+    return;
+  }
+  if (r.claim.kind != CLAIM_REGISTRY) {
+    FAIL("expected CLAIM_REGISTRY");
+    return;
+  }
+  PASS();
+}
+
+/* Tamper the wsh sortedmulti witness_script: SPK still matches (so the
+ * registry entry's regen spk passes), but the byte-compare against the
+ * provided witness_script fails. The classifier must reject SAFE and fall
+ * through; no other claim shape matches the wsh spk for our key, so we land
+ * on EXPECTED_OWNED -- the user can no longer unsafely-sign without first
+ * also enabling expected-owned signing. */
+static void test_psbt_classify_registry_wsh_tampered_witness(void) {
+  TEST("psbt_classify_input: wsh(sortedmulti) tampered witness -> "
+       "EXPECTED_OWNED");
+
+  registry_clear();
+  if (!registry_add_from_string("t", WSH_REGISTRY_DESC, STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  uint8_t bad_witness[sizeof(REF_WSH_WITNESS)];
+  memcpy(bad_witness, REF_WSH_WITNESS, sizeof(REF_WSH_WITNESS));
+  bad_witness[3] ^= 0xff; /* flip a pubkey byte inside the multisig script */
+
+  struct wally_psbt *psbt =
+      make_wsh_registry_psbt(bad_witness, sizeof(bad_witness));
+  if (!psbt) {
+    FAIL("make_wsh_registry_psbt");
+    registry_clear();
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED) {
+    FAIL("expected EXPECTED_OWNED on tampered witness");
+    return;
+  }
+  PASS();
+}
+
+/* Mixed two-input PSBT: input 0 is OWNED_SAFE (BIP84 verified), input 1 is
+ * EXTERNAL (foreign fp). Verifies each input is classified independently and
+ * that the per-input policy gate in psbt_sign signs exactly one of them. */
+static void test_psbt_classify_multi_input_mixed(void) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    TEST("psbt_classify_multi_input: setup");
+    FAIL("key derivation failed");
+    return;
+  }
+
+  uint8_t kp_owned[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  uint8_t kp_external[] = {
+      0xde, 0xad, 0xbe, 0xef, /* foreign fp -> EXTERNAL */
+      0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00,
+      0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+
+  /* Use a distinct external pubkey (just the derived pubkey reversed in the
+   * leading byte) so the second input's keypath/pubkey pair doesn't collide
+   * with the first. The fp mismatch is the real EXTERNAL signal. */
+  uint8_t ext_pubkey[EC_PUBLIC_KEY_LEN];
+  memcpy(ext_pubkey, derived->pub_key, sizeof(ext_pubkey));
+  ext_pubkey[0] = (derived->pub_key[0] == 0x02) ? 0x03 : 0x02;
+
+  struct wally_psbt *psbt = make_two_input_psbt(
+      REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+      sizeof(derived->pub_key), kp_owned, sizeof(kp_owned), REF_SPK_P2PKH,
+      sizeof(REF_SPK_P2PKH), ext_pubkey, sizeof(ext_pubkey), kp_external,
+      sizeof(kp_external));
+  bip32_key_free(derived);
+  if (!psbt) {
+    TEST("psbt_classify_multi_input: setup");
+    FAIL("make_two_input_psbt");
+    return;
+  }
+
+  TEST("psbt_classify_multi_input: input 0 -> OWNED_SAFE");
+  input_ownership_t r0 = psbt_classify_input(psbt, 0, false);
+  if (r0.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    wally_psbt_free(psbt);
+    FAIL("input 0 should classify as OWNED_SAFE");
+    return;
+  }
+  PASS();
+
+  TEST("psbt_classify_multi_input: input 1 -> EXTERNAL");
+  input_ownership_t r1 = psbt_classify_input(psbt, 1, false);
+  if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL) {
+    wally_psbt_free(psbt);
+    FAIL("input 1 should classify as EXTERNAL");
+    return;
+  }
+  PASS();
+
+  TEST("psbt_sign multi-input: permissive policy signs exactly the owned "
+       "input");
+  psbt_sign_policy_t policy = {.allow_unsafe = true,
+                               .allow_expected_owned = true};
+  size_t n = psbt_sign(psbt, false, policy);
+  wally_psbt_free(psbt);
+  if (n != 1) {
+    FAIL("expected exactly 1 signature on the mixed PSBT");
+    return;
+  }
+  PASS();
+}
+
 /* ------------------------------------------------------------------ */
 
 static void test_registry_claim(const char *test_name, const char *desc_str,
@@ -1416,6 +1644,9 @@ int main(void) {
   test_psbt_sign_gate_unsafe_allowed();
   test_psbt_sign_gate_expected_blocked();
   test_psbt_sign_gate_external_always_skipped();
+  test_psbt_classify_multi_input_mixed();
+  test_psbt_classify_registry_wsh_owned();
+  test_psbt_classify_registry_wsh_tampered_witness();
 
   key_unload();
 
