@@ -16,6 +16,14 @@
 
 static const char *TAG = "PSBT";
 
+/* Buffer for the BIP32 path string passed to key_get_derived_key, formatted
+ * as "m" + ("/<u32>" or "/<u32>'") per component. Worst case is
+ * MAX_KEYPATH_TOTAL_DEPTH components, each "/4294967295'" (12 chars), plus
+ * "m" and the NUL terminator. */
+#define KEYPATH_STR_BUF_SIZE 128
+_Static_assert(KEYPATH_STR_BUF_SIZE >= 1 + MAX_KEYPATH_TOTAL_DEPTH * 12 + 1,
+               "KEYPATH_STR_BUF_SIZE too small for MAX_KEYPATH_TOTAL_DEPTH");
+
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
   struct wally_tx_output *utxo = NULL;
   uint64_t value = 0;
@@ -230,7 +238,7 @@ static bool derive_matches_spk(const unsigned char *raw_keypath,
   if (!target_spk || target_spk_len == 0)
     return false;
 
-  char path[128];
+  char path[KEYPATH_STR_BUF_SIZE];
   if (!raw_keypath_to_string(raw_keypath, raw_keypath_len, path, sizeof(path)))
     return false;
 
@@ -832,7 +840,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       continue;
     }
 
-    char path[128];
+    char path[KEYPATH_STR_BUF_SIZE];
     bool have_path = false;
 
     if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
