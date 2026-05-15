@@ -644,7 +644,7 @@ static void scan_descriptor_validation_cb(descriptor_validation_result_t result,
   (void)user_data;
 
   if (result == VALIDATION_SUCCESS) {
-    dialog_show_info("Descriptor Loaded", "Wallet descriptor updated",
+    dialog_show_info("Descriptor Loaded", "Wallet descriptor added to session",
                      descriptor_loaded_info_cb, NULL, DIALOG_STYLE_FULLSCREEN);
     return;
   }

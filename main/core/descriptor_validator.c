@@ -24,6 +24,7 @@ static const char *TAG = "descriptor_validator";
 #define DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED 0
 
 typedef struct {
+  uint32_t generation; /* set once at create; see pending_generation below */
   char *descriptor_str;
   validation_complete_cb callback;
   validation_confirm_cb confirm_cb;
@@ -35,11 +36,26 @@ typedef struct {
 
 static validation_context_t *current_ctx = NULL;
 
+/* Monotonic generation assigned to each validate_and_load call. If a previous
+ * validation is interrupted (session timeout, navigation away from a pending
+ * dialog) and the user starts a new one, the old static callbacks may still
+ * fire after current_ctx has been replaced. Each schedule point captures the
+ * live ctx's generation into pending_generation; the callback compares it on
+ * fire and no-ops on mismatch, preventing the old flow from corrupting the
+ * new one (or completing it with the wrong result code). */
+static uint32_t next_generation = 1;
+static uint32_t pending_generation = 0;
+
 /* Last duplicate descriptor ID stashed by descriptor_validate_and_load before
  * delivering VALIDATION_DUPLICATE. The page layer fetches this via
  * descriptor_validator_get_duplicate_id() and renders the toast itself, so
  * core stays UI-free. Cleared at the start of each validate_and_load call. */
 static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
+
+static bool ctx_callback_is_live(void) {
+  return current_ctx && pending_generation != 0 &&
+         current_ctx->generation == pending_generation;
+}
 
 static void cleanup_context(void) {
   if (current_ctx) {
@@ -49,6 +65,7 @@ static void cleanup_context(void) {
     free(current_ctx);
     current_ctx = NULL;
   }
+  pending_generation = 0;
 }
 
 static void complete_validation(descriptor_validation_result_t result) {
@@ -209,6 +226,9 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
 static void id_loc_proceed(const char *id, storage_location_t loc,
                            void *user_data) {
   (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
   if (!id || strlen(id) == 0) {
     complete_validation(VALIDATION_USER_DECLINED);
     return;
@@ -301,6 +321,9 @@ static void session_register_current_descriptor(void) {
 // Callback after user confirms/declines descriptor info
 static void info_confirm_proceed(bool confirmed, void *user_data) {
   (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
 
   if (!confirmed) {
     complete_validation(VALIDATION_USER_DECLINED);
@@ -311,6 +334,7 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
    * registry only. Keep id_loc_cb wired for the future registration flow, but
    * skip it until encrypted descriptor backups are ready. */
   if (DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED && current_ctx->id_loc_cb) {
+    pending_generation = current_ctx->generation;
     current_ctx->id_loc_cb(id_loc_proceed, NULL);
   } else {
     session_register_current_descriptor();
@@ -319,11 +343,15 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
 
 static void psb_warn_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
   if (!confirmed) {
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
   if (current_ctx->info_confirm_cb) {
+    pending_generation = current_ctx->generation;
     current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
   } else {
     info_confirm_proceed(true, NULL);
@@ -453,6 +481,7 @@ static void verify_xpub_and_show_info(void) {
   // rendered by the page layer.
   if (psb_result == PSB_WARN) {
     if (current_ctx->confirm_cb) {
+      pending_generation = current_ctx->generation;
       current_ctx->confirm_cb(psb_msg, psb_warn_confirm_cb);
     } else {
       // No way to prompt the user: treat as declined.
@@ -463,6 +492,7 @@ static void verify_xpub_and_show_info(void) {
 
   // PSB_OK or PSB_NA: proceed to info confirmation.
   if (current_ctx->info_confirm_cb) {
+    pending_generation = current_ctx->generation;
     current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
   } else {
     info_confirm_proceed(true, NULL);
@@ -503,6 +533,9 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
   memset(current_ctx, 0, sizeof(validation_context_t));
+  current_ctx->generation = next_generation++;
+  if (next_generation == 0) /* avoid the 0 sentinel after wrap */
+    next_generation = 1;
 
   current_ctx->descriptor_str = strdup(descriptor_str);
   if (!current_ctx->descriptor_str) {
