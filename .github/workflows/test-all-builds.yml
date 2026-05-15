@@ -45,3 +45,46 @@ jobs:
         path: firmware_${{ matrix.board }}/
         if-no-files-found: error
         retention-days: 30
+
+
+  deploy-flasher:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Checkout flasher sources
+      uses: actions/checkout@v4
+    - name: Download wave_4b firmware
+      uses: actions/download-artifact@v4.1.3
+      with:
+        name: firmware-wave_4b
+        path: flasher/firmware/wave_4b
+    - name: Download wave_35 firmware
+      uses: actions/download-artifact@v4.1.3
+      with:
+        name: firmware-wave_35
+        path: flasher/firmware/wave_35
+    - name: Download wave_5 firmware
+      uses: actions/download-artifact@v4.1.3
+      with:
+        name: firmware-wave_5
+        path: flasher/firmware/wave_5
+    - name: Download wave_43 firmware
+      uses: actions/download-artifact@v4.1.3
+      with:
+        name: firmware-wave_43
+        path: flasher/firmware/wave_43
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: flasher/
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4

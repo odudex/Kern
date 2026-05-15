@@ -136,6 +136,63 @@ CONFIG_CAM_MOTOR_DW9714=y
 CONFIG_CAMERA_OV5647_ENABLE_MOTOR_BY_GPIO0=y
 ```
 
+## Web Flasher
+
+The easiest way to flash Kern is the browser-based flasher, which requires no local toolchain. It works in **Google Chrome** or **Microsoft Edge** (version 89+) via the Web Serial API.
+
+**Live flasher:** https://3rditeration.github.io/Kern/
+
+The flasher offers two modes:
+- **Latest CI Build** — fetches firmware built by the most recent `master` push directly from the site and flashes it to the selected board.
+- **Custom ZIP Bundle** — accepts a `firmware-<board>.zip` artifact downloaded from the [Actions tab](../../actions) to flash any PR or older build.
+
+> **Warning:** CI builds are unvetted development snapshots from a project in an initial development stage. Secure boot is not enabled; do **not** use flashed firmware to manage real savings.
+
+> **Note:** The live flasher is deployed automatically on every successful push to `master`. To enable it for your fork, go to **Settings → Pages** and set the source to **GitHub Actions**.
+
+## Flashing CI Build Artifacts
+
+Every pull request and push to `master` produces a firmware artifact for each supported board via the **Test All Builds** workflow. These builds are useful for testing unreleased changes without setting up a local toolchain.
+
+### Requirements
+
+- Python 3
+- USB cable connected to the board
+
+### Steps
+
+1. Open the **Actions** tab of the repository on GitHub and select the workflow run you want.
+
+2. Scroll to the **Artifacts** section at the bottom of the run summary and download the zip for your board (e.g. `firmware-wave_4b`).
+
+3. Unzip the package:
+
+   ```bash
+   unzip firmware-wave_4b.zip -d firmware-wave_4b
+   cd firmware-wave_4b
+   ```
+
+   The zip contains, among other files:
+   - `bootloader.bin` — bootloader
+   - `partition-table.bin` — partition table
+   - `ota_data_initial.bin` — OTA data partition
+   - `kern.bin` — application firmware
+   - `flasher_args.json` / `flash_args` — pre-computed flash offsets
+
+4. Create a Python virtual environment and install esptool:
+
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install esptool
+   ```
+
+5. Flash using the pre-computed offsets from `flash_args`:
+
+   ```bash
+   esptool --chip esp32p4 --baud 460800 write_flash $(cat flash_args)
+   ```
+
 ## Flashing Pre-releases
 
 Pre-release firmware is provided **for testing purposes only**. Do not use pre-release builds as a signer for real savings.
