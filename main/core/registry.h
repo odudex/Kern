@@ -40,16 +40,6 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
 bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
                                     size_t out_id_size);
 
-/* Look up whether `descriptor_str` is already persisted on disk. Walks
- * STORAGE_FLASH + STORAGE_SD via storage_list_descriptors, parses each
- * stored descriptor, and compares h-normalized BIP-380 checksums. Returns
- * true if a match is found; on match writes the existing entry's id (sanitized
- * filename minus the ".txt" extension) to `out_id` if non-NULL.
- * `out_id_size` is the buffer capacity. This helper is retained for the
- * future encrypted persistent-registration flow; current runtime registration
- * uses the in-memory session registry only. */
-bool registry_storage_has_duplicate(const char *descriptor_str, char *out_id,
-                                    size_t out_id_size);
 void registry_clear(void);
 void registry_init(bool is_testnet);
 registry_entry_t *registry_match_keypath(const uint8_t *keypath,

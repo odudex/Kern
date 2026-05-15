@@ -1,5 +1,4 @@
 #include "descriptor_checksum.h"
-#include "registry.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -151,28 +150,4 @@ bool descriptor_string_from_descriptor(const struct wally_descriptor *desc,
   wally_free_string(canonical);
   *output = result;
   return true;
-}
-
-bool wallet_get_descriptor_string(char **output) {
-  const registry_entry_t *entry = registry_get(0);
-  if (!entry || !entry->desc || !output)
-    return false;
-
-  return descriptor_string_from_descriptor(entry->desc, output);
-}
-
-bool wallet_get_descriptor_checksum(char **output) {
-  if (!output)
-    return false;
-
-  const registry_entry_t *entry = registry_get(0);
-  if (!entry || !entry->desc)
-    return false;
-
-  char cksum[9];
-  if (!descriptor_checksum_from_descriptor(entry->desc, cksum))
-    return false;
-
-  *output = strdup(cksum);
-  return (*output != NULL);
 }

@@ -157,7 +157,6 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/error.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
