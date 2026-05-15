@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "descriptor_checksum.h"
 #include "key.h"
 #include "wallet.h"
 #include <esp_log.h>
@@ -12,6 +13,12 @@ static const char *TAG = "registry";
 
 static registry_entry_t registry_entries[REGISTRY_MAX_ENTRIES];
 static size_t registry_len = 0;
+
+/* Descriptor registration is intentionally disabled for now. Descriptor
+ * storage stays available as explicit backup/import, but boot must not treat
+ * stored descriptor files as the durable registry until backups are encrypted
+ * to the descriptor's own public keys (bitcoin/bips#1951). */
+#define REGISTRY_AUTOLOAD_DESCRIPTORS 0
 
 size_t registry_count(void) { return registry_len; }
 
@@ -28,6 +35,19 @@ const registry_entry_t *registry_find_by_id(const char *id) {
     }
   }
   return NULL;
+}
+
+bool registry_set_label(const char *id, const char *label) {
+  if (!id || !label)
+    return false;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0) {
+      strncpy(registry_entries[i].label, label, REGISTRY_LABEL_MAX_LEN - 1);
+      registry_entries[i].label[REGISTRY_LABEL_MAX_LEN - 1] = '\0';
+      return true;
+    }
+  }
+  return false;
 }
 
 bool registry_remove(const char *id) {
@@ -121,13 +141,15 @@ static void registry_init_scan(storage_location_t loc) {
 void registry_init(bool is_testnet) {
   (void)is_testnet;
   registry_clear();
-  registry_init_scan(STORAGE_FLASH);
-  registry_init_scan(STORAGE_SD);
+  if (REGISTRY_AUTOLOAD_DESCRIPTORS) {
+    registry_init_scan(STORAGE_FLASH);
+    registry_init_scan(STORAGE_SD);
+  }
   ESP_LOGI(TAG, "Registry: %zu entries loaded", registry_len);
 }
 
-/* Compute the BIP-380 checksum of a descriptor string by parsing it on
- * either network. Caller frees via wally_free_string. NULL on failure. */
+/* Compute the h-normalized BIP-380 checksum of a descriptor string by parsing
+ * it on either network. Caller frees via free. NULL on failure. */
 static char *descriptor_checksum_alloc(const char *descriptor_str) {
   if (!descriptor_str)
     return NULL;
@@ -142,10 +164,10 @@ static char *descriptor_checksum_alloc(const char *descriptor_str) {
     if (wally_descriptor_parse(descriptor_str, NULL, net, 0, &desc) != WALLY_OK)
       return NULL;
   }
-  char *cksum = NULL;
-  int ret = wally_descriptor_get_checksum(desc, 0, &cksum);
+  char checksum[9];
+  bool ok = descriptor_checksum_from_descriptor(desc, checksum);
   wally_descriptor_free(desc);
-  return (ret == WALLY_OK) ? cksum : NULL;
+  return ok ? strdup(checksum) : NULL;
 }
 
 static bool storage_loc_has_descriptor_checksum(storage_location_t loc,
@@ -192,7 +214,7 @@ static bool storage_loc_has_descriptor_checksum(storage_location_t loc,
             out_id[id_len] = '\0';
           }
         }
-        wally_free_string(cksum);
+        free(cksum);
       }
       free(desc_str);
     }
@@ -217,7 +239,40 @@ bool registry_storage_has_duplicate(const char *descriptor_str, char *out_id,
                                                    out_id, out_id_size) ||
                storage_loc_has_descriptor_checksum(STORAGE_SD, target, out_id,
                                                    out_id_size);
-  wally_free_string(target);
+  free(target);
+  return found;
+}
+
+bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
+                                    size_t out_id_size) {
+  if (out_id && out_id_size > 0)
+    out_id[0] = '\0';
+  if (!descriptor_str)
+    return false;
+
+  char *target = descriptor_checksum_alloc(descriptor_str);
+  if (!target)
+    return false;
+
+  bool found = false;
+  for (size_t i = 0; i < registry_len; i++) {
+    char entry_cksum[9];
+    if (registry_entries[i].desc &&
+        descriptor_checksum_from_descriptor(registry_entries[i].desc,
+                                            entry_cksum)) {
+      if (strcmp(entry_cksum, target) == 0) {
+        found = true;
+        if (out_id && out_id_size > 0) {
+          strncpy(out_id, registry_entries[i].id, out_id_size - 1);
+          out_id[out_id_size - 1] = '\0';
+        }
+      }
+      if (found)
+        break;
+    }
+  }
+
+  free(target);
   return found;
 }
 

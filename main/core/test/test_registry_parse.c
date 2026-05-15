@@ -7,6 +7,12 @@
 static int tests_passed = 0;
 static int tests_failed = 0;
 
+void registry_stub_reset_storage_counters(void);
+int registry_stub_storage_save_calls(void);
+int registry_stub_storage_delete_calls(void);
+int registry_stub_storage_list_calls(void);
+int registry_stub_storage_load_calls(void);
+
 #define TEST(name) printf("Testing: %s... ", name)
 #define PASS()                                                                 \
   do {                                                                         \
@@ -28,6 +34,8 @@ static int tests_failed = 0;
 #define XPUB_86                                                                \
   "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWc"                \
   "LteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+
+#define DESC_WPKH "wpkh([00000000/84'/0'/0']" XPUB_84 "/<0;1>/*)#d9qwe873"
 
 int main(void) {
   printf("=== registry_add_from_string parse tests ===\n\n");
@@ -480,7 +488,7 @@ int main(void) {
   printf("\n--- Group 10: long id truncation ---\n");
   {
     registry_clear();
-    const char *desc = "wpkh([00000000/84'/0'/0']" XPUB_84 "/<0;1>/*)#d9qwe873";
+    const char *desc = DESC_WPKH;
     /* 32-char id + extra; should be truncated to REGISTRY_ID_MAX_LEN-1 and
      * still succeed without buffer overflow. */
     const char *long_id = "abcdefghij_abcdefghij_abcdefghij_overflow_tail";
@@ -497,6 +505,123 @@ int main(void) {
       PASS();
     } else {
       FAIL("count != 1");
+    }
+  }
+
+  /* --- Group 11: registry_init is RAM-only --- */
+  printf("\n--- Group 11: registry_init does not scan storage ---\n");
+  {
+    registry_clear();
+    registry_add_from_string("session", DESC_WPKH, STORAGE_FLASH, false);
+    registry_stub_reset_storage_counters();
+
+    registry_init(false);
+
+    TEST("registry_init: clears session entries");
+    if (registry_count() == 0) {
+      PASS();
+    } else {
+      FAIL("session entries were not cleared");
+    }
+
+    TEST("registry_init: does not list descriptor storage");
+    if (registry_stub_storage_list_calls() == 0 &&
+        registry_stub_storage_load_calls() == 0) {
+      PASS();
+    } else {
+      FAIL("storage was scanned");
+    }
+  }
+
+  /* --- Group 12: session duplicate check is in-memory --- */
+  printf("\n--- Group 12: session duplicate detection ---\n");
+  {
+    registry_clear();
+    registry_add_from_string("session", DESC_WPKH, STORAGE_FLASH, false);
+
+    char duplicate_id[REGISTRY_ID_MAX_LEN];
+    bool duplicate = registry_session_has_duplicate(DESC_WPKH, duplicate_id,
+                                                    sizeof(duplicate_id));
+
+    TEST("session duplicate: found in RAM");
+    if (duplicate) {
+      PASS();
+    } else {
+      FAIL("duplicate not found");
+    }
+
+    TEST("session duplicate: returns matching id");
+    if (strcmp(duplicate_id, "session") == 0) {
+      PASS();
+    } else {
+      FAIL("wrong duplicate id");
+    }
+
+    duplicate_id[0] = '\0';
+    duplicate = registry_session_has_duplicate(
+        "wpkh([00000000/84'/0'/0']" XPUB_84 "/<0;1>/*)", duplicate_id,
+        sizeof(duplicate_id));
+
+    TEST("session duplicate: checksum match ignores checksum serialization");
+    if (duplicate && strcmp(duplicate_id, "session") == 0) {
+      PASS();
+    } else {
+      FAIL("checksum duplicate not found");
+    }
+
+    duplicate_id[0] = '\0';
+    duplicate = registry_session_has_duplicate(
+        "wpkh([00000000/84h/0h/0h]" XPUB_84 "/<0;1>/*)", duplicate_id,
+        sizeof(duplicate_id));
+
+    TEST("session duplicate: checksum match ignores h/apostrophe path style");
+    if (duplicate && strcmp(duplicate_id, "session") == 0) {
+      PASS();
+    } else {
+      FAIL("h-style duplicate not found");
+    }
+  }
+
+  /* --- Group 13: removing a session descriptor does not delete storage --- */
+  printf("\n--- Group 13: session removal is RAM-only ---\n");
+  {
+    registry_clear();
+    registry_stub_reset_storage_counters();
+    registry_add_from_string("session", DESC_WPKH, STORAGE_FLASH, false);
+
+    TEST("session remove: returns true");
+    if (registry_remove("session")) {
+      PASS();
+    } else {
+      FAIL("remove failed");
+    }
+
+    TEST("session remove: does not delete descriptor file");
+    if (registry_stub_storage_delete_calls() == 0) {
+      PASS();
+    } else {
+      FAIL("storage delete was called");
+    }
+  }
+
+  /* --- Group 14: explicit persist path still writes storage --- */
+  printf("\n--- Group 14: explicit persist still saves descriptor ---\n");
+  {
+    registry_clear();
+    registry_stub_reset_storage_counters();
+
+    TEST("persist add: returns true");
+    if (registry_add_from_string("persisted", DESC_WPKH, STORAGE_FLASH, true)) {
+      PASS();
+    } else {
+      FAIL("persist add failed");
+    }
+
+    TEST("persist add: writes descriptor storage");
+    if (registry_stub_storage_save_calls() == 1) {
+      PASS();
+    } else {
+      FAIL("storage save was not called once");
     }
   }
 

@@ -348,7 +348,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
       content, "Expected-owned signing", settings_get_expected_owned_signing(),
       expected_owned_signing_cb, "Expected-owned signing", EXPECTED_OWNED_HELP);
 
-  /* Registered Descriptors moved into the Descriptors sub-page
+  /* Session Descriptors moved into the Descriptors sub-page
    * (descriptor_manager_page). This page is one level shallower. */
 }
 

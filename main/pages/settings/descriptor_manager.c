@@ -460,7 +460,7 @@ static void build_main_menu(void) {
 
   bool has_desc = registry_count() > 0;
 
-  ui_menu_add_entry(main_menu, "Registered Descriptors", registered_desc_cb);
+  ui_menu_add_entry(main_menu, "Session Descriptors", registered_desc_cb);
   idx_registered = 0;
 
   ui_menu_add_entry(main_menu,

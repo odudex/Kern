@@ -75,33 +75,49 @@ static bool desc_compute_checksum(const char *str, size_t len, char out[9]) {
   return true;
 }
 
-bool wallet_get_descriptor_string(char **output) {
-  const registry_entry_t *entry = registry_get(0);
-  if (!entry || !entry->desc || !output)
+bool descriptor_checksum_from_descriptor(const struct wally_descriptor *desc,
+                                         char out[9]) {
+  if (!desc || !out)
     return false;
 
-  /* Get canonical body without checksum (uses ' for hardened) */
   char *canonical = NULL;
-  if (wally_descriptor_canonicalize(entry->desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
+  if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
                                     &canonical) != WALLY_OK)
     return false;
 
   size_t body_len = strlen(canonical);
-
-  /* Replace ' with h to match most coordinators */
   for (char *p = canonical; *p; p++) {
     if (*p == '\'')
       *p = 'h';
   }
 
-  /* Compute checksum over the h-normalized body */
+  bool ok = desc_compute_checksum(canonical, body_len, out);
+  wally_free_string(canonical);
+  return ok;
+}
+
+bool descriptor_string_from_descriptor(const struct wally_descriptor *desc,
+                                       char **output) {
+  if (!desc || !output)
+    return false;
+
+  char *canonical = NULL;
+  if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canonical) != WALLY_OK)
+    return false;
+
+  size_t body_len = strlen(canonical);
+  for (char *p = canonical; *p; p++) {
+    if (*p == '\'')
+      *p = 'h';
+  }
+
   char cksum[9];
   if (!desc_compute_checksum(canonical, body_len, cksum)) {
     wally_free_string(canonical);
     return false;
   }
 
-  /* Assemble: body + '#' + checksum */
   char *result = malloc(body_len + 1 + 8 + 1);
   if (!result) {
     wally_free_string(canonical);
@@ -117,17 +133,26 @@ bool wallet_get_descriptor_string(char **output) {
   return true;
 }
 
+bool wallet_get_descriptor_string(char **output) {
+  const registry_entry_t *entry = registry_get(0);
+  if (!entry || !entry->desc || !output)
+    return false;
+
+  return descriptor_string_from_descriptor(entry->desc, output);
+}
+
 bool wallet_get_descriptor_checksum(char **output) {
   if (!output)
     return false;
 
-  char *desc = NULL;
-  if (!wallet_get_descriptor_string(&desc))
+  const registry_entry_t *entry = registry_get(0);
+  if (!entry || !entry->desc)
     return false;
 
-  /* Checksum is the last 8 chars (after '#') */
-  size_t len = strlen(desc);
-  *output = (len >= 8) ? strdup(desc + len - 8) : NULL;
-  free(desc);
+  char cksum[9];
+  if (!descriptor_checksum_from_descriptor(entry->desc, cksum))
+    return false;
+
+  *output = strdup(cksum);
   return (*output != NULL);
 }

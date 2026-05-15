@@ -12,9 +12,11 @@
 
 #define REGISTRY_MAX_ENTRIES 16
 #define REGISTRY_ID_MAX_LEN 32
+#define REGISTRY_LABEL_MAX_LEN 48
 
 typedef struct {
   char id[REGISTRY_ID_MAX_LEN];
+  char label[REGISTRY_LABEL_MAX_LEN];
   storage_location_t loc;
   struct wally_descriptor *desc;
   size_t my_key_index;
@@ -27,17 +29,25 @@ typedef struct {
 size_t registry_count(void);
 const registry_entry_t *registry_get(size_t i);
 const registry_entry_t *registry_find_by_id(const char *id);
+bool registry_set_label(const char *id, const char *label);
 bool registry_remove(const char *id);
 bool registry_add_from_string(const char *id, const char *descriptor_str,
                               storage_location_t loc, bool persist);
 
+/* Look up whether `descriptor_str` is already loaded in the in-memory
+ * session registry. Compares h-normalized BIP-380 checksums and writes the
+ * matching session id to `out_id` if non-NULL. */
+bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
+                                    size_t out_id_size);
+
 /* Look up whether `descriptor_str` is already persisted on disk. Walks
  * STORAGE_FLASH + STORAGE_SD via storage_list_descriptors, parses each
- * stored descriptor, and compares BIP-380 checksums. Returns true if a
- * match is found; on match writes the existing entry's id (sanitized
+ * stored descriptor, and compares h-normalized BIP-380 checksums. Returns
+ * true if a match is found; on match writes the existing entry's id (sanitized
  * filename minus the ".txt" extension) to `out_id` if non-NULL.
- * `out_id_size` is the buffer capacity. Storage is the source of
- * truth — the in-memory registry is just a cache populated at boot. */
+ * `out_id_size` is the buffer capacity. This helper is retained for the
+ * future encrypted persistent-registration flow; current runtime registration
+ * uses the in-memory session registry only. */
 bool registry_storage_has_duplicate(const char *descriptor_str, char *out_id,
                                     size_t out_id_size);
 void registry_clear(void);

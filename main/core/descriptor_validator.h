@@ -17,9 +17,9 @@ typedef enum {
   /* Descriptor parses on the other network only (wallet mainnet vs
    * descriptor tpub, or vice versa). */
   VALIDATION_NETWORK_MISMATCH,
-  /* Same descriptor (BIP-380 checksum match) is already persisted on
-   * disk. The validator already showed a dialog naming the existing
-   * entry — see descriptor_loader_show_error. */
+  /* Same descriptor (h-normalized BIP-380 checksum match) is already loaded in
+   * the current session. The validator already showed a dialog naming the
+   * existing entry — see descriptor_loader_show_error. */
   VALIDATION_DUPLICATE,
 } descriptor_validation_result_t;
 
@@ -50,8 +50,9 @@ typedef void (*validation_info_confirm_cb)(const descriptor_info_t *info,
                                            void (*proceed)(bool confirmed,
                                                            void *user_data));
 
-// Called after info-confirm to collect the registry ID and storage location.
-// Implementation shows a text-input prompt, then calls proceed(id, loc, NULL).
+// Future persistent-registration hook, used to collect the registry ID and
+// storage location once descriptor registration is re-enabled with encrypted
+// descriptor backups.
 typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
                                                      storage_location_t loc,
                                                      void *user_data),

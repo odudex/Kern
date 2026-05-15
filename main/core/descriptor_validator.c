@@ -12,11 +12,17 @@
 #include <wally_descriptor.h>
 
 #include "../ui/dialog.h"
+#include "descriptor_checksum.h"
 #include "registry.h"
 #include "ss_whitelist.h"
 #include "storage.h"
 
 static const char *TAG = "descriptor_validator";
+
+/* Keep the persistent-registration path dormant until descriptor backups can be
+ * encrypted to the descriptor's own public keys, per the Bitcoin Encrypted
+ * Backup proposal in bitcoin/bips#1951. */
+#define DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED 0
 
 typedef struct {
   char *descriptor_str;
@@ -210,6 +216,83 @@ static void id_loc_proceed(const char *id, storage_location_t loc,
   complete_validation(VALIDATION_SUCCESS);
 }
 
+static bool descriptor_checksum_for_session_id(const char *descriptor_str,
+                                               char out[9]) {
+  if (!descriptor_str || !out)
+    return false;
+
+  uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                               ? WALLY_NETWORK_BITCOIN_MAINNET
+                               : WALLY_NETWORK_BITCOIN_TESTNET;
+  struct wally_descriptor *desc = NULL;
+  if (wally_descriptor_parse(descriptor_str, NULL, wally_network, 0, &desc) !=
+      WALLY_OK) {
+    return false;
+  }
+
+  bool ok = descriptor_checksum_from_descriptor(desc, out);
+  wally_descriptor_free(desc);
+  if (!ok)
+    return false;
+  return true;
+}
+
+static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
+  char checksum[9];
+  if (!descriptor_checksum_for_session_id(current_ctx->descriptor_str,
+                                          checksum))
+    return false;
+
+  char base[REGISTRY_ID_MAX_LEN];
+  snprintf(base, sizeof(base), "desc_%s", checksum);
+
+  for (size_t i = 0; i < REGISTRY_MAX_ENTRIES; i++) {
+    if (i == 0)
+      snprintf(out, REGISTRY_ID_MAX_LEN, "%s", base);
+    else
+      snprintf(out, REGISTRY_ID_MAX_LEN, "%s_%zu", base, i + 1);
+
+    if (!registry_find_by_id(out))
+      return true;
+  }
+
+  return false;
+}
+
+static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
+  if (!out)
+    return;
+
+  if (current_ctx->info.is_multisig) {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
+             current_ctx->info.threshold, current_ctx->info.num_keys);
+  } else {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig");
+  }
+}
+
+static void session_register_current_descriptor(void) {
+  char id[REGISTRY_ID_MAX_LEN];
+  if (!build_session_descriptor_id(id)) {
+    ESP_LOGE(TAG, "Failed to build session descriptor id");
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+
+  if (!registry_add_from_string(id, current_ctx->descriptor_str, STORAGE_FLASH,
+                                false)) {
+    ESP_LOGE(TAG, "Failed to load session descriptor '%s'", id);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+
+  char label[REGISTRY_LABEL_MAX_LEN];
+  build_session_descriptor_label(label);
+  registry_set_label(id, label);
+
+  complete_validation(VALIDATION_SUCCESS);
+}
+
 // Callback after user confirms/declines descriptor info
 static void info_confirm_proceed(bool confirmed, void *user_data) {
   (void)user_data;
@@ -219,11 +302,13 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
     return;
   }
 
-  if (current_ctx->id_loc_cb) {
+  /* Descriptor registration is disabled: load into the in-memory session
+   * registry only. Keep id_loc_cb wired for the future registration flow, but
+   * skip it until encrypted descriptor backups are ready. */
+  if (DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED && current_ctx->id_loc_cb) {
     current_ctx->id_loc_cb(id_loc_proceed, NULL);
   } else {
-    // Headless / test path: no interactive prompt available.
-    id_loc_proceed("default", STORAGE_FLASH, NULL);
+    session_register_current_descriptor();
   }
 }
 
@@ -454,14 +539,11 @@ void descriptor_validate_and_load(const char *descriptor_str,
 
   wally_descriptor_free(descriptor);
 
-  /* Stage 1.5: dedup against persisted descriptors. Walks
-   * STORAGE_FLASH + STORAGE_SD via registry_storage_has_duplicate, so
-   * the answer reflects what's actually on disk rather than the
-   * in-memory registry cache. Show a dialog naming the existing entry
-   * before completing — descriptor_loader_show_error treats DUPLICATE
-   * as "dialog already shown". */
+  /* Stage 1.5: dedup against the current in-memory session only. Descriptor
+   * files on flash/SD are explicit backups/import sources and must not behave
+   * as registered descriptors while persistent registration is disabled. */
   char existing_id[REGISTRY_ID_MAX_LEN];
-  if (registry_storage_has_duplicate(current_ctx->descriptor_str, existing_id,
+  if (registry_session_has_duplicate(current_ctx->descriptor_str, existing_id,
                                      sizeof(existing_id))) {
     char msg[96];
     if (existing_id[0])

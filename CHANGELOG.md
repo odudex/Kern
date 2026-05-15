@@ -3,8 +3,8 @@
 ## [Unreleased]
 
 ### Added
-- Registered descriptors are now loaded automatically at device boot.
-- Permissive signing mode (opt-in in settings): allows signing PSBTs whose key paths are not matched by any registered descriptor.
+- Descriptors can be loaded into the current session and used for PSBT/address matching; explicit flash/SD save/load remains available for backups.
+- Permissive signing mode (opt-in in settings): allows signing PSBTs whose key paths are not matched by any loaded session descriptor.
 - Support for Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 (wave_43, 480x800 MIPI DSI, ST7701)
 
 ### Changed

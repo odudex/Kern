@@ -227,7 +227,8 @@ static void build_options(wallet_picker_mode_t mode, char *out, size_t out_sz) {
     size_t reg_count = registry_count();
     for (size_t ri = 0; ri < reg_count && written < out_sz - 1; ri++) {
       const registry_entry_t *entry = registry_get(ri);
-      int n = snprintf(out + written, out_sz - written, "\n%s", entry->id);
+      const char *label = entry->label[0] ? entry->label : entry->id;
+      int n = snprintf(out + written, out_sz - written, "\n%s", label);
       if (n > 0)
         written += (size_t)n;
     }

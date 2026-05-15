@@ -101,7 +101,8 @@ static void format_input_policy(const input_ownership_t *own, char *out,
              ss_script_label(own->claim.whitelist.script),
              (unsigned)own->claim.whitelist.account);
   } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
-    snprintf(out, out_size, "%s", own->claim.registry.entry->id);
+    const registry_entry_t *entry = own->claim.registry.entry;
+    snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
   }
 }
 
