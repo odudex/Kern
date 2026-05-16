@@ -230,21 +230,20 @@ esp_err_t app_video_init_once(i2c_master_bus_handle_t i2c_bus_handle) {
 
 #ifdef SIM_WEBCAM
   if (s_webcam_enabled) {
-    s_webcam = v4l2_capture_open(s_webcam_device, 1280, 720);
-    if (s_webcam) {
-      v4l2_capture_get_resolution(s_webcam, &s_width, &s_height);
-      s_frame_size = (size_t)s_width * s_height * 2;
-      s_frame_buf = calloc(1, s_frame_size);
-      if (s_frame_buf) {
-        ESP_LOGI(TAG, "Webcam opened: %" PRIu32 "x%" PRIu32, s_width,
-                 s_height);
-        s_initialized = true;
-        return ESP_OK;
-      }
-      v4l2_capture_close(s_webcam);
-      s_webcam = NULL;
+    // Defer v4l2_capture_open() until app_video_start() so the webcam light
+    // only turns on while a camera page is active. Allocate a placeholder
+    // buffer at the expected resolution so app_video_is_ready() can return
+    // true and pages can query buffer size before starting the stream.
+    s_width = 1280;
+    s_height = 720;
+    s_frame_size = (size_t)s_width * s_height * 2;
+    s_frame_buf = calloc(1, s_frame_size);
+    if (!s_frame_buf) {
+      ESP_LOGE(TAG, "Failed to allocate webcam placeholder buffer");
+      return ESP_ERR_NO_MEM;
     }
-    ESP_LOGW(TAG, "Webcam unavailable, falling back to image/blank");
+    s_initialized = true;
+    return ESP_OK;
   }
 #endif
 
@@ -277,6 +276,32 @@ esp_err_t app_video_start(app_video_frame_operation_cb_t cb, int core_id) {
   if (s_streaming)
     return ESP_ERR_INVALID_STATE;
 
+#ifdef SIM_WEBCAM
+  if (s_webcam_enabled && !s_webcam) {
+    s_webcam = v4l2_capture_open(s_webcam_device, 1280, 720);
+    if (s_webcam) {
+      uint32_t w = s_width, h = s_height;
+      v4l2_capture_get_resolution(s_webcam, &w, &h);
+      size_t needed = (size_t)w * h * 2;
+      if (needed != s_frame_size) {
+        uint8_t *nbuf = realloc(s_frame_buf, needed);
+        if (!nbuf) {
+          v4l2_capture_close(s_webcam);
+          s_webcam = NULL;
+          return ESP_ERR_NO_MEM;
+        }
+        s_frame_buf = nbuf;
+        s_width = w;
+        s_height = h;
+        s_frame_size = needed;
+      }
+      ESP_LOGI(TAG, "Webcam opened: %" PRIu32 "x%" PRIu32, s_width, s_height);
+    } else {
+      ESP_LOGW(TAG, "Webcam unavailable, falling back to image/blank");
+    }
+  }
+#endif
+
   esp_err_t ret = load_configured_frame(true);
   if (ret != ESP_OK)
     return ret;
@@ -299,6 +324,12 @@ esp_err_t app_video_stop(void) {
   s_streaming = false;
   pthread_join(s_stream_thread, NULL);
   s_frame_cb = NULL;
+#ifdef SIM_WEBCAM
+  if (s_webcam) {
+    v4l2_capture_close(s_webcam);
+    s_webcam = NULL;
+  }
+#endif
   return ESP_OK;
 }
 
