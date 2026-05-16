@@ -54,9 +54,7 @@ static lv_obj_t *capture_btn = NULL;
 static lv_obj_t *back_btn = NULL;
 static void (*return_callback)(void) = NULL;
 
-static int camera_handle = -1;
 static lv_img_dsc_t img_dsc;
-static bool video_initialized = false;
 static EventGroupHandle_t camera_event_group = NULL;
 
 static uint8_t *display_buffer_a = NULL;
@@ -186,7 +184,6 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
     current_display_buffer = back_buffer;
     img_dsc.data = current_display_buffer;
     lv_img_set_src(camera_img, &img_dsc);
-    lv_refr_now(NULL);
     bsp_display_unlock();
   }
 
@@ -194,28 +191,19 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
 }
 
 static bool camera_init(void) {
-  if (video_initialized)
+  if (app_video_is_streaming())
     return true;
+
+  if (!app_video_is_ready()) {
+    ESP_LOGE(TAG, "Video pipeline is not ready");
+    return false;
+  }
 
   camera_event_group = xEventGroupCreate();
   if (!camera_event_group)
     return false;
 
   xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
-
-  i2c_master_bus_handle_t i2c_handle = bsp_i2c_get_handle();
-  if (!i2c_handle)
-    return false;
-
-  if (app_video_main(i2c_handle) != ESP_OK)
-    return false;
-  video_initialized = true;
-
-  camera_handle = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT_RGB565);
-  if (camera_handle < 0)
-    return false;
-
-  ESP_ERROR_CHECK(app_video_register_frame_operation_cb(camera_frame_cb));
 
   img_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
@@ -231,9 +219,7 @@ static bool camera_init(void) {
   current_display_buffer = display_buffer_a;
   img_dsc.data = current_display_buffer;
 
-  ESP_ERROR_CHECK(app_video_set_bufs(camera_handle, CAM_BUF_NUM, NULL));
-
-  if (app_video_stream_task_start(camera_handle, 0) != ESP_OK)
+  if (app_video_start(camera_frame_cb, 0) != ESP_OK)
     return false;
 
   return true;
@@ -349,12 +335,7 @@ void snapshot_page_destroy(void) {
     wait++;
   }
 
-  if (camera_handle >= 0) {
-    app_video_stream_task_stop(camera_handle);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    app_video_close(camera_handle);
-    camera_handle = -1;
-  }
+  app_video_stop();
 
   bool locked = bsp_display_lock(1000);
   camera_img = NULL;
@@ -368,11 +349,6 @@ void snapshot_page_destroy(void) {
     bsp_display_unlock();
 
   free_buffers();
-
-  if (video_initialized) {
-    app_video_deinit();
-    video_initialized = false;
-  }
 
   if (camera_event_group) {
     vEventGroupDelete(camera_event_group);

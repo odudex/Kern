@@ -216,14 +216,11 @@ disk and delivering RGB565 frames via a callback at ~30 fps.
 **Frame delivery:**
 - Background pthread delivers frames every ~33 ms
 - Calls `s_frame_cb(buffer, 0, width, height, frame_size)`
-- Supports up to 4 user-provided frame buffers
 
 **Application API** (matches real camera driver):
-- `app_video_open()` - Loads QR image, returns fake fd=42
-- `app_video_stream_task_start()` - Starts delivery thread
-- `app_video_stream_task_stop()` - Joins thread
-- `app_video_register_frame_operation_cb()` - Registers
-  frame callback
+- `app_video_init_once()` - Initializes the persistent fake camera
+- `app_video_start()` - Registers frame callback and starts delivery thread
+- `app_video_stop()` - Joins thread but keeps camera state initialized
 - `app_video_get_resolution()` /
   `app_video_get_buf_size()` - Frame metadata
 - Focus/AE/AF functions are no-ops

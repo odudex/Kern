@@ -1,5 +1,10 @@
 #pragma once
 
+/* C standard includes */
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 /* System includes */
 #include "esp_err.h"
 #include "esp_log.h"
@@ -59,55 +64,23 @@ typedef void (*app_video_frame_operation_cb_t)(uint8_t *camera_buf,
 /* ----------------------- Function Declarations ----------------------- */
 
 /**
- * @brief Initialize the video system
+ * @brief Initialize the boot-owned video pipeline once.
  *
- * Initializes the ESP video subsystem with CSI configuration.
- * Can use an existing I2C bus handle or create a new one.
+ * Initializes the ESP video subsystem, opens the camera device, configures the
+ * capture format, maps V4L2 buffers, and caches camera capabilities. Streaming
+ * remains stopped until app_video_start() is called by a camera page.
  *
  * @param i2c_bus_handle Existing I2C bus handle (or NULL to create new one)
- * @return ESP_OK on success, or ESP_FAIL on failure
+ * @return ESP_OK on success, or an ESP-IDF error on failure
  */
-esp_err_t app_video_main(i2c_master_bus_handle_t i2c_bus_handle);
+esp_err_t app_video_init_once(i2c_master_bus_handle_t i2c_bus_handle);
 
 /**
- * @brief Open a video device
+ * @brief Check whether the boot-owned video pipeline is ready.
  *
- * Opens the specified video device, queries its capabilities,
- * and configures the video format if needed.
- *
- * @param dev Path to the video device (e.g., "/dev/video0")
- * @param init_fmt Desired video format to initialize
- * @return File descriptor on success, or -1 on failure
+ * @return true when init succeeded and the camera device is available
  */
-int app_video_open(char *dev, video_fmt_t init_fmt);
-
-/**
- * @brief Set up video capture buffers.
- *
- * Configures the video device to use the specified number of buffers for
- * capturing video frames. Ensures the buffer count is within acceptable limits
- * and allocates buffers either via memory-mapped I/O or user pointers.
- * Closes the device on failure.
- *
- * @param video_fd File descriptor for the video device.
- * @param fb_num Number of frame buffers to allocate.
- * @param fb Array of pointers to user-provided frame buffers (if applicable).
- * @return ESP_OK on success, or ESP_FAIL on failure.
- */
-esp_err_t app_video_set_bufs(int video_fd, uint32_t fb_num, const void **fb);
-
-/**
- * @brief Retrieve video capture buffers.
- *
- * Fills the provided array with pointers to the allocated frame buffers for
- * capturing video frames. Checks that the specified buffer count is within
- * acceptable limits.
- *
- * @param fb_num Number of frame buffers to retrieve.
- * @param fb Array of pointers to receive the frame buffers.
- * @return ESP_OK on success, or ESP_FAIL on failure.
- */
-esp_err_t app_video_get_bufs(int fb_num, void **fb);
+bool app_video_is_ready(void);
 
 /**
  * @brief Get the size of the video buffer.
@@ -123,7 +96,7 @@ uint32_t app_video_get_buf_size(void);
  * @brief Get the current video resolution.
  *
  * Retrieves the current width and height of the video stream.
- * Must be called after app_video_open() to get valid values.
+ * Must be called after app_video_init_once() to get valid values.
  *
  * @param width Pointer to store the width value.
  * @param height Pointer to store the height value.
@@ -132,51 +105,36 @@ uint32_t app_video_get_buf_size(void);
 esp_err_t app_video_get_resolution(uint32_t *width, uint32_t *height);
 
 /**
- * @brief Start the video stream task.
+ * @brief Check whether the video stream is currently running.
  *
- * Initiates the video streaming by starting the video stream and creating
- * a FreeRTOS task to handle the streaming process on a specified core.
- * Stops the video stream if task creation fails.
+ * @return true when app_video_start() has succeeded and app_video_stop() has
+ *         not yet been called.
+ */
+bool app_video_is_streaming(void);
+
+/**
+ * @brief Start camera streaming with a page-owned frame callback.
  *
- * @param video_fd File descriptor for the video device.
+ * Queues the persistent V4L2 buffers, starts the stream, and creates a FreeRTOS
+ * task to deliver frames to the callback on the specified core.
+ *
+ * @param operation_cb Callback function to handle captured frames
  * @param core_id Core ID to which the task will be pinned.
  * @return ESP_OK on success, or ESP_FAIL on failure.
  */
-esp_err_t app_video_stream_task_start(int video_fd, int core_id);
+esp_err_t app_video_start(app_video_frame_operation_cb_t operation_cb,
+                          int core_id);
 
 /**
- * @brief Stop the video stream task.
+ * @brief Stop camera streaming synchronously.
  *
- * Deletes the video stream task if it is running and stops the video stream.
- * Ensures the task handle is reset to NULL after deletion.
+ * Stops the V4L2 stream, waits for the stream task to exit, and clears the
+ * active frame callback while keeping the opened device and mapped buffers for
+ * later app_video_start() calls.
  *
- * @param video_fd File descriptor for the video device.
- * @return ESP_OK on success.
+ * @return ESP_OK on success, or ESP_ERR_TIMEOUT if the task did not exit.
  */
-esp_err_t app_video_stream_task_stop(int video_fd);
-
-/**
- * @brief Register a callback for video frame operations
- *
- * Sets a user-defined callback function that will be called for each
- * captured video frame. This allows custom processing of video data.
- *
- * @param operation_cb Callback function to handle video frames
- * @return ESP_OK on success
- */
-esp_err_t app_video_register_frame_operation_cb(
-    app_video_frame_operation_cb_t operation_cb);
-
-/**
- * @brief Close video device and clean up video system.
- *
- * Stops the video stream, closes the video device file descriptor,
- * and deinitializes the video hardware system.
- *
- * @param video_fd File descriptor for the video device to close.
- * @return ESP_OK on success, or ESP_FAIL on failure.
- */
-esp_err_t app_video_close(int video_fd);
+esp_err_t app_video_stop(void);
 
 /**
  * @brief Set the sensor auto-exposure target level.
@@ -185,11 +143,10 @@ esp_err_t app_video_close(int video_fd);
  * Lower values reduce exposure time and gain, which decreases
  * motion blur and saturated regions. Default is 0x50 (80).
  *
- * @param video_fd File descriptor for the video device.
  * @param level AE target level (range: 2-235).
  * @return ESP_OK on success, or ESP_FAIL on failure.
  */
-esp_err_t app_video_set_ae_target(int video_fd, uint32_t level);
+esp_err_t app_video_set_ae_target(uint32_t level);
 
 /**
  * @brief Set the camera focus position (DW9714 motor).
@@ -197,27 +154,16 @@ esp_err_t app_video_set_ae_target(int video_fd, uint32_t level);
  * Manually sets the lens focal position, bypassing auto-focus.
  * Lower values focus closer, higher values focus farther.
  *
- * @param video_fd File descriptor for the video device.
  * @param position Focus position (range: 0-1023).
  * @return ESP_OK on success, or ESP_FAIL on failure.
  */
-esp_err_t app_video_set_focus(int video_fd, uint32_t position);
+esp_err_t app_video_set_focus(uint32_t position);
 
 /**
  * @brief Check if a focus motor (DW9714) is available.
  *
  * Probes the V4L2_CID_FOCUS_ABSOLUTE control at runtime.
  *
- * @param video_fd File descriptor for the video device.
  * @return true if focus motor is available, false otherwise.
  */
-bool app_video_has_focus_motor(int video_fd);
-
-/**
- * @brief Deinitialize the video system.
- *
- * Calls esp_video_deinit() to clean up all video hardware resources.
- *
- * @return ESP_OK on success, or ESP_FAIL on failure.
- */
-esp_err_t app_video_deinit(void);
+bool app_video_has_focus_motor(void);
