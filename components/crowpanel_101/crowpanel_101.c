@@ -259,8 +259,11 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
   BSP_ERROR_CHECK_RETURN_ERR(bsp_i2c_init());
 
   /* GT911 on crowpanel_101 can respond at either 0x5D (primary) or 0x14
-     (backup) depending on INT/RST timing — probe both and fall back. */
-  const esp_lcd_touch_config_t tp_cfg = {
+     (backup) depending on INT/RST timing; probe both and fall back. */
+  esp_lcd_touch_io_gt911_config_t gt911_config = {
+      .dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS,
+  };
+  esp_lcd_touch_config_t tp_cfg = {
       .x_max = BSP_LCD_H_RES,
       .y_max = BSP_LCD_V_RES,
       .rst_gpio_num = BSP_LCD_TOUCH_RST,
@@ -276,6 +279,7 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
               .mirror_x = 0,
               .mirror_y = 0,
           },
+      .driver_data = &gt911_config,
   };
 
   esp_lcd_panel_io_i2c_config_t tp_io_config;
@@ -289,6 +293,7 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
              ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP);
     esp_lcd_panel_io_i2c_config_t cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     cfg.dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
+    gt911_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
     memcpy(&tp_io_config, &cfg, sizeof(cfg));
   } else {
     ESP_LOGE(TAG, "GT911 not found at either I2C address");
