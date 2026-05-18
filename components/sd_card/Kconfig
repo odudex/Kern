@@ -22,6 +22,30 @@ menu "SD Card"
             GPIO number to use for SDMMC D0 via the GPIO matrix.
             Set to -1 to rely on the hardware IOMUX default pin assignment.
 
+    config SD_D1_GPIO
+        int "D1 GPIO number (-1 = hardware IOMUX default)"
+        default -1
+        help
+            GPIO number to use for SDMMC D1 via the GPIO matrix.
+            Required with custom GPIO routing when SD_BUS_WIDTH is 4.
+            Set to -1 to rely on the hardware IOMUX default pin assignment.
+
+    config SD_D2_GPIO
+        int "D2 GPIO number (-1 = hardware IOMUX default)"
+        default -1
+        help
+            GPIO number to use for SDMMC D2 via the GPIO matrix.
+            Required with custom GPIO routing when SD_BUS_WIDTH is 4.
+            Set to -1 to rely on the hardware IOMUX default pin assignment.
+
+    config SD_D3_GPIO
+        int "D3 GPIO number (-1 = hardware IOMUX default)"
+        default -1
+        help
+            GPIO number to use for SDMMC D3 via the GPIO matrix.
+            Required with custom GPIO routing when SD_BUS_WIDTH is 4.
+            Set to -1 to rely on the hardware IOMUX default pin assignment.
+
     config SD_BUS_WIDTH
         int "Bus width (1 or 4)"
         default 4
