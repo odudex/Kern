@@ -140,7 +140,7 @@ CONFIG_CAMERA_OV5647_ENABLE_MOTOR_BY_GPIO0=y
 
 The easiest way to flash Kern is the browser-based flasher, which requires no local toolchain. It works in **Google Chrome** or **Microsoft Edge** (version 89+) via the Web Serial API.
 
-**Live flasher:** https://3rditeration.github.io/Kern/
+**Live flasher:** https://odudex.github.io/Kern/
 
 The flasher offers two modes:
 - **Latest CI Build** — fetches firmware built by the most recent `master` push directly from the site and flashes it to the selected board.

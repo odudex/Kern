@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     container: espressif/idf:v6.0.1
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         board: [wave_4b, wave_35, wave_5, wave_43]
     name: build (${{ matrix.board }})
@@ -81,6 +81,8 @@ jobs:
       with:
         name: firmware-wave_43
         path: flasher/firmware/wave_43
+    - name: Stage branding assets
+      run: cp -r branding flasher/branding
     - name: Upload Pages artifact
       uses: actions/upload-pages-artifact@v3
       with:
