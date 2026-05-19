@@ -140,9 +140,10 @@ set(SIM_SOURCES
 # --- ESP-IDF stubs (NVS, FreeRTOS, eFuse, storage) ---
 set(STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/nvs_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_storage_hooks.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/efuse_hmac_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/freertos_sim.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_stub.c
 )
 
 # --- Application utilities ---
@@ -154,6 +155,7 @@ set(APP_UTIL_SOURCES
 # --- Core application modules ---
 set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
@@ -412,3 +414,47 @@ target_link_libraries(kern_simulator PRIVATE
     ${MBEDX509_LIB}
     $<$<BOOL:${SIM_WEBCAM}>:v4l2_capture>
 )
+
+add_executable(kern_sim_storage_smoke
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage_smoke.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_storage_hooks.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/sd_card_sim.c
+)
+
+target_include_directories(kern_sim_storage_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${MBEDTLS_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src
+)
+
+target_compile_definitions(kern_sim_storage_smoke PRIVATE
+    SIMULATOR=1
+)
+
+target_compile_options(kern_sim_storage_smoke PRIVATE
+    -Wall -Wextra
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -include mbedtls_compat.h
+)
+
+target_link_libraries(kern_sim_storage_smoke PRIVATE
+    m
+    ${MBEDTLS_LIB}
+    ${MBEDCRYPTO_LIB}
+    ${MBEDX509_LIB}
+)
+
+enable_testing()
+add_test(NAME storage_smoke COMMAND kern_sim_storage_smoke)

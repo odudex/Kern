@@ -10,8 +10,7 @@
 extern "C" {
 #endif
 
-/* Override mount point to simulator data directory */
-#define SD_CARD_MOUNT_POINT "simulator/sim_data/sdcard"
+#define SD_CARD_MOUNT_POINT "/sdcard"
 
 esp_err_t sd_card_init(void);
 esp_err_t sd_card_deinit(void);

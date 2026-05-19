@@ -110,6 +110,7 @@ just sim --qr-image path/to/qr.png --data-dir /tmp/kern-sim-data
 ```
 sim_data/                 # default base data directory
   nvs/                    # Simulated NVS storage
+  spiffs/                 # Simulated flash/SPIFFS storage
   sdcard/                 # Simulated SD card
     kern/
       mnemonics/
@@ -118,7 +119,8 @@ sim_data/                 # default base data directory
 
 When `--data-dir <path>` is specified:
 - NVS data goes to `<path>/nvs/`
-- SD card data goes to `<path>/kern/` (mnemonics and
+- Flash data goes to `<path>/spiffs/`
+- SD card data goes to `<path>/sdcard/kern/` (mnemonics and
   descriptors subdirectories under it)
 
 Settings persist across runs in the NVS files.

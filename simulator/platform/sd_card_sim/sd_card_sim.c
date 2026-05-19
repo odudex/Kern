@@ -1,5 +1,6 @@
 /**
- * SD Card Simulator — maps sd_card.h API to POSIX filesystem under sim_data/sdcard/
+ * SD Card Simulator — maps /sdcard paths to POSIX filesystem under
+ * simulator/sim_data/sdcard/
  */
 
 #include "sd_card.h"
@@ -15,6 +16,8 @@
 
 static const char *TAG = "SD_SIM";
 
+#define SIM_SDCARD_DEFAULT_ROOT "simulator/sim_data/sdcard"
+
 static bool s_mounted = false;
 
 static char *s_sdcard_root_override = NULL;
@@ -25,7 +28,7 @@ void sim_sdcard_set_data_dir(const char *dir) {
 }
 
 static const char *sdcard_root(void) {
-    return s_sdcard_root_override ? s_sdcard_root_override : SD_CARD_MOUNT_POINT;
+    return s_sdcard_root_override ? s_sdcard_root_override : SIM_SDCARD_DEFAULT_ROOT;
 }
 
 /* Reject any path containing a ".." component — the simulator's SD root is
@@ -45,8 +48,7 @@ static bool path_is_safe(const char *path) {
     return true;
 }
 
-/* If s_sdcard_root_override is set and path starts with SD_CARD_MOUNT_POINT,
- * rewrite path into buf replacing that prefix with s_sdcard_root_override.
+/* Rewrite paths under the firmware mount point into the simulator root.
  * Returns a pointer to the (possibly rewritten) path to use, or NULL if the
  * path contains a traversal component. */
 static const char *rewrite_path(const char *path, char *buf, size_t bufsz) {
@@ -54,14 +56,22 @@ static const char *rewrite_path(const char *path, char *buf, size_t bufsz) {
         ESP_LOGE(TAG, "rejected unsafe path: %s", path ? path : "(null)");
         return NULL;
     }
-    if (s_sdcard_root_override) {
-        size_t mlen = strlen(SD_CARD_MOUNT_POINT);
-        if (strncmp(path, SD_CARD_MOUNT_POINT, mlen) == 0) {
-            snprintf(buf, bufsz, "%s%s", s_sdcard_root_override, path + mlen);
-            return buf;
-        }
+    size_t mlen = strlen(SD_CARD_MOUNT_POINT);
+    if (strncmp(path, SD_CARD_MOUNT_POINT, mlen) == 0 &&
+        (path[mlen] == '\0' || path[mlen] == '/')) {
+        int n = snprintf(buf, bufsz, "%s%s", sdcard_root(), path + mlen);
+        if (n < 0 || (size_t)n >= bufsz) return NULL;
+        return buf;
     }
-    return path;
+
+    size_t rlen = strlen(sdcard_root());
+    if (strncmp(path, sdcard_root(), rlen) == 0 &&
+        (path[rlen] == '\0' || path[rlen] == '/')) {
+        return path;
+    }
+
+    ESP_LOGE(TAG, "rejected path outside simulated SD root: %s", path);
+    return NULL;
 }
 
 /* Create a directory path recursively, ignoring EEXIST */

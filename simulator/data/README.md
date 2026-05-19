@@ -75,7 +75,13 @@ Files placed in `data/sdcard/` can serve as test fixtures
 
 ## spiffs/
 
-Content for the simulated SPIFFS partition. The simulator
-creates the SPIFFS mount point directory via
-`esp_vfs_spiffs_register()` but does not currently use it
-for active storage. Reserved for future use.
+Fixture content for the simulated SPIFFS partition. At runtime,
+the flash shim maps firmware `/spiffs` paths to `sim_data/spiffs/`
+and stores flash backups there:
+
+```
+sim_data/spiffs/
+├── m_<id>.kef          Encrypted mnemonic backups
+├── d_<id>.kef          Encrypted descriptor backups
+└── d_<id>.txt          Plaintext descriptor registrations
+```

@@ -23,6 +23,7 @@
 #include <esp_err.h>
 #include "sim_video.h"
 #include "video/video.h"
+#include "sim_flash.h"
 #include "sim_nvs.h"
 #include "sim_sdcard.h"
 #include <bsp/pmic.h>
@@ -162,9 +163,14 @@ int main(int argc, char *argv[]) {
                 break;
             case 'd': {
                 char nvs_path[512];
+                char flash_path[512];
+                char sdcard_path[512];
                 snprintf(nvs_path, sizeof(nvs_path), "%s/nvs", optarg);
+                snprintf(flash_path, sizeof(flash_path), "%s/spiffs", optarg);
+                snprintf(sdcard_path, sizeof(sdcard_path), "%s/sdcard", optarg);
                 sim_nvs_set_data_dir(nvs_path);
-                sim_sdcard_set_data_dir(optarg);
+                sim_flash_set_data_dir(flash_path);
+                sim_sdcard_set_data_dir(sdcard_path);
                 break;
             }
             case 'W':

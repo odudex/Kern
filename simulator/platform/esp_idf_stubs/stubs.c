@@ -8,6 +8,7 @@
 #include "esp_timer.h"
 #include "esp_spiffs.h"
 #include "esp_app_desc.h"
+#include "sim_flash.h"
 #include "driver/ppa.h"
 #include <errno.h>
 #include <stdbool.h>
@@ -30,6 +31,7 @@ const char *esp_err_to_name(esp_err_t code) {
         case ESP_ERR_NOT_FOUND:             return "ESP_ERR_NOT_FOUND";
         case ESP_ERR_NOT_SUPPORTED:         return "ESP_ERR_NOT_SUPPORTED";
         case ESP_ERR_TIMEOUT:               return "ESP_ERR_TIMEOUT";
+        case ESP_ERR_INVALID_RESPONSE:      return "ESP_ERR_INVALID_RESPONSE";
         case ESP_ERR_NVS_NOT_FOUND:         return "ESP_ERR_NVS_NOT_FOUND";
         case ESP_ERR_NVS_NO_FREE_PAGES:     return "ESP_ERR_NVS_NO_FREE_PAGES";
         case ESP_ERR_NVS_INVALID_HANDLE:    return "ESP_ERR_NVS_INVALID_HANDLE";
@@ -198,23 +200,15 @@ esp_err_t ppa_do_scale_rotate_mirror(ppa_client_handle_t client,
 /* --- SPIFFS --- */
 
 esp_err_t esp_vfs_spiffs_register(const esp_vfs_spiffs_conf_t *conf) {
-    if (!conf || !conf->base_path) return ESP_ERR_INVALID_ARG;
-    /* Create the directory tree so POSIX file ops work */
-    struct stat st;
-    if (stat(conf->base_path, &st) != 0) {
-        mkdir(conf->base_path, 0755);
-    }
-    return ESP_OK;
+    return sim_flash_spiffs_register(conf);
 }
 
 esp_err_t esp_vfs_spiffs_unregister(const char *partition_label) {
-    (void)partition_label;
-    return ESP_OK;
+    return sim_flash_spiffs_unregister(partition_label);
 }
 
 bool esp_spiffs_check(const char *partition_label) {
-    (void)partition_label;
-    return true;
+    return sim_flash_spiffs_check(partition_label);
 }
 
 /* --- App description --- */
