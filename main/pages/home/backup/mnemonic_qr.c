@@ -17,9 +17,8 @@
 
 #define GRID_INTERVAL_DEFAULT 5
 #define GRID_INTERVAL_21 7
-#define LEGEND_SIZE 28
-#define LABEL_PAD 6
 #define SHADE_OPACITY LV_OPA_70
+#define PORTRAIT_CONTROL_WIDTH_PCT 70
 
 static int get_grid_interval(int modules) {
   return (modules == 21) ? GRID_INTERVAL_21 : GRID_INTERVAL_DEFAULT;
@@ -241,6 +240,7 @@ static void create_grid_overlay(void) {
   int grid_interval = get_grid_interval(modules);
   int divisions = (modules + grid_interval - 1) / grid_interval;
   int32_t cell_px = scale * grid_interval;
+  int32_t label_pad = LV_MAX(theme_get_small_padding(), 2);
 
   grid_divisions = divisions;
   col_labels = calloc(divisions, sizeof(lv_obj_t *));
@@ -258,15 +258,15 @@ static void create_grid_overlay(void) {
     lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
 
     if (c < divisions) {
-      char txt[4];
-      snprintf(txt, sizeof(txt), "%d", c);
+      char txt[12];
+      snprintf(txt, sizeof(txt), "%d", c + 1);
       lv_obj_t *lbl = lv_label_create(grid_overlay);
       lv_label_set_text(lbl, txt);
       lv_obj_set_style_text_color(lbl, color, 0);
       lv_obj_set_style_text_font(lbl, theme_font_small(), 0);
       lv_obj_update_layout(lbl);
       lv_obj_set_pos(lbl, x + (cell_px - lv_obj_get_width(lbl)) / 2,
-                     qr_y - LABEL_PAD - lv_obj_get_height(lbl));
+                     qr_y - label_pad - lv_obj_get_height(lbl));
       if (col_labels)
         col_labels[c] = lbl;
     }
@@ -290,7 +290,7 @@ static void create_grid_overlay(void) {
       lv_obj_set_style_text_color(lbl, color, 0);
       lv_obj_set_style_text_font(lbl, theme_font_small(), 0);
       lv_obj_update_layout(lbl);
-      lv_obj_set_pos(lbl, qr_x - LABEL_PAD - lv_obj_get_width(lbl),
+      lv_obj_set_pos(lbl, qr_x - label_pad - lv_obj_get_width(lbl),
                      y + (cell_px - lv_obj_get_height(lbl)) / 2);
       if (row_labels)
         row_labels[r] = lbl;
@@ -427,56 +427,62 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_style_pad_all(mnemonic_qr_screen, theme_get_default_padding(), 0);
   lv_obj_set_style_pad_gap(mnemonic_qr_screen, theme_get_default_padding(), 0);
 
+  bool portrait = theme_get_screen_height() > theme_get_screen_width();
+  int32_t ctrl_h = theme_get_min_touch_size();
+  int32_t ctrl_gap = theme_get_small_padding();
+  int32_t ctrl_w_pct = portrait ? PORTRAIT_CONTROL_WIDTH_PCT : 40;
+
   lv_obj_t *top_bar = lv_obj_create(mnemonic_qr_screen);
-  lv_obj_set_size(top_bar, LV_PCT(100), 60);
-  lv_obj_set_style_bg_opa(top_bar, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(top_bar, 0, 0);
-  lv_obj_set_style_pad_all(top_bar, 0, 0);
+  lv_obj_set_size(top_bar, LV_PCT(100),
+                  portrait ? (ctrl_h * 2 + ctrl_gap) : ctrl_h);
+  theme_apply_transparent_container(top_bar);
+  lv_obj_set_flex_flow(top_bar,
+                       portrait ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(top_bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(top_bar, ctrl_gap, 0);
   lv_obj_clear_flag(top_bar, LV_OBJ_FLAG_SCROLLABLE);
 
   back_button = ui_create_back_button(parent, back_cb);
 
   qr_type_dropdown = theme_create_dropdown(
       top_bar, "Plaintext\nSeedQR\nCompact SeedQR\nEncrypted");
-  lv_obj_set_width(qr_type_dropdown, LV_PCT(40));
-  lv_obj_align(qr_type_dropdown, LV_ALIGN_CENTER, -30, 0);
+  lv_obj_set_size(qr_type_dropdown, LV_PCT(ctrl_w_pct), ctrl_h);
   lv_obj_add_event_cb(qr_type_dropdown, dropdown_cb, LV_EVENT_VALUE_CHANGED,
                       NULL);
 
   grid_btn = lv_btn_create(top_bar);
-  lv_obj_set_size(grid_btn, 80, 120);
-  lv_obj_align_to(grid_btn, qr_type_dropdown, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+  lv_obj_set_size(grid_btn, portrait ? LV_PCT(ctrl_w_pct) : ctrl_h, ctrl_h);
   theme_apply_touch_button(grid_btn, false);
   lv_obj_add_event_cb(grid_btn, grid_btn_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *grid_label = lv_label_create(grid_btn);
   lv_label_set_text(grid_label, "#");
-  lv_obj_set_style_text_font(grid_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(grid_label, main_color(), 0);
+  theme_apply_button_label(grid_label, false);
   lv_obj_center(grid_label);
 
   content_area = lv_obj_create(mnemonic_qr_screen);
-  lv_obj_set_size(content_area, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_opa(content_area, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(content_area, 0, 0);
-  lv_obj_set_style_pad_all(content_area, 0, 0);
+  lv_obj_set_size(content_area, LV_PCT(100), LV_PCT(100));
+  theme_apply_transparent_container(content_area);
   lv_obj_set_flex_grow(content_area, 1);
   lv_obj_clear_flag(content_area, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(content_area, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content_area, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-  lv_obj_update_layout(content_area);
+  lv_obj_update_layout(mnemonic_qr_screen);
   int32_t avail_w = lv_obj_get_content_width(content_area);
   int32_t avail_h = lv_obj_get_content_height(content_area);
-  int32_t container_size = (avail_w < avail_h) ? avail_w : avail_h;
+  int32_t container_size = LV_MIN(avail_w, avail_h);
+  int32_t legend = LV_MAX(24, lv_font_get_line_height(theme_font_small()) +
+                                  2 * LV_MAX(ctrl_gap, 2));
 
   qr_container = lv_obj_create(content_area);
   lv_obj_set_size(qr_container, container_size, container_size);
   lv_obj_set_style_bg_color(qr_container, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_bg_opa(qr_container, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(qr_container, 0, 0);
-  lv_obj_set_style_pad_all(qr_container, LEGEND_SIZE, 0);
+  lv_obj_set_style_pad_all(qr_container, legend, 0);
   lv_obj_set_style_radius(qr_container, 0, 0);
   lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_SCROLLABLE);
 
