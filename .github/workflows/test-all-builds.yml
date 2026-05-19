@@ -81,6 +81,11 @@ jobs:
       with:
         name: firmware-wave_43
         path: flasher/firmware/wave_43
+    - name: Download crowpanel_101 firmware
+      uses: actions/download-artifact@v4.1.3
+      with:
+        name: firmware-crowpanel_101
+        path: flasher/firmware/crowpanel_101
     - name: Stage branding assets
       run: cp -r branding flasher/branding
     - name: Upload Pages artifact
