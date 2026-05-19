@@ -99,30 +99,25 @@ static void render_xpub(void) {
   snprintf(key_origin, sizeof(key_origin), "[%s/%s]%s", fingerprint_hex,
            derivation_compact, xpub_str);
 
-  // Cap by both width and height so the QR doesn't crowd out the xpub label
-  // on square panels (wave_4b is 720x720 and has more rows above the QR).
-  int32_t w_based = theme_get_screen_width() * 60 / 100;
-  int32_t h_based = theme_get_screen_height() * 45 / 100;
-  int32_t square_size = (w_based < h_based) ? w_based : h_based;
+  lv_obj_update_layout(public_key_screen);
+  int32_t square_size =
+      LV_MIN(lv_obj_get_content_width(content_wrapper) * 65 / 100,
+             lv_obj_get_content_height(content_wrapper) * 70 / 100);
 
   lv_obj_t *qr_container = lv_obj_create(content_wrapper);
   lv_obj_set_size(qr_container, square_size, square_size);
   lv_obj_set_style_bg_color(qr_container, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_bg_opa(qr_container, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(qr_container, 0, 0);
-  lv_obj_set_style_pad_all(qr_container, 15, 0);
+  lv_obj_set_style_pad_all(qr_container, theme_get_small_padding(), 0);
   lv_obj_set_style_radius(qr_container, 0, 0);
   lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_update_layout(qr_container);
 
-  int32_t container_width = lv_obj_get_content_width(qr_container);
-  int32_t container_height = lv_obj_get_content_height(qr_container);
-  int32_t qr_size =
-      (container_width < container_height) ? container_width : container_height;
-
   lv_obj_t *qr = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr, qr_size);
+  lv_qrcode_set_size(qr, LV_MIN(lv_obj_get_content_width(qr_container),
+                                lv_obj_get_content_height(qr_container)));
   lv_qrcode_update(qr, key_origin, strlen(key_origin));
   lv_obj_center(qr);
 
@@ -217,17 +212,15 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
       public_key_screen, "Multisig", false, multisig_switch_cb, "Multisig",
       "BIP48 cosigner xpub for multisig wallets. SegWit only (Native or "
       "Nested).");
-  // Drop the touch-target min_height; the public_key page is space-constrained
-  // and the switch has its own hit area.
-  lv_obj_set_style_min_height(multisig_row, 0, 0);
   multisig_switch = settings_row_get_widget(multisig_row);
   update_multisig_switch_state();
 
   content_wrapper = lv_obj_create(public_key_screen);
-  lv_obj_set_size(content_wrapper, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_size(content_wrapper, LV_PCT(100), LV_PCT(100));
   theme_apply_transparent_container(content_wrapper);
+  lv_obj_set_flex_grow(content_wrapper, 1);
   lv_obj_set_flex_flow(content_wrapper, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content_wrapper, LV_FLEX_ALIGN_START,
+  lv_obj_set_flex_align(content_wrapper, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(content_wrapper, theme_get_default_padding(), 0);
 
