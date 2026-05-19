@@ -234,14 +234,19 @@ static void show_confirm_internal(const char *message,
 
   if (danger && style == DIALOG_STYLE_OVERLAY)
     lv_obj_set_style_border_color(dialog, error_color(), 0);
-
+    lv_obj_t *icon = lv_label_create(dialog);
+  lv_obj_set_style_text_font(icon, theme_font_medium(), 0);
+  lv_obj_set_style_text_color(icon, danger ? error_color() : yes_color(), 0);
+  lv_label_set_text(icon, danger ? LV_SYMBOL_WARNING : LV_SYMBOL_OK);
+  lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 0);
+  
   lv_obj_t *msg_label = theme_create_label(dialog, message, false);
   lv_label_set_recolor(msg_label, true);
   lv_obj_set_width(msg_label, LV_PCT(90));
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(msg_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(msg_label, theme_font_medium(), 0);
-  lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, 40);
 
   lv_obj_t *no_btn = theme_create_button(dialog, "No", false);
   lv_obj_set_size(no_btn, LV_PCT(40), theme_get_button_height());
