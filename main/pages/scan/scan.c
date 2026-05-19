@@ -29,6 +29,7 @@
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wally_address.h>
 #include <wally_bip32.h>
@@ -160,39 +161,67 @@ static void format_btc(char *buf, size_t buf_size, uint64_t sats) {
            frac_third);
 }
 
-// Create address label with first and last 6 chars highlighted in given color
+#define ADDRESS_TIP_CHARS 6
+#define ADDRESS_INDENT_PX 20
+
+static void add_address_tip_overlay(lv_obj_t *parent, lv_obj_t *base_label,
+                                    const char *address, size_t index,
+                                    lv_color_t highlight, int32_t x_offset) {
+  char text[2] = {address[index], '\0'};
+  lv_point_t pos;
+  lv_label_get_letter_pos(base_label, (uint32_t)index, &pos);
+
+  lv_obj_t *tip = lv_label_create(parent);
+  lv_label_set_text(tip, text);
+  lv_obj_set_style_text_font(tip, theme_font_small(), 0);
+  lv_obj_set_style_text_color(tip, highlight, 0);
+  lv_obj_set_pos(tip, x_offset + pos.x, pos.y);
+}
+
+// Plain wrapped address label plus colored overlays for the tip chars. This
+// keeps wrapping in LVGL's label engine and avoids recolor/span edge cases.
 static lv_obj_t *create_address_label(lv_obj_t *parent, const char *address,
-                                      lv_color_t highlight) {
+                                      lv_color_t highlight, int32_t pad_left) {
   size_t len = strlen(address);
-  char *formatted = malloc(len + 32);
-  if (!formatted) {
-    return theme_create_label(parent, address, false);
-  }
+  const lv_font_t *font = theme_font_small();
+  lv_obj_update_layout(parent);
 
-  lv_color32_t c32 = lv_color_to_32(highlight, LV_OPA_COVER);
-  uint32_t color_hex = (c32.red << 16) | (c32.green << 8) | c32.blue;
+  lv_obj_t *container = lv_obj_create(parent);
+  theme_apply_transparent_container(container);
+  lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_width(container, LV_PCT(100));
+  lv_obj_set_height(container, LV_SIZE_CONTENT);
 
-  if (len > 12) {
-    char first[7], last[7];
-    strncpy(first, address, 6);
-    first[6] = '\0';
-    strncpy(last, address + len - 6, 6);
-    last[6] = '\0';
+  int32_t label_width = lv_obj_get_content_width(parent) - pad_left;
+  if (label_width < 0)
+    label_width = 0;
 
-    snprintf(formatted, len + 32, "#%06X %s#%.*s#%06X %s#", (unsigned)color_hex,
-             first, (int)(len - 12), address + 6, (unsigned)color_hex, last);
-  } else {
-    snprintf(formatted, len + 32, "#%06X %s#", (unsigned)color_hex, address);
-  }
-
-  lv_obj_t *label = lv_label_create(parent);
-  lv_label_set_recolor(label, true);
-  lv_label_set_text(label, formatted);
-  lv_obj_set_style_text_font(label, theme_font_small(), 0);
+  lv_obj_t *label = lv_label_create(container);
+  lv_obj_set_pos(label, pad_left, 0);
+  lv_obj_set_width(label, label_width);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(label, address);
+  lv_obj_set_style_text_font(label, font, 0);
   lv_obj_set_style_text_color(label, lv_color_hex(0xAAAAAA), 0);
-  free(formatted);
 
-  return label;
+  lv_obj_update_layout(container);
+  lv_obj_update_layout(label);
+  lv_obj_set_height(container, lv_obj_get_height(label));
+
+  size_t tip_count = len < ADDRESS_TIP_CHARS ? len : ADDRESS_TIP_CHARS;
+  for (size_t i = 0; i < tip_count; i++) {
+    add_address_tip_overlay(container, label, address, i, highlight, pad_left);
+  }
+  if (len > ADDRESS_TIP_CHARS) {
+    size_t tail_start = len > ADDRESS_TIP_CHARS * 2 ? len - ADDRESS_TIP_CHARS
+                                                    : ADDRESS_TIP_CHARS;
+    for (size_t i = tail_start; i < len; i++) {
+      add_address_tip_overlay(container, label, address, i, highlight,
+                              pad_left);
+    }
+  }
+
+  return container;
 }
 
 // Create a row with: [prefix text] [BTC icon] [formatted value]
@@ -1178,11 +1207,8 @@ static bool create_psbt_info_display(void) {
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_inputs[i].address) {
-        lv_obj_t *addr = create_address_label(
-            psbt_info_container, classified_inputs[i].address, error_color());
-        lv_obj_set_width(addr, LV_PCT(100));
-        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_pad_left(addr, 20, 0);
+        create_address_label(psbt_info_container, classified_inputs[i].address,
+                             error_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1240,11 +1266,8 @@ static bool create_psbt_info_display(void) {
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_outputs[i].address) {
-        lv_obj_t *addr = create_address_label(
-            psbt_info_container, classified_outputs[i].address, cyan_color());
-        lv_obj_set_width(addr, LV_PCT(100));
-        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_pad_left(addr, 20, 0);
+        create_address_label(psbt_info_container, classified_outputs[i].address,
+                             cyan_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1292,11 +1315,8 @@ static bool create_psbt_info_display(void) {
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_outputs[i].address) {
-        lv_obj_t *addr = create_address_label(
-            psbt_info_container, classified_outputs[i].address, cyan_color());
-        lv_obj_set_width(addr, LV_PCT(100));
-        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_pad_left(addr, 20, 0);
+        create_address_label(psbt_info_container, classified_outputs[i].address,
+                             cyan_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1324,11 +1344,8 @@ static bool create_psbt_info_display(void) {
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_outputs[i].address) {
-        lv_obj_t *addr = create_address_label(
-            psbt_info_container, classified_outputs[i].address, error_color());
-        lv_obj_set_width(addr, LV_PCT(100));
-        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_pad_left(addr, 20, 0);
+        create_address_label(psbt_info_container, classified_outputs[i].address,
+                             error_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1354,12 +1371,8 @@ static bool create_psbt_info_display(void) {
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_outputs[i].address) {
-        lv_obj_t *addr = create_address_label(psbt_info_container,
-                                              classified_outputs[i].address,
-                                              highlight_color());
-        lv_obj_set_width(addr, LV_PCT(100));
-        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_pad_left(addr, 20, 0);
+        create_address_label(psbt_info_container, classified_outputs[i].address,
+                             highlight_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1594,10 +1607,7 @@ static void create_message_sign_display(void) {
   theme_apply_label(addr_title, true);
   lv_obj_set_style_text_color(addr_title, secondary_color(), 0);
 
-  lv_obj_t *addr_label =
-      create_address_label(psbt_info_container, address, highlight_color());
-  lv_obj_set_width(addr_label, LV_PCT(100));
-  lv_label_set_long_mode(addr_label, LV_LABEL_LONG_WRAP);
+  create_address_label(psbt_info_container, address, highlight_color(), 0);
 
   wally_free_string(address);
 
