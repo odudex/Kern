@@ -17,12 +17,20 @@
 #include "../shared/wallet_source_picker.h"
 #include <lvgl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wally_address.h>
 #include <wally_core.h>
 
 #define NUM_ADDRESSES 8
+#define ADDRESS_INDEX_FIT_ALLOWANCE 6
+#define ADDRESS_PART_LEN 128
+
+typedef struct {
+  char prefix[ADDRESS_PART_LEN];
+  char suffix[ADDRESS_PART_LEN];
+} address_display_t;
 
 static lv_obj_t *addresses_screen = NULL;
 static lv_obj_t *prev_button = NULL;
@@ -120,17 +128,71 @@ static void next_button_cb(lv_event_t *e) {
   refresh_address_list();
 }
 
-static void truncate_address_middle(char *dest, size_t dest_size,
-                                    const char *address, int prefix_len,
-                                    int suffix_len) {
+static int32_t text_width_px(const char *text, const lv_font_t *font) {
+  lv_point_t size = {0};
+  lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return size.x;
+}
+
+static address_display_t address_display_fit(const char *address,
+                                             const lv_font_t *font,
+                                             int32_t max_width) {
+  address_display_t display = {0};
   size_t addr_len = strlen(address);
-  size_t needed = (size_t)(prefix_len + 3 + suffix_len + 1);
-  if (addr_len <= needed || dest_size < needed) {
-    snprintf(dest, dest_size, "%s", address);
-    return;
+  int32_t ellipsis_w = text_width_px("...", font);
+
+  snprintf(display.prefix, sizeof(display.prefix), "%s", address);
+  if (text_width_px(display.prefix, font) <= max_width)
+    return display;
+  if (ellipsis_w > max_width)
+    return (address_display_t){0};
+
+  for (size_t visible = addr_len - 1; visible > 1; visible--) {
+    size_t prefix = visible * 55 / 100;
+    size_t suffix = visible - prefix;
+    snprintf(display.prefix, sizeof(display.prefix), "%.*s", (int)prefix,
+             address);
+    snprintf(display.suffix, sizeof(display.suffix), "%s",
+             address + addr_len - suffix);
+    if (text_width_px(display.prefix, font) + ellipsis_w +
+            text_width_px(display.suffix, font) <=
+        max_width)
+      return display;
   }
-  snprintf(dest, dest_size, "%.*s...%s", prefix_len, address,
-           address + addr_len - suffix_len);
+
+  return (address_display_t){0};
+}
+
+static lv_obj_t *create_address_label(lv_obj_t *parent, const char *text,
+                                      const lv_font_t *font,
+                                      lv_text_align_t align) {
+  lv_obj_t *label = lv_label_create(parent);
+  lv_label_set_text(label, text);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_align(label, align, 0);
+  lv_obj_set_style_text_font(label, font, 0);
+  lv_obj_set_style_text_color(label, main_color(), 0);
+  return label;
+}
+
+static void create_address_display(lv_obj_t *parent,
+                                   const address_display_t *display,
+                                   const lv_font_t *font, int32_t width) {
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_set_size(row, width, LV_SIZE_CONTENT);
+  theme_apply_transparent_container(row);
+  lv_obj_set_flex_grow(row, 1);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+  create_address_label(row, display->prefix, font, LV_TEXT_ALIGN_LEFT);
+  if (display->suffix[0] != '\0') {
+    create_address_label(row, "...", font, LV_TEXT_ALIGN_CENTER);
+    create_address_label(row, display->suffix, font, LV_TEXT_ALIGN_RIGHT);
+  }
 }
 
 // Detail view back button callback
@@ -284,37 +346,41 @@ static void refresh_address_list(void) {
       dynamic_addr = NULL;
     }
 
-    /* Build truncated display label from the stored copy */
+    /* Build truncated display label from the stored copy. Cropping by rendered
+       width keeps proportional-font rows visually aligned. */
     const lv_font_t *font = theme_font_small();
-    int avg_char_w = lv_font_get_glyph_width(font, '0', '0');
+    char max_index_text[16];
+    snprintf(max_index_text, sizeof(max_index_text),
+             "%u:", address_offset + NUM_ADDRESSES - 1);
+    int32_t index_w =
+        text_width_px(max_index_text, font) + ADDRESS_INDEX_FIT_ALLOWANCE;
     int32_t usable_w =
-        theme_get_screen_width() - 2 * theme_get_default_padding();
-    int max_chars = usable_w / avg_char_w - 4;
-    int prefix = max_chars * 55 / 100;
-    int suffix = max_chars - prefix - 3;
-    if (prefix < 6)
-      prefix = 6;
-    if (suffix < 4)
-      suffix = 4;
-    char truncated[64];
-    truncate_address_middle(truncated, sizeof(truncated), stored_addresses[si],
-                            prefix, suffix);
+        theme_get_screen_width() - 2 * theme_get_default_padding() - 30;
+    int32_t address_w = usable_w - index_w - theme_get_small_padding();
+    if (address_w < 1)
+      address_w = 1;
 
-    char btn_text[80];
-    snprintf(btn_text, sizeof(btn_text), "%u: %s", idx, truncated);
+    char index_text[16];
+    snprintf(index_text, sizeof(index_text), "%u:", idx);
+
+    address_display_t address_display =
+        address_display_fit(stored_addresses[si], font, address_w);
 
     /* Create clickable button */
     lv_obj_t *btn = lv_btn_create(address_list_container);
     lv_obj_set_size(btn, LV_PCT(100), LV_SIZE_CONTENT);
     theme_apply_touch_button(btn, false);
     lv_obj_set_flex_grow(btn, 1);
+    lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(btn, theme_get_small_padding(), 0);
 
-    lv_obj_t *label = lv_label_create(btn);
-    lv_label_set_text(label, btn_text);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_align(label, LV_ALIGN_LEFT_MID);
-    lv_obj_set_style_text_font(label, theme_font_small(), 0);
-    lv_obj_set_style_text_color(label, main_color(), 0);
+    lv_obj_t *index_label =
+        create_address_label(btn, index_text, font, LV_TEXT_ALIGN_RIGHT);
+    lv_obj_set_width(index_label, index_w);
+
+    create_address_display(btn, &address_display, font, address_w);
 
     lv_obj_add_event_cb(btn, address_button_cb, LV_EVENT_CLICKED,
                         (void *)(intptr_t)si);
