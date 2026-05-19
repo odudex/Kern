@@ -65,6 +65,14 @@ char *qr_scanner_get_completed_content_with_len(size_t *content_len);
 bool qr_scanner_is_ready(void);
 
 /**
+ * @brief Check if the scanner has completed QR content
+ *
+ * @return true if a QR was fully scanned, false if the scanner was canceled or
+ * no complete QR is available yet
+ */
+bool qr_scanner_has_completed_result(void);
+
+/**
  * @brief Get the detected QR code format
  *
  * @return QR format constant (FORMAT_NONE, FORMAT_PMOFN, FORMAT_UR, etc.)

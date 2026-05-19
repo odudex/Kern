@@ -316,6 +316,14 @@ static bool is_valid_address(const char *data) {
 // --- Main scanner callback with two-layer detection ---
 
 static void return_from_qr_scanner_cb(void) {
+  if (!qr_scanner_has_completed_result()) {
+    qr_scanner_page_hide();
+    qr_scanner_page_destroy();
+    if (return_callback)
+      return_callback();
+    return;
+  }
+
   int detected_format = qr_scanner_get_format();
 
   char *qr_content = NULL;
