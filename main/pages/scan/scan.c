@@ -282,7 +282,13 @@ static bool is_bluewallet_descriptor(const char *data) {
   return strstr(data, "Policy:") != NULL;
 }
 
-static bool is_valid_address(const char *data) {
+typedef enum {
+  ADDRESS_NETWORK_NONE,
+  ADDRESS_NETWORK_MAINNET,
+  ADDRESS_NETWORK_TESTNET,
+} address_network_t;
+
+static address_network_t detect_address_network(const char *data) {
   const char *addr = data;
   char *stripped = NULL;
 
@@ -293,24 +299,29 @@ static bool is_valid_address(const char *data) {
     size_t addr_len = query ? (size_t)(query - start) : strlen(start);
     stripped = strndup(start, addr_len);
     if (!stripped)
-      return false;
+      return ADDRESS_NETWORK_NONE;
     addr = stripped;
   }
 
-  const char *hrp =
-      (wallet_get_network() == WALLET_NETWORK_MAINNET) ? "bc" : "tb";
-  uint32_t wally_net = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                           ? WALLY_NETWORK_BITCOIN_MAINNET
-                           : WALLY_NETWORK_BITCOIN_TESTNET;
   unsigned char script[128];
   size_t written = 0;
-  bool valid =
-      (wally_addr_segwit_to_bytes(addr, hrp, 0, script, sizeof(script),
-                                  &written) == WALLY_OK) ||
-      (wally_address_to_scriptpubkey(addr, wally_net, script, sizeof(script),
-                                     &written) == WALLY_OK);
+  address_network_t result = ADDRESS_NETWORK_NONE;
+
+  if (wally_addr_segwit_to_bytes(addr, "bc", 0, script, sizeof(script),
+                                 &written) == WALLY_OK ||
+      wally_address_to_scriptpubkey(addr, WALLY_NETWORK_BITCOIN_MAINNET, script,
+                                    sizeof(script), &written) == WALLY_OK) {
+    result = ADDRESS_NETWORK_MAINNET;
+  } else if (wally_addr_segwit_to_bytes(addr, "tb", 0, script, sizeof(script),
+                                        &written) == WALLY_OK ||
+             wally_address_to_scriptpubkey(addr, WALLY_NETWORK_BITCOIN_TESTNET,
+                                           script, sizeof(script),
+                                           &written) == WALLY_OK) {
+    result = ADDRESS_NETWORK_TESTNET;
+  }
+
   free(stripped);
-  return valid;
+  return result;
 }
 
 // --- Main scanner callback with two-layer detection ---
@@ -425,12 +436,25 @@ static void return_from_qr_scanner_cb(void) {
     }
 
     // 4. Address
-    if (!parse_success && is_valid_address(qr_content)) {
-      qr_scanner_page_hide();
-      qr_scanner_page_destroy();
-      handle_address_content(qr_content);
-      free(qr_content);
-      return;
+    if (!parse_success) {
+      address_network_t addr_net = detect_address_network(qr_content);
+      if (addr_net != ADDRESS_NETWORK_NONE) {
+        bool addr_is_mainnet = (addr_net == ADDRESS_NETWORK_MAINNET);
+        bool wallet_is_mainnet =
+            (wallet_get_network() == WALLET_NETWORK_MAINNET);
+        qr_scanner_page_hide();
+        qr_scanner_page_destroy();
+        if (addr_is_mainnet == wallet_is_mainnet) {
+          handle_address_content(qr_content);
+        } else {
+          dialog_show_error(
+              addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
+                              : "Address is for Testnet, wallet is on Mainnet",
+              return_callback, 3000);
+        }
+        free(qr_content);
+        return;
+      }
     }
 
     // 5. Mnemonic
