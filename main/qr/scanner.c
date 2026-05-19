@@ -3,6 +3,7 @@
 #include "scanner.h"
 #include "../components/cUR/src/ur_decoder.h"
 #include "../core/settings.h"
+#include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
 #include "../ui/theme.h"
 #include "../utils/memory_utils.h"
@@ -969,6 +970,11 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   scan_completed = false;
   is_fully_initialized = false;
   active_frame_operations = 0;
+
+  if (!app_video_is_ready()) {
+    dialog_show_error("Camera not available", return_callback, 0);
+    return;
+  }
 
   qr_scanner_screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(qr_scanner_screen, LV_PCT(100), LV_PCT(100));

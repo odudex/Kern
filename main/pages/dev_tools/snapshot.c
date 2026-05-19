@@ -267,6 +267,11 @@ void snapshot_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   is_initialized = false;
   active_frame_ops = 0;
 
+  if (!app_video_is_ready()) {
+    dialog_show_error("Camera not available", return_callback, 0);
+    return;
+  }
+
   snapshot_screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(snapshot_screen, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_color(snapshot_screen, lv_color_hex(0x1e1e1e), 0);

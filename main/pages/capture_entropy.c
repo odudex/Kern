@@ -308,6 +308,11 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   entropy_captured = false;
   secure_memzero(captured_entropy, sizeof(captured_entropy));
 
+  if (!app_video_is_ready()) {
+    dialog_show_error("Camera not available", return_callback, 0);
+    return;
+  }
+
   capture_screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(capture_screen, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_color(capture_screen, lv_color_hex(0x1e1e1e), 0);
