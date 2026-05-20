@@ -45,6 +45,7 @@ __pycache__/
 **/squareline/backup/
 **/squareline/autosave/
 
-# Claude Code
+# AI tools
+AGENTS.md
 CLAUDE.md
 .claude/

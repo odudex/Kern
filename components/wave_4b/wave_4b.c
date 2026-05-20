@@ -368,9 +368,8 @@ static lv_display_t *bsp_display_lcd_init(void) {
               .rotation = ESP_LV_ADAPTER_ROTATE_0,
               .hor_res = BSP_LCD_H_RES,
               .ver_res = BSP_LCD_V_RES,
-              // Draw buffer = 1/4 of the screen (180 lines), allocated in PSRAM
-              .buffer_height = BSP_LCD_V_RES / 4,
-              .use_psram = true,
+              .buffer_height = 50,
+              .use_psram = false,
               .enable_ppa_accel = false,
               .require_double_buffer = false,
           },
