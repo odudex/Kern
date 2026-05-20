@@ -39,6 +39,10 @@
 /* Camera I2C (shares main I2C bus on this board) */
 #define BSP_CAM_I2C_SCL BSP_I2C_SCL
 #define BSP_CAM_I2C_SDA BSP_I2C_SDA
+/* CrowPanel wires the camera SCCB on a dedicated bus (SCL=13, SDA=12).
+   Tried as a fallback when no sensor responds on the shared bus. */
+#define BSP_CAM_I2C_SCL_ALT (GPIO_NUM_13)
+#define BSP_CAM_I2C_SDA_ALT (GPIO_NUM_12)
 #define BSP_CAM_HAS_MOTOR 0
 
 /**************************************************************************************************

@@ -7,6 +7,7 @@
 - Web flasher deployment with CrowPanel 10.1 included
 - Simulator now uses production storage with a file-backed SPIFFS shim
 - Optional 4-bit custom GPIO routing for SD card (D1/D2/D3 Kconfig); defaults preserve the SDMMC IOMUX fast path
+- Camera: SC2336 image sensor auto-detected alongside OV5647 (some CrowPanel modules ship with SC2336)
 
 
 ### Fixed

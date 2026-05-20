@@ -25,7 +25,10 @@ static const char *TAG = "video";
 // OV5647 SCCB handle used to widen on-sensor AE hysteresis past the +/-8%
 // window the managed sensor driver writes. The sensor's hunting response to
 // that narrow band made luminance visibly pulse under high-contrast scenes.
+// Only applied when an OV5647 is actually present — SC2336 (the alternate
+// camera shipped with some boards) lives at SCCB 0x30 and uses its own AE.
 #define OV5647_SCCB_ADDR 0x36
+#define SC2336_SCCB_ADDR 0x30
 #define OV5647_SCCB_FREQ_HZ 100000
 #define OV5647_AE_HYST_NUM_LOW 7   // BPT = target * 7/10
 #define OV5647_AE_HYST_NUM_HIGH 13 // WPT = target * 13/10
@@ -37,14 +40,41 @@ static const char *TAG = "video";
 #define OV5647_MAX_GAIN_HI 0x01
 #define OV5647_MAX_GAIN_LO 0xFF
 
+typedef enum {
+  SENSOR_KIND_UNKNOWN = 0,
+  SENSOR_KIND_OV5647,
+  SENSOR_KIND_SC2336,
+  SENSOR_KIND_OTHER,
+} sensor_kind_t;
+
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
 static esp_sccb_io_handle_t s_sensor_sccb = NULL;
+static sensor_kind_t s_sensor_kind = SENSOR_KIND_UNKNOWN;
+
+static sensor_kind_t detect_sensor_kind(void) {
+  if (s_sensor_kind != SENSOR_KIND_UNKNOWN)
+    return s_sensor_kind;
+  if (!s_i2c_bus)
+    return SENSOR_KIND_UNKNOWN;
+  if (i2c_master_probe(s_i2c_bus, OV5647_SCCB_ADDR, 100) == ESP_OK) {
+    s_sensor_kind = SENSOR_KIND_OV5647;
+    ESP_LOGI(TAG, "Camera sensor: OV5647");
+  } else {
+    s_sensor_kind = SENSOR_KIND_OTHER;
+    ESP_LOGI(
+        TAG,
+        "Camera sensor: non-OV5647 (e.g. SC2336); skipping OV5647 AE override");
+  }
+  return s_sensor_kind;
+}
 
 static esp_err_t ensure_sensor_sccb(void) {
   if (s_sensor_sccb)
     return ESP_OK;
   if (!s_i2c_bus)
     return ESP_ERR_INVALID_STATE;
+  if (detect_sensor_kind() != SENSOR_KIND_OV5647)
+    return ESP_ERR_NOT_SUPPORTED;
   sccb_i2c_config_t cfg = {
       .dev_addr_length = I2C_ADDR_BIT_LEN_7,
       .device_address = OV5647_SCCB_ADDR,
@@ -90,14 +120,69 @@ static esp_err_t stream_on(void);
 static esp_err_t stream_off(void);
 static void stream_task(void *arg);
 
+static bool probe_known_sensors(i2c_master_bus_handle_t bus) {
+  if (i2c_master_probe(bus, OV5647_SCCB_ADDR, 100) == ESP_OK) {
+    s_sensor_kind = SENSOR_KIND_OV5647;
+    return true;
+  }
+  if (i2c_master_probe(bus, SC2336_SCCB_ADDR, 100) == ESP_OK) {
+    s_sensor_kind = SENSOR_KIND_SC2336;
+    return true;
+  }
+  return false;
+}
+
+static esp_err_t pick_camera_i2c_bus(i2c_master_bus_handle_t shared_bus,
+                                     i2c_master_bus_handle_t *out_bus) {
+  // Try the shared bus first — covers boards where the camera SCCB is on the
+  // same pins as touch (CrowPanel 10.1, all wave_* variants).
+  if (probe_known_sensors(shared_bus)) {
+    *out_bus = shared_bus;
+    return ESP_OK;
+  }
+
+#if defined(BSP_CAM_I2C_SCL_ALT) && defined(BSP_CAM_I2C_SDA_ALT)
+  // CrowPanel 7" wires the camera on a dedicated SCCB bus — try it.
+  static i2c_master_bus_handle_t s_alt_cam_bus = NULL;
+  if (!s_alt_cam_bus) {
+    i2c_master_bus_config_t cfg = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .sda_io_num = BSP_CAM_I2C_SDA_ALT,
+        .scl_io_num = BSP_CAM_I2C_SCL_ALT,
+        .i2c_port = -1,
+        .flags.enable_internal_pullup = true,
+    };
+    if (i2c_new_master_bus(&cfg, &s_alt_cam_bus) != ESP_OK) {
+      ESP_LOGW(TAG, "Failed to create alt camera I2C bus");
+      *out_bus = shared_bus;
+      return ESP_OK;
+    }
+  }
+  if (probe_known_sensors(s_alt_cam_bus)) {
+    ESP_LOGI(TAG, "Camera SCCB on dedicated bus (SCL=%d SDA=%d)",
+             BSP_CAM_I2C_SCL_ALT, BSP_CAM_I2C_SDA_ALT);
+    *out_bus = s_alt_cam_bus;
+    return ESP_OK;
+  }
+#endif
+
+  // No sensor found on any bus — fall back to the shared bus so esp_video_init
+  // still runs and surfaces the error consistently.
+  *out_bus = shared_bus;
+  return ESP_OK;
+}
+
 static esp_err_t video_driver_init(i2c_master_bus_handle_t i2c_bus_handle) {
   if (!i2c_bus_handle)
     return ESP_ERR_INVALID_ARG;
-  s_i2c_bus = i2c_bus_handle;
+
+  i2c_master_bus_handle_t cam_bus = i2c_bus_handle;
+  (void)pick_camera_i2c_bus(i2c_bus_handle, &cam_bus);
+  s_i2c_bus = cam_bus;
 
   esp_video_init_csi_config_t csi_config = {
       .sccb_config = {.init_sccb = false,
-                      .i2c_handle = i2c_bus_handle,
+                      .i2c_handle = cam_bus,
                       .freq = 100000},
       .reset_pin = -1,
       .pwdn_pin = -1,
@@ -107,7 +192,7 @@ static esp_err_t video_driver_init(i2c_master_bus_handle_t i2c_bus_handle) {
 #if BSP_CAM_HAS_MOTOR
   esp_video_init_cam_motor_config_t cam_motor_config = {
       .sccb_config = {.init_sccb = false,
-                      .i2c_handle = i2c_bus_handle,
+                      .i2c_handle = cam_bus,
                       .freq = 100000},
       .reset_pin = -1,
       .pwdn_pin = -1,
@@ -203,6 +288,23 @@ static esp_err_t video_device_open(video_fmt_t fmt) {
   if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &controls))
     ESP_LOGW(TAG, "HFLIP failed");
 #endif
+
+  // SC2336 on the CrowPanel 7" camera module is mounted upside-down.
+  // Apply 180° rotation in-sensor (free, vs PPA/CPU cost).
+  if (s_sensor_kind == SENSOR_KIND_SC2336) {
+    struct v4l2_ext_controls flip_ctrls = {.ctrl_class = V4L2_CTRL_CLASS_USER,
+                                           .count = 1};
+    struct v4l2_ext_control flip_ctrl = {0};
+    flip_ctrls.controls = &flip_ctrl;
+    flip_ctrl.id = V4L2_CID_VFLIP;
+    flip_ctrl.value = 1;
+    if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &flip_ctrls))
+      ESP_LOGW(TAG, "SC2336 VFLIP failed");
+    flip_ctrl.id = V4L2_CID_HFLIP;
+    flip_ctrl.value = 1;
+    if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &flip_ctrls))
+      ESP_LOGW(TAG, "SC2336 HFLIP failed");
+  }
 
   app_video.has_focus_motor = query_focus_motor();
   return configure_dqbuf_timeout();
@@ -492,7 +594,12 @@ esp_err_t app_video_set_ae_target(uint32_t level) {
   // high-contrast scenes. Write the same target registers here with +/-20%.
   if (!app_video.ready)
     return ESP_ERR_INVALID_STATE;
-  if (ensure_sensor_sccb() != ESP_OK) {
+  esp_err_t sccb_ret = ensure_sensor_sccb();
+  if (sccb_ret == ESP_ERR_NOT_SUPPORTED) {
+    // Non-OV5647 sensor (e.g. SC2336) — its driver-provided AE is fine.
+    return ESP_OK;
+  }
+  if (sccb_ret != ESP_OK) {
     ESP_LOGW(TAG, "Set AE target: SCCB handle unavailable");
     return ESP_FAIL;
   }
