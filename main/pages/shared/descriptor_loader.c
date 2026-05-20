@@ -2,10 +2,13 @@
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/output.h"
 #include "../../core/key.h"
+#include "../../core/registry.h"
+#include "../../core/wallet.h"
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
 #include "../../ui/assets/icons_24.h"
 #include "../../ui/dialog.h"
+#include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
@@ -176,6 +179,18 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   case VALIDATION_USER_DECLINED:
     return false;
 
+  case VALIDATION_DUPLICATE: {
+    char existing_id[REGISTRY_ID_MAX_LEN];
+    char msg[96];
+    if (descriptor_validator_get_duplicate_id(existing_id, sizeof(existing_id)))
+      snprintf(msg, sizeof(msg), "Descriptor already loaded as '%s'",
+               existing_id);
+    else
+      snprintf(msg, sizeof(msg), "Descriptor already loaded");
+    dialog_show_error(msg, NULL, 2500);
+    return true;
+  }
+
   case VALIDATION_FINGERPRINT_NOT_FOUND:
     dialog_show_error("Key not found in descriptor", NULL, 2000);
     return true;
@@ -188,6 +203,22 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     dialog_show_error("Invalid descriptor format", NULL, 2000);
     return true;
 
+  case VALIDATION_INVALID_HARDENED_NOTATION:
+    dialog_show_error("Descriptor uses 'H'. Use ' or h for hardened.", NULL,
+                      3000);
+    return true;
+
+  case VALIDATION_NETWORK_MISMATCH: {
+    const char *expected = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                               ? "Testnet"
+                               : "Mainnet";
+    char msg[80];
+    snprintf(msg, sizeof(msg),
+             "Descriptor is for %s. Switch network in Settings.", expected);
+    dialog_show_error(msg, NULL, 3000);
+    return true;
+  }
+
   case VALIDATION_INTERNAL_ERROR:
   default:
     dialog_show_error("Validation failed", NULL, 2000);
@@ -195,11 +226,74 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   }
 }
 
-// UI confirmation wrapper: bridges validation_confirm_cb to dialog_show_confirm
+typedef struct {
+  void (*proceed)(const char *id, storage_location_t loc, void *user_data);
+  ui_text_input_t input;
+  /* Wrapper screen owning the textarea + eye-btn so they cascade-delete
+   * with the screen on teardown (ui_text_input_destroy only kills the
+   * keyboard + input_group). Without this container the textarea kept
+   * its parent — whichever screen was active at create time — and
+   * stayed rendered on top of the home menu after the success dialog. */
+  lv_obj_t *screen;
+} id_prompt_ctx_t;
+
+static id_prompt_ctx_t *g_id_prompt_ctx = NULL;
+
+static void id_prompt_ready_cb(lv_event_t *e) {
+  (void)e;
+  if (!g_id_prompt_ctx)
+    return;
+  const char *text = lv_textarea_get_text(g_id_prompt_ctx->input.textarea);
+  if (!text || strlen(text) == 0) {
+    dialog_show_error("Please enter a name", NULL, 2000);
+    return;
+  }
+
+  char id_copy[REGISTRY_ID_MAX_LEN];
+  strncpy(id_copy, text, sizeof(id_copy) - 1);
+  id_copy[sizeof(id_copy) - 1] = '\0';
+
+  void (*proceed)(const char *, storage_location_t, void *) =
+      g_id_prompt_ctx->proceed;
+  ui_text_input_destroy(&g_id_prompt_ctx->input);
+  if (g_id_prompt_ctx->screen) {
+    lv_obj_del(g_id_prompt_ctx->screen);
+    g_id_prompt_ctx->screen = NULL;
+  }
+  free(g_id_prompt_ctx);
+  g_id_prompt_ctx = NULL;
+
+  proceed(id_copy, STORAGE_FLASH, NULL);
+}
+
+static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
+                                                      storage_location_t loc,
+                                                      void *user_data),
+                                      void *user_data) {
+  (void)user_data;
+  id_prompt_ctx_t *ctx = malloc(sizeof(id_prompt_ctx_t));
+  if (!ctx) {
+    proceed(NULL, STORAGE_FLASH, NULL);
+    return;
+  }
+  ctx->proceed = proceed;
+  memset(&ctx->input, 0, sizeof(ctx->input));
+  ctx->screen = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ctx->screen, LV_PCT(100), LV_PCT(100));
+  theme_apply_screen(ctx->screen);
+  lv_obj_clear_flag(ctx->screen, LV_OBJ_FLAG_SCROLLABLE);
+  g_id_prompt_ctx = ctx;
+  ui_text_input_create(&ctx->input, ctx->screen, "Descriptor name", false,
+                       id_prompt_ready_cb);
+}
+
+// UI confirmation wrapper: validator's confirm_cb fires on danger-style
+// warnings (e.g. purpose/script binding mismatch) — render as overlay danger
+// confirm.
 static void descriptor_confirm_wrapper(const char *message,
                                        void (*proceed)(bool confirmed,
                                                        void *user_data)) {
-  dialog_show_confirm(message, proceed, NULL, DIALOG_STYLE_FULLSCREEN);
+  dialog_show_danger_confirm(message, proceed, NULL, DIALOG_STYLE_OVERLAY);
 }
 
 // Context for descriptor info confirmation dialog
@@ -357,7 +451,8 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
     char *unambiguous = descriptor_to_unambiguous(to_process);
     descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                  validation_cb, descriptor_confirm_wrapper,
-                                 descriptor_info_confirm_wrapper, user_data);
+                                 descriptor_info_confirm_wrapper,
+                                 descriptor_id_loc_wrapper, user_data);
     free(unambiguous);
     free(converted);
     free(descriptor_str);
@@ -383,7 +478,8 @@ void descriptor_loader_process_string(const char *descriptor_str,
   char *unambiguous = descriptor_to_unambiguous(to_process);
   descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                validation_cb, descriptor_confirm_wrapper,
-                               descriptor_info_confirm_wrapper, user_data);
+                               descriptor_info_confirm_wrapper,
+                               descriptor_id_loc_wrapper, user_data);
   free(unambiguous);
   free(converted);
 }

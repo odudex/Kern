@@ -12,7 +12,7 @@
 #include "ui/assets/kern_logo_lvgl.h"
 #include "core/settings.h"
 #include "core/pin.h"
-#include "core/session.h"
+#include "utils/session.h"
 #include "pages/pin/pin_page.h"
 #include "pages/login/login.h"
 #include "ui/nav.h"
@@ -22,6 +22,7 @@
 #include <nvs_flash.h>
 #include <esp_err.h>
 #include "sim_video.h"
+#include "video/video.h"
 #include "sim_nvs.h"
 #include "sim_sdcard.h"
 #include <bsp/pmic.h>
@@ -242,6 +243,12 @@ int main(int argc, char *argv[]) {
 
     /* Initialize PMIC (simulated battery on wave_35; no-op on wave_4b) */
     bsp_pmic_init();
+
+    esp_err_t video_ret = app_video_init_once(NULL);
+    if (video_ret != ESP_OK) {
+        ESP_LOGW("SIM_MAIN", "Video pipeline init failed: %s",
+                 esp_err_to_name(video_ret));
+    }
 
     /* -----------------------------------------------------------------------
      * Show animated Kern logo splash screen

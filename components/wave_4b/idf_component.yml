@@ -3,7 +3,7 @@ dependencies:
     version: '>=5.4'
   esp_lcd_touch_gt911: ^1
   espressif/esp_lvgl_adapter:
-    version: '*'
+    version: '==0.4.2'
     pre_release: true
     public: true
   lvgl/lvgl: '>=8,<10'

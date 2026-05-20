@@ -12,14 +12,34 @@ static void battery_update(lv_obj_t *label) {
   bsp_pmic_chg_t chg = BSP_PMIC_CHG_DISCHARGING;
   bsp_pmic_get_charge_status(&chg);
 
+  const char *battery_icon;
+  lv_color_t color;
+  if (pct >= 76) {
+    battery_icon = LV_SYMBOL_BATTERY_FULL;
+    color = yes_color();
+  } else if (pct >= 40) {
+    battery_icon = LV_SYMBOL_BATTERY_3;
+    color = main_color();
+  } else if (pct >= 20) {
+    battery_icon = LV_SYMBOL_BATTERY_2;
+    color = highlight_color();
+  } else if (pct >= 5) {
+    battery_icon = LV_SYMBOL_BATTERY_1;
+    color = error_color();
+  } else {
+    battery_icon = LV_SYMBOL_BATTERY_EMPTY;
+    color = error_color();
+  }
+
   char buf[16];
   if (chg == BSP_PMIC_CHG_CHARGING) {
-    snprintf(buf, sizeof(buf), "%u%% " LV_SYMBOL_CHARGE, pct);
+    snprintf(buf, sizeof(buf), "%s%s", battery_icon, LV_SYMBOL_CHARGE);
+    color = yes_color();
+    lv_label_set_text(label, buf);
   } else {
-    snprintf(buf, sizeof(buf), "%u%%", pct);
+    lv_label_set_text(label, battery_icon);
   }
-  lv_label_set_text(label, buf);
-  lv_obj_set_style_text_color(label, pct > 20 ? yes_color() : error_color(), 0);
+  lv_obj_set_style_text_color(label, color, 0);
 }
 
 static void battery_timer_cb(lv_timer_t *t) {

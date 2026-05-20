@@ -2,6 +2,7 @@
 build/
 build_wave_35/
 build_wave_4b/
+build_wave_43/
 build_wave_5/
 sdkconfig
 sdkconfig.old
@@ -20,6 +21,13 @@ components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/bbqr/test/test_miniz
 main/core/test/test_derivation_path
+main/core/test/test_ss_whitelist_parse
+main/core/test/test_ss_whitelist_is_whitelisted
+main/core/test/test_ss_whitelist_regen
+main/core/test/test_purpose_binding
+main/core/test/test_registry_match
+main/core/test/test_registry_parse
+main/core/test/test_psbt_classify
 main/core/test/combined.o
 main/core/test/libwally.a
 
@@ -27,6 +35,10 @@ main/core/test/libwally.a
 .vscode/
 .cache/
 .cm/logs/
+
+# Python
+__pycache__/
+*.py[cod]
 
 # SquareLine Studio
 **/squareline/backup/

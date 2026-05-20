@@ -1,5 +1,4 @@
 #include "core/pin.h"
-#include "core/session.h"
 #include "core/settings.h"
 #include "core/wallet.h"
 #include "pages/login/login.h"
@@ -8,6 +7,8 @@
 #include "ui/assets/kern_logo_lvgl.h"
 #include "ui/theme.h"
 #include "utils/bip39_filter.h"
+#include "utils/session.h"
+#include "video.h"
 #include <bsp/display.h>
 #include <bsp/esp-bsp.h>
 #include <bsp/pmic.h>
@@ -64,6 +65,13 @@ void app_main(void) {
 
   bsp_display_start();
   ESP_LOGI(TAG, "Display initialized successfully");
+
+  esp_err_t video_ret = app_video_init_once(bsp_i2c_get_handle());
+  if (video_ret == ESP_OK) {
+    ESP_LOGI(TAG, "Video pipeline initialized");
+  } else {
+    ESP_LOGW(TAG, "Video pipeline init failed: %s", esp_err_to_name(video_ret));
+  }
 
   // Paint screen black early to overwrite stale framebuffer on warm reset.
   bsp_display_lock(0);

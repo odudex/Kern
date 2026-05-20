@@ -1,0 +1,47 @@
+name: Test All Builds
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.1
+    strategy:
+      fail-fast: true
+      matrix:
+        board: [wave_4b, wave_35, wave_5, wave_43]
+    name: build (${{ matrix.board }})
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    - name: Build (${{ matrix.board }})
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        . $IDF_PATH/export.sh
+        idf.py -B build_${{ matrix.board }} \
+               -D SDKCONFIG=build_${{ matrix.board }}/sdkconfig \
+               -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.${{ matrix.board }}' \
+               build all size-components size
+    - name: Stage flashable firmware (${{ matrix.board }})
+      run: |
+        STAGE="firmware_${{ matrix.board }}"
+        BUILD="build_${{ matrix.board }}"
+        mkdir -p "$STAGE"
+        cp "$BUILD"/bootloader/bootloader.bin "$STAGE"/
+        cp "$BUILD"/partition_table/partition-table.bin "$STAGE"/
+        cp "$BUILD"/flasher_args.json "$STAGE"/
+        cp "$BUILD"/*.bin "$STAGE"/ 2>/dev/null || true
+        cp "$BUILD"/flash_args "$STAGE"/ 2>/dev/null || true
+        cp "$BUILD"/*.elf "$STAGE"/ 2>/dev/null || true
+        cp "$BUILD"/*.map "$STAGE"/ 2>/dev/null || true
+    - name: Upload firmware artifact (${{ matrix.board }})
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-${{ matrix.board }}
+        path: firmware_${{ matrix.board }}/
+        if-no-files-found: error
+        retention-days: 30

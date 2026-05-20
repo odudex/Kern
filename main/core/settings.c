@@ -8,10 +8,12 @@
 static const char *TAG = "SETTINGS";
 static const char *NVS_NAMESPACE = "settings";
 static const char *KEY_DEFAULT_NET = "def_net";
-static const char *KEY_DEFAULT_POL = "def_pol";
 static const char *KEY_BRIGHTNESS = "bright";
 static const char *KEY_AE_TARGET = "ae_tgt";
 static const char *KEY_FOCUS_POS = "focus";
+static const char *KEY_PERMISSIVE_SIGNING = "perm_sign";
+static const char *KEY_PARTIAL_SIGNING = "part_sign";
+static const char *KEY_EXPECTED_OWNED_SIGNING = "exp_own_sign";
 
 static nvs_handle_t settings_nvs;
 static bool initialized = false;
@@ -23,6 +25,18 @@ esp_err_t settings_init(void) {
     return err;
   }
   initialized = true;
+
+  /* Drop legacy "def_pol" (default wallet policy) key — superseded by the
+   * per-state permissive/partial/expected-owned toggles. Inert if absent. */
+  esp_err_t mig = nvs_erase_key(settings_nvs, "def_pol");
+  if (mig == ESP_OK) {
+    ESP_LOGI(TAG, "migrated: erased legacy 'def_pol' key");
+    nvs_commit(settings_nvs);
+  } else if (mig != ESP_ERR_NVS_NOT_FOUND) {
+    ESP_LOGW(TAG, "migration: erase 'def_pol' returned %s",
+             esp_err_to_name(mig));
+  }
+
   return ESP_OK;
 }
 
@@ -40,25 +54,6 @@ esp_err_t settings_set_default_network(wallet_network_t network) {
   if (!initialized)
     return ESP_ERR_INVALID_STATE;
   esp_err_t err = nvs_set_u8(settings_nvs, KEY_DEFAULT_NET, (uint8_t)network);
-  if (err != ESP_OK)
-    return err;
-  return nvs_commit(settings_nvs);
-}
-
-wallet_policy_t settings_get_default_policy(void) {
-  if (!initialized)
-    return WALLET_POLICY_SINGLESIG;
-  uint8_t val = 0;
-  if (nvs_get_u8(settings_nvs, KEY_DEFAULT_POL, &val) != ESP_OK)
-    return WALLET_POLICY_SINGLESIG;
-  return (val <= WALLET_POLICY_MULTISIG) ? (wallet_policy_t)val
-                                         : WALLET_POLICY_SINGLESIG;
-}
-
-esp_err_t settings_set_default_policy(wallet_policy_t policy) {
-  if (!initialized)
-    return ESP_ERR_INVALID_STATE;
-  esp_err_t err = nvs_set_u8(settings_nvs, KEY_DEFAULT_POL, (uint8_t)policy);
   if (err != ESP_OK)
     return err;
   return nvs_commit(settings_nvs);
@@ -122,6 +117,63 @@ esp_err_t settings_set_focus_position(uint16_t position) {
   if (position > FOCUS_POSITION_MAX)
     position = FOCUS_POSITION_MAX;
   esp_err_t err = nvs_set_u16(settings_nvs, KEY_FOCUS_POS, position);
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
+}
+
+bool settings_get_permissive_signing(void) {
+  if (!initialized)
+    return false;
+  uint8_t val = 0;
+  if (nvs_get_u8(settings_nvs, KEY_PERMISSIVE_SIGNING, &val) != ESP_OK)
+    return false;
+  return val ? true : false;
+}
+
+esp_err_t settings_set_permissive_signing(bool permissive) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  uint8_t val = permissive ? 1 : 0;
+  esp_err_t err = nvs_set_u8(settings_nvs, KEY_PERMISSIVE_SIGNING, val);
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
+}
+
+bool settings_get_partial_signing(void) {
+  if (!initialized)
+    return false;
+  uint8_t val = 0;
+  if (nvs_get_u8(settings_nvs, KEY_PARTIAL_SIGNING, &val) != ESP_OK)
+    return false;
+  return val ? true : false;
+}
+
+esp_err_t settings_set_partial_signing(bool partial) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  uint8_t val = partial ? 1 : 0;
+  esp_err_t err = nvs_set_u8(settings_nvs, KEY_PARTIAL_SIGNING, val);
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
+}
+
+bool settings_get_expected_owned_signing(void) {
+  if (!initialized)
+    return false;
+  uint8_t val = 0;
+  if (nvs_get_u8(settings_nvs, KEY_EXPECTED_OWNED_SIGNING, &val) != ESP_OK)
+    return false;
+  return val ? true : false;
+}
+
+esp_err_t settings_set_expected_owned_signing(bool enabled) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  uint8_t val = enabled ? 1 : 0;
+  esp_err_t err = nvs_set_u8(settings_nvs, KEY_EXPECTED_OWNED_SIGNING, val);
   if (err != ESP_OK)
     return err;
   return nvs_commit(settings_nvs);

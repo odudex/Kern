@@ -159,6 +159,6 @@ esp_err_t bsp_i2c_deinit(void) {
 
 i2c_master_bus_handle_t bsp_i2c_get_handle(void) {
     /* Return a non-NULL dummy handle so callers (scanner, capture_entropy)
-     * don't bail out.  app_video_main() ignores the handle in the simulator. */
+     * don't bail out. app_video_init_once() ignores it in the simulator. */
     return (i2c_master_bus_handle_t)1;
 }

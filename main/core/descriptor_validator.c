@@ -2,6 +2,7 @@
 #include "key.h"
 #include "wallet.h"
 #include <esp_log.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,24 +11,51 @@
 #include <wally_core.h>
 #include <wally_descriptor.h>
 
+#include "descriptor_checksum.h"
+#include "registry.h"
+#include "ss_whitelist.h"
+#include "storage.h"
+
 static const char *TAG = "descriptor_validator";
 
+/* Keep the persistent-registration path dormant until descriptor backups can be
+ * encrypted to the descriptor's own public keys, per the Bitcoin Encrypted
+ * Backup proposal in bitcoin/bips#1951. */
+#define DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED 0
+
 typedef struct {
+  uint32_t generation; /* set once at create; see pending_generation below */
   char *descriptor_str;
   validation_complete_cb callback;
   validation_confirm_cb confirm_cb;
   validation_info_confirm_cb info_confirm_cb;
+  validation_id_loc_cb id_loc_cb;
   void *user_data;
-  wallet_network_t target_network;
-  wallet_policy_t target_policy;
-  uint32_t target_account;
-  bool needs_network_change;
-  bool needs_policy_change;
-  bool needs_account_change;
   descriptor_info_t info;
 } validation_context_t;
 
 static validation_context_t *current_ctx = NULL;
+
+/* Monotonic generation assigned to each validate_and_load call. If a previous
+ * validation is interrupted (session timeout, navigation away from a pending
+ * dialog) and the user starts a new one, the old static callbacks may still
+ * fire after current_ctx has been replaced. Each schedule point captures the
+ * live ctx's generation into pending_generation; the callback compares it on
+ * fire and no-ops on mismatch, preventing the old flow from corrupting the
+ * new one (or completing it with the wrong result code). */
+static uint32_t next_generation = 1;
+static uint32_t pending_generation = 0;
+
+/* Last duplicate descriptor ID stashed by descriptor_validate_and_load before
+ * delivering VALIDATION_DUPLICATE. The page layer fetches this via
+ * descriptor_validator_get_duplicate_id() and renders the toast itself, so
+ * core stays UI-free. Cleared at the start of each validate_and_load call. */
+static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
+
+static bool ctx_callback_is_live(void) {
+  return current_ctx && pending_generation != 0 &&
+         current_ctx->generation == pending_generation;
+}
 
 static void cleanup_context(void) {
   if (current_ctx) {
@@ -37,6 +65,7 @@ static void cleanup_context(void) {
     free(current_ctx);
     current_ctx = NULL;
   }
+  pending_generation = 0;
 }
 
 static void complete_validation(descriptor_validation_result_t result) {
@@ -75,71 +104,6 @@ static int find_matching_key_index(struct wally_descriptor *descriptor) {
   }
 
   return -1;
-}
-
-// Parse origin path like "48'/0'/0'/2'" into network, policy, account
-static bool parse_origin_path(const char *path, wallet_network_t *network_out,
-                              wallet_policy_t *policy_out,
-                              uint32_t *account_out) {
-  if (!path || !network_out || !policy_out || !account_out) {
-    return false;
-  }
-
-  // Path format: "purpose'/coin'/account'[/script']"
-  // BIP84 (singlesig): 84'/coin'/account'
-  // BIP48 (multisig): 48'/coin'/account'/script'
-  uint32_t purpose = 0, coin = 0, account = 0;
-  const char *p = path;
-  const char *start;
-
-  // Parse purpose
-  start = p;
-  while (*p >= '0' && *p <= '9') {
-    purpose = purpose * 10 + (*p - '0');
-    p++;
-  }
-  if (p == start)
-    return false;
-  if (*p == '\'' || *p == 'h')
-    p++;
-  if (*p == '/')
-    p++;
-
-  // Parse coin type
-  start = p;
-  while (*p >= '0' && *p <= '9') {
-    coin = coin * 10 + (*p - '0');
-    p++;
-  }
-  if (p == start)
-    return false;
-  if (*p == '\'' || *p == 'h')
-    p++;
-  if (*p == '/')
-    p++;
-
-  // Parse account
-  start = p;
-  while (*p >= '0' && *p <= '9') {
-    account = account * 10 + (*p - '0');
-    p++;
-  }
-  if (p == start)
-    return false;
-
-  // Determine network from coin type
-  *network_out = (coin == 0) ? WALLET_NETWORK_MAINNET : WALLET_NETWORK_TESTNET;
-
-  // Determine policy from purpose
-  if (purpose == 48) {
-    *policy_out = WALLET_POLICY_MULTISIG;
-  } else {
-    *policy_out = WALLET_POLICY_SINGLESIG;
-  }
-
-  *account_out = account;
-
-  return true;
 }
 
 // Extract xpub from key string
@@ -259,22 +223,139 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   return true;
 }
 
+static void id_loc_proceed(const char *id, storage_location_t loc,
+                           void *user_data) {
+  (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
+  if (!id || strlen(id) == 0) {
+    complete_validation(VALIDATION_USER_DECLINED);
+    return;
+  }
+  if (!registry_add_from_string(id, current_ctx->descriptor_str, loc, true)) {
+    ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+  complete_validation(VALIDATION_SUCCESS);
+}
+
+static bool descriptor_checksum_for_session_id(const char *descriptor_str,
+                                               char out[9]) {
+  if (!descriptor_str || !out)
+    return false;
+
+  uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                               ? WALLY_NETWORK_BITCOIN_MAINNET
+                               : WALLY_NETWORK_BITCOIN_TESTNET;
+  struct wally_descriptor *desc = NULL;
+  if (wally_descriptor_parse(descriptor_str, NULL, wally_network, 0, &desc) !=
+      WALLY_OK) {
+    return false;
+  }
+
+  bool ok = descriptor_checksum_from_descriptor(desc, out);
+  wally_descriptor_free(desc);
+  if (!ok)
+    return false;
+  return true;
+}
+
+static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
+  char checksum[9];
+  if (!descriptor_checksum_for_session_id(current_ctx->descriptor_str,
+                                          checksum))
+    return false;
+
+  char base[REGISTRY_ID_MAX_LEN];
+  snprintf(base, sizeof(base), "desc_%s", checksum);
+
+  for (size_t i = 0; i < REGISTRY_MAX_ENTRIES; i++) {
+    if (i == 0)
+      snprintf(out, REGISTRY_ID_MAX_LEN, "%s", base);
+    else
+      snprintf(out, REGISTRY_ID_MAX_LEN, "%s_%zu", base, i + 1);
+
+    if (!registry_find_by_id(out))
+      return true;
+  }
+
+  return false;
+}
+
+static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
+  if (!out)
+    return;
+
+  if (current_ctx->info.is_multisig) {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
+             current_ctx->info.threshold, current_ctx->info.num_keys);
+  } else {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig");
+  }
+}
+
+static void session_register_current_descriptor(void) {
+  char id[REGISTRY_ID_MAX_LEN];
+  if (!build_session_descriptor_id(id)) {
+    ESP_LOGE(TAG, "Failed to build session descriptor id");
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+
+  if (!registry_add_from_string(id, current_ctx->descriptor_str, STORAGE_FLASH,
+                                false)) {
+    ESP_LOGE(TAG, "Failed to load session descriptor '%s'", id);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+
+  char label[REGISTRY_LABEL_MAX_LEN];
+  build_session_descriptor_label(label);
+  registry_set_label(id, label);
+
+  complete_validation(VALIDATION_SUCCESS);
+}
+
 // Callback after user confirms/declines descriptor info
 static void info_confirm_proceed(bool confirmed, void *user_data) {
   (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
 
   if (!confirmed) {
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
 
-  if (!wallet_load_descriptor(current_ctx->descriptor_str)) {
-    ESP_LOGE(TAG, "Failed to load descriptor");
-    complete_validation(VALIDATION_INTERNAL_ERROR);
+  /* Descriptor registration is disabled: load into the in-memory session
+   * registry only. Keep id_loc_cb wired for the future registration flow, but
+   * skip it until encrypted descriptor backups are ready. */
+  if (DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED && current_ctx->id_loc_cb) {
+    pending_generation = current_ctx->generation;
+    current_ctx->id_loc_cb(id_loc_proceed, NULL);
+  } else {
+    session_register_current_descriptor();
+  }
+}
+
+static void psb_warn_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
+  if (!confirmed) {
+    complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
-
-  complete_validation(VALIDATION_SUCCESS);
+  if (current_ctx->info_confirm_cb) {
+    pending_generation = current_ctx->generation;
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+  } else {
+    info_confirm_proceed(true, NULL);
+  }
 }
 
 // Re-parse descriptor, verify xpub matches wallet, extract info, and show it.
@@ -314,8 +395,21 @@ static void verify_xpub_and_show_info(void) {
     return;
   }
 
+  char *origin_path_str = NULL;
+  char full_path[72];
+  if (wally_descriptor_get_key_origin_path_str(descriptor, (uint32_t)key_index,
+                                               &origin_path_str) != WALLY_OK ||
+      !origin_path_str) {
+    free(descriptor_xpub);
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
+  snprintf(full_path, sizeof(full_path), "m/%s", origin_path_str);
+  wally_free_string(origin_path_str);
+
   char *wallet_xpub = NULL;
-  if (!wallet_get_account_xpub(&wallet_xpub)) {
+  if (!key_get_xpub(full_path, &wallet_xpub)) {
     free(descriptor_xpub);
     wally_descriptor_free(descriptor);
     complete_validation(VALIDATION_INTERNAL_ERROR);
@@ -333,161 +427,75 @@ static void verify_xpub_and_show_info(void) {
     return;
   }
 
-  // Extract descriptor info before freeing
+  // Run soft purpose-script binding check before freeing the descriptor.
+  psb_result_t psb_result = purpose_script_binding_check_soft(descriptor);
+
+  // Build the WARN message while the descriptor is still available.
+  char psb_msg[128] = {0};
+  if (psb_result == PSB_WARN) {
+    // Determine outer script name from canonical form.
+    const char *script_name = "unknown";
+    char *canon = NULL;
+    if (wally_descriptor_canonicalize(
+            descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM, &canon) == WALLY_OK &&
+        canon) {
+      if (strncmp(canon, "sh(wpkh(", 8) == 0)
+        script_name = "sh(wpkh)";
+      else if (strncmp(canon, "sh(wsh(", 7) == 0)
+        script_name = "sh(wsh)";
+      else if (strncmp(canon, "wpkh(", 5) == 0)
+        script_name = "wpkh";
+      else if (strncmp(canon, "wsh(", 4) == 0)
+        script_name = "wsh";
+      else if (strncmp(canon, "pkh(", 4) == 0)
+        script_name = "pkh";
+      else if (strncmp(canon, "tr(", 3) == 0)
+        script_name = "tr";
+      wally_free_string(canon);
+    }
+    // Extract purpose number from key[0] origin path.
+    uint32_t purpose = 0;
+    char *path = NULL;
+    if (wally_descriptor_get_key_origin_path_str(descriptor, 0, &path) ==
+            WALLY_OK &&
+        path && path[0] != '\0') {
+      char *endp = NULL;
+      unsigned long ul = strtoul(path, &endp, 10);
+      if (endp != path && ul <= 0x7FFFFFFFul)
+        purpose = (uint32_t)ul;
+      wally_free_string(path);
+    }
+    snprintf(psb_msg, sizeof(psb_msg),
+             "This descriptor uses a purpose-%" PRIu32 " origin\n"
+             "wrapped in a %s script.\n"
+             "This is unusual. Register anyway?",
+             purpose, script_name);
+  }
+
+  // Extract descriptor info before freeing.
   extract_descriptor_info(descriptor, current_ctx->descriptor_str,
                           &current_ctx->info);
   wally_descriptor_free(descriptor);
 
-  // Show info confirmation if callback is set, otherwise auto-confirm
+  // If purpose-script binding mismatch: gate behind a WARN confirmation
+  // rendered by the page layer.
+  if (psb_result == PSB_WARN) {
+    if (current_ctx->confirm_cb) {
+      pending_generation = current_ctx->generation;
+      current_ctx->confirm_cb(psb_msg, psb_warn_confirm_cb);
+    } else {
+      // No way to prompt the user: treat as declined.
+      complete_validation(VALIDATION_USER_DECLINED);
+    }
+    return;
+  }
+
+  // PSB_OK or PSB_NA: proceed to info confirmation.
   if (current_ctx->info_confirm_cb) {
+    pending_generation = current_ctx->generation;
     current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
   } else {
     info_confirm_proceed(true, NULL);
-  }
-}
-
-// Apply settings changes and verify xpub
-static void apply_changes_and_verify(void) {
-  if (!current_ctx) {
-    return;
-  }
-
-  // Get current mnemonic for reinit
-  char *mnemonic = NULL;
-  if (!key_get_mnemonic(&mnemonic)) {
-    ESP_LOGE(TAG, "Failed to get mnemonic");
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
-  }
-
-  bool is_testnet = (current_ctx->target_network == WALLET_NETWORK_TESTNET);
-
-  // Perform wallet reinit with new settings
-  wallet_cleanup();
-  wallet_set_account(current_ctx->target_account);
-  wallet_set_policy(current_ctx->target_policy);
-
-  // Reload key - passphrase is already applied in current key
-  if (!key_load_from_mnemonic(mnemonic, NULL, is_testnet)) {
-    ESP_LOGE(TAG, "Failed to reload key");
-    free(mnemonic);
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
-  }
-  free(mnemonic);
-
-  if (!wallet_init(current_ctx->target_network)) {
-    ESP_LOGE(TAG, "Failed to reinit wallet");
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
-  }
-
-  verify_xpub_and_show_info();
-}
-
-// Callback for attribute change confirmation dialog
-static void attribute_change_confirm_cb(bool confirmed, void *user_data) {
-  (void)user_data;
-
-  if (!confirmed) {
-    complete_validation(VALIDATION_USER_DECLINED);
-    return;
-  }
-
-  apply_changes_and_verify();
-}
-
-// Stage 2 & 3: Check attributes and verify xpub
-static void check_attributes_and_verify(struct wally_descriptor *descriptor,
-                                        int key_index) {
-  // Get origin path for our key
-  char *origin_path = NULL;
-  if (wally_descriptor_get_key_origin_path_str(descriptor, key_index,
-                                               &origin_path) != WALLY_OK) {
-    ESP_LOGE(TAG, "Failed to get key origin path");
-    complete_validation(VALIDATION_PARSE_ERROR);
-    return;
-  }
-
-  // Parse the origin path to extract attributes
-  wallet_network_t desc_network;
-  wallet_policy_t desc_policy;
-  uint32_t desc_account;
-
-  if (!parse_origin_path(origin_path, &desc_network, &desc_policy,
-                         &desc_account)) {
-    ESP_LOGE(TAG, "Failed to parse origin path: %s", origin_path);
-    wally_free_string(origin_path);
-    complete_validation(VALIDATION_PARSE_ERROR);
-    return;
-  }
-  wally_free_string(origin_path);
-
-  // Get current wallet attributes
-  wallet_network_t wallet_network = wallet_get_network();
-  wallet_policy_t wallet_policy = wallet_get_policy();
-  uint32_t wallet_account = wallet_get_account();
-
-  // Check for mismatches
-  bool network_mismatch = (desc_network != wallet_network);
-  bool policy_mismatch = (desc_policy != wallet_policy);
-  bool account_mismatch = (desc_account != wallet_account);
-
-  if (!network_mismatch && !policy_mismatch && !account_mismatch) {
-    // No changes needed - verify xpub directly
-    verify_xpub_and_show_info();
-    return;
-  }
-
-  // Store target attributes for later application
-  current_ctx->target_network = desc_network;
-  current_ctx->target_policy = desc_policy;
-  current_ctx->target_account = desc_account;
-  current_ctx->needs_network_change = network_mismatch;
-  current_ctx->needs_policy_change = policy_mismatch;
-  current_ctx->needs_account_change = account_mismatch;
-
-  // Build confirmation message
-  char message[512];
-  int offset = 0;
-  offset += snprintf(message + offset, sizeof(message) - offset,
-                     "Descriptor requires different settings:\n\n");
-
-  if (network_mismatch) {
-    const char *current_net =
-        (wallet_network == WALLET_NETWORK_MAINNET) ? "Mainnet" : "Testnet";
-    const char *target_net =
-        (desc_network == WALLET_NETWORK_MAINNET) ? "Mainnet" : "Testnet";
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "#FFFFFF   Network: %s -> ##FF6600 %s#\n", current_net,
-                       target_net);
-  }
-
-  if (policy_mismatch) {
-    const char *current_pol =
-        (wallet_policy == WALLET_POLICY_SINGLESIG) ? "Single-sig" : "Multisig";
-    const char *target_pol =
-        (desc_policy == WALLET_POLICY_SINGLESIG) ? "Single-sig" : "Multisig";
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "#FFFFFF   Policy: %s -> ##FF6600 %s#\n", current_pol,
-                       target_pol);
-  }
-
-  if (account_mismatch) {
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "#FFFFFF   Account: %u -> ##FF6600 %u#\n",
-                       wallet_account, desc_account);
-  }
-
-  snprintf(message + offset, sizeof(message) - offset,
-           "\nApply these changes?");
-
-  // Request confirmation via callback (UI-agnostic)
-  if (current_ctx->confirm_cb) {
-    current_ctx->confirm_cb(message, attribute_change_confirm_cb);
-  } else {
-    // No confirmation callback provided, decline by default
-    complete_validation(VALIDATION_USER_DECLINED);
   }
 }
 
@@ -495,9 +503,11 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
                                   validation_info_confirm_cb info_confirm_cb,
+                                  validation_id_loc_cb id_loc_cb,
                                   void *user_data) {
   // Clean up any previous context
   cleanup_context();
+  last_duplicate_id[0] = '\0';
 
   if (!descriptor_str || !callback) {
     if (callback) {
@@ -511,6 +521,11 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
+  if (descriptor_text_has_uppercase_hardened(descriptor_str)) {
+    callback(VALIDATION_INVALID_HARDENED_NOTATION, user_data);
+    return;
+  }
+
   // Allocate context
   current_ctx = malloc(sizeof(validation_context_t));
   if (!current_ctx) {
@@ -518,6 +533,9 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
   memset(current_ctx, 0, sizeof(validation_context_t));
+  current_ctx->generation = next_generation++;
+  if (next_generation == 0) /* avoid the 0 sentinel after wrap */
+    next_generation = 1;
 
   current_ctx->descriptor_str = strdup(descriptor_str);
   if (!current_ctx->descriptor_str) {
@@ -529,9 +547,12 @@ void descriptor_validate_and_load(const char *descriptor_str,
   current_ctx->callback = callback;
   current_ctx->confirm_cb = confirm_cb;
   current_ctx->info_confirm_cb = info_confirm_cb;
+  current_ctx->id_loc_cb = id_loc_cb;
   current_ctx->user_data = user_data;
 
-  // Parse descriptor
+  // Parse on the wallet's network; if that fails, probe the other
+  // network so we can return NETWORK_MISMATCH instead of a generic
+  // parse error.
   uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
                                ? WALLY_NETWORK_BITCOIN_MAINNET
                                : WALLY_NETWORK_BITCOIN_TESTNET;
@@ -540,16 +561,17 @@ void descriptor_validate_and_load(const char *descriptor_str,
   int ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
                                    &descriptor);
 
-  // If parsing fails with current network, try the other network
   if (ret != WALLY_OK) {
-    wally_network = (wally_network == WALLY_NETWORK_BITCOIN_MAINNET)
-                        ? WALLY_NETWORK_BITCOIN_TESTNET
-                        : WALLY_NETWORK_BITCOIN_MAINNET;
-    ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
-                                 &descriptor);
-  }
-
-  if (ret != WALLY_OK) {
+    uint32_t other_network = (wally_network == WALLY_NETWORK_BITCOIN_MAINNET)
+                                 ? WALLY_NETWORK_BITCOIN_TESTNET
+                                 : WALLY_NETWORK_BITCOIN_MAINNET;
+    struct wally_descriptor *other_desc = NULL;
+    if (wally_descriptor_parse(descriptor_str, NULL, other_network, 0,
+                               &other_desc) == WALLY_OK) {
+      wally_descriptor_free(other_desc);
+      complete_validation(VALIDATION_NETWORK_MISMATCH);
+      return;
+    }
     ESP_LOGE(TAG, "Failed to parse descriptor: %d", ret);
     complete_validation(VALIDATION_PARSE_ERROR);
     return;
@@ -564,7 +586,29 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
-  // Stage 2 & 3: Check attributes and verify xpub
-  check_attributes_and_verify(descriptor, key_index);
   wally_descriptor_free(descriptor);
+
+  /* Stage 1.5: dedup against the current in-memory session only. Descriptor
+   * files on flash/SD are explicit backups/import sources and must not behave
+   * as registered descriptors while persistent registration is disabled. */
+  char existing_id[REGISTRY_ID_MAX_LEN];
+  if (registry_session_has_duplicate(current_ctx->descriptor_str, existing_id,
+                                     sizeof(existing_id))) {
+    strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
+    last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
+    complete_validation(VALIDATION_DUPLICATE);
+    return;
+  }
+
+  verify_xpub_and_show_info();
+}
+
+bool descriptor_validator_get_duplicate_id(char *out, size_t out_len) {
+  if (!out || out_len == 0 || last_duplicate_id[0] == '\0')
+    return false;
+  if (strlen(last_duplicate_id) >= out_len)
+    return false;
+  strncpy(out, last_duplicate_id, out_len);
+  out[out_len - 1] = '\0';
+  return true;
 }

@@ -25,6 +25,7 @@ DIRS=(
     "$REPO_ROOT/components/video"
     "$REPO_ROOT/components/wave_4b"
     "$REPO_ROOT/components/wave_35"
+    "$REPO_ROOT/components/wave_43"
 )
 
 if $CHECK_MODE; then
@@ -46,7 +47,9 @@ for dir in "${DIRS[@]}"; do
         if ! clang-format $FORMAT_ARGS "$file"; then
             FAILED=true
         fi
-    done < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/build/*" -print0)
+    done < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/build/*" \
+        -not -name "stb_image.h" \
+        -print0)
 done
 
 if $CHECK_MODE && $FAILED; then

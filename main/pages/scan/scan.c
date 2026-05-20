@@ -9,6 +9,8 @@
 #include "../../core/key.h"
 #include "../../core/message_sign.h"
 #include "../../core/psbt.h"
+#include "../../core/registry.h"
+#include "../../core/settings.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -40,6 +42,11 @@
 typedef enum {
   OUTPUT_TYPE_SELF_TRANSFER,
   OUTPUT_TYPE_CHANGE,
+  /* fp + derive verifies the spk on a non-standard path — factually ours */
+  OUTPUT_TYPE_OWNED_UNSAFE,
+  /* fp matches but derive doesn't reach the spk — harness state, not
+   * provably ours */
+  OUTPUT_TYPE_EXPECTED_OWNED,
   OUTPUT_TYPE_SPEND,
 } output_type_t;
 
@@ -49,13 +56,60 @@ typedef struct {
   uint64_t value;
   char *address;
   uint32_t address_index;
+  char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
 } classified_output_t;
+
+/* Input classification for the review screen. We only need a subset of
+ * the policy-gate state here — enough to render an "External inputs"
+ * warning section when the PSBT has any non-owned inputs and the user
+ * has Partial signing enabled. */
+typedef struct {
+  size_t index;
+  psbt_ownership_t ownership;
+  uint64_t value;
+  char *address; /* heap-allocated, may be NULL if spk can't be decoded */
+  /* Human-readable policy this input is signed under, e.g. "BIP84 (Native
+   * SegWit) acct 0" for whitelisted singlesig or the registered
+   * descriptor's id ("ms_2of2") for registry matches. Empty for inputs
+   * that aren't OWNED_SAFE — UNSAFE / EXPECTED_OWNED inputs surface the
+   * raw path in their own warning sections. */
+  char policy[64];
+} classified_input_t;
+
+static const char *ss_script_label(ss_script_type_t script) {
+  switch (script) {
+  case SS_SCRIPT_P2PKH:
+    return "Legacy";
+  case SS_SCRIPT_P2SH_P2WPKH:
+    return "Nested SegWit";
+  case SS_SCRIPT_P2WPKH:
+    return "Native SegWit";
+  case SS_SCRIPT_P2TR:
+    return "Taproot";
+  default:
+    return "Single-sig";
+  }
+}
+
+static void format_input_policy(const input_ownership_t *own, char *out,
+                                size_t out_size) {
+  out[0] = '\0';
+  if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE)
+    return;
+  if (own->claim.kind == CLAIM_WHITELIST) {
+    snprintf(out, out_size, "%s @ account %u",
+             ss_script_label(own->claim.whitelist.script),
+             (unsigned)own->claim.whitelist.account);
+  } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
+    const registry_entry_t *entry = own->claim.registry.entry;
+    snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
+  }
+}
 
 // UI components
 static lv_obj_t *scan_screen = NULL;
 static lv_obj_t *psbt_info_container = NULL;
 static sankey_diagram_t *tx_diagram = NULL;
-static ui_menu_t *multisig_menu = NULL;
 static void (*return_callback)(void) = NULL;
 static void (*saved_return_callback)(void) = NULL;
 
@@ -65,7 +119,6 @@ static char *psbt_base64 = NULL;
 static char *signed_psbt_base64 = NULL;
 static bool is_testnet = false;
 static int scanned_qr_format = FORMAT_NONE;
-static bool skip_verification = false;
 
 // Message signing data
 static parsed_sign_message_t current_message = {0};
@@ -81,20 +134,19 @@ static bool parse_and_display_psbt(const char *base64_data);
 static void cleanup_psbt_data(void);
 static bool create_psbt_info_display(void);
 static output_type_t classify_output(size_t output_index,
-                                     const struct wally_tx_output *tx_output,
-                                     const struct wally_tx *global_tx,
-                                     uint32_t *address_index_out);
+                                     uint32_t *address_index_out,
+                                     char *path_out, size_t path_out_size);
 static void sign_button_cb(lv_event_t *e);
 static void return_from_qr_viewer_cb(void);
 static bool check_psbt_mismatch(void);
 static void mismatch_dialog_cb(void *user_data);
-static void show_multisig_options_menu(void);
 static void return_from_descriptor_scanner_cb(void);
 static void create_message_sign_display(void);
 static void message_sign_button_cb(lv_event_t *e);
 static void handle_descriptor_content(const char *descriptor_str);
 static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
+static void descriptor_loaded_info_cb(void *user_data);
 
 // Format satoshis as Bitcoin with visual grouping: "1.00 000 000"
 static void format_btc(char *buf, size_t buf_size, uint64_t sats) {
@@ -171,45 +223,45 @@ static lv_obj_t *create_btc_value_row(lv_obj_t *parent, const char *prefix,
   return row;
 }
 
-// Classify output as self-transfer, change, or spend
+// Classify output as self-transfer, change, owned-unsafe, expected-owned,
+// or spend. For owned-unsafe and expected-owned, the path string is written
+// to path_out (truncated to path_out_size).
 static output_type_t classify_output(size_t output_index,
-                                     const struct wally_tx_output *tx_output,
-                                     const struct wally_tx *global_tx,
-                                     uint32_t *address_index_out) {
+                                     uint32_t *address_index_out,
+                                     char *path_out, size_t path_out_size) {
   bool is_change = false;
   uint32_t address_index = 0;
 
-  if (skip_verification) {
-    return OUTPUT_TYPE_SPEND;
-  }
+  output_ownership_t ownership =
+      psbt_classify_output(current_psbt, output_index, is_testnet);
 
-  if (psbt_is_multisig(current_psbt) && wallet_has_descriptor()) {
-    if (psbt_verify_output_with_descriptor(current_psbt, output_index,
-                                           global_tx, &is_change,
-                                           &address_index)) {
-      *address_index_out = address_index;
-      return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
+  switch (ownership.ownership) {
+  case PSBT_OWNERSHIP_OWNED_SAFE:
+    if (ownership.source.kind == CLAIM_WHITELIST) {
+      is_change = (ownership.source.whitelist.chain == 1);
+      address_index = ownership.source.whitelist.index;
+    } else {
+      is_change = (ownership.source.registry.multi_index == 1);
+      address_index = ownership.source.registry.child_num;
     }
+    *address_index_out = address_index;
+    return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
+
+  case PSBT_OWNERSHIP_OWNED_UNSAFE:
+  case PSBT_OWNERSHIP_EXPECTED_OWNED:
+    if (path_out && path_out_size > 0) {
+      path_out[0] = '\0';
+      psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
+                          path_out, path_out_size);
+    }
+    return ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE
+               ? OUTPUT_TYPE_OWNED_UNSAFE
+               : OUTPUT_TYPE_EXPECTED_OWNED;
+
+  case PSBT_OWNERSHIP_EXTERNAL:
+  default:
     return OUTPUT_TYPE_SPEND;
   }
-
-  if (!psbt_get_output_derivation(current_psbt, output_index, is_testnet,
-                                  &is_change, &address_index)) {
-    return OUTPUT_TYPE_SPEND;
-  }
-
-  unsigned char expected_script[WALLY_WITNESSSCRIPT_MAX_LEN];
-  size_t expected_script_len;
-
-  if (!wallet_get_scriptpubkey(is_change, address_index, expected_script,
-                               &expected_script_len) ||
-      tx_output->script_len != expected_script_len ||
-      memcmp(tx_output->script, expected_script, expected_script_len) != 0) {
-    return OUTPUT_TYPE_SPEND;
-  }
-
-  *address_index_out = address_index;
-  return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
 }
 
 static void back_button_cb(lv_event_t *e) {
@@ -318,15 +370,23 @@ static void return_from_qr_scanner_cb(void) {
       }
     }
   } else if (detected_format == FORMAT_BBQR) {
-    // BBQr returns raw binary PSBT data
+    /* BBQr can carry any payload type — file_type 'P' for raw PSBT
+     * bytes, 'U' for UTF-8 text (descriptor / mnemonic / address /
+     * signed-message). Try the binary-PSBT path first; on failure,
+     * keep qr_content alive so layer 2's text-mode detectors get a
+     * shot at it. The decoded payload from qr_parser_result is
+     * NUL-terminated (parser.c:301), so it's safe to treat as a C
+     * string in the layer-2 detectors. */
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
       cleanup_psbt_data();
       parse_success =
           (wally_psbt_from_bytes((const uint8_t *)qr_content, qr_content_len, 0,
                                  &current_psbt) == WALLY_OK);
-      free(qr_content);
-      qr_content = NULL;
+      if (parse_success) {
+        free(qr_content);
+        qr_content = NULL;
+      }
     }
   } else {
     // Other formats (PMOFN, NONE) — get content with length for binary formats
@@ -393,12 +453,178 @@ static void return_from_qr_scanner_cb(void) {
     } else {
       scanned_qr_format = detected_format;
 
-      if (psbt_is_multisig(current_psbt) && !wallet_has_descriptor()) {
-        show_multisig_options_menu();
-      } else {
-        if (!create_psbt_info_display()) {
-          dialog_show_error("Invalid PSBT data", return_callback, 0);
+      if (check_psbt_mismatch()) {
+        return;
+      }
+
+      /* Policy-gate the sign flow. Walk inputs + outputs, classify each,
+       * and refuse with a specific explanation if any element triggers
+       * a setting-gated condition.
+       *
+       * Order of refusals (strictest first):
+       *   1. nothing signable          → "no inputs match policy"
+       *   2. EXPECTED_OWNED present    → "Expected-owned signing" gate
+       *      (harness against derivation bugs / UTXO-swap attacks)
+       *   3. OWNED_UNSAFE present      → "Permissive signing" gate
+       *      (non-standard path)
+       *   4. EXTERNAL input present    → "Partial signing" gate
+       *      (mixed-input PSBT)
+       *   otherwise                    → review + confirm. */
+      bool any_signable = false;
+      bool any_input_external = false;
+      bool need_perm = false; // any element OWNED_UNSAFE
+      bool need_exp = false;  // any element EXPECTED_OWNED
+
+      char flagged_path[80] = {0};
+      size_t flagged_index = 0;
+      bool flagged_is_input = false;
+      psbt_ownership_t flagged_kind = PSBT_OWNERSHIP_EXTERNAL;
+
+      size_t num_inputs = 0, num_outputs = 0;
+      if (wally_psbt_get_num_inputs(current_psbt, &num_inputs) != WALLY_OK)
+        num_inputs = 0;
+      if (wally_psbt_get_num_outputs(current_psbt, &num_outputs) != WALLY_OK)
+        num_outputs = 0;
+
+        /* Track up to EXTERNAL_INPUT_LIST_CAP external-input indices for
+         * the partial-signing dialog body. Larger PSBTs append "..." instead
+         * of expanding the list — keeps the message bounded. */
+#define EXTERNAL_INPUT_LIST_CAP 4
+      size_t external_inputs[EXTERNAL_INPUT_LIST_CAP];
+      size_t external_count = 0;
+
+      for (size_t i = 0; i < num_inputs; i++) {
+        input_ownership_t own =
+            psbt_classify_input(current_psbt, i, is_testnet);
+        switch (own.ownership) {
+        case PSBT_OWNERSHIP_OWNED_SAFE:
+          any_signable = true;
+          break;
+        case PSBT_OWNERSHIP_OWNED_UNSAFE:
+          any_signable = true;
+          if (!need_perm && !need_exp) {
+            flagged_kind = own.ownership;
+            flagged_index = i;
+            flagged_is_input = true;
+            psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
+                                flagged_path, sizeof(flagged_path));
+          }
+          need_perm = true;
+          break;
+        case PSBT_OWNERSHIP_EXPECTED_OWNED:
+          any_signable = true;
+          /* Expected-owned wins precedence — overwrite any prior flag. */
+          flagged_kind = own.ownership;
+          flagged_index = i;
+          flagged_is_input = true;
+          psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
+                              flagged_path, sizeof(flagged_path));
+          need_exp = true;
+          break;
+        case PSBT_OWNERSHIP_EXTERNAL:
+          any_input_external = true;
+          if (external_count < EXTERNAL_INPUT_LIST_CAP)
+            external_inputs[external_count] = i;
+          external_count++;
+          break;
         }
+      }
+
+      for (size_t i = 0; i < num_outputs; i++) {
+        output_ownership_t own =
+            psbt_classify_output(current_psbt, i, is_testnet);
+        switch (own.ownership) {
+        case PSBT_OWNERSHIP_OWNED_UNSAFE:
+          if (!need_perm && !need_exp) {
+            flagged_kind = own.ownership;
+            flagged_index = i;
+            flagged_is_input = false;
+            psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
+                                flagged_path, sizeof(flagged_path));
+          }
+          need_perm = true;
+          break;
+        case PSBT_OWNERSHIP_EXPECTED_OWNED:
+          if (!need_exp) {
+            flagged_kind = own.ownership;
+            flagged_index = i;
+            flagged_is_input = false;
+            psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
+                                flagged_path, sizeof(flagged_path));
+          }
+          need_exp = true;
+          break;
+        case PSBT_OWNERSHIP_OWNED_SAFE:
+        case PSBT_OWNERSHIP_EXTERNAL:
+          break;
+        }
+      }
+
+      if (!any_signable) {
+        dialog_show_info(
+            "Cannot sign PSBT", "No inputs match this wallet's signing policy.",
+            descriptor_loaded_info_cb, NULL, DIALOG_STYLE_FULLSCREEN);
+        return;
+      }
+      if (need_exp && !settings_get_expected_owned_signing()) {
+        char body[384];
+        snprintf(body, sizeof(body),
+                 "%s %zu's path %s matches our fingerprint but the script "
+                 "cannot be re-derived from it -- wallet bug or "
+                 "attacker-crafted input.\n"
+                 "If multisig: Load the wallet descriptor.\n"
+                 "To sign anyway: Enable 'Expected-owned signing' in "
+                 "Wallet settings. The device will then trust the PSBT's "
+                 "keypath without verification.",
+                 flagged_is_input ? "Input" : "Output", flagged_index,
+                 flagged_path[0] ? flagged_path : "(unknown)");
+        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
+                         NULL, DIALOG_STYLE_FULLSCREEN);
+        (void)flagged_kind;
+        return;
+      }
+      if (need_perm && !settings_get_permissive_signing()) {
+        char body[384];
+        snprintf(body, sizeof(body),
+                 "%s %zu's path %s is on a non-standard derivation. "
+                 "Enable 'Permissive signing' in Settings > Wallet to "
+                 "proceed.",
+                 flagged_is_input ? "Input" : "Output", flagged_index,
+                 flagged_path[0] ? flagged_path : "(unknown)");
+        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
+                         NULL, DIALOG_STYLE_FULLSCREEN);
+        return;
+      }
+      if (any_input_external && !settings_get_partial_signing()) {
+        char body[384];
+        char idx_list[96];
+        size_t idx_pos = 0;
+        idx_list[0] = '\0';
+        size_t shown = external_count < EXTERNAL_INPUT_LIST_CAP
+                           ? external_count
+                           : EXTERNAL_INPUT_LIST_CAP;
+        for (size_t k = 0; k < shown; k++) {
+          int w = snprintf(idx_list + idx_pos, sizeof(idx_list) - idx_pos,
+                           "%s%zu", k == 0 ? "" : ", ", external_inputs[k]);
+          if (w < 0 || (size_t)w >= sizeof(idx_list) - idx_pos)
+            break;
+          idx_pos += (size_t)w;
+        }
+        if (external_count > EXTERNAL_INPUT_LIST_CAP) {
+          snprintf(idx_list + idx_pos, sizeof(idx_list) - idx_pos, ", ...");
+        }
+        snprintf(body, sizeof(body),
+                 "Input%s %s %s not from this wallet. Enable 'Partial "
+                 "signing' in Settings > Wallet to proceed.",
+                 external_count == 1 ? "" : "s", idx_list,
+                 external_count == 1 ? "is" : "are");
+        dialog_show_info("Cannot sign PSBT", body, descriptor_loaded_info_cb,
+                         NULL, DIALOG_STYLE_FULLSCREEN);
+        return;
+      }
+
+      if (!create_psbt_info_display()) {
+        dialog_show_error("Invalid PSBT data", return_callback, 0);
       }
     }
   } else {
@@ -419,7 +645,7 @@ static void scan_descriptor_validation_cb(descriptor_validation_result_t result,
   (void)user_data;
 
   if (result == VALIDATION_SUCCESS) {
-    dialog_show_info("Descriptor Loaded", "Wallet descriptor updated",
+    dialog_show_info("Descriptor Loaded", "Wallet descriptor added to session",
                      descriptor_loaded_info_cb, NULL, DIALOG_STYLE_FULLSCREEN);
     return;
   }
@@ -449,14 +675,6 @@ static void address_not_found_cb(void) {
 }
 
 static void handle_address_content(const char *content) {
-  // For multisig without descriptor, we can't verify addresses
-  if (wallet_get_policy() == WALLET_POLICY_MULTISIG &&
-      !wallet_has_descriptor()) {
-    dialog_show_error("Load a descriptor first to verify multisig addresses",
-                      return_callback, 0);
-    return;
-  }
-
   address_checker_check(content, address_found_cb, address_not_found_cb);
 }
 
@@ -591,17 +809,13 @@ static bool check_psbt_mismatch(void) {
   }
 
   is_testnet = psbt_detect_network(current_psbt);
-  int32_t psbt_account = psbt_detect_account(current_psbt);
 
   wallet_network_t wallet_net = wallet_get_network();
   bool wallet_is_testnet = (wallet_net == WALLET_NETWORK_TESTNET);
-  uint32_t wallet_account = wallet_get_account();
 
   bool network_mismatch = (is_testnet != wallet_is_testnet);
-  bool account_mismatch =
-      (psbt_account >= 0 && (uint32_t)psbt_account != wallet_account);
 
-  if (!network_mismatch && !account_mismatch) {
+  if (!network_mismatch) {
     return false;
   }
 
@@ -611,17 +825,10 @@ static bool check_psbt_mismatch(void) {
       message + offset, sizeof(message) - offset,
       "PSBT requires different settings for proper change detection:\n\n");
 
-  if (network_mismatch) {
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "  Network:  %s -> %s\n",
-                       wallet_is_testnet ? "Testnet" : "Mainnet",
-                       is_testnet ? "Testnet" : "Mainnet");
-  }
-
-  if (account_mismatch) {
-    offset += snprintf(message + offset, sizeof(message) - offset,
-                       "  Account:  %u -> %d\n", wallet_account, psbt_account);
-  }
+  offset += snprintf(message + offset, sizeof(message) - offset,
+                     "  Network:  %s -> %s\n",
+                     wallet_is_testnet ? "Testnet" : "Mainnet",
+                     is_testnet ? "Testnet" : "Mainnet");
 
   snprintf(message + offset, sizeof(message) - offset,
            "\nGo to Settings " LV_SYMBOL_SETTINGS
@@ -658,15 +865,53 @@ static bool create_psbt_info_display(void) {
   if (!input_amounts) {
     return false;
   }
+  lv_color_t *input_colors = malloc(num_inputs * sizeof(lv_color_t));
+  if (!input_colors) {
+    free(input_amounts);
+    return false;
+  }
+  classified_input_t *classified_inputs =
+      calloc(num_inputs, sizeof(classified_input_t));
+  if (!classified_inputs) {
+    free(input_colors);
+    free(input_amounts);
+    return false;
+  }
   uint64_t total_input_value = 0;
+  size_t external_input_count = 0;
   for (size_t i = 0; i < num_inputs; i++) {
     input_amounts[i] = psbt_get_input_value(current_psbt, i);
     total_input_value += input_amounts[i];
+
+    input_ownership_t own = psbt_classify_input(current_psbt, i, is_testnet);
+    classified_inputs[i].index = i;
+    classified_inputs[i].ownership = own.ownership;
+    classified_inputs[i].value = input_amounts[i];
+    input_colors[i] = (own.ownership == PSBT_OWNERSHIP_EXTERNAL) ? error_color()
+                                                                 : main_color();
+    format_input_policy(&own, classified_inputs[i].policy,
+                        sizeof(classified_inputs[i].policy));
+
+    /* External inputs need their address rendered in the warning section.
+     * Skip address decoding for owned inputs — they're not displayed. */
+    if (own.ownership == PSBT_OWNERSHIP_EXTERNAL) {
+      external_input_count++;
+      unsigned char spk[34];
+      size_t spk_len = 0;
+      if (psbt_input_utxo_script(current_psbt, i, spk, sizeof(spk), &spk_len)) {
+        classified_inputs[i].address =
+            psbt_scriptpubkey_to_address(spk, spk_len, is_testnet);
+      }
+    }
   }
 
   struct wally_tx *global_tx = NULL;
   int tx_ret = wally_psbt_get_global_tx_alloc(current_psbt, &global_tx);
   if (tx_ret != WALLY_OK || !global_tx) {
+    for (size_t i = 0; i < num_inputs; i++)
+      free(classified_inputs[i].address);
+    free(classified_inputs);
+    free(input_colors);
     free(input_amounts);
     return false;
   }
@@ -674,6 +919,10 @@ static bool create_psbt_info_display(void) {
   classified_output_t *classified_outputs =
       calloc(num_outputs, sizeof(classified_output_t));
   if (!classified_outputs) {
+    for (size_t i = 0; i < num_inputs; i++)
+      free(classified_inputs[i].address);
+    free(classified_inputs);
+    free(input_colors);
     free(input_amounts);
     wally_tx_free(global_tx);
     return false;
@@ -691,6 +940,10 @@ static bool create_psbt_info_display(void) {
   uint64_t *output_amounts = malloc(diagram_output_count * sizeof(uint64_t));
   lv_color_t *output_colors = malloc(diagram_output_count * sizeof(lv_color_t));
   if (!output_amounts || !output_colors) {
+    for (size_t i = 0; i < num_inputs; i++)
+      free(classified_inputs[i].address);
+    free(classified_inputs);
+    free(input_colors);
     free(input_amounts);
     free(output_amounts);
     free(output_colors);
@@ -705,9 +958,10 @@ static bool create_psbt_info_display(void) {
     classified_outputs[i].address = psbt_scriptpubkey_to_address(
         global_tx->outputs[i].script, global_tx->outputs[i].script_len,
         is_testnet);
-    classified_outputs[i].type =
-        classify_output(i, &global_tx->outputs[i], global_tx,
-                        &classified_outputs[i].address_index);
+    classified_outputs[i].path[0] = '\0';
+    classified_outputs[i].type = classify_output(
+        i, &classified_outputs[i].address_index, classified_outputs[i].path,
+        sizeof(classified_outputs[i].path));
   }
 
   size_t diagram_idx = 0;
@@ -724,6 +978,22 @@ static bool create_psbt_info_display(void) {
     if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
       output_amounts[diagram_idx] = classified_outputs[i].value;
       output_colors[diagram_idx] = yes_color();
+      diagram_idx++;
+    }
+  }
+
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_OWNED_UNSAFE) {
+      output_amounts[diagram_idx] = classified_outputs[i].value;
+      output_colors[diagram_idx] = cyan_color();
+      diagram_idx++;
+    }
+  }
+
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_EXPECTED_OWNED) {
+      output_amounts[diagram_idx] = classified_outputs[i].value;
+      output_colors[diagram_idx] = error_color();
       diagram_idx++;
     }
   }
@@ -753,9 +1023,12 @@ static bool create_psbt_info_display(void) {
 
   lv_obj_update_layout(psbt_info_container);
   int32_t diagram_width = lv_obj_get_width(scan_screen) - 20;
-  tx_diagram = sankey_diagram_create(psbt_info_container, diagram_width, 160);
+  int32_t diagram_height = lv_obj_get_height(scan_screen) / 4;
+  tx_diagram =
+      sankey_diagram_create(psbt_info_container, diagram_width, diagram_height);
   if (tx_diagram) {
-    sankey_diagram_set_inputs(tx_diagram, input_amounts, num_inputs);
+    sankey_diagram_set_inputs(tx_diagram, input_amounts, num_inputs,
+                              input_colors);
     sankey_diagram_set_outputs(tx_diagram, output_amounts, diagram_output_count,
                                output_colors);
     sankey_diagram_render(tx_diagram);
@@ -797,32 +1070,134 @@ static bool create_psbt_info_display(void) {
   }
 
   free(input_amounts);
+  free(input_colors);
   free(output_amounts);
   free(output_colors);
 
-  char prefix_text[64];
-  snprintf(prefix_text, sizeof(prefix_text), "Inputs(%zu): ", num_inputs);
-  lv_obj_t *inputs_row = create_btc_value_row(psbt_info_container, prefix_text,
-                                              total_input_value, main_color());
-  lv_obj_set_width(inputs_row, LV_PCT(100));
+  /* Group owned-safe inputs by their signing policy and render one
+   * "Inputs(N): <amount> from <policy>" row per distinct source.
+   * UNSAFE / EXPECTED / External inputs keep their dedicated warning
+   * sections below — those carry the count + amount + path/address
+   * inline so they don't need a top-level breakdown. */
+  for (size_t i = 0; i < num_inputs; i++) {
+    const char *policy = classified_inputs[i].policy;
+    if (policy[0] == '\0')
+      continue;
+
+    bool already = false;
+    for (size_t j = 0; j < i; j++) {
+      if (strcmp(classified_inputs[j].policy, policy) == 0) {
+        already = true;
+        break;
+      }
+    }
+    if (already)
+      continue;
+
+    size_t count = 0;
+    uint64_t total = 0;
+    for (size_t k = i; k < num_inputs; k++) {
+      if (strcmp(classified_inputs[k].policy, policy) == 0) {
+        count++;
+        total += classified_inputs[k].value;
+      }
+    }
+
+    char prefix[32];
+    snprintf(prefix, sizeof(prefix), "Inputs(%zu): ", count);
+    lv_obj_t *row =
+        create_btc_value_row(psbt_info_container, prefix, total, main_color());
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+
+    lv_obj_t *src = lv_label_create(row);
+    lv_label_set_text_fmt(src, " from %s", policy);
+    lv_obj_set_style_text_font(src, theme_font_small(), 0);
+    lv_obj_set_style_text_color(src, secondary_color(), 0);
+    lv_label_set_long_mode(src, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_max_width(src, LV_PCT(100), 0);
+  }
+  (void)total_input_value; /* now distributed across per-policy rows */
+
+  /* External inputs warning section. The Partial-signing gate has already
+   * passed (otherwise we wouldn't reach the review screen with externals
+   * present), but the user must still see what they're co-signing — we
+   * sign our inputs only, leaving externals to whoever holds those keys.
+   * Render each external input's amount + address so the user can spot a
+   * forgery (an attacker tricking us into co-signing their address). */
+  if (external_input_count > 0) {
+    lv_obj_t *warn_title = theme_create_label(
+        psbt_info_container,
+        "External inputs (NOT YOURS) -- you are co-signing:", false);
+    theme_apply_label(warn_title, true);
+    lv_obj_set_style_text_color(warn_title, error_color(), 0);
+    lv_obj_set_style_margin_top(warn_title, 15, 0);
+    lv_obj_set_width(warn_title, LV_PCT(100));
+    lv_label_set_long_mode(warn_title, LV_LABEL_LONG_WRAP);
+
+    for (size_t i = 0; i < num_inputs; i++) {
+      if (classified_inputs[i].ownership != PSBT_OWNERSHIP_EXTERNAL)
+        continue;
+      char text[64];
+      snprintf(text, sizeof(text), "Input %zu: ", classified_inputs[i].index);
+      lv_obj_t *row = create_btc_value_row(
+          psbt_info_container, text, classified_inputs[i].value, main_color());
+      lv_obj_set_width(row, LV_PCT(100));
+      lv_obj_set_style_pad_left(row, 20, 0);
+
+      if (classified_inputs[i].address) {
+        lv_obj_t *addr = create_address_label(
+            psbt_info_container, classified_inputs[i].address, error_color());
+        lv_obj_set_width(addr, LV_PCT(100));
+        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_pad_left(addr, 20, 0);
+      }
+    }
+  }
 
   lv_obj_t *separator1 = lv_obj_create(psbt_info_container);
   lv_obj_set_size(separator1, LV_PCT(100), 2);
   lv_obj_set_style_bg_color(separator1, main_color(), 0);
   lv_obj_set_style_bg_opa(separator1, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(separator1, 0, 0);
+  lv_obj_set_style_margin_top(separator1, 15, 0);
 
-  bool has_self_transfers = false;
+  /* Count self-transfers up-front so we can collapse to a totals row when
+   * the list would otherwise scroll-fatigue the review screen. */
+#define SELF_TRANSFER_INLINE_THRESHOLD 4
+  size_t self_transfer_count = 0;
+  uint64_t total_self_transfer = 0;
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
-      if (!has_self_transfers) {
-        lv_obj_t *title =
-            theme_create_label(psbt_info_container, "Self-Transfer: ", false);
-        theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, cyan_color(), 0);
-        lv_obj_set_width(title, LV_PCT(100));
-        has_self_transfers = true;
-      }
+      self_transfer_count++;
+      total_self_transfer += classified_outputs[i].value;
+    }
+  }
+
+  if (self_transfer_count > SELF_TRANSFER_INLINE_THRESHOLD) {
+    char title_text[48];
+    snprintf(title_text, sizeof(title_text),
+             "Self-Transfer (%zu): ", self_transfer_count);
+    lv_obj_t *title =
+        theme_create_label(psbt_info_container, title_text, false);
+    theme_apply_label(title, true);
+    lv_obj_set_style_text_color(title, cyan_color(), 0);
+    lv_obj_set_width(title, LV_PCT(100));
+
+    lv_obj_t *row = create_btc_value_row(
+        psbt_info_container, "Total: ", total_self_transfer, main_color());
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_style_pad_left(row, 20, 0);
+  } else if (self_transfer_count > 0) {
+    lv_obj_t *title =
+        theme_create_label(psbt_info_container, "Self-Transfer: ", false);
+    theme_apply_label(title, true);
+    lv_obj_set_style_text_color(title, cyan_color(), 0);
+    lv_obj_set_width(title, LV_PCT(100));
+
+    for (size_t i = 0; i < num_outputs; i++) {
+      if (classified_outputs[i].type != OUTPUT_TYPE_SELF_TRANSFER)
+        continue;
 
       char text[64];
       snprintf(text, sizeof(text),
@@ -842,22 +1217,43 @@ static bool create_psbt_info_display(void) {
     }
   }
 
-  bool has_change = false;
+  /* Change is verified-owned (derive reproduces the spk on chain=1); the
+   * specific addresses don't need user review. Collapse to a single total
+   * row so the review screen stays focused on outgoing spends. Outputs we
+   * can't verify (fp matches but derive fails) classify as
+   * EXPECTED_OWNED, not CHANGE, and render in their own warning section. */
+  uint64_t total_change = 0;
+  size_t change_count = 0;
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
-      if (!has_change) {
-        lv_obj_t *title =
-            theme_create_label(psbt_info_container, "Change: ", false);
+      total_change += classified_outputs[i].value;
+      change_count++;
+    }
+  }
+  if (change_count > 0) {
+    lv_obj_t *row = create_btc_value_row(psbt_info_container,
+                                         "Change: ", total_change, yes_color());
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_style_margin_top(row, 15, 0);
+  }
+
+  bool has_owned_unsafe = false;
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_OWNED_UNSAFE) {
+      if (!has_owned_unsafe) {
+        lv_obj_t *title = theme_create_label(
+            psbt_info_container, "Owned (non-standard path): ", false);
         theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, yes_color(), 0);
+        lv_obj_set_style_text_color(title, cyan_color(), 0);
         lv_obj_set_style_margin_top(title, 15, 0);
         lv_obj_set_width(title, LV_PCT(100));
-        has_change = true;
+        has_owned_unsafe = true;
       }
 
-      char text[64];
-      snprintf(text, sizeof(text),
-               "Change #%u: ", classified_outputs[i].address_index);
+      char text[128];
+      snprintf(
+          text, sizeof(text), "Output %zu (%s): ", classified_outputs[i].index,
+          classified_outputs[i].path[0] ? classified_outputs[i].path : "?");
       lv_obj_t *row = create_btc_value_row(
           psbt_info_container, text, classified_outputs[i].value, main_color());
       lv_obj_set_width(row, LV_PCT(100));
@@ -865,7 +1261,39 @@ static bool create_psbt_info_display(void) {
 
       if (classified_outputs[i].address) {
         lv_obj_t *addr = create_address_label(
-            psbt_info_container, classified_outputs[i].address, yes_color());
+            psbt_info_container, classified_outputs[i].address, cyan_color());
+        lv_obj_set_width(addr, LV_PCT(100));
+        lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_pad_left(addr, 20, 0);
+      }
+    }
+  }
+
+  bool has_expected = false;
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (classified_outputs[i].type == OUTPUT_TYPE_EXPECTED_OWNED) {
+      if (!has_expected) {
+        lv_obj_t *title = theme_create_label(
+            psbt_info_container, "Expected ownership (UNVERIFIED): ", false);
+        theme_apply_label(title, true);
+        lv_obj_set_style_text_color(title, error_color(), 0);
+        lv_obj_set_style_margin_top(title, 15, 0);
+        lv_obj_set_width(title, LV_PCT(100));
+        has_expected = true;
+      }
+
+      char text[128];
+      snprintf(
+          text, sizeof(text), "Output %zu (%s): ", classified_outputs[i].index,
+          classified_outputs[i].path[0] ? classified_outputs[i].path : "?");
+      lv_obj_t *row = create_btc_value_row(
+          psbt_info_container, text, classified_outputs[i].value, main_color());
+      lv_obj_set_width(row, LV_PCT(100));
+      lv_obj_set_style_pad_left(row, 20, 0);
+
+      if (classified_outputs[i].address) {
+        lv_obj_t *addr = create_address_label(
+            psbt_info_container, classified_outputs[i].address, error_color());
         lv_obj_set_width(addr, LV_PCT(100));
         lv_label_set_long_mode(addr, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_pad_left(addr, 20, 0);
@@ -914,6 +1342,16 @@ static bool create_psbt_info_display(void) {
     }
   }
   free(classified_outputs);
+
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (classified_inputs[i].address) {
+      if (strcmp(classified_inputs[i].address, "OP_RETURN") == 0)
+        free(classified_inputs[i].address);
+      else
+        wally_free_string(classified_inputs[i].address);
+    }
+  }
+  free(classified_inputs);
 
   if (global_tx) {
     wally_tx_free(global_tx);
@@ -985,7 +1423,11 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  size_t signatures_added = psbt_sign(current_psbt, is_testnet);
+  psbt_sign_policy_t sign_policy = {
+      .allow_unsafe = settings_get_permissive_signing(),
+      .allow_expected_owned = settings_get_expected_owned_signing(),
+  };
+  size_t signatures_added = psbt_sign(current_psbt, is_testnet, sign_policy);
 
   if (signatures_added == 0) {
     dismiss_sign_progress();
@@ -1077,134 +1519,6 @@ static void cleanup_psbt_data(void) {
 
   is_testnet = false;
   scanned_qr_format = FORMAT_NONE;
-  skip_verification = false;
-}
-
-// Multisig menu callbacks
-static void multisig_menu_back_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
-  cleanup_psbt_data();
-  if (return_callback) {
-    return_callback();
-  }
-}
-
-static void show_multisig_menu_on_error(void) {
-  if (multisig_menu)
-    ui_menu_show(multisig_menu);
-}
-
-static void descriptor_validation_cb(descriptor_validation_result_t result,
-                                     void *user_data) {
-  (void)user_data;
-
-  if (result == VALIDATION_SUCCESS) {
-    descriptor_loader_destroy_source_menu();
-    if (multisig_menu) {
-      ui_menu_destroy(multisig_menu);
-      multisig_menu = NULL;
-    }
-    if (!create_psbt_info_display()) {
-      dialog_show_error("Invalid PSBT data", return_callback, 0);
-    }
-    return;
-  }
-
-  descriptor_loader_show_error(result);
-  show_multisig_menu_on_error();
-}
-
-static void return_from_descriptor_scanner_cb(void) {
-  descriptor_loader_process_scanner(descriptor_validation_cb, NULL,
-                                    show_multisig_menu_on_error);
-}
-
-static void return_from_descriptor_storage(void) {
-  load_descriptor_storage_page_destroy();
-  show_multisig_menu_on_error();
-}
-
-static void success_from_descriptor_storage(void) {
-  load_descriptor_storage_page_destroy();
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
-  if (!create_psbt_info_display()) {
-    dialog_show_error("Invalid PSBT data", return_callback, 0);
-  }
-}
-
-static void load_desc_from_qr_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu)
-    ui_menu_hide(multisig_menu);
-  qr_scanner_page_create(NULL, return_from_descriptor_scanner_cb);
-  qr_scanner_page_show();
-}
-
-static void load_desc_from_flash_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu)
-    ui_menu_hide(multisig_menu);
-  load_descriptor_storage_page_create(
-      lv_screen_active(), return_from_descriptor_storage,
-      success_from_descriptor_storage, STORAGE_FLASH);
-  load_descriptor_storage_page_show();
-}
-
-static void load_desc_from_sd_cb(void) {
-  descriptor_loader_destroy_source_menu();
-  if (multisig_menu)
-    ui_menu_hide(multisig_menu);
-  load_descriptor_storage_page_create(
-      lv_screen_active(), return_from_descriptor_storage,
-      success_from_descriptor_storage, STORAGE_SD);
-  load_descriptor_storage_page_show();
-}
-
-static void load_desc_source_back_cb(void) {
-  descriptor_loader_destroy_source_menu();
-}
-
-static void load_descriptor_menu_cb(void) {
-  descriptor_loader_show_source_menu(
-      scan_screen, load_desc_from_qr_cb, load_desc_from_flash_cb,
-      load_desc_from_sd_cb, load_desc_source_back_cb);
-}
-
-static void sign_without_verification_cb(void) {
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
-  skip_verification = true;
-  if (!create_psbt_info_display()) {
-    dialog_show_error("Invalid PSBT data", return_callback, 0);
-  }
-}
-
-static void show_multisig_options_menu(void) {
-  if (!scan_screen) {
-    return;
-  }
-
-  multisig_menu = ui_menu_create(scan_screen, "Multisig PSBT Detected",
-                                 multisig_menu_back_cb);
-  if (!multisig_menu) {
-    dialog_show_error("Failed to create menu", return_callback, 0);
-    return;
-  }
-
-  ui_menu_add_entry(multisig_menu, "Load Descriptor", load_descriptor_menu_cb);
-  ui_menu_add_entry(multisig_menu, "Sign Without Verification",
-                    sign_without_verification_cb);
-  ui_menu_show(multisig_menu);
 }
 
 static void create_message_sign_display(void) {
@@ -1359,11 +1673,6 @@ void scan_page_destroy(void) {
   cleanup_psbt_data();
 
   SECURE_FREE_STRING(scanned_mnemonic);
-
-  if (multisig_menu) {
-    ui_menu_destroy(multisig_menu);
-    multisig_menu = NULL;
-  }
 
   if (tx_diagram) {
     sankey_diagram_destroy(tx_diagram);

@@ -32,20 +32,21 @@
 - Networks
   - ✅ Mainnet
   - ✅ Testnet
-- ✅ Account
-- Policy types
-  - ✅ Single-sig
-  - ✅ Multisig
+- ✅ Account (any BIP44/49/84/86 account 0–100, no per-session selection required)
+- Signing model
+  - ✅ Single-sig (BIP44/49/84/86 whitelist; no policy setting required)
+  - ✅ Multisig (session-loaded descriptors, with explicit flash + SD backup/import)
   - ❌ Miniscript
 - Descriptors
   - ✅ Loading
   - ✅ Exporting
   - ✅ Saving
   - ✅ Encrypting/Decrypting
+  - ❌ Persistent registration with encrypted descriptor backups, using the public keys inside the descriptor as keys, following the Bitcoin Encrypted Backup proposal in bitcoin/bips#1951
 - Script type
-  - ✅ Native Segwit
-  - ❌ Nested Segwit
-  - ❌ Taproot
+  - ✅ Native Segwit (P2WPKH, BIP84)
+  - ✅ Nested Segwit (P2SH-P2WPKH, BIP49)
+  - ✅ Taproot (P2TR, BIP86)
 
 - Security
   - ✅ KEF encryption

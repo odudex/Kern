@@ -88,9 +88,7 @@ static lv_obj_t *ur_progress_indicator = NULL;
 static int ur_progress_bar_inner_width = 0;
 static void (*return_callback)(void) = NULL;
 
-static int camera_ctlr_handle = -1;
 static lv_img_dsc_t img_refresh_dsc;
-static bool video_system_initialized = false;
 static EventGroupHandle_t camera_event_group = NULL;
 
 static uint8_t *display_buffer_a = NULL;
@@ -156,7 +154,7 @@ static void qr_decode_task(void *pvParameters);
 static bool qr_decoder_init(uint32_t width, uint32_t height);
 static void qr_decoder_cleanup(void);
 static bool camera_run(void);
-static void camera_init(void);
+static bool camera_init(void);
 static void create_progress_indicators(int total_parts);
 static void update_progress_indicator(int part_index);
 static void cleanup_progress_indicators(void);
@@ -386,12 +384,12 @@ static void destroy_settings_overlay(void) {
 
 static void ae_slider_cb(lv_event_t *e) {
   int32_t val = lv_slider_get_value(lv_event_get_target(e));
-  app_video_set_ae_target(camera_ctlr_handle, (uint32_t)val);
+  app_video_set_ae_target((uint32_t)val);
 }
 
 static void focus_slider_cb(lv_event_t *e) {
   int32_t val = lv_slider_get_value(lv_event_get_target(e));
-  app_video_set_focus(camera_ctlr_handle, (uint32_t)(FOCUS_POSITION_MAX - val));
+  app_video_set_focus((uint32_t)(FOCUS_POSITION_MAX - val));
 }
 
 static void settings_close_cb(lv_event_t *e) { destroy_settings_overlay(); }
@@ -874,7 +872,6 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
       current_display_buffer = back_buffer;
       img_refresh_dsc.data = display_src;
       lv_img_set_src(camera_img, &img_refresh_dsc);
-      lv_refr_now(NULL);
     }
     buffer_swap_needed = false;
     bsp_display_unlock();
@@ -895,47 +892,24 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
 }
 
-static void camera_init(void) {
-  if (video_system_initialized) {
-    return;
+static bool camera_init(void) {
+  if (app_video_is_streaming())
+    return true;
+
+  if (!app_video_is_ready()) {
+    ESP_LOGE(TAG, "Video pipeline is not ready");
+    return false;
   }
 
   camera_event_group = xEventGroupCreate();
   if (!camera_event_group) {
     ESP_LOGE(TAG, "Failed to create camera event group");
-    return;
+    return false;
   }
 
   xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
 
-  i2c_master_bus_handle_t i2c_handle = bsp_i2c_get_handle();
-  if (!i2c_handle) {
-    ESP_LOGE(TAG, "Failed to get I2C bus handle");
-    return;
-  }
-
-  esp_err_t err = app_video_main(i2c_handle);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to initialize camera: %s", esp_err_to_name(err));
-    return;
-  }
-
-  video_system_initialized = true;
-
-  camera_ctlr_handle = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT_RGB565);
-  if (camera_ctlr_handle < 0) {
-    ESP_LOGE(TAG, "Failed to open camera device");
-    return;
-  }
-
-#if BSP_CAM_HAS_MOTOR
-  has_focus_motor = app_video_has_focus_motor(camera_ctlr_handle);
-#else
-  has_focus_motor = false;
-#endif
-
-  ESP_ERROR_CHECK(
-      app_video_register_frame_operation_cb(camera_video_frame_operation));
+  has_focus_motor = app_video_has_focus_motor();
 
   img_refresh_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
@@ -947,27 +921,11 @@ static void camera_init(void) {
 
   if (!allocate_display_buffers(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
     ESP_LOGE(TAG, "Failed to allocate display buffers");
-    return;
+    return false;
   }
 
   current_display_buffer = display_buffer_a;
   img_refresh_dsc.data = current_display_buffer;
-
-  ESP_ERROR_CHECK(app_video_set_bufs(camera_ctlr_handle, CAM_BUF_NUM, NULL));
-
-  esp_err_t start_err = app_video_stream_task_start(camera_ctlr_handle, 0);
-  if (start_err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start camera stream task: %s",
-             esp_err_to_name(start_err));
-    return;
-  }
-
-  // Apply camera settings after stream starts (V4L2 controls register with the
-  // sensor device only once streaming).
-  app_video_set_ae_target(camera_ctlr_handle, settings_get_ae_target());
-  if (has_focus_motor) {
-    app_video_set_focus(camera_ctlr_handle, settings_get_focus_position());
-  }
 
   if (!qr_decoder_init(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
     ESP_LOGE(TAG, "Failed to initialize QR decoder");
@@ -979,12 +937,27 @@ static void camera_init(void) {
     ESP_LOGE(TAG, "Failed to register PPA client for camera scaler");
     cam_ppa_client = NULL;
   }
+
+  esp_err_t start_err = app_video_start(camera_video_frame_operation, 0);
+  if (start_err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start camera stream task: %s",
+             esp_err_to_name(start_err));
+    return false;
+  }
+
+  // Apply camera settings after stream starts (V4L2 controls register with the
+  // sensor device only once streaming).
+  app_video_set_ae_target(settings_get_ae_target());
+  if (has_focus_motor) {
+    app_video_set_focus(settings_get_focus_position());
+  }
+
+  return true;
 }
 
 static bool camera_run(void) {
-  if (camera_ctlr_handle < 0 || !video_system_initialized) {
-    camera_init();
-  }
+  if (!app_video_is_streaming())
+    return camera_init();
   return true;
 }
 
@@ -1097,12 +1070,7 @@ void qr_scanner_page_destroy(void) {
     ESP_LOGW(TAG, "Timeout waiting for frame operations (remaining: %d)",
              remaining_ops);
 
-  if (camera_ctlr_handle >= 0) {
-    app_video_stream_task_stop(camera_ctlr_handle);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    app_video_close(camera_ctlr_handle);
-    camera_ctlr_handle = -1;
-  }
+  app_video_stop();
 
   qr_decoder_cleanup();
 
@@ -1129,11 +1097,6 @@ void qr_scanner_page_destroy(void) {
   if (cam_ppa_client) {
     ppa_unregister_client(cam_ppa_client);
     cam_ppa_client = NULL;
-  }
-
-  if (video_system_initialized) {
-    app_video_deinit();
-    video_system_initialized = false;
   }
 
   if (camera_event_group) {

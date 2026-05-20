@@ -1,9 +1,12 @@
 #include <fcntl.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/errno.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/param.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "driver/i2c_master.h"
 #include "esp_err.h"
@@ -11,11 +14,15 @@
 #include "esp_sccb_i2c.h"
 #include "esp_sccb_intf.h"
 #include "esp_video_init.h"
+#include "esp_video_ioctl.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "video.h"
 
 static const char *TAG = "video";
 
-// OV5647 SCCB handle used to widen on-sensor AE hysteresis past the ±8%
+// OV5647 SCCB handle used to widen on-sensor AE hysteresis past the +/-8%
 // window the managed sensor driver writes. The sensor's hunting response to
 // that narrow band made luminance visibly pulse under high-contrast scenes.
 #define OV5647_SCCB_ADDR 0x36
@@ -50,124 +57,111 @@ static esp_err_t ensure_sensor_sccb(void) {
 
 #define MAX_BUFFER_COUNT 6
 #define MIN_BUFFER_COUNT 2
-// 8KB needed: motor driver init (DW9714) deepens SCCB/I2C call stack
+// 8KB needed: motor driver init (DW9714) deepens SCCB/I2C call stack.
 #define VIDEO_TASK_STACK_SIZE (8 * 1024)
 #define VIDEO_TASK_PRIORITY 3
-
-typedef enum {
-  VIDEO_TASK_DELETE = BIT(0),
-  VIDEO_TASK_DELETE_DONE = BIT(1),
-} video_event_id_t;
+#define VIDEO_STOP_TIMEOUT_MS 1000
+#define VIDEO_DQBUF_TIMEOUT_MS 100
 
 typedef struct {
   uint8_t *camera_buffer[MAX_BUFFER_COUNT];
   size_t camera_buf_size;
   uint32_t camera_buf_hes;
   uint32_t camera_buf_ves;
-  struct v4l2_buffer v4l2_buf;
-  uint8_t camera_mem_mode;
+  uint32_t buffer_count;
   int video_fd;
+  bool ready;
+  bool streaming;
+  bool has_focus_motor;
   app_video_frame_operation_cb_t frame_cb;
   TaskHandle_t task_handle;
-  EventGroupHandle_t event_group;
 } app_video_t;
 
-static const esp_video_init_csi_config_t s_csi_config = {
-    .sccb_config = {.init_sccb = true,
-                    .i2c_config = {.port = 0,
-                                   .scl_pin = BSP_CAM_I2C_SCL,
-                                   .sda_pin = BSP_CAM_I2C_SDA},
-                    .freq = 100000},
-    .reset_pin = -1,
-    .pwdn_pin = -1,
-};
-
-#if BSP_CAM_HAS_MOTOR
-static const esp_video_init_cam_motor_config_t s_cam_motor_config = {
-    .sccb_config = {.init_sccb = true,
-                    .i2c_config = {.port = 0,
-                                   .scl_pin = BSP_CAM_I2C_SCL,
-                                   .sda_pin = BSP_CAM_I2C_SDA},
-                    .freq = 100000},
-    .reset_pin = -1,
-    .pwdn_pin = -1,
-    .signal_pin = -1,
-};
-#endif
-
-static const esp_video_init_config_t s_cam_config = {
-    .csi = &s_csi_config,
-#if BSP_CAM_HAS_MOTOR
-    .cam_motor = &s_cam_motor_config,
-#endif
-};
-
 static app_video_t app_video = {.video_fd = -1};
-static bool s_initialized = false;
+static volatile bool s_stop_requested = false;
+static SemaphoreHandle_t s_task_done = NULL;
 
-static esp_err_t stream_start(int fd);
-static esp_err_t stream_stop(int fd);
+static esp_err_t video_driver_init(i2c_master_bus_handle_t i2c_bus_handle);
+static esp_err_t video_device_open(video_fmt_t fmt);
+static esp_err_t configure_dqbuf_timeout(void);
+static esp_err_t request_capture_buffers(uint32_t fb_num);
+static esp_err_t queue_capture_buffers(void);
+static esp_err_t stream_on(void);
+static esp_err_t stream_off(void);
 static void stream_task(void *arg);
 
-esp_err_t app_video_main(i2c_master_bus_handle_t i2c_bus_handle) {
-  if (s_initialized) {
-    ESP_LOGW(TAG, "Already initialized");
-    return ESP_OK;
-  }
-
-  esp_err_t ret;
-
+static esp_err_t video_driver_init(i2c_master_bus_handle_t i2c_bus_handle) {
+  if (!i2c_bus_handle)
+    return ESP_ERR_INVALID_ARG;
   s_i2c_bus = i2c_bus_handle;
 
-  if (i2c_bus_handle) {
-    static esp_video_init_csi_config_t csi_config;
-    static esp_video_init_config_t cam_config;
-    csi_config = s_csi_config;
-    csi_config.sccb_config.init_sccb = false;
-    csi_config.sccb_config.i2c_handle = i2c_bus_handle;
-
-    cam_config = (esp_video_init_config_t){
-        .csi = &csi_config,
-    };
+  esp_video_init_csi_config_t csi_config = {
+      .sccb_config = {.init_sccb = false,
+                      .i2c_handle = i2c_bus_handle,
+                      .freq = 100000},
+      .reset_pin = -1,
+      .pwdn_pin = -1,
+  };
+  esp_video_init_config_t cam_config = {.csi = &csi_config};
 
 #if BSP_CAM_HAS_MOTOR
-    static esp_video_init_cam_motor_config_t cam_motor_config;
-    cam_motor_config = s_cam_motor_config;
-    cam_motor_config.sccb_config.init_sccb = false;
-    cam_motor_config.sccb_config.i2c_handle = i2c_bus_handle;
-    cam_config.cam_motor = &cam_motor_config;
+  esp_video_init_cam_motor_config_t cam_motor_config = {
+      .sccb_config = {.init_sccb = false,
+                      .i2c_handle = i2c_bus_handle,
+                      .freq = 100000},
+      .reset_pin = -1,
+      .pwdn_pin = -1,
+      .signal_pin = -1,
+  };
+  cam_config.cam_motor = &cam_motor_config;
 #endif
 
-    ret = esp_video_init(&cam_config);
-  } else {
-    ret = esp_video_init(&s_cam_config);
-  }
-
-  if (ret == ESP_OK)
-    s_initialized = true;
-  return ret;
+  return esp_video_init(&cam_config);
 }
 
-int app_video_open(char *dev, video_fmt_t fmt) {
+static bool query_focus_motor(void) {
+#if BSP_CAM_HAS_MOTOR
+  struct v4l2_query_ext_ctrl qctrl = {.id = V4L2_CID_FOCUS_ABSOLUTE};
+  return (ioctl(app_video.video_fd, VIDIOC_QUERY_EXT_CTRL, &qctrl) == 0);
+#else
+  return false;
+#endif
+}
+
+static esp_err_t configure_dqbuf_timeout(void) {
+  struct timeval timeout = {
+      .tv_sec = VIDEO_DQBUF_TIMEOUT_MS / 1000,
+      .tv_usec = (VIDEO_DQBUF_TIMEOUT_MS % 1000) * 1000,
+  };
+
+  if (ioctl(app_video.video_fd, VIDIOC_S_DQBUF_TIMEOUT, &timeout)) {
+    ESP_LOGE(TAG, "Set DQBUF timeout failed: %s", strerror(errno));
+    return ESP_FAIL;
+  }
+  return ESP_OK;
+}
+
+static esp_err_t video_device_open(video_fmt_t fmt) {
   struct v4l2_format default_format = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE};
   struct v4l2_capability cap;
 
-  int fd = open(dev, O_RDWR);
+  int fd = open(CAM_DEV_PATH, O_RDWR);
   if (fd < 0) {
-    ESP_LOGE(TAG, "Open failed");
-    return -1;
+    ESP_LOGE(TAG, "Open failed: %s", strerror(errno));
+    return ESP_FAIL;
   }
+  app_video.video_fd = fd;
 
   if (ioctl(fd, VIDIOC_QUERYCAP, &cap)) {
     ESP_LOGE(TAG, "QUERYCAP failed");
-    goto fail;
+    return ESP_FAIL;
   }
 
   ESP_LOGI(TAG, "Driver: %s, Card: %s", cap.driver, cap.card);
 
   if (ioctl(fd, VIDIOC_G_FMT, &default_format)) {
     ESP_LOGE(TAG, "G_FMT failed");
-    goto fail;
+    return ESP_FAIL;
   }
 
   ESP_LOGI(TAG, "Resolution: %" PRIu32 "x%" PRIu32,
@@ -185,7 +179,7 @@ int app_video_open(char *dev, video_fmt_t fmt) {
     };
     if (ioctl(fd, VIDIOC_S_FMT, &format)) {
       ESP_LOGE(TAG, "S_FMT failed");
-      goto fail;
+      return ESP_FAIL;
     }
   }
 
@@ -210,273 +204,294 @@ int app_video_open(char *dev, video_fmt_t fmt) {
     ESP_LOGW(TAG, "HFLIP failed");
 #endif
 
-  return fd;
-
-fail:
-  close(fd);
-  return -1;
+  app_video.has_focus_motor = query_focus_motor();
+  return configure_dqbuf_timeout();
 }
 
-esp_err_t app_video_set_bufs(int fd, uint32_t fb_num, const void **fb) {
+static esp_err_t request_capture_buffers(uint32_t fb_num) {
   if (fb_num > MAX_BUFFER_COUNT || fb_num < MIN_BUFFER_COUNT) {
     ESP_LOGE(TAG, "Invalid buffer count: %" PRIu32, fb_num);
-    return ESP_FAIL;
+    return ESP_ERR_INVALID_ARG;
   }
+  if (app_video.video_fd < 0)
+    return ESP_ERR_INVALID_STATE;
 
   struct v4l2_requestbuffers req = {
       .count = fb_num,
       .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
-      .memory = fb ? V4L2_MEMORY_USERPTR : V4L2_MEMORY_MMAP,
+      .memory = V4L2_MEMORY_MMAP,
   };
-  app_video.camera_mem_mode = req.memory;
 
-  if (ioctl(fd, VIDIOC_REQBUFS, &req)) {
+  if (ioctl(app_video.video_fd, VIDIOC_REQBUFS, &req)) {
     ESP_LOGE(TAG, "REQBUFS failed");
-    goto fail;
-  }
-
-  for (int i = 0; i < fb_num; i++) {
-    struct v4l2_buffer buf = {
-        .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
-        .memory = req.memory,
-        .index = i,
-    };
-
-    if (ioctl(fd, VIDIOC_QUERYBUF, &buf)) {
-      ESP_LOGE(TAG, "QUERYBUF failed");
-      goto fail;
-    }
-
-    if (req.memory == V4L2_MEMORY_MMAP) {
-      app_video.camera_buffer[i] =
-          mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-               buf.m.offset);
-      if (app_video.camera_buffer[i] == MAP_FAILED) {
-        ESP_LOGE(TAG, "mmap failed: %s", strerror(errno));
-        goto fail;
-      }
-    } else {
-      if (!fb[i]) {
-        ESP_LOGE(TAG, "NULL buffer");
-        goto fail;
-      }
-      buf.m.userptr = (unsigned long)fb[i];
-      app_video.camera_buffer[i] = (uint8_t *)fb[i];
-    }
-
-    app_video.camera_buf_size = buf.length;
-
-    if (ioctl(fd, VIDIOC_QBUF, &buf)) {
-      ESP_LOGE(TAG, "QBUF failed");
-      goto fail;
-    }
-  }
-
-  return ESP_OK;
-
-fail:
-  if (req.memory == V4L2_MEMORY_MMAP) {
-    for (int i = 0; i < MAX_BUFFER_COUNT; i++) {
-      if (app_video.camera_buffer[i] &&
-          app_video.camera_buffer[i] != MAP_FAILED) {
-        munmap(app_video.camera_buffer[i], app_video.camera_buf_size);
-        app_video.camera_buffer[i] = NULL;
-      }
-    }
-  }
-  close(fd);
-  return ESP_FAIL;
-}
-
-esp_err_t app_video_get_bufs(int fb_num, void **fb) {
-  if (fb_num > MAX_BUFFER_COUNT || fb_num < MIN_BUFFER_COUNT) {
-    ESP_LOGE(TAG, "Invalid buffer count");
     return ESP_FAIL;
   }
 
-  for (int i = 0; i < fb_num; i++) {
-    if (!app_video.camera_buffer[i]) {
-      ESP_LOGE(TAG, "NULL buffer at %d", i);
+  for (uint32_t i = 0; i < fb_num; i++) {
+    struct v4l2_buffer buf = {
+        .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        .memory = V4L2_MEMORY_MMAP,
+        .index = i,
+    };
+
+    if (ioctl(app_video.video_fd, VIDIOC_QUERYBUF, &buf)) {
+      ESP_LOGE(TAG, "QUERYBUF failed");
       return ESP_FAIL;
     }
-    fb[i] = app_video.camera_buffer[i];
+
+    app_video.camera_buffer[i] =
+        mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED,
+             app_video.video_fd, buf.m.offset);
+    if (app_video.camera_buffer[i] == MAP_FAILED) {
+      ESP_LOGE(TAG, "mmap failed: %s", strerror(errno));
+      app_video.camera_buffer[i] = NULL;
+      return ESP_FAIL;
+    }
+
+    app_video.camera_buf_size = buf.length;
   }
+
+  app_video.buffer_count = fb_num;
+  return ESP_OK;
+}
+
+static esp_err_t queue_capture_buffers(void) {
+  if (!app_video.ready || app_video.video_fd < 0 || app_video.buffer_count == 0)
+    return ESP_ERR_INVALID_STATE;
+
+  for (uint32_t i = 0; i < app_video.buffer_count; i++) {
+    struct v4l2_buffer buf = {
+        .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        .memory = V4L2_MEMORY_MMAP,
+        .index = i,
+        .length = app_video.camera_buf_size,
+    };
+
+    if (ioctl(app_video.video_fd, VIDIOC_QBUF, &buf)) {
+      ESP_LOGE(TAG, "QBUF failed");
+      return ESP_FAIL;
+    }
+  }
+
   return ESP_OK;
 }
 
 uint32_t app_video_get_buf_size(void) {
-  return app_video.camera_buf_hes * app_video.camera_buf_ves *
-         (APP_VIDEO_FMT == APP_VIDEO_FMT_RGB565 ? 2 : 3);
+  if (app_video.camera_buf_size)
+    return (uint32_t)app_video.camera_buf_size;
+  return app_video.camera_buf_hes * app_video.camera_buf_ves * 2;
 }
 
 esp_err_t app_video_get_resolution(uint32_t *width, uint32_t *height) {
   if (!width || !height)
-    return ESP_FAIL;
+    return ESP_ERR_INVALID_ARG;
+  if (!app_video.ready)
+    return ESP_ERR_INVALID_STATE;
   *width = app_video.camera_buf_hes;
   *height = app_video.camera_buf_ves;
   return ESP_OK;
 }
 
-static esp_err_t receive_frame(int fd) {
-  memset(&app_video.v4l2_buf, 0, sizeof(app_video.v4l2_buf));
-  app_video.v4l2_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  app_video.v4l2_buf.memory = app_video.camera_mem_mode;
+static esp_err_t receive_frame(struct v4l2_buffer *buf) {
+  memset(buf, 0, sizeof(*buf));
+  buf->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  buf->memory = V4L2_MEMORY_MMAP;
 
-  if (ioctl(fd, VIDIOC_DQBUF, &app_video.v4l2_buf)) {
-    ESP_LOGE(TAG, "DQBUF failed");
+  if (ioctl(app_video.video_fd, VIDIOC_DQBUF, buf)) {
+    if (s_stop_requested)
+      return ESP_ERR_INVALID_STATE;
+    if (errno == ETIMEDOUT || errno == EPERM)
+      return ESP_ERR_TIMEOUT;
+    ESP_LOGE(TAG, "DQBUF failed: %s", strerror(errno));
     return ESP_FAIL;
   }
   return ESP_OK;
 }
 
-static void process_frame(void) {
-  uint8_t idx = app_video.v4l2_buf.index;
-  if (idx >= MAX_BUFFER_COUNT) {
+static void process_frame(const struct v4l2_buffer *buf) {
+  uint8_t idx = buf->index;
+  if (idx >= app_video.buffer_count) {
     ESP_LOGE(TAG, "Buffer index %u out of range", idx);
     return;
   }
-  app_video.v4l2_buf.m.userptr = (unsigned long)app_video.camera_buffer[idx];
-  app_video.v4l2_buf.length = app_video.camera_buf_size;
 
-  app_video.frame_cb(app_video.camera_buffer[idx], idx,
-                     app_video.camera_buf_hes, app_video.camera_buf_ves,
-                     app_video.camera_buf_size);
+  app_video_frame_operation_cb_t cb = app_video.frame_cb;
+  if (!cb)
+    return;
+
+  cb(app_video.camera_buffer[idx], idx, app_video.camera_buf_hes,
+     app_video.camera_buf_ves, app_video.camera_buf_size);
 }
 
-static esp_err_t release_frame(int fd) {
-  if (ioctl(fd, VIDIOC_QBUF, &app_video.v4l2_buf)) {
-    ESP_LOGE(TAG, "QBUF failed");
+static esp_err_t release_frame(struct v4l2_buffer *buf) {
+  if (s_stop_requested)
+    return ESP_OK;
+
+  if (ioctl(app_video.video_fd, VIDIOC_QBUF, buf)) {
+    if (!s_stop_requested) {
+      ESP_LOGE(TAG, "QBUF failed");
+    }
     return ESP_FAIL;
   }
   return ESP_OK;
 }
 
-static esp_err_t stream_start(int fd) {
+static esp_err_t stream_on(void) {
   int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (ioctl(fd, VIDIOC_STREAMON, &type)) {
+  if (ioctl(app_video.video_fd, VIDIOC_STREAMON, &type)) {
     ESP_LOGE(TAG, "STREAMON failed: %s", strerror(errno));
     return ESP_FAIL;
   }
+  app_video.streaming = true;
   ESP_LOGI(TAG, "Stream started");
   return ESP_OK;
 }
 
-static esp_err_t stream_stop(int fd) {
+static esp_err_t stream_off(void) {
+  if (app_video.video_fd < 0 || !app_video.streaming)
+    return ESP_OK;
+
+  app_video.streaming = false;
+
   int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  ioctl(fd, VIDIOC_STREAMOFF, &type);
-  if (app_video.event_group)
-    xEventGroupSetBits(app_video.event_group, VIDEO_TASK_DELETE_DONE);
+  esp_err_t ret = ESP_OK;
+  if (ioctl(app_video.video_fd, VIDIOC_STREAMOFF, &type) && errno != EINVAL) {
+    ESP_LOGW(TAG, "STREAMOFF failed: %s", strerror(errno));
+    ret = ESP_FAIL;
+  }
+
   ESP_LOGI(TAG, "Stream stopped");
-  return ESP_OK;
+  return ret;
 }
 
 static void stream_task(void *arg) {
-  int fd = app_video.video_fd;
-  ESP_ERROR_CHECK(stream_start(fd));
+  (void)arg;
+  struct v4l2_buffer v4l2_buf;
 
-  while (1) {
-    if (xEventGroupGetBits(app_video.event_group) & VIDEO_TASK_DELETE)
+  while (!s_stop_requested) {
+    esp_err_t ret = receive_frame(&v4l2_buf);
+    if (ret == ESP_ERR_TIMEOUT)
+      continue;
+    if (ret != ESP_OK)
       break;
 
-    if (receive_frame(fd) != ESP_OK)
+    if (s_stop_requested)
       break;
 
-    if (app_video.v4l2_buf.flags & V4L2_BUF_FLAG_DONE)
-      process_frame();
+    if (v4l2_buf.flags & V4L2_BUF_FLAG_DONE)
+      process_frame(&v4l2_buf);
 
-    if (release_frame(fd) != ESP_OK)
+    if (release_frame(&v4l2_buf) != ESP_OK)
       break;
   }
 
-  stream_stop(fd);
+  if (!s_stop_requested)
+    (void)stream_off();
+  app_video.task_handle = NULL;
+  xSemaphoreGive(s_task_done);
   vTaskDelete(NULL);
 }
 
-esp_err_t app_video_stream_task_start(int fd, int core_id) {
-  if (!app_video.event_group)
-    app_video.event_group = xEventGroupCreate();
-  xEventGroupClearBits(app_video.event_group, VIDEO_TASK_DELETE_DONE);
+esp_err_t app_video_init_once(i2c_master_bus_handle_t i2c_bus_handle) {
+  if (app_video.ready)
+    return ESP_OK;
 
-  app_video.video_fd = fd;
+  if (!s_task_done) {
+    s_task_done = xSemaphoreCreateBinary();
+    if (!s_task_done)
+      return ESP_ERR_NO_MEM;
+  }
+
+  esp_err_t ret = video_driver_init(i2c_bus_handle);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Driver init failed: %s", esp_err_to_name(ret));
+    return ret;
+  }
+
+  ret = video_device_open(APP_VIDEO_FMT_RGB565);
+  if (ret != ESP_OK)
+    return ret;
+
+  ret = request_capture_buffers(CAM_BUF_NUM);
+  if (ret != ESP_OK)
+    return ret;
+
+  app_video.ready = true;
+  ESP_LOGI(TAG, "Video pipeline initialized once");
+  return ESP_OK;
+}
+
+bool app_video_is_ready(void) { return app_video.ready; }
+
+bool app_video_is_streaming(void) { return app_video.streaming; }
+
+esp_err_t app_video_start(app_video_frame_operation_cb_t cb, int core_id) {
+  if (!app_video.ready)
+    return ESP_ERR_INVALID_STATE;
+  if (!cb)
+    return ESP_ERR_INVALID_ARG;
+  if (app_video.task_handle || app_video.streaming)
+    return ESP_ERR_INVALID_STATE;
+
+  s_stop_requested = false;
+  while (xSemaphoreTake(s_task_done, 0) == pdTRUE) {
+  }
+
+  esp_err_t ret = queue_capture_buffers();
+  if (ret != ESP_OK)
+    return ret;
+
+  app_video.frame_cb = cb;
+  ret = stream_on();
+  if (ret != ESP_OK) {
+    app_video.frame_cb = NULL;
+    return ret;
+  }
 
   if (xTaskCreatePinnedToCore(stream_task, "video_stream",
                               VIDEO_TASK_STACK_SIZE, NULL, VIDEO_TASK_PRIORITY,
                               &app_video.task_handle, core_id) != pdPASS) {
     ESP_LOGE(TAG, "Task create failed");
+    app_video.frame_cb = NULL;
+    (void)stream_off();
     return ESP_FAIL;
   }
+
   return ESP_OK;
 }
 
-esp_err_t app_video_stream_task_stop(int fd) {
-  if (!app_video.event_group)
+esp_err_t app_video_stop(void) {
+  if (!s_task_done)
     return ESP_OK;
-  xEventGroupSetBits(app_video.event_group, VIDEO_TASK_DELETE);
-  return ESP_OK;
-}
 
-esp_err_t
-app_video_register_frame_operation_cb(app_video_frame_operation_cb_t cb) {
-  app_video.frame_cb = cb;
-  return ESP_OK;
-}
-
-esp_err_t app_video_close(int fd) {
-  esp_err_t ret = ESP_OK;
-
-  app_video_stream_task_stop(fd);
-  if (fd >= 0) {
-    int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    ioctl(fd, VIDIOC_STREAMOFF, &type);
+  TaskHandle_t task = app_video.task_handle;
+  if (!task && !app_video.streaming) {
+    app_video.frame_cb = NULL;
+    return ESP_OK;
   }
 
-  if (app_video.event_group) {
-    xEventGroupWaitBits(app_video.event_group, VIDEO_TASK_DELETE_DONE, pdFALSE,
-                        pdFALSE, pdMS_TO_TICKS(1000));
-  }
+  s_stop_requested = true;
+  app_video.frame_cb = NULL;
+  esp_err_t ret = stream_off();
 
-  if (fd >= 0) {
-    // Release mmap'd buffers before closing FD
-    if (app_video.camera_mem_mode == V4L2_MEMORY_MMAP) {
-      for (int i = 0; i < MAX_BUFFER_COUNT; i++) {
-        if (app_video.camera_buffer[i] &&
-            app_video.camera_buffer[i] != MAP_FAILED) {
-          munmap(app_video.camera_buffer[i], app_video.camera_buf_size);
-          app_video.camera_buffer[i] = NULL;
-        }
-      }
-    }
-
-    // Explicitly release V4L2 buffers
-    struct v4l2_requestbuffers req = {
-        .count = 0,
-        .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
-        .memory = app_video.camera_mem_mode,
-    };
-    ioctl(fd, VIDIOC_REQBUFS, &req);
-
-    if (close(fd)) {
-      ESP_LOGE(TAG, "Close failed: %s", strerror(errno));
-      ret = ESP_FAIL;
+  if (task) {
+    TickType_t timeout = pdMS_TO_TICKS(VIDEO_STOP_TIMEOUT_MS);
+    if (xSemaphoreTake(s_task_done, timeout) != pdTRUE) {
+      ESP_LOGW(TAG, "Timeout waiting for stream task");
+      ret = ESP_ERR_TIMEOUT;
     }
   }
 
-  if (app_video.event_group) {
-    vEventGroupDelete(app_video.event_group);
-    app_video.event_group = NULL;
-  }
-
-  memset(&app_video, 0, sizeof(app_video));
-  app_video.video_fd = -1;
-
+  s_stop_requested = false;
   return ret;
 }
 
-esp_err_t app_video_set_ae_target(int fd, uint32_t level) {
-  (void)fd;
+esp_err_t app_video_set_ae_target(uint32_t level) {
   // Bypass V4L2_CID_EXPOSURE: the OV5647 driver's ov5647_set_AE_target() writes
-  // a ±8% stable band, which causes AE to hunt on small luma shifts under
-  // high-contrast scenes. Write the same target registers here with ±20%.
+  // a +/-8% stable band, which causes AE to hunt on small luma shifts under
+  // high-contrast scenes. Write the same target registers here with +/-20%.
+  if (!app_video.ready)
+    return ESP_ERR_INVALID_STATE;
   if (ensure_sensor_sccb() != ESP_OK) {
     ESP_LOGW(TAG, "Set AE target: SCCB handle unavailable");
     return ESP_FAIL;
@@ -518,42 +533,24 @@ esp_err_t app_video_set_ae_target(int fd, uint32_t level) {
   return ESP_OK;
 }
 
-esp_err_t app_video_set_focus(int fd, uint32_t position) {
+esp_err_t app_video_set_focus(uint32_t position) {
+  if (!app_video.ready || app_video.video_fd < 0)
+    return ESP_ERR_INVALID_STATE;
+  if (!app_video.has_focus_motor)
+    return ESP_ERR_NOT_SUPPORTED;
+
   struct v4l2_ext_controls controls = {.ctrl_class = V4L2_CTRL_CLASS_CAMERA,
                                        .count = 1};
   struct v4l2_ext_control control = {.id = V4L2_CID_FOCUS_ABSOLUTE,
                                      .value = position};
   controls.controls = &control;
-  if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &controls)) {
+  if (ioctl(app_video.video_fd, VIDIOC_S_EXT_CTRLS, &controls)) {
     ESP_LOGW(TAG, "Set focus position failed");
     return ESP_FAIL;
   }
   return ESP_OK;
 }
 
-bool app_video_has_focus_motor(int fd) {
-  struct v4l2_query_ext_ctrl qctrl = {.id = V4L2_CID_FOCUS_ABSOLUTE};
-  return (ioctl(fd, VIDIOC_QUERY_EXT_CTRL, &qctrl) == 0);
-}
-
-esp_err_t app_video_deinit(void) {
-  if (!s_initialized) {
-    ESP_LOGW(TAG, "Not initialized");
-    return ESP_OK;
-  }
-
-  if (s_sensor_sccb) {
-    esp_sccb_del_i2c_io(s_sensor_sccb);
-    s_sensor_sccb = NULL;
-  }
-  s_i2c_bus = NULL;
-
-  esp_err_t ret = esp_video_deinit();
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Deinit failed: %s", esp_err_to_name(ret));
-    return ESP_FAIL;
-  }
-
-  s_initialized = false;
-  return ESP_OK;
+bool app_video_has_focus_motor(void) {
+  return app_video.ready && app_video.has_focus_motor;
 }

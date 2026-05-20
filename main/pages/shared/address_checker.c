@@ -1,8 +1,13 @@
 // Address Checker — shared address verification via sweep
 
 #include "address_checker.h"
+#include "../../core/registry.h"
+#include "../../core/ss_whitelist.h"
 #include "../../core/wallet.h"
 #include "../../ui/dialog.h"
+#include "../../ui/theme.h"
+#include "wallet_source_picker.h"
+#include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -18,14 +23,74 @@ static void (*on_found)(void) = NULL;
 static void (*on_not_found)(void) = NULL;
 static lv_obj_t *progress_dialog = NULL;
 
+// Source picker state — persists between invocations (page-scoped)
+static wallet_source_t ac_source = {0, 0};
+
+static lv_obj_t *ac_overlay = NULL;
+static wallet_source_picker_t *ac_picker = NULL;
+
 static void perform_sweep(void);
 static void perform_sweep_deferred(lv_timer_t *timer);
+static void show_source_picker(void);
+static void destroy_source_picker(void);
 
 static void dismiss_progress(void) {
   if (progress_dialog) {
     lv_obj_delete(progress_dialog);
     progress_dialog = NULL;
   }
+}
+
+static void ac_picker_changed_cb(const wallet_source_t *src, void *user_data) {
+  (void)user_data;
+  ac_source = *src;
+}
+
+static void destroy_source_picker(void) {
+  wallet_source_picker_destroy(ac_picker);
+  ac_picker = NULL;
+  if (ac_overlay) {
+    lv_obj_del(ac_overlay);
+    ac_overlay = NULL;
+  }
+}
+
+static void ac_verify_btn_cb(lv_event_t *e) {
+  (void)e;
+  destroy_source_picker();
+  search_start = 0;
+  search_limit = SEARCH_BATCH;
+  perform_sweep();
+}
+
+static void show_source_picker(void) {
+  ac_overlay = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ac_overlay, LV_PCT(100), LV_PCT(100));
+  theme_apply_screen(ac_overlay);
+  lv_obj_set_style_pad_all(ac_overlay, theme_get_default_padding(), 0);
+  lv_obj_set_flex_flow(ac_overlay, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(ac_overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(ac_overlay, theme_get_default_padding(), 0);
+
+  lv_obj_t *picker_row = lv_obj_create(ac_overlay);
+  lv_obj_set_size(picker_row, LV_PCT(100), LV_SIZE_CONTENT);
+  theme_apply_transparent_container(picker_row);
+  lv_obj_set_flex_flow(picker_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(picker_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  ac_picker = wallet_source_picker_create(
+      picker_row, WALLET_PICKER_SINGLESIG_WITH_DESCRIPTORS, &ac_source,
+      ac_picker_changed_cb, NULL);
+
+  lv_obj_t *verify_btn = lv_btn_create(ac_overlay);
+  lv_obj_set_size(verify_btn, LV_PCT(60), LV_SIZE_CONTENT);
+  theme_apply_touch_button(verify_btn, false);
+  lv_obj_t *verify_lbl = lv_label_create(verify_btn);
+  lv_label_set_text(verify_lbl, "Verify");
+  lv_obj_center(verify_lbl);
+  theme_apply_button_label(verify_lbl, false);
+  lv_obj_add_event_cb(verify_btn, ac_verify_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void invalid_address_cb(void) {
@@ -61,23 +126,43 @@ static void perform_sweep(void) {
 
 static void perform_sweep_deferred(lv_timer_t *timer) {
   (void)timer;
-  wallet_policy_t policy = wallet_get_policy();
+  bool is_testnet = (wallet_get_network() == WALLET_NETWORK_TESTNET);
+  const registry_entry_t *reg_entry = NULL;
 
-  // Search receive addresses
+  if (ac_source.source >= 4) {
+    reg_entry = registry_get((size_t)(ac_source.source - 4));
+    if (!reg_entry) {
+      dismiss_progress();
+      if (on_not_found)
+        on_not_found();
+      return;
+    }
+  }
+
+  // Search receive addresses (chain = 0)
   for (uint32_t i = search_start; i < search_limit; i++) {
-    char *address = NULL;
-    bool success;
+    char addr_buf[SS_ADDRESS_MAX_LEN];
+    char *dyn = NULL;
+    bool success = false;
 
-    if (policy == WALLET_POLICY_MULTISIG)
-      success = wallet_get_multisig_receive_address(i, &address);
-    else
-      success = wallet_get_receive_address(i, &address);
-
-    if (!success || !address)
+    if (reg_entry) {
+      uint32_t mp = 0;
+      int ret = wally_descriptor_to_address(reg_entry->desc, 0, mp, i, 0, &dyn);
+      success = (ret == WALLY_OK) && dyn;
+    } else {
+      // Fixed account: user selected it in the picker; do not iterate accounts.
+      ss_script_type_t script =
+          wallet_source_picker_script_type(ac_source.source);
+      success = ss_address(script, ac_source.account, 0, i, is_testnet,
+                           addr_buf, sizeof(addr_buf));
+    }
+    if (!success)
       continue;
 
-    if (strcasecmp(address, checked_address) == 0) {
-      wally_free_string(address);
+    const char *addr = dyn ? dyn : addr_buf;
+    if (strcasecmp(addr, checked_address) == 0) {
+      if (dyn)
+        wally_free_string(dyn);
       dismiss_progress();
       char msg[64];
       snprintf(msg, sizeof(msg), "Receive #%u", i);
@@ -85,24 +170,36 @@ static void perform_sweep_deferred(lv_timer_t *timer) {
                        DIALOG_STYLE_FULLSCREEN);
       return;
     }
-    wally_free_string(address);
+    if (dyn) {
+      wally_free_string(dyn);
+      dyn = NULL;
+    }
   }
 
-  // Search change addresses
+  // Search change addresses (chain = 1)
   for (uint32_t i = search_start; i < search_limit; i++) {
-    char *address = NULL;
-    bool success;
+    char addr_buf[SS_ADDRESS_MAX_LEN];
+    char *dyn = NULL;
+    bool success = false;
 
-    if (policy == WALLET_POLICY_MULTISIG)
-      success = wallet_get_multisig_change_address(i, &address);
-    else
-      success = wallet_get_change_address(i, &address);
-
-    if (!success || !address)
+    if (reg_entry) {
+      uint32_t mp = (reg_entry->num_paths <= 1) ? 0 : 1;
+      int ret = wally_descriptor_to_address(reg_entry->desc, 0, mp, i, 0, &dyn);
+      success = (ret == WALLY_OK) && dyn;
+    } else {
+      // Fixed account: same rationale as receive loop above.
+      ss_script_type_t script =
+          wallet_source_picker_script_type(ac_source.source);
+      success = ss_address(script, ac_source.account, 1, i, is_testnet,
+                           addr_buf, sizeof(addr_buf));
+    }
+    if (!success)
       continue;
 
-    if (strcasecmp(address, checked_address) == 0) {
-      wally_free_string(address);
+    const char *addr = dyn ? dyn : addr_buf;
+    if (strcasecmp(addr, checked_address) == 0) {
+      if (dyn)
+        wally_free_string(dyn);
       dismiss_progress();
       char msg[64];
       snprintf(msg, sizeof(msg), "Change #%u", i);
@@ -110,12 +207,15 @@ static void perform_sweep_deferred(lv_timer_t *timer) {
                        DIALOG_STYLE_FULLSCREEN);
       return;
     }
-    wally_free_string(address);
+    if (dyn) {
+      wally_free_string(dyn);
+      dyn = NULL;
+    }
   }
 
   dismiss_progress();
 
-  // Not found
+  // Not found — offer to search another batch
   char msg[192];
   snprintf(msg, sizeof(msg),
            "Address not found in first %u addresses.\n\n"
@@ -169,7 +269,7 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
   search_limit = SEARCH_BATCH;
   on_found = found_cb;
   on_not_found = not_found_cb;
-  perform_sweep();
+  show_source_picker();
 }
 
 void address_checker_search_more(void) {
@@ -180,6 +280,7 @@ void address_checker_search_more(void) {
 
 void address_checker_destroy(void) {
   dismiss_progress();
+  destroy_source_picker();
   if (checked_address) {
     free(checked_address);
     checked_address = NULL;
@@ -188,4 +289,5 @@ void address_checker_destroy(void) {
   search_limit = SEARCH_BATCH;
   on_found = NULL;
   on_not_found = NULL;
+  // ac_source intentionally NOT reset — persist session selection
 }

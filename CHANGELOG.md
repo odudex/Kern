@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.0.7] - 2026-05-15
+
+### Added
+- Descriptors can be loaded into the current session and used for PSBT/address matching; explicit flash/SD save/load remains available for backups.
+- Session descriptor actions are now descriptor-scoped: view, export QR, save to flash/SD, or remove from session after selecting the descriptor.
+- Permissive signing mode (opt-in in settings): allows signing PSBTs whose key paths are not matched by any loaded session descriptor.
+- PSBT review now shows signing policy, per-source input totals, and highlights external inputs in the Sankey diagram.
+- Public key export now supports script type and account selection, plus BIP48 multisig cosigner xpub export.
+- Support for Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 (wave_43, 480x800 MIPI DSI, ST7701)
+- Simulator webcam capture is available on macOS and Linux.
+
+### Changed
+- Removed the policy-selection step from the signing flow. Any BIP-44/49/84/86 account that matches a whitelisted descriptor is accepted directly.
+- Account derivation is now inferred from the PSBT key path rather than a manual user setting. Existing PSBTs continue to sign correctly.
+- Descriptor registration is disabled until encrypted descriptor backups are available; loaded descriptors are session-only, while explicit flash/SD storage remains a backup/import feature.
+- Session descriptor details now use a full-screen viewer for long descriptor text instead of a modal dialog.
+- Battery status is shown with icon glyphs instead of text percentages.
+- Updated project target to ESP-IDF v6.0.1.
+
+### Fixed
+- Descriptor duplicate detection catches equivalent QR/storage loads that differ only by checksum or hardened-path notation.
+- Descriptor loads with the wrong network now report a network mismatch instead of a generic parse error.
+- Encrypted descriptor backups loaded from storage return cleanly after confirmation.
+- Wallet settings apply network and passphrase changes immediately.
+- Address and PSBT review controls fit better on narrow screens, including wrapped policy chips and scaled Sankey diagrams.
+- Avoid VFS slot exhaustion when reinitializing camera/storage paths.
+
+### Migration notes
+- Devices upgrading in-place have their legacy `def_pol` NVS key (the old default-wallet-policy setting) automatically erased on first boot. No user action required.
+
 ## [0.0.6] - 2026-04-25
 
 ### Changed

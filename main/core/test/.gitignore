@@ -1,0 +1,11 @@
+test_derivation_path
+test_ss_whitelist_parse
+test_ss_whitelist_is_whitelisted
+test_ss_whitelist_regen
+test_purpose_binding
+test_registry_match
+test_registry_parse
+test_psbt_classify
+test_psbt_regen_registry
+combined.o
+libwally.a

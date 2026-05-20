@@ -1,7 +1,14 @@
 #include "theme.h"
+#include "font_policy.h"
+#if !defined(ICONS_16) || ICONS_16
 #include "assets/icons_16.h"
+#endif
+#if !defined(ICONS_24) || ICONS_24
 #include "assets/icons_24.h"
+#endif
+#if !defined(ICONS_36) || ICONS_36
 #include "assets/icons_36.h"
+#endif
 
 // Minimalist theme colors
 #define COLOR_BG lv_color_hex(0x000000)       // Black background
@@ -32,6 +39,34 @@ static int sz_corner_btn_h;
 static int sz_small_padding;
 static int sz_logo;
 
+typedef struct {
+  const lv_font_t *text;
+  const lv_font_t *icon;
+} theme_font_pair_t;
+
+static theme_font_pair_t font_pair_for_size(uint16_t size) {
+  switch (size) {
+#if LV_FONT_MONTSERRAT_16 && (!defined(ICONS_16) || ICONS_16)
+  case 16:
+    return (theme_font_pair_t){&lv_font_montserrat_16, &icons_16};
+#endif
+#if LV_FONT_MONTSERRAT_24 && (!defined(ICONS_24) || ICONS_24)
+  case 24:
+    return (theme_font_pair_t){&lv_font_montserrat_24, &icons_24};
+#endif
+#if LV_FONT_MONTSERRAT_36 && (!defined(ICONS_36) || ICONS_36)
+  case 36:
+    return (theme_font_pair_t){&lv_font_montserrat_36, &icons_36};
+#endif
+  default:
+#if LV_FONT_MONTSERRAT_24 && (!defined(ICONS_24) || ICONS_24)
+    return (theme_font_pair_t){&lv_font_montserrat_24, &icons_24};
+#else
+#error "theme requires LV_FONT_MONTSERRAT_24 and icons_24"
+#endif
+  }
+}
+
 void theme_init(void) {
   scr_w = lv_disp_get_hor_res(NULL);
   scr_h = lv_disp_get_ver_res(NULL);
@@ -47,20 +82,15 @@ void theme_init(void) {
   sz_small_padding = scr_w / 72;     //  10 @ 720
   sz_logo = scr_w * 5 / 18;          // 200 @ 720
 
-  // Copy const fonts to mutable structs so we can set fallbacks
-  if (scr_w >= 600) {
-    font_small = lv_font_montserrat_24;
-    font_small.fallback = &icons_24;
+  ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
+  theme_font_pair_t small = font_pair_for_size(policy.small_px);
+  theme_font_pair_t medium = font_pair_for_size(policy.medium_px);
 
-    font_medium = lv_font_montserrat_36;
-    font_medium.fallback = &icons_36;
-  } else {
-    font_small = lv_font_montserrat_16;
-    font_small.fallback = &icons_16;
+  font_small = *small.text;
+  font_small.fallback = small.icon;
 
-    font_medium = lv_font_montserrat_24;
-    font_medium.fallback = &icons_24;
-  }
+  font_medium = *medium.text;
+  font_medium.fallback = medium.icon;
 }
 
 lv_color_t bg_color(void) { return COLOR_BG; }

@@ -1,0 +1,10 @@
+/*
+ * UI font policy rows:
+ *   UI_FONT_POLICY_ENTRY(max_diagonal_px, small_font_px, medium_font_px)
+ *
+ * max_diagonal_px is exclusive. Use 0 for the catch-all row.
+ * Text font sizes returned here must be enabled by the active LVGL config,
+ * with matching icon font assets available for the same sizes.
+ */
+UI_FONT_POLICY_ENTRY(960, 16, 24)
+UI_FONT_POLICY_ENTRY(0, 24, 36)

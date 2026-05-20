@@ -128,6 +128,7 @@ set(APP_UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/ui)
 set(SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
+    ${APP_UI_DIR}/font_policy.c
     ${APP_UI_DIR}/theme.c
     ${APP_UI_DIR}/assets/kern_logo_lvgl.c
     ${APP_UI_DIR}/assets/kern_logo_font.c
@@ -147,6 +148,7 @@ set(STUB_SOURCES
 # --- Application utilities ---
 set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
 )
 
 # --- Core application modules ---
@@ -154,15 +156,16 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/session.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/error.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/key.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/message_sign.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
     # miniz (used by kef.c for raw-deflate compression)
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
     # bbqr (multi-part QR encoding)
@@ -181,6 +184,7 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
     ${APP_UI_DIR}/sankey.c
+    ${APP_UI_DIR}/settings_row.c
 )
 
 # --- PIN pages ---
@@ -259,6 +263,7 @@ set(APP_PAGE_SOURCES
     # Settings
     ${APP_PAGES_DIR}/settings/descriptor_manager.c
     ${APP_PAGES_DIR}/settings/wallet_settings.c
+    ${APP_PAGES_DIR}/settings/registered_descriptors.c
     # Shared pages
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
@@ -267,6 +272,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/shared/key_confirmation.c
     ${APP_PAGES_DIR}/shared/mnemonic_editor.c
     ${APP_PAGES_DIR}/shared/storage_browser.c
+    ${APP_PAGES_DIR}/shared/wallet_source_picker.c
     ${APP_PAGES_DIR}/shared/wipe_flash_dialog.c
     # Top-level pages
     ${APP_PAGES_DIR}/capture_entropy.c
@@ -364,6 +370,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},wave_4b>:CONFIG_KERN_BOARD_WAVE_4B=1>
     $<$<STREQUAL:${SIM_BOARD},wave_35>:CONFIG_KERN_BOARD_WAVE_35=1>
     $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
+    $<$<STREQUAL:${SIM_BOARD},wave_43>:CONFIG_KERN_BOARD_WAVE_43=1>
 )
 
 target_compile_options(kern_simulator PRIVATE

@@ -2,11 +2,11 @@
 
 #include "pin_settings.h"
 #include "../../core/pin.h"
-#include "../../core/session.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme.h"
+#include "../../utils/session.h"
 #include "pin_page.h"
 
 #include <lvgl.h>

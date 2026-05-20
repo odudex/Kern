@@ -14,6 +14,9 @@ menu "Kern Configuration"
 
         config KERN_BOARD_WAVE_5
             bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-5 (720x1280 MIPI DSI)"
+
+        config KERN_BOARD_WAVE_43
+            bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 (480x800 MIPI DSI)"
     endchoice
 
 endmenu
