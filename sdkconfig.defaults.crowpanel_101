@@ -3,3 +3,5 @@ CONFIG_KERN_BOARD_CROWPANEL_101=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_SD_BUS_WIDTH=1
 CONFIG_SD_INTERNAL_PULLUP=y
+# SC2336 needs the ISP pipeline controller to run AWB/AGC/CCM — without it the image comes out green and clipped. IPA algorithms default to y, so enabling the controller is enough to bring them online via the sensor's default JSON.
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y

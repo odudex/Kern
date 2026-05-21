@@ -169,6 +169,17 @@ esp_err_t app_video_set_focus(uint32_t position);
 bool app_video_has_focus_motor(void);
 
 /**
+ * @brief Check if AE target tuning is supported on the active sensor.
+ *
+ * Only the OV5647 path exposes the AE-hysteresis SCCB writes used by
+ * app_video_set_ae_target(); on other sensors (e.g. SC2336) exposure is
+ * managed by the IPA AGC algorithm and the AE-target slider has no effect.
+ *
+ * @return true if AE target tuning is supported, false otherwise.
+ */
+bool app_video_has_ae_control(void);
+
+/**
  * @brief Snap a crop dimension so PPA's Q4.4 scale lands an exact output.
  *
  * The ESP32-P4 PPA scale fraction has only 4 bits (1/16 steps), so any

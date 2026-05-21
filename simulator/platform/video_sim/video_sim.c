@@ -345,6 +345,8 @@ esp_err_t app_video_set_focus(uint32_t position) {
 
 bool app_video_has_focus_motor(void) { return false; }
 
+bool app_video_has_ae_control(void) { return false; }
+
 /* --- Simulator control API --- */
 
 void sim_video_set_qr_image(const char *path) {

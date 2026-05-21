@@ -118,6 +118,7 @@ static lv_obj_t *settings_overlay = NULL;
 static lv_obj_t *ae_slider = NULL;
 static lv_obj_t *focus_slider = NULL;
 static bool has_focus_motor = false;
+static bool has_ae_control = false;
 static volatile bool settings_active = false;
 
 // PPA does centered crop + downscale (1280x960 -> 640x640) in a single pass.
@@ -434,17 +435,19 @@ static void create_settings_overlay(void) {
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(panel, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
-  // Exposure label + slider
-  lv_obj_t *ae_title = lv_label_create(panel);
-  lv_label_set_text(ae_title, "Exposure");
-  lv_obj_set_style_text_font(ae_title, theme_font_small(), 0);
-  lv_obj_set_style_text_color(ae_title, main_color(), 0);
+  // Exposure label + slider (only when sensor exposes AE control)
+  if (has_ae_control) {
+    lv_obj_t *ae_title = lv_label_create(panel);
+    lv_label_set_text(ae_title, "Exposure");
+    lv_obj_set_style_text_font(ae_title, theme_font_small(), 0);
+    lv_obj_set_style_text_color(ae_title, main_color(), 0);
 
-  ae_slider = lv_slider_create(panel);
-  lv_slider_set_range(ae_slider, AE_TARGET_MIN, AE_TARGET_MAX);
-  lv_slider_set_value(ae_slider, settings_get_ae_target(), LV_ANIM_OFF);
-  style_settings_slider(ae_slider);
-  lv_obj_add_event_cb(ae_slider, ae_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    ae_slider = lv_slider_create(panel);
+    lv_slider_set_range(ae_slider, AE_TARGET_MIN, AE_TARGET_MAX);
+    lv_slider_set_value(ae_slider, settings_get_ae_target(), LV_ANIM_OFF);
+    style_settings_slider(ae_slider);
+    lv_obj_add_event_cb(ae_slider, ae_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+  }
 
   // Focus label + slider (only if motor detected, inverted: left=near
   // right=far)
@@ -693,10 +696,15 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
     goto error;
   }
 
-  // Pin decode task to Core 1 to avoid competing with camera task on Core 0
-  BaseType_t task_result = xTaskCreatePinnedToCore(
+  // Pin decode task to Core 1 to avoid competing with camera task on Core 0.
+  // Stack lives in PSRAM: the ISP pipeline controller (when enabled on
+  // crowpanel_101) holds enough internal DRAM for its task + IPA algorithm
+  // state that a 32 KB internal-DRAM stack here fails to allocate. The decode
+  // task never writes flash/NVS, so the SPI-cache-disabled caveat for PSRAM
+  // stacks does not apply.
+  BaseType_t task_result = xTaskCreatePinnedToCoreWithCaps(
       qr_decode_task, "qr_decode", QR_DECODE_TASK_STACK_SIZE, NULL,
-      QR_DECODE_TASK_PRIORITY, &qr_decode_task_handle, 1);
+      QR_DECODE_TASK_PRIORITY, &qr_decode_task_handle, 1, MALLOC_CAP_SPIRAM);
   if (task_result != pdPASS) {
     ESP_LOGE(TAG, "Failed to create QR decode task");
     goto error;
@@ -715,7 +723,7 @@ error:
     qr_parser = NULL;
   }
   if (qr_decode_task_handle) {
-    vTaskDelete(qr_decode_task_handle);
+    vTaskDeleteWithCaps(qr_decode_task_handle);
     qr_decode_task_handle = NULL;
   }
   if (qr_task_done_sem) {
@@ -739,7 +747,7 @@ static void qr_decoder_cleanup(void) {
   if (qr_decode_task_handle && qr_task_done_sem) {
     if (xSemaphoreTake(qr_task_done_sem, pdMS_TO_TICKS(500)) != pdTRUE)
       ESP_LOGW(TAG, "Timeout waiting for QR decode task");
-    vTaskDelete(qr_decode_task_handle);
+    vTaskDeleteWithCaps(qr_decode_task_handle);
     qr_decode_task_handle = NULL;
   }
 
@@ -912,8 +920,6 @@ static bool camera_init(void) {
 
   xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
 
-  has_focus_motor = app_video_has_focus_motor();
-
   img_refresh_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
                  .w = CAMERA_SCREEN_WIDTH,
@@ -950,7 +956,9 @@ static bool camera_init(void) {
 
   // Apply camera settings after stream starts (V4L2 controls register with the
   // sensor device only once streaming).
-  app_video_set_ae_target(settings_get_ae_target());
+  if (has_ae_control) {
+    app_video_set_ae_target(settings_get_ae_target());
+  }
   if (has_focus_motor) {
     app_video_set_focus(settings_get_focus_position());
   }
@@ -977,6 +985,11 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     dialog_show_error("Camera not available", return_callback, 0);
     return;
   }
+
+  // Probe sensor capabilities up front so we can gate the settings button
+  // before camera_init() runs (which only happens later, inside camera_run()).
+  has_focus_motor = app_video_has_focus_motor();
+  has_ae_control = app_video_has_ae_control();
 
   qr_scanner_screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(qr_scanner_screen, LV_PCT(100), LV_PCT(100));
@@ -1012,10 +1025,12 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_label(title_label, true);
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 8);
 
-  lv_obj_t *settings_btn =
-      ui_create_settings_button(qr_scanner_screen, settings_btn_cb);
-  lv_obj_set_style_bg_opa(settings_btn, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(settings_btn, bg_color(), 0);
+  if (has_ae_control || has_focus_motor) {
+    lv_obj_t *settings_btn =
+        ui_create_settings_button(qr_scanner_screen, settings_btn_cb);
+    lv_obj_set_style_bg_opa(settings_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(settings_btn, bg_color(), 0);
+  }
 
 #ifdef QR_PERF_DEBUG
   fps_label = lv_label_create(qr_scanner_screen);
@@ -1053,6 +1068,7 @@ void qr_scanner_page_destroy(void) {
   is_fully_initialized = false;
   destroy_settings_overlay();
   has_focus_motor = false;
+  has_ae_control = false;
 
   if (completion_timer) {
     lv_timer_del(completion_timer);

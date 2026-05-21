@@ -675,3 +675,9 @@ esp_err_t app_video_set_focus(uint32_t position) {
 bool app_video_has_focus_motor(void) {
   return app_video.ready && app_video.has_focus_motor;
 }
+
+bool app_video_has_ae_control(void) {
+  // AE-target tuning here only writes OV5647 SCCB registers; SC2336 leaves AE
+  // to the IPA AGC algorithm.
+  return app_video.ready && detect_sensor_kind() == SENSOR_KIND_OV5647;
+}
