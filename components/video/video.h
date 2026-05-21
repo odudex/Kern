@@ -167,3 +167,19 @@ esp_err_t app_video_set_focus(uint32_t position);
  * @return true if focus motor is available, false otherwise.
  */
 bool app_video_has_focus_motor(void);
+
+/**
+ * @brief Snap a crop dimension so PPA's Q4.4 scale lands an exact output.
+ *
+ * The ESP32-P4 PPA scale fraction has only 4 bits (1/16 steps), so any
+ * non-N/16 scale truncates and leaves the right edge of out.pic_w
+ * uninitialized (visible as a noisy column). Given the largest crop the
+ * source allows and the desired output dimension, returns the largest crop
+ * <= crop_max such that crop * N == target * 16 for some integer N in
+ * [1, 16]. Falls back to `target` if no such crop fits.
+ *
+ * @param crop_max Largest crop the source frame permits (in pixels).
+ * @param target Desired exact PPA output dimension (in pixels).
+ * @return Snapped crop dimension.
+ */
+uint32_t app_video_ppa_snap_crop(uint32_t crop_max, uint32_t target);

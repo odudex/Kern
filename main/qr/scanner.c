@@ -827,10 +827,12 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   if (cam_ppa_client && !closing) {
     uint32_t in_w = camera_buf_hes;
     uint32_t in_h = camera_buf_ves;
-    uint32_t crop = (in_w < in_h) ? in_w : in_h;
-    if (crop > CAMERA_INPUT_CROP) {
-      crop = CAMERA_INPUT_CROP;
-    }
+    uint32_t crop_max = (in_w < in_h) ? in_w : in_h;
+    if (crop_max > CAMERA_INPUT_CROP)
+      crop_max = CAMERA_INPUT_CROP;
+    // Snap crop so PPA's Q4.4 scale produces exactly CAMERA_SCREEN_WIDTH;
+    // otherwise the truncated scale leaves a noisy column on the right edge.
+    uint32_t crop = app_video_ppa_snap_crop(crop_max, CAMERA_SCREEN_WIDTH);
     uint32_t crop_ox = (in_w - crop) / 2;
     uint32_t crop_oy = (in_h - crop) / 2;
     float sim_scale = (float)CAMERA_SCREEN_WIDTH / (float)crop;

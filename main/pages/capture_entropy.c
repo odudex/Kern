@@ -179,7 +179,10 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
 
   uint32_t in_w = camera_buf_hes ? camera_buf_hes : CAMERA_INPUT_WIDTH;
   uint32_t in_h = camera_buf_ves ? camera_buf_ves : CAMERA_INPUT_HEIGHT;
-  uint32_t crop = (in_w < in_h) ? in_w : in_h;
+  uint32_t crop_max = (in_w < in_h) ? in_w : in_h;
+  // Snap crop so PPA's Q4.4 scale produces exactly CAMERA_WIDTH; otherwise
+  // the truncated scale leaves a noisy column on the right edge.
+  uint32_t crop = app_video_ppa_snap_crop(crop_max, CAMERA_WIDTH);
   uint32_t crop_ox = (in_w - crop) / 2;
   uint32_t crop_oy = (in_h - crop) / 2;
   float scale = (float)CAMERA_WIDTH / (float)crop;

@@ -384,6 +384,20 @@ uint32_t app_video_get_buf_size(void) {
   return app_video.camera_buf_hes * app_video.camera_buf_ves * 2;
 }
 
+uint32_t app_video_ppa_snap_crop(uint32_t crop_max, uint32_t target) {
+  // Iterating N from 1 yields decreasing crop = target*16/N, so the first
+  // crop that fits in crop_max is the largest valid choice.
+  uint32_t target16 = target * 16u;
+  for (uint32_t n = 1; n <= 16; n++) {
+    if (target16 % n != 0)
+      continue;
+    uint32_t c = target16 / n;
+    if (c <= crop_max)
+      return c;
+  }
+  return target;
+}
+
 esp_err_t app_video_get_resolution(uint32_t *width, uint32_t *height) {
   if (!width || !height)
     return ESP_ERR_INVALID_ARG;
