@@ -235,14 +235,18 @@ static void show_address_detail(int index) {
 
   lv_obj_t *parent = lv_screen_active();
 
+  int32_t pad = theme_get_default_padding();
+  int32_t scr_w = theme_get_screen_width();
+  bool landscape = theme_is_landscape();
+
   detail_container = lv_obj_create(parent);
   lv_obj_set_size(detail_container, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(detail_container);
-  lv_obj_set_style_pad_all(detail_container, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(detail_container, pad, 0);
   lv_obj_set_flex_flow(detail_container, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(detail_container, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(detail_container, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_gap(detail_container, pad, 0);
 
   // Title
   char title[32];
@@ -251,32 +255,36 @@ static void show_address_detail(int index) {
   lv_obj_t *title_label = theme_create_label(detail_container, title, false);
   lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
 
+  // QR + address layout: column on portrait/square, row (side-by-side) on
+  // landscape so the address text fills the unused horizontal space.
+  lv_obj_t *content = lv_obj_create(detail_container);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(content,
+                       landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(content, pad, 0);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+
   // QR code in white container
-  int32_t square_size = theme_get_screen_width() * 55 / 100;
-
-  lv_obj_t *qr_container = lv_obj_create(detail_container);
-  lv_obj_set_size(qr_container, square_size, square_size);
-  lv_obj_set_style_bg_color(qr_container, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_bg_opa(qr_container, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(qr_container, 0, 0);
-  lv_obj_set_style_pad_all(qr_container, 15, 0);
-  lv_obj_set_style_radius(qr_container, 0, 0);
-  lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_SCROLLABLE);
-
-  int32_t qr_size = square_size - 30; // 15px padding each side
-
+  int32_t square_size = theme_get_min_dim() * 55 / 100;
+  lv_obj_t *qr_container = theme_create_qr_container(content, square_size, 15);
   lv_obj_t *qr = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr, qr_size);
+  lv_qrcode_set_size(qr, square_size - 30); // 15px padding each side
   lv_qrcode_update(qr, address, strlen(address));
   lv_obj_center(qr);
 
   // Full address text with alternating colored 4-char blocks
   char colored_addr[512];
   format_address_colored_blocks(colored_addr, sizeof(colored_addr), address);
-  lv_obj_t *addr_label = lv_label_create(detail_container);
+  lv_obj_t *addr_label = lv_label_create(content);
   lv_label_set_recolor(addr_label, true);
   lv_label_set_text(addr_label, colored_addr);
-  lv_obj_set_width(addr_label, LV_PCT(95));
+  if (landscape)
+    lv_obj_set_width(addr_label, scr_w - 2 * pad - square_size - pad);
+  else
+    lv_obj_set_width(addr_label, LV_PCT(95));
   lv_label_set_long_mode(addr_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(addr_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(addr_label, theme_font_medium(), 0);

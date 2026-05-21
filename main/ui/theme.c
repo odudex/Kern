@@ -29,6 +29,7 @@ static lv_font_t font_medium;
 // Cached screen dimensions and derived sizes (set once in theme_init)
 static int32_t scr_w;
 static int32_t scr_h;
+static int32_t scr_min_dim;
 static int sz_button_width;
 static int sz_button_height;
 static int sz_button_spacing;
@@ -70,17 +71,20 @@ static theme_font_pair_t font_pair_for_size(uint16_t size) {
 void theme_init(void) {
   scr_w = lv_disp_get_hor_res(NULL);
   scr_h = lv_disp_get_ver_res(NULL);
+  scr_min_dim = scr_w < scr_h ? scr_w : scr_h;
 
-  // Pre-compute all proportional sizes
-  sz_button_width = scr_w * 5 / 24;  // 150 @ 720
-  sz_button_height = scr_w * 5 / 36; // 100 @ 720
-  sz_button_spacing = scr_w / 36;    //  20 @ 720
-  sz_default_padding = scr_w / 24;   //  30 @ 720
-  sz_min_touch = scr_w / 8;          //  90 @ 720
-  sz_corner_btn_w = scr_w / 6;       // 120 @ 720
-  sz_corner_btn_h = scr_w / 8;       //  90 @ 720
-  sz_small_padding = scr_w / 72;     //  10 @ 720
-  sz_logo = scr_w * 5 / 18;          // 200 @ 720
+  // Pre-compute all proportional sizes. Vertical-axis sizes (heights, touch
+  // targets) use min_dim so they don't blow up the vertical budget on landscape
+  // displays where scr_w is the larger dimension.
+  sz_button_width = scr_w * 5 / 24;        // 150 @ 720
+  sz_button_height = scr_min_dim * 5 / 36; // 100 @ 720
+  sz_button_spacing = scr_w / 36;          //  20 @ 720
+  sz_default_padding = scr_w / 24;         //  30 @ 720
+  sz_min_touch = scr_min_dim / 8;          //  90 @ 720
+  sz_corner_btn_w = scr_w / 6;             // 120 @ 720
+  sz_corner_btn_h = scr_min_dim / 8;       //  90 @ 720
+  sz_small_padding = scr_w / 72;           //  10 @ 720
+  sz_logo = scr_min_dim * 5 / 18;          // 200 @ 720
 
   ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
   theme_font_pair_t small = font_pair_for_size(policy.small_px);
@@ -120,6 +124,8 @@ const lv_font_t *theme_font_medium(void) { return &font_medium; }
 
 int theme_get_screen_width(void) { return scr_w; }
 int theme_get_screen_height(void) { return scr_h; }
+int theme_get_min_dim(void) { return scr_min_dim; }
+bool theme_is_landscape(void) { return scr_w > scr_h; }
 
 int theme_get_button_width(void) { return sz_button_width; }
 int theme_get_button_height(void) { return sz_button_height; }
@@ -368,4 +374,20 @@ lv_obj_t *theme_create_dropdown(lv_obj_t *parent, const char *options) {
   lv_obj_set_style_border_color(dd, COLOR_ORANGE, 0);
   lv_obj_add_event_cb(dd, dropdown_open_cb, LV_EVENT_READY, NULL);
   return dd;
+}
+
+lv_obj_t *theme_create_qr_container(lv_obj_t *parent, int32_t size,
+                                    int32_t inner_pad) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *cont = lv_obj_create(parent);
+  lv_obj_set_size(cont, size, size);
+  lv_obj_set_style_bg_color(cont, COLOR_WHITE, 0);
+  lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(cont, 0, 0);
+  lv_obj_set_style_pad_all(cont, inner_pad, 0);
+  lv_obj_set_style_radius(cont, 0, 0);
+  lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+  return cont;
 }

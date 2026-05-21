@@ -2,6 +2,7 @@
 #define THEME_H
 
 #include <lvgl.h>
+#include <stdbool.h>
 
 void theme_init(void);
 lv_color_t bg_color(void);
@@ -22,6 +23,11 @@ const lv_font_t *theme_font_medium(void);
 // Screen dimensions (cached, never changes at runtime)
 int theme_get_screen_width(void);
 int theme_get_screen_height(void);
+// Smaller of width/height — use as the sizing reference for content that must
+// fit both directions (logos, QR codes) so landscape displays don't overflow.
+int theme_get_min_dim(void);
+// True when the display is wider than tall.
+bool theme_is_landscape(void);
 
 // Theme sizing constants (all proportional to screen width)
 int theme_get_button_width(void);
@@ -51,5 +57,9 @@ void theme_apply_transparent_container(lv_obj_t *obj);
 lv_obj_t *theme_create_flex_row(lv_obj_t *parent);
 lv_obj_t *theme_create_flex_column(lv_obj_t *parent);
 lv_obj_t *theme_create_dropdown(lv_obj_t *parent, const char *options);
+// Square white-background container for hosting an lv_qrcode. `inner_pad` is
+// the QR's white quiet zone (in pixels).
+lv_obj_t *theme_create_qr_container(lv_obj_t *parent, int32_t size,
+                                    int32_t inner_pad);
 
 #endif // THEME_H

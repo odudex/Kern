@@ -269,14 +269,7 @@ static void show_qr_export(void) {
   int32_t h = lv_obj_get_content_height(content_area);
   int32_t container_size = (w < h ? w : h) * 80 / 100;
 
-  qr_container = lv_obj_create(content_area);
-  lv_obj_set_size(qr_container, container_size, container_size);
-  lv_obj_set_style_bg_color(qr_container, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_bg_opa(qr_container, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(qr_container, 0, 0);
-  lv_obj_set_style_pad_all(qr_container, 10, 0);
-  lv_obj_set_style_radius(qr_container, 0, 0);
-  lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_SCROLLABLE);
+  qr_container = theme_create_qr_container(content_area, container_size, 10);
 
   lv_obj_update_layout(qr_container);
   int32_t qr_widget_size = lv_obj_get_content_width(qr_container);

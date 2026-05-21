@@ -100,24 +100,21 @@ static void render_xpub(void) {
            derivation_compact, xpub_str);
 
   lv_obj_update_layout(public_key_screen);
+  int32_t content_w = lv_obj_get_content_width(content_wrapper);
+  int32_t content_h = lv_obj_get_content_height(content_wrapper);
+
+  // Landscape stacks QR over xpub inside the right column, so the QR can use
+  // the column's full width (limited by height that leaves room for the text).
   int32_t square_size =
-      LV_MIN(lv_obj_get_content_width(content_wrapper) * 65 / 100,
-             lv_obj_get_content_height(content_wrapper) * 70 / 100);
+      theme_is_landscape() ? LV_MIN(content_w, content_h * 65 / 100)
+                           : LV_MIN(content_w * 65 / 100, content_h * 70 / 100);
 
-  lv_obj_t *qr_container = lv_obj_create(content_wrapper);
-  lv_obj_set_size(qr_container, square_size, square_size);
-  lv_obj_set_style_bg_color(qr_container, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_bg_opa(qr_container, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(qr_container, 0, 0);
-  lv_obj_set_style_pad_all(qr_container, theme_get_small_padding(), 0);
-  lv_obj_set_style_radius(qr_container, 0, 0);
-  lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_SCROLLABLE);
-
+  lv_obj_t *qr_container = theme_create_qr_container(
+      content_wrapper, square_size, theme_get_small_padding());
   lv_obj_update_layout(qr_container);
 
   lv_obj_t *qr = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr, LV_MIN(lv_obj_get_content_width(qr_container),
-                                lv_obj_get_content_height(qr_container)));
+  lv_qrcode_set_size(qr, lv_obj_get_content_width(qr_container));
   lv_qrcode_update(qr, key_origin, strlen(key_origin));
   lv_obj_center(qr);
 
@@ -180,10 +177,15 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   current_source = (wallet_source_t){0, 0};
   multisig_mode = false;
 
+  bool landscape = theme_is_landscape();
+
   public_key_screen = lv_obj_create(parent);
   lv_obj_set_size(public_key_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(public_key_screen);
-  lv_obj_set_style_pad_all(public_key_screen, theme_get_default_padding(), 0);
+  // Tighter page margins on landscape so the xpub column gets more width.
+  lv_obj_set_style_pad_all(
+      public_key_screen,
+      landscape ? theme_get_small_padding() : theme_get_default_padding(), 0);
   lv_obj_set_flex_flow(public_key_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(public_key_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -193,9 +195,32 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_t *header = ui_key_info_create(public_key_screen);
   ui_battery_create(header);
 
+  // Landscape moves the picker + multisig controls into a left column so the
+  // content area gets the full remaining height for the QR.
+  lv_obj_t *body = public_key_screen;
+  lv_obj_t *controls_parent = public_key_screen;
+  if (landscape) {
+    body = lv_obj_create(public_key_screen);
+    lv_obj_set_size(body, LV_PCT(100), LV_PCT(100));
+    theme_apply_transparent_container(body);
+    lv_obj_set_flex_grow(body, 1);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(body, theme_get_small_padding(), 0);
+
+    controls_parent = lv_obj_create(body);
+    lv_obj_set_size(controls_parent, LV_PCT(38), LV_PCT(100));
+    theme_apply_transparent_container(controls_parent);
+    lv_obj_set_flex_flow(controls_parent, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(controls_parent, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(controls_parent, theme_get_default_padding(), 0);
+  }
+
   // Top row: source picker. Held as a static (`picker_row`) because the
   // multisig toggle recreates the picker into the same row.
-  picker_row = lv_obj_create(public_key_screen);
+  picker_row = lv_obj_create(controls_parent);
   lv_obj_set_size(picker_row, LV_PCT(100), LV_SIZE_CONTENT);
   theme_apply_transparent_container(picker_row);
   lv_obj_set_flex_flow(picker_row, LV_FLEX_FLOW_ROW);
@@ -209,13 +234,13 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // and multisig BIP48 (P2WSH / P2SH-P2WSH). Disabled for Taproot / Legacy
   // since BIP48 only covers SegWit multisig.
   lv_obj_t *multisig_row = settings_row_toggle(
-      public_key_screen, "Multisig", false, multisig_switch_cb, "Multisig",
+      controls_parent, "Multisig", false, multisig_switch_cb, "Multisig",
       "BIP48 cosigner xpub for multisig wallets. SegWit only (Native or "
       "Nested).");
   multisig_switch = settings_row_get_widget(multisig_row);
   update_multisig_switch_state();
 
-  content_wrapper = lv_obj_create(public_key_screen);
+  content_wrapper = lv_obj_create(body);
   lv_obj_set_size(content_wrapper, LV_PCT(100), LV_PCT(100));
   theme_apply_transparent_container(content_wrapper);
   lv_obj_set_flex_grow(content_wrapper, 1);
