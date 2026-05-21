@@ -698,7 +698,7 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
 
   // Pin decode task to Core 1 to avoid competing with camera task on Core 0.
   // Stack lives in PSRAM: the ISP pipeline controller (when enabled on
-  // crowpanel_101) holds enough internal DRAM for its task + IPA algorithm
+  // crowpanel) holds enough internal DRAM for its task + IPA algorithm
   // state that a 32 KB internal-DRAM stack here fails to allocate. The decode
   // task never writes flash/NVS, so the SPI-cache-disabled caveat for PSRAM
   // stacks does not apply.

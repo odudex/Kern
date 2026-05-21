@@ -475,6 +475,6 @@ direct_dependencies:
 - espressif/esp_video
 - idf
 - lvgl/lvgl
-manifest_hash: 5a14a0826926a37742f09bf0fa557d5de2154a32d0e9075f48a655d8dff7b5ee
+manifest_hash: f3acc06cd6d868f54ffadf7dacf88acb772f815e20637648dbc4cc13157b3430
 target: esp32p4
 version: 3.0.0

@@ -29,7 +29,7 @@ static esp_err_t sd_card_enable_power(void) {
   esp_ldo_channel_config_t ldo_cfg = {.chan_id = 4, .voltage_mv = 3300};
   esp_err_t ret = esp_ldo_acquire_channel(&ldo_cfg, &s_ldo_chan);
   if (ret != ESP_OK) {
-#if CONFIG_KERN_BOARD_CROWPANEL_101
+#if CONFIG_KERN_BOARD_CROWPANEL
     if (ret == ESP_ERR_INVALID_STATE) {
       ESP_LOGW(TAG, "LDO VO4 already enabled; sharing CrowPanel panel rail");
       return ESP_OK;

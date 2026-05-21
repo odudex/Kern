@@ -10,7 +10,7 @@ dependencies:
   espressif/esp_lcd_ek79007:
     version: '>=1.0.2'
 
-description: Minimal BSP for CrowPanel Advanced 10.1" ESP32-P4 (1024x600 MIPI DSI, EK79007, GT911)
+description: Minimal BSP for CrowPanel Advanced ESP32-P4 boards (7" / 10.1", 1024x600 MIPI DSI, EK79007, GT911)
 targets:
 - esp32p4
 version: 1.0.0

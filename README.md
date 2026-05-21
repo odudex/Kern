@@ -27,7 +27,7 @@ Kern supports four Waveshare ESP32-P4 boards and one Elecrow CrowPanel board:
 | [ESP32-P4-WiFi6-Touch-LCD-3.5](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-3.5.htm) (`wave_35`) | 320x480 SPI | FT5x06 | OV5647 (no autofocus) |
 | [ESP32-P4-WiFi6-Touch-LCD-5](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-5.htm) (`wave_5`) | 720x1280 MIPI DSI | GT911 | OV5647 (no autofocus) |
 | [ESP32-P4-WiFi6-Touch-LCD-4.3](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm) (`wave_43`) | 480x800 MIPI DSI | GT911 | OV5647 (no autofocus) |
-| [CrowPanel Advanced 10.1" ESP32-P4](https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen) (`crowpanel_101`) | 1024x600 MIPI DSI | GT911 | OV5647 via camera header (no autofocus) |
+| [CrowPanel Advanced 10.1" ESP32-P4](https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen) and 7" siblings (`crowpanel`) | 1024x600 MIPI DSI | GT911 | OV5647 via camera header (no autofocus) |
 
 ESP32-P4 does not contain radio (WiFi, BLE), but these boards have a radio in a secondary chip (ESP32-C6 mini). Later the project will migrate to use radio-less, simpler and cheaper boards with ESP32-P4 only.
 
@@ -67,14 +67,14 @@ git submodule update --init --recursive
 
 ### Building the Project
 
-Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter — `wave_4b` (default), `wave_35`, `wave_5`, `wave_43`, or `crowpanel_101`:
+Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter — `wave_4b` (default), `wave_35`, `wave_5`, `wave_43`, or `crowpanel`:
 
 ```bash
 just build              # Build for wave_4b (default)
 just build wave_35      # Build for wave_35
 just build wave_5       # Build for wave_5
 just build wave_43      # Build for wave_43
-just build crowpanel_101 # Build for CrowPanel 10.1"
+just build crowpanel    # Build for CrowPanel 7" / 10.1"
 just flash wave_5       # Flash for wave_5
 just monitor            # Serial monitor
 just clean              # Required when switching boards
@@ -95,8 +95,8 @@ idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_5' buil
 # wave_43
 idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_43' build
 
-# crowpanel_101
-idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.crowpanel_101' build
+# crowpanel (7" / 10.1")
+idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.crowpanel' build
 ```
 
 > **Note:** Switching between boards requires a clean build (`just clean`) because sdkconfig is board-specific.
@@ -110,7 +110,7 @@ just sim                # Run simulator as wave_4b (720x720)
 just sim wave_35        # Run simulator as wave_35 (320x480)
 just sim wave_5         # Run simulator as wave_5 (720x1280)
 just sim wave_43        # Run simulator as wave_43 (480x800)
-just sim crowpanel_101  # Run simulator as crowpanel_101 (1024x600)
+just sim crowpanel      # Run simulator as crowpanel (1024x600)
 just sim-build wave_35  # Build only
 just sim-clean          # Remove simulator build artifacts
 just sim-reset          # Wipe simulator data (factory reset)
@@ -211,7 +211,7 @@ Pre-release firmware is provided **for testing purposes only**. Do not use pre-r
 | `wave_35` | Waveshare ESP32-P4-WiFi6-Touch-LCD-3.5 | 320x480 SPI |
 | `wave_5` | Waveshare ESP32-P4-WiFi6-Touch-LCD-5 | 720x1280 MIPI DSI |
 | `wave_43` | Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 | 480x800 MIPI DSI |
-| `crowpanel_101` | CrowPanel Advanced 10.1" ESP32-P4 | 1024x600 MIPI DSI |
+| `crowpanel` | CrowPanel Advanced 7" / 10.1" ESP32-P4 | 1024x600 MIPI DSI |
 
 ### Requirements
 

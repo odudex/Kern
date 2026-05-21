@@ -18,8 +18,8 @@ menu "Kern Configuration"
         config KERN_BOARD_WAVE_43
             bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 (480x800 MIPI DSI)"
 
-        config KERN_BOARD_CROWPANEL_101
-            bool "CrowPanel Advanced 10.1\" ESP32-P4 (1024x600 MIPI DSI)"
+        config KERN_BOARD_CROWPANEL
+            bool "CrowPanel Advanced ESP32-P4 (7\" / 10.1\", 1024x600 MIPI DSI)"
     endchoice
 
 endmenu

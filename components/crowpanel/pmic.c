@@ -1,4 +1,4 @@
-/* Battery monitoring for the CrowPanel 10.1 (crowpanel_101) board.
+/* Battery monitoring for the CrowPanel Advanced ESP32-P4 boards (7" / 10.1").
  *
  * Hardware overview
  * -----------------
@@ -27,7 +27,7 @@
  */
 
 #include "bsp/pmic.h"
-#include "bsp/crowpanel_101.h"
+#include "bsp/crowpanel.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "esp_log.h"

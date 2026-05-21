@@ -1,4 +1,4 @@
-#include "bsp/crowpanel_101.h"
+#include "bsp/crowpanel.h"
 #include "bsp/display.h"
 #include "bsp/touch.h"
 #include "bsp_err_check.h"
@@ -18,7 +18,7 @@
 #include "sdkconfig.h"
 #include <string.h>
 
-static const char *TAG = "crowpanel_101";
+static const char *TAG = "crowpanel";
 
 static bool i2c_initialized = false;
 static i2c_master_bus_handle_t i2c_handle = NULL;
@@ -258,7 +258,7 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
                         esp_lcd_touch_handle_t *ret_touch) {
   BSP_ERROR_CHECK_RETURN_ERR(bsp_i2c_init());
 
-  /* GT911 on crowpanel_101 can respond at either 0x5D (primary) or 0x14
+  /* GT911 on crowpanel can respond at either 0x5D (primary) or 0x14
      (backup) depending on INT/RST timing; probe both and fall back. */
   esp_lcd_touch_io_gt911_config_t gt911_config = {
       .dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS,
