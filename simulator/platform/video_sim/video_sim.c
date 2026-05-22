@@ -259,6 +259,18 @@ bool app_video_is_streaming(void) { return s_streaming; }
 
 uint32_t app_video_get_buf_size(void) { return (uint32_t)s_frame_size; }
 
+uint32_t app_video_ppa_snap_crop(uint32_t crop_max, uint32_t target) {
+  uint32_t target16 = target * 16u;
+  for (uint32_t n = 1; n <= 16; n++) {
+    if (target16 % n != 0)
+      continue;
+    uint32_t c = target16 / n;
+    if (c <= crop_max)
+      return c;
+  }
+  return target;
+}
+
 esp_err_t app_video_get_resolution(uint32_t *width, uint32_t *height) {
   if (width)
     *width = s_width;
