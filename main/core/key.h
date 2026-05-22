@@ -15,6 +15,7 @@ void key_unload(void);
 bool key_get_fingerprint(unsigned char *fingerprint_out);
 /* Caller-provided buffer of BIP32_KEY_FINGERPRINT_LEN*2 + 1 (9) bytes. */
 bool key_get_fingerprint_hex(char *hex_out);
+bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out);
 
 /* On success, *xpub_out is heap-allocated and must be freed by the caller
  * with wally_free_string(). Public-only -- safe to log. */
