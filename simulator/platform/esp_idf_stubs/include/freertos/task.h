@@ -15,7 +15,14 @@ BaseType_t xTaskCreatePinnedToCore(TaskFunction_t func, const char *name,
                                    UBaseType_t priority, TaskHandle_t *handle,
                                    int core_id);
 
+BaseType_t xTaskCreatePinnedToCoreWithCaps(TaskFunction_t func, const char *name,
+                                           uint32_t stack_size, void *param,
+                                           UBaseType_t priority,
+                                           TaskHandle_t *handle, int core_id,
+                                           uint32_t caps);
+
 void vTaskDelete(TaskHandle_t handle);
+void vTaskDeleteWithCaps(TaskHandle_t handle);
 void vTaskDelay(TickType_t ticks);
 void vTaskSuspend(TaskHandle_t handle);
 
