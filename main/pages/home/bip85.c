@@ -76,7 +76,6 @@ static bool derive_child_mnemonic(void) {
   bool ok = false;
 
   clear_child_mnemonic();
-  secure_memzero(entropy, sizeof(entropy));
 
   if (!key_get_derived_key("m", &master_key))
     goto cleanup;
@@ -148,6 +147,7 @@ static void create_word_labels(lv_obj_t *parent) {
     lv_obj_set_style_text_align(right, LV_TEXT_ALIGN_LEFT, 0);
   }
 
+  secure_memzero(word_list, sizeof(word_list));
   SECURE_FREE_STRING(mnemonic_copy);
 }
 
@@ -258,6 +258,11 @@ static void index_submit_cb(uint32_t value, void *user_data) {
   request_derivation_confirmation();
 }
 
+static void index_cancel_cb(void *user_data) {
+  (void)user_data;
+  create_word_count_menu();
+}
+
 static void open_index_keypad(void) {
   ui_numeric_keypad_config_t config = {
       .title = "Child Index",
@@ -266,6 +271,7 @@ static void open_index_keypad(void) {
       .max_digits = 10,
       .invalid_message = "Invalid child index",
       .submit_cb = index_submit_cb,
+      .cancel_cb = index_cancel_cb,
       .user_data = NULL,
   };
   ui_numeric_keypad_open(&index_keypad, &config);

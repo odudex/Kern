@@ -1,5 +1,6 @@
 #include "numeric_keypad.h"
 #include "dialog.h"
+#include "input_helpers.h"
 #include "theme.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -9,7 +10,7 @@
 struct ui_numeric_keypad_s {
   ui_numeric_keypad_t **handle;
   ui_numeric_keypad_config_t config;
-  lv_obj_t *overlay;
+  lv_obj_t *container;
   lv_obj_t *numpad;
   lv_obj_t *input_label;
   char input_buf[12];
@@ -93,17 +94,29 @@ static void submit_value(ui_numeric_keypad_t *keypad) {
   const char *invalid_message = keypad->config.invalid_message;
 
   if (!parse_value(keypad, &value)) {
-    if (invalid_message) {
+    if (invalid_message)
       dialog_show_error(invalid_message, NULL, 0);
-    } else {
-      ui_numeric_keypad_close(handle);
-    }
     return;
   }
 
   ui_numeric_keypad_close(handle);
   if (cb)
     cb(value, user_data);
+}
+
+static void cancel_keypad(ui_numeric_keypad_t *keypad) {
+  ui_numeric_keypad_t **handle = keypad->handle;
+  ui_numeric_keypad_cancel_cb cb = keypad->config.cancel_cb;
+  void *user_data = keypad->config.user_data;
+
+  ui_numeric_keypad_close(handle);
+  if (cb)
+    cb(user_data);
+}
+
+static void back_btn_cb(lv_event_t *e) {
+  ui_numeric_keypad_t *keypad = lv_event_get_user_data(e);
+  cancel_keypad(keypad);
 }
 
 static void numpad_event_cb(lv_event_t *e) {
@@ -129,6 +142,23 @@ static void numpad_event_cb(lv_event_t *e) {
   }
 }
 
+static void seed_initial_value(ui_numeric_keypad_t *keypad) {
+  uint32_t initial = keypad->config.initial_value;
+  if (initial > keypad->config.max_value)
+    initial = keypad->config.max_value;
+
+  snprintf(keypad->input_buf, sizeof(keypad->input_buf), "%u",
+           (unsigned)initial);
+
+  uint8_t max_digits = effective_max_digits(keypad);
+  size_t len = strlen(keypad->input_buf);
+  if (len > max_digits) {
+    len = max_digits;
+    keypad->input_buf[len] = '\0';
+  }
+  keypad->input_len = (int)len;
+}
+
 void ui_numeric_keypad_open(ui_numeric_keypad_t **handle,
                             const ui_numeric_keypad_config_t *config) {
   if (!handle || !config)
@@ -142,42 +172,36 @@ void ui_numeric_keypad_open(ui_numeric_keypad_t **handle,
 
   keypad->handle = handle;
   keypad->config = *config;
-  keypad->input_len = snprintf(keypad->input_buf, sizeof(keypad->input_buf),
-                               "%u", keypad->config.initial_value);
+  seed_initial_value(keypad);
 
-  keypad->overlay = lv_obj_create(lv_screen_active());
-  lv_obj_remove_style_all(keypad->overlay);
-  lv_obj_set_size(keypad->overlay, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(keypad->overlay, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(keypad->overlay, LV_OPA_50, 0);
-  lv_obj_add_flag(keypad->overlay, LV_OBJ_FLAG_CLICKABLE);
+  keypad->container = theme_create_page_container(lv_screen_active());
+  if (!keypad->container) {
+    free(keypad);
+    return;
+  }
 
-  lv_obj_t *modal = lv_obj_create(keypad->overlay);
-  lv_obj_set_size(modal, LV_PCT(80), LV_PCT(80));
-  lv_obj_center(modal);
-  theme_apply_frame(modal);
-  lv_obj_set_style_bg_opa(modal, LV_OPA_90, 0);
-  lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_flex_flow(modal, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(modal, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(modal, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_gap(modal, 15, 0);
+  lv_obj_t *back_btn = ui_create_back_button(keypad->container, NULL);
+  lv_obj_add_event_cb(back_btn, back_btn_cb, LV_EVENT_CLICKED, keypad);
 
-  lv_obj_t *title = lv_label_create(modal);
+  int32_t pad = theme_get_default_padding();
+
+  lv_obj_t *title = lv_label_create(keypad->container);
   lv_label_set_text(title, keypad->config.title ? keypad->config.title : "");
   lv_obj_set_style_text_font(title, theme_font_medium(), 0);
   lv_obj_set_style_text_color(title, main_color(), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, pad);
 
-  keypad->input_label = lv_label_create(modal);
+  keypad->input_label = lv_label_create(keypad->container);
   lv_obj_set_style_text_font(keypad->input_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(keypad->input_label, highlight_color(), 0);
+  lv_obj_align(keypad->input_label, LV_ALIGN_TOP_MID, 0,
+               theme_get_corner_button_height() + pad * 2);
   update_input_display(keypad);
 
-  keypad->numpad = lv_btnmatrix_create(modal);
+  keypad->numpad = lv_btnmatrix_create(keypad->container);
   lv_btnmatrix_set_map(keypad->numpad, NUMPAD_MAP);
-  lv_obj_set_size(keypad->numpad, LV_PCT(100), LV_PCT(70));
-  lv_obj_set_flex_grow(keypad->numpad, 1);
+  lv_obj_set_size(keypad->numpad, LV_PCT(90), LV_PCT(60));
+  lv_obj_align(keypad->numpad, LV_ALIGN_BOTTOM_MID, 0, -pad);
   theme_apply_btnmatrix(keypad->numpad);
   lv_obj_add_event_cb(keypad->numpad, numpad_event_cb, LV_EVENT_VALUE_CHANGED,
                       keypad);
@@ -191,8 +215,8 @@ void ui_numeric_keypad_close(ui_numeric_keypad_t **handle) {
     return;
 
   ui_numeric_keypad_t *keypad = *handle;
-  if (keypad->overlay)
-    lv_obj_del(keypad->overlay);
   *handle = NULL;
+  if (keypad->container)
+    lv_obj_del(keypad->container);
   free(keypad);
 }

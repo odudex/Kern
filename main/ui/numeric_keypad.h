@@ -7,6 +7,7 @@
 typedef struct ui_numeric_keypad_s ui_numeric_keypad_t;
 
 typedef void (*ui_numeric_keypad_submit_cb)(uint32_t value, void *user_data);
+typedef void (*ui_numeric_keypad_cancel_cb)(void *user_data);
 
 typedef struct {
   const char *title;
@@ -15,6 +16,7 @@ typedef struct {
   uint8_t max_digits;
   const char *invalid_message;
   ui_numeric_keypad_submit_cb submit_cb;
+  ui_numeric_keypad_cancel_cb cancel_cb;
   void *user_data;
 } ui_numeric_keypad_config_t;
 

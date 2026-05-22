@@ -17,7 +17,6 @@ static void fingerprint_to_hex(const unsigned char *fp, char *hex_out) {
   for (int i = 0; i < BIP32_KEY_FINGERPRINT_LEN; i++) {
     sprintf(hex_out + (i * 2), "%02x", fp[i]);
   }
-  hex_out[BIP32_KEY_FINGERPRINT_LEN * 2] = '\0';
 }
 
 bool key_init(void) {
@@ -113,6 +112,9 @@ bool key_get_fingerprint_hex(char *hex_out) {
 
 bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out) {
   if (!mnemonic || !hex_out)
+    return false;
+
+  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK)
     return false;
 
   unsigned char seed[BIP39_SEED_LEN_512];
