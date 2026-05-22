@@ -182,6 +182,7 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/keyboard.c
     ${APP_UI_DIR}/menu.c
     ${APP_UI_DIR}/nav.c
+    ${APP_UI_DIR}/numeric_keypad.c
     ${APP_UI_DIR}/word_selector.c
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
@@ -257,6 +258,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/new_mnemonic/entropy_from_camera.c
     # Home
     ${APP_PAGES_DIR}/home/home.c
+    ${APP_PAGES_DIR}/home/advanced_tools.c
+    ${APP_PAGES_DIR}/home/bip85.c
     ${APP_PAGES_DIR}/home/addresses.c
     ${APP_PAGES_DIR}/home/public_key.c
     ${APP_PAGES_DIR}/home/backup/backup_menu.c
