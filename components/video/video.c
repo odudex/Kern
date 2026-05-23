@@ -546,6 +546,16 @@ esp_err_t app_video_start(app_video_frame_operation_cb_t cb, int core_id) {
     return ESP_ERR_INVALID_STATE;
   if (!cb)
     return ESP_ERR_INVALID_ARG;
+
+  // If a previous app_video_stop() timed out, an orphan stream_task may still
+  // be exiting (s_stop_requested stays true so its outer loop terminates on
+  // the next DQBUF timeout, ~100 ms). Wait for it before refusing the start.
+  if (app_video.task_handle && s_task_done) {
+    if (xSemaphoreTake(s_task_done, pdMS_TO_TICKS(VIDEO_STOP_TIMEOUT_MS)) !=
+        pdTRUE)
+      return ESP_ERR_INVALID_STATE;
+  }
+
   if (app_video.task_handle || app_video.streaming)
     return ESP_ERR_INVALID_STATE;
 
@@ -593,8 +603,13 @@ esp_err_t app_video_stop(void) {
   if (task) {
     TickType_t timeout = pdMS_TO_TICKS(VIDEO_STOP_TIMEOUT_MS);
     if (xSemaphoreTake(s_task_done, timeout) != pdTRUE) {
+      // Leave s_stop_requested = true so the orphan's outer loop terminates
+      // on its next DQBUF cycle; the following app_video_start() will wait
+      // on s_task_done for it to exit before creating a new stream_task.
+      // Resetting the flag here would cause the orphan to spin forever on
+      // DQBUF EPERM after STREAMOFF, leaking task_handle.
       ESP_LOGW(TAG, "Timeout waiting for stream task");
-      ret = ESP_ERR_TIMEOUT;
+      return ESP_ERR_TIMEOUT;
     }
   }
 
