@@ -316,21 +316,12 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     return;
   }
 
-  capture_screen = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(capture_screen, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(capture_screen, lv_color_hex(0x1e1e1e), 0);
-  lv_obj_set_style_bg_opa(capture_screen, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(capture_screen, 0, 0);
-  lv_obj_set_style_pad_all(capture_screen, 0, 0);
-  lv_obj_set_style_radius(capture_screen, 0, 0);
-  lv_obj_clear_flag(capture_screen, LV_OBJ_FLAG_SCROLLABLE);
+  capture_screen = theme_create_page_container(lv_screen_active());
 
   lv_obj_t *frame = lv_obj_create(capture_screen);
   lv_obj_set_size(frame, CAMERA_WIDTH, CAMERA_HEIGHT);
   lv_obj_center(frame);
-  lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(frame, 0, 0);
-  lv_obj_set_style_pad_all(frame, 0, 0);
+  theme_apply_transparent_container(frame);
   lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(frame, touch_event_cb, LV_EVENT_CLICKED, NULL);
 
@@ -338,18 +329,14 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(camera_img, CAMERA_WIDTH, CAMERA_HEIGHT);
   lv_obj_center(camera_img);
   lv_obj_clear_flag(camera_img, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(camera_img, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(camera_img, LV_OPA_COVER, 0);
 
-  lv_obj_t *title =
-      theme_create_label(capture_screen, "Capture Entropy", false);
-  theme_apply_label(title, true);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+  theme_create_page_title(capture_screen, "Capture Entropy");
 
   lv_obj_t *instruction =
       theme_create_label(capture_screen, "Tap to capture", false);
   lv_obj_set_style_text_color(instruction, highlight_color(), 0);
-  lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0, -10);
+  lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0,
+               -theme_get_default_padding());
 
   if (!camera_init()) {
     ESP_LOGE(TAG, "Failed to initialize camera");
