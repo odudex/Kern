@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../registry.c"
+#include "core/descriptor_checksum.h"
+#include "core/registry.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

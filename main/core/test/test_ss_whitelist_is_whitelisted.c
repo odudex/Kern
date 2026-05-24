@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "../ss_whitelist.c"
+#include "core/ss_whitelist.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

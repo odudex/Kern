@@ -2,8 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Pull in implementation directly */
-#include "../ss_whitelist.c"
+#include "core/ss_whitelist.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

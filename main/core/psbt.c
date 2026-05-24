@@ -1,6 +1,7 @@
 #include "psbt.h"
 #include "bip32_path.h"
 #include "key.h"
+#include "psbt_internal.h"
 #include "script_templates.h"
 #include "wallet.h"
 #include <esp_log.h>
@@ -15,14 +16,11 @@
 
 static const char *TAG = "PSBT";
 
-typedef struct {
-  uint8_t spk[34];
-  size_t spk_len;
-  uint8_t redeem[256];
-  size_t redeem_len;
-  uint8_t witness[256];
-  size_t witness_len;
-} expected_scripts_t;
+#ifdef PSBT_TESTING
+#define PSBT_PRIVATE
+#else
+#define PSBT_PRIVATE static
+#endif
 
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
   struct wally_tx_output *utxo = NULL;
@@ -131,8 +129,8 @@ static bool try_match_registry(const unsigned char *keypath, size_t keypath_len,
   return true;
 }
 
-static bool claim_regenerate(const claim_t *claim, bool is_testnet,
-                             expected_scripts_t *out) {
+PSBT_PRIVATE bool claim_regenerate(const claim_t *claim, bool is_testnet,
+                                   expected_scripts_t *out) {
   if (!claim || !out)
     return false;
   memset(out, 0, sizeof(*out));

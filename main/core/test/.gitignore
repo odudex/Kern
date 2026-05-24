@@ -7,5 +7,6 @@ test_registry_match
 test_registry_parse
 test_psbt_classify
 test_psbt_regen_registry
+test_psbt_key.o
 combined.o
 libwally.a

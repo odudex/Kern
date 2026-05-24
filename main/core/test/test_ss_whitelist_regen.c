@@ -2,9 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Pull in full implementations directly */
-#include "../key.c"
-#include "../ss_whitelist.c"
+#include "core/key.h"
+#include "core/ss_whitelist.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

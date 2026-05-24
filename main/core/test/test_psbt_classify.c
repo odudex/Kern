@@ -6,10 +6,14 @@
 
 /* Wally types needed by stubs */
 #include <wally_bip32.h>
+#include <wally_psbt.h>
+#include <wally_psbt_members.h>
 #include <wally_script.h>
 
 /* Project headers for stub type declarations */
 #include "core/key.h"
+#include "core/psbt.h"
+#include "core/psbt_internal.h"
 #include "core/registry.h"
 #include "core/storage.h"
 #include "core/wallet.h"
@@ -65,31 +69,11 @@ wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
 #include "core/settings.h"
 bool settings_get_permissive_signing(void) { return false; }
 
-/* --- Key: real implementation but key_get_fingerprint always returns 00000000.
- *
- * Registry tests need fingerprint 00000000 to match descriptors that use
- * [00000000/...].  Whitelist tests use key_get_derived_key (real) and never
- * call key_get_fingerprint.  Rename the real function so we can define the
- * stub after the include without a redefinition error. --- */
-#define key_get_fingerprint key_get_fingerprint_raw
-#include "../key.c"
-#undef key_get_fingerprint
-
 bool key_get_fingerprint(unsigned char *fp) {
   if (fp)
     memset(fp, 0, BIP32_KEY_FINGERPRINT_LEN);
   return true;
 }
-
-#include "../ss_whitelist.c"
-
-#define TAG registry_TAG
-#include "../registry.c"
-#undef TAG
-
-#define TAG psbt_TAG
-#include "../psbt.c"
-#undef TAG
 
 /* ------------------------------------------------------------------ */
 
@@ -1506,7 +1490,7 @@ static void test_registry_claim(const char *test_name, const char *desc_str,
 
   claim_t claim = {0};
   claim.kind = CLAIM_REGISTRY;
-  claim.registry.entry = (registry_entry_t *)e;
+  claim.registry.entry = e;
   claim.registry.multi_index = multi_index;
   claim.registry.child_num = child_num;
 
