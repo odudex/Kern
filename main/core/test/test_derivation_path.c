@@ -1,5 +1,5 @@
 /*
- * Tests for parse_derivation_path() in key.c
+ * Tests for bip32_path_parse().
  * Using BIP32 test vectors from the specification.
  *
  * Compile: see Makefile
@@ -9,8 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Include key.c directly to access the static parse_derivation_path */
-#include "../key.c"
+#include "core/bip32_path.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -35,7 +34,7 @@ static void test_parse_valid(const char *name, const char *path,
   size_t depth = 0;
   memset(indices, 0, sizeof(indices));
 
-  if (!parse_derivation_path(path, indices, &depth, 10)) {
+  if (!bip32_path_parse(path, indices, &depth, 10)) {
     FAIL("parse returned false");
     return;
   }
@@ -66,7 +65,7 @@ static void test_parse_invalid(const char *name, const char *path) {
   uint32_t indices[10];
   size_t depth = 0;
 
-  if (parse_derivation_path(path, indices, &depth, 10)) {
+  if (bip32_path_parse(path, indices, &depth, 10)) {
     FAIL("parse should have returned false");
     return;
   }
@@ -74,12 +73,10 @@ static void test_parse_invalid(const char *name, const char *path) {
   PASS();
 }
 
-static uint32_t hardened(uint32_t index) {
-  return index | BIP32_INITIAL_HARDENED_CHILD;
-}
+static uint32_t hardened(uint32_t index) { return index | BIP32_PATH_HARDENED; }
 
 int main(void) {
-  printf("=== parse_derivation_path tests ===\n\n");
+  printf("=== bip32_path_parse tests ===\n\n");
 
   /* BIP32 Test Vector 1 paths (seed 000102030405060708090a0b0c0d0e0f) */
   printf("--- BIP32 Test Vector 1 ---\n");
@@ -200,7 +197,7 @@ int main(void) {
   {
     size_t depth = 0;
     TEST("invalid: NULL indices_out");
-    if (parse_derivation_path("m/0", NULL, &depth, 10)) {
+    if (bip32_path_parse("m/0", NULL, &depth, 10)) {
       FAIL("should reject NULL indices_out");
     } else {
       PASS();
@@ -210,7 +207,7 @@ int main(void) {
   {
     uint32_t indices[10];
     TEST("invalid: NULL depth_out");
-    if (parse_derivation_path("m/0", indices, NULL, 10)) {
+    if (bip32_path_parse("m/0", indices, NULL, 10)) {
       FAIL("should reject NULL depth_out");
     } else {
       PASS();
@@ -262,8 +259,7 @@ int main(void) {
     uint32_t indices[10];
     size_t depth = 0;
     TEST("max depth exceeded (11 levels, max=10)");
-    if (parse_derivation_path("m/0/1/2/3/4/5/6/7/8/9/10", indices, &depth,
-                              10)) {
+    if (bip32_path_parse("m/0/1/2/3/4/5/6/7/8/9/10", indices, &depth, 10)) {
       FAIL("should reject path exceeding max_depth");
     } else {
       PASS();
@@ -275,7 +271,7 @@ int main(void) {
     size_t depth = 0;
     uint32_t exp[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     TEST("exact max depth (10 levels, max=10)");
-    if (!parse_derivation_path("m/0/1/2/3/4/5/6/7/8/9", indices, &depth, 10)) {
+    if (!bip32_path_parse("m/0/1/2/3/4/5/6/7/8/9", indices, &depth, 10)) {
       FAIL("should accept path at exactly max_depth");
     } else if (depth != 10) {
       FAIL("depth should be 10");
@@ -299,7 +295,7 @@ int main(void) {
     uint32_t indices[10];
     size_t depth = 0;
     TEST("max_depth=0 accepts m");
-    if (!parse_derivation_path("m", indices, &depth, 0)) {
+    if (!bip32_path_parse("m", indices, &depth, 0)) {
       FAIL("should accept 'm' with max_depth=0");
     } else if (depth != 0) {
       FAIL("depth should be 0");
@@ -312,7 +308,7 @@ int main(void) {
     uint32_t indices[10];
     size_t depth = 0;
     TEST("max_depth=0 rejects m/0");
-    if (parse_derivation_path("m/0", indices, &depth, 0)) {
+    if (bip32_path_parse("m/0", indices, &depth, 0)) {
       FAIL("should reject 'm/0' with max_depth=0");
     } else {
       PASS();
@@ -323,7 +319,7 @@ int main(void) {
     uint32_t indices[10];
     size_t depth = 0;
     TEST("max_depth=1 accepts m/0");
-    if (!parse_derivation_path("m/0", indices, &depth, 1)) {
+    if (!bip32_path_parse("m/0", indices, &depth, 1)) {
       FAIL("should accept 'm/0' with max_depth=1");
     } else if (depth != 1 || indices[0] != 0) {
       FAIL("wrong depth or index");
@@ -336,7 +332,7 @@ int main(void) {
     uint32_t indices[10];
     size_t depth = 0;
     TEST("max_depth=1 rejects m/0/1");
-    if (parse_derivation_path("m/0/1", indices, &depth, 1)) {
+    if (bip32_path_parse("m/0/1", indices, &depth, 1)) {
       FAIL("should reject 'm/0/1' with max_depth=1");
     } else {
       PASS();

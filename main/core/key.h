@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <wally_bip32.h>
 
 bool key_init(void);
@@ -35,6 +36,8 @@ bool key_get_mnemonic_words(char ***words_out, size_t *word_count_out);
  * PRIVATE key material. Caller must free with bip32_key_free(), which
  * zeroizes the private bytes before releasing the allocation. */
 bool key_get_derived_key(const char *path, struct ext_key **key_out);
+bool key_get_derived_key_components(const uint32_t *path, size_t path_depth,
+                                    struct ext_key **key_out);
 
 void key_cleanup(void);
 

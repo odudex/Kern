@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bip32_path.h"
+
 typedef enum {
   SS_SCRIPT_P2PKH = 0,   // BIP44, purpose 44
   SS_SCRIPT_P2SH_P2WPKH, // BIP49, purpose 49
@@ -38,16 +40,15 @@ typedef struct {
   (MAX_KEYPATH_ORIGIN_DEPTH + MAX_KEYPATH_TAIL_DEPTH)
 
 static inline bool ss_is_hardened(uint32_t component) {
-  return (component & 0x80000000u) != 0;
+  return bip32_path_is_hardened(component);
 }
 
 static inline uint32_t ss_unharden(uint32_t component) {
-  return component & 0x7fffffffu;
+  return bip32_path_unharden(component);
 }
 
 static inline uint32_t ss_u32_le(const unsigned char *bytes) {
-  return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
-         ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+  return bip32_path_u32_le(bytes);
 }
 
 bool ss_keypath_parse(const unsigned char *keypath_after_fp,

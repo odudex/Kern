@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "bip32_path.h"
 #include "descriptor_checksum.h"
 #include "key.h"
 #include "wallet.h"
@@ -220,18 +221,24 @@ registry_entry_t *registry_match_keypath(const uint8_t *keypath,
     registry_entry_t *e = &registry_entries[i];
     if (e->origin_path_len > total_depth)
       continue;
-    if (memcmp(keypath + 4, e->origin_path, e->origin_path_len * 4) != 0)
+    bool origin_matches = true;
+    for (size_t j = 0; j < e->origin_path_len; j++) {
+      if (bip32_path_u32_le(keypath + 4 + j * 4) != e->origin_path[j]) {
+        origin_matches = false;
+        break;
+      }
+    }
+    if (!origin_matches)
       continue;
     size_t tail_depth = total_depth - e->origin_path_len;
     if (tail_depth != MAX_KEYPATH_TAIL_DEPTH)
       continue;
     const uint8_t *tail = keypath + 4 + e->origin_path_len * 4;
-    uint32_t mp, ix;
-    memcpy(&mp, tail, 4);
-    memcpy(&ix, tail + 4, 4);
-    if (mp & BIP32_INITIAL_HARDENED_CHILD)
+    uint32_t mp = bip32_path_u32_le(tail);
+    uint32_t ix = bip32_path_u32_le(tail + 4);
+    if (bip32_path_is_hardened(mp))
       continue;
-    if (ix & BIP32_INITIAL_HARDENED_CHILD)
+    if (bip32_path_is_hardened(ix))
       continue;
     if (mp > 1)
       continue;
@@ -241,51 +248,6 @@ registry_entry_t *registry_match_keypath(const uint8_t *keypath,
     return e;
   }
   return NULL;
-}
-
-// Convert an origin path string like "84'/0'/0'" to uint32_t[]
-// Returns false on overflow, invalid chars, or depth > max_depth.
-static bool parse_origin_path_str(const char *path, uint32_t *out,
-                                  size_t *depth_out, size_t max_depth) {
-  if (!path || !out || !depth_out)
-    return false;
-  size_t depth = 0;
-  const char *p = path;
-  while (*p && depth < max_depth) {
-    if (*p < '0' || *p > '9')
-      return false;
-    uint32_t v = 0;
-    bool has_digit = false;
-    while (*p >= '0' && *p <= '9') {
-      uint32_t d = (uint32_t)(*p - '0');
-      if (v > UINT32_MAX / 10 || (v == UINT32_MAX / 10 && d > UINT32_MAX % 10))
-        return false;
-      v = v * 10 + d;
-      p++;
-      has_digit = true;
-    }
-    if (!has_digit)
-      return false;
-    if (*p == '\'' || *p == 'h') {
-      if (v >= BIP32_INITIAL_HARDENED_CHILD)
-        return false;
-      v |= BIP32_INITIAL_HARDENED_CHILD;
-      p++;
-    }
-    out[depth++] = v;
-    if (*p == '/') {
-      p++;
-      if (!*p)
-        return false;
-    } else if (*p == '\0')
-      break;
-    else
-      return false;
-  }
-  if (*p != '\0')
-    return false;
-  *depth_out = depth;
-  return true;
 }
 
 bool registry_add_from_string(const char *id, const char *descriptor_str,
@@ -351,8 +313,8 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
     wally_descriptor_free(desc);
     return false;
   }
-  bool path_ok = parse_origin_path_str(path_str, origin_path, &origin_path_len,
-                                       MAX_KEYPATH_ORIGIN_DEPTH);
+  bool path_ok = bip32_path_parse(path_str, origin_path, &origin_path_len,
+                                  MAX_KEYPATH_ORIGIN_DEPTH);
   wally_free_string(path_str);
   if (!path_ok) {
     ESP_LOGE(TAG, "failed to parse origin path for key %d", key_index);
