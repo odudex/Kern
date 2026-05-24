@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <wally_address.h>
+#include <wally_core.h>
 #include <wally_descriptor.h>
 
 /* Pull in full implementation directly */

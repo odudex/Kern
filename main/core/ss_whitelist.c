@@ -3,11 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h> /* strtoul */
 #include <string.h>
-#include <wally_address.h>
 #include <wally_bip32.h>
+#include <wally_core.h>
 #include <wally_crypto.h>
 #include <wally_descriptor.h> /* wally_descriptor_canonicalize, wally_descriptor_get_key_origin_path_str */
-#include <wally_script.h>
 
 bool ss_keypath_parse(const unsigned char *keypath_after_fp,
                       size_t keypath_len_after_fp, ss_keypath_t *out) {
@@ -81,140 +80,78 @@ bool ss_keypath_is_whitelisted(const ss_keypath_t *kp, bool is_testnet) {
   return true;
 }
 
+static uint32_t ss_purpose_for_script(ss_script_type_t script) {
+  switch (script) {
+  case SS_SCRIPT_P2PKH:
+    return 44;
+  case SS_SCRIPT_P2SH_P2WPKH:
+    return 49;
+  case SS_SCRIPT_P2WPKH:
+    return 84;
+  case SS_SCRIPT_P2TR:
+    return 86;
+  default:
+    return 0;
+  }
+}
+
+static script_template_type_t ss_template_for_script(ss_script_type_t script) {
+  switch (script) {
+  case SS_SCRIPT_P2PKH:
+    return SCRIPT_TEMPLATE_P2PKH;
+  case SS_SCRIPT_P2SH_P2WPKH:
+    return SCRIPT_TEMPLATE_P2SH_P2WPKH;
+  case SS_SCRIPT_P2WPKH:
+    return SCRIPT_TEMPLATE_P2WPKH;
+  case SS_SCRIPT_P2TR:
+  default:
+    return SCRIPT_TEMPLATE_P2TR;
+  }
+}
+
+static bool ss_derive_key(ss_script_type_t script, uint32_t account,
+                          uint32_t chain, uint32_t index, bool is_testnet,
+                          struct ext_key **key_out) {
+  uint32_t purpose = ss_purpose_for_script(script);
+  if (purpose == 0)
+    return false;
+
+  uint32_t path[] = {
+      BIP32_PATH_HARDENED | purpose,
+      BIP32_PATH_HARDENED | (is_testnet ? 1u : 0u),
+      BIP32_PATH_HARDENED | account,
+      chain,
+      index,
+  };
+
+  return key_get_derived_key_components(path, sizeof(path) / sizeof(path[0]),
+                                        key_out);
+}
+
+static bool ss_scriptpubkey_common(ss_script_type_t script, uint32_t account,
+                                   uint32_t chain, uint32_t index,
+                                   bool is_testnet, uint8_t *spk_out,
+                                   size_t *spk_len, uint8_t *redeem_out,
+                                   size_t *redeem_len) {
+  if (!spk_out || !spk_len)
+    return false;
+
+  struct ext_key *derived_key = NULL;
+  if (!ss_derive_key(script, account, chain, index, is_testnet, &derived_key))
+    return false;
+
+  bool ok = script_template_from_pubkey(
+      ss_template_for_script(script), derived_key->pub_key, EC_PUBLIC_KEY_LEN,
+      spk_out, spk_len, redeem_out, redeem_len);
+  bip32_key_free(derived_key);
+  return ok;
+}
+
 bool ss_scriptpubkey(ss_script_type_t script, uint32_t account, uint32_t chain,
                      uint32_t index, bool is_testnet, uint8_t *out,
                      size_t *out_len) {
-  switch (script) {
-  case SS_SCRIPT_P2WPKH: {
-    ss_keypath_t kp = {
-        .script = SS_SCRIPT_P2WPKH,
-        .purpose = 84,
-        .coin = is_testnet ? 1u : 0u,
-        .account = account,
-        .chain = chain,
-        .index = index,
-    };
-    char path[SS_KEYPATH_FMT_MAX];
-    if (!ss_keypath_format(&kp, path, sizeof(path)))
-      return false;
-
-    struct ext_key *derived_key = NULL;
-    if (!key_get_derived_key(path, &derived_key))
-      return false;
-
-    int ret = wally_witness_program_from_bytes(
-        derived_key->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, out, 22,
-        out_len);
-    bip32_key_free(derived_key);
-    return ret == WALLY_OK;
-  }
-  case SS_SCRIPT_P2PKH: {
-    ss_keypath_t kp = {
-        .script = SS_SCRIPT_P2PKH,
-        .purpose = 44,
-        .coin = is_testnet ? 1u : 0u,
-        .account = account,
-        .chain = chain,
-        .index = index,
-    };
-    char path[SS_KEYPATH_FMT_MAX];
-    if (!ss_keypath_format(&kp, path, sizeof(path)))
-      return false;
-
-    struct ext_key *derived_key = NULL;
-    if (!key_get_derived_key(path, &derived_key))
-      return false;
-
-    uint8_t pkh20[HASH160_LEN];
-    int ret = wally_hash160(derived_key->pub_key, EC_PUBLIC_KEY_LEN, pkh20,
-                            HASH160_LEN);
-    bip32_key_free(derived_key);
-    if (ret != WALLY_OK)
-      return false;
-
-    out[0] = 0x76;              /* OP_DUP */
-    out[1] = 0xa9;              /* OP_HASH160 */
-    out[2] = 0x14;              /* push 20 bytes */
-    memcpy(out + 3, pkh20, 20); /* 20-byte hash160 */
-    out[23] = 0x88;             /* OP_EQUALVERIFY */
-    out[24] = 0xac;             /* OP_CHECKSIG */
-    *out_len = 25;
-    return true;
-  }
-  case SS_SCRIPT_P2SH_P2WPKH: {
-    ss_keypath_t kp = {
-        .script = SS_SCRIPT_P2SH_P2WPKH,
-        .purpose = 49,
-        .coin = is_testnet ? 1u : 0u,
-        .account = account,
-        .chain = chain,
-        .index = index,
-    };
-    char path[SS_KEYPATH_FMT_MAX];
-    if (!ss_keypath_format(&kp, path, sizeof(path)))
-      return false;
-
-    struct ext_key *derived_key = NULL;
-    if (!key_get_derived_key(path, &derived_key))
-      return false;
-
-    /* Build the 22-byte inner witness program (OP_0 <20-byte pkh>). */
-    uint8_t witness_prog[SS_P2SH_P2WPKH_REDEEM_LEN];
-    size_t witness_prog_len = 0;
-    int ret = wally_witness_program_from_bytes(
-        derived_key->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160,
-        witness_prog, sizeof(witness_prog), &witness_prog_len);
-    bip32_key_free(derived_key);
-    if (ret != WALLY_OK || witness_prog_len != SS_P2SH_P2WPKH_REDEEM_LEN)
-      return false;
-
-    /* Hash the witness program and wrap in OP_HASH160 <sh20> OP_EQUAL. */
-    uint8_t sh20[HASH160_LEN];
-    ret = wally_hash160(witness_prog, witness_prog_len, sh20, HASH160_LEN);
-    if (ret != WALLY_OK)
-      return false;
-
-    out[0] = 0xa9;             /* OP_HASH160 */
-    out[1] = 0x14;             /* push 20 bytes */
-    memcpy(out + 2, sh20, 20); /* 20-byte script hash */
-    out[22] = 0x87;            /* OP_EQUAL */
-    *out_len = SS_P2SH_P2WPKH_SPK_LEN;
-    return true;
-  }
-  case SS_SCRIPT_P2TR: {
-    ss_keypath_t kp = {
-        .script = SS_SCRIPT_P2TR,
-        .purpose = 86,
-        .coin = is_testnet ? 1u : 0u,
-        .account = account,
-        .chain = chain,
-        .index = index,
-    };
-    char path[SS_KEYPATH_FMT_MAX];
-    if (!ss_keypath_format(&kp, path, sizeof(path)))
-      return false;
-
-    struct ext_key *derived_key = NULL;
-    if (!key_get_derived_key(path, &derived_key))
-      return false;
-
-    uint8_t tweaked_pk33[EC_PUBLIC_KEY_LEN];
-    int ret = wally_ec_public_key_bip341_tweak(derived_key->pub_key,
-                                               EC_PUBLIC_KEY_LEN, NULL, 0, 0,
-                                               tweaked_pk33, EC_PUBLIC_KEY_LEN);
-    bip32_key_free(derived_key);
-    if (ret != WALLY_OK)
-      return false;
-
-    out[0] = 0x51;                         /* OP_1 */
-    out[1] = 0x20;                         /* push 32 bytes */
-    memcpy(out + 2, tweaked_pk33 + 1, 32); /* x-only tweaked pubkey */
-    *out_len = 34;
-    return true;
-  }
-  default:
-    return false;
-  }
+  return ss_scriptpubkey_common(script, account, chain, index, is_testnet, out,
+                                out_len, NULL, NULL);
 }
 
 bool ss_scriptpubkey_with_redeem(ss_script_type_t script, uint32_t account,
@@ -222,48 +159,8 @@ bool ss_scriptpubkey_with_redeem(ss_script_type_t script, uint32_t account,
                                  bool is_testnet, uint8_t *spk_out,
                                  size_t *spk_len, uint8_t *redeem_out,
                                  size_t *redeem_len) {
-  if (script != SS_SCRIPT_P2SH_P2WPKH) {
-    *redeem_len = 0;
-    return ss_scriptpubkey(script, account, chain, index, is_testnet, spk_out,
-                           spk_len);
-  }
-
-  ss_keypath_t kp = {
-      .script = SS_SCRIPT_P2SH_P2WPKH,
-      .purpose = 49,
-      .coin = is_testnet ? 1u : 0u,
-      .account = account,
-      .chain = chain,
-      .index = index,
-  };
-  char path[SS_KEYPATH_FMT_MAX];
-  if (!ss_keypath_format(&kp, path, sizeof(path)))
-    return false;
-
-  struct ext_key *derived_key = NULL;
-  if (!key_get_derived_key(path, &derived_key))
-    return false;
-
-  /* Build the 22-byte inner witness program (also the redeem script). */
-  int ret = wally_witness_program_from_bytes(
-      derived_key->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, redeem_out,
-      SS_P2SH_P2WPKH_REDEEM_LEN, redeem_len);
-  bip32_key_free(derived_key);
-  if (ret != WALLY_OK || *redeem_len != SS_P2SH_P2WPKH_REDEEM_LEN)
-    return false;
-
-  /* Hash the redeem script and wrap in OP_HASH160 <sh20> OP_EQUAL. */
-  uint8_t sh20[HASH160_LEN];
-  ret = wally_hash160(redeem_out, *redeem_len, sh20, HASH160_LEN);
-  if (ret != WALLY_OK)
-    return false;
-
-  spk_out[0] = 0xa9;             /* OP_HASH160 */
-  spk_out[1] = 0x14;             /* push 20 bytes */
-  memcpy(spk_out + 2, sh20, 20); /* 20-byte script hash */
-  spk_out[22] = 0x87;            /* OP_EQUAL */
-  *spk_len = SS_P2SH_P2WPKH_SPK_LEN;
-  return true;
+  return ss_scriptpubkey_common(script, account, chain, index, is_testnet,
+                                spk_out, spk_len, redeem_out, redeem_len);
 }
 
 bool ss_address(ss_script_type_t script, uint32_t account, uint32_t chain,
@@ -275,28 +172,8 @@ bool ss_address(ss_script_type_t script, uint32_t account, uint32_t chain,
                        &spk_len))
     return false;
 
-  char *alloc = NULL;
-  int ret;
-
-  switch (script) {
-  case SS_SCRIPT_P2WPKH:
-  case SS_SCRIPT_P2TR: {
-    const char *hrp = is_testnet ? "tb" : "bc";
-    ret = wally_addr_segwit_from_bytes(spk, spk_len, hrp, 0, &alloc);
-    break;
-  }
-  case SS_SCRIPT_P2PKH:
-  case SS_SCRIPT_P2SH_P2WPKH: {
-    uint32_t network = is_testnet ? WALLY_NETWORK_BITCOIN_TESTNET
-                                  : WALLY_NETWORK_BITCOIN_MAINNET;
-    ret = wally_scriptpubkey_to_address(spk, spk_len, network, &alloc);
-    break;
-  }
-  default:
-    return false;
-  }
-
-  if (ret != WALLY_OK || !alloc)
+  char *alloc = script_template_address_from_spk(spk, spk_len, is_testnet);
+  if (!alloc)
     return false;
 
   size_t len = strlen(alloc);

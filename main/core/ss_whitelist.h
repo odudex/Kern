@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "bip32_path.h"
+#include "script_templates.h"
 
 typedef enum {
   SS_SCRIPT_P2PKH = 0,   // BIP44, purpose 44
@@ -58,8 +59,10 @@ bool ss_keypath_parse(const unsigned char *keypath_after_fp,
  * bytes). */
 #define SS_KEYPATH_FMT_MAX 32
 
-#define SS_P2SH_P2WPKH_REDEEM_LEN 22 /* OP_0 <20-byte pkh> */
-#define SS_P2SH_P2WPKH_SPK_LEN 23    /* OP_HASH160 <20-byte hash> OP_EQUAL */
+#define SS_P2SH_P2WPKH_REDEEM_LEN                                              \
+  SCRIPT_TEMPLATE_P2SH_P2WPKH_REDEEM_LEN /* OP_0 <20-byte pkh> */
+#define SS_P2SH_P2WPKH_SPK_LEN                                                 \
+  SCRIPT_TEMPLATE_P2SH_P2WPKH_SPK_LEN /* OP_HASH160 <20-byte hash> OP_EQUAL */
 
 bool ss_keypath_format(const ss_keypath_t *kp, char *buf, size_t buf_size);
 

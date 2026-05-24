@@ -1,12 +1,10 @@
 #include "psbt.h"
 #include "bip32_path.h"
 #include "key.h"
-#include "settings.h"
+#include "script_templates.h"
 #include "wallet.h"
 #include <esp_log.h>
-#include <stdio.h>
 #include <string.h>
-#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
 #include <wally_descriptor.h>
@@ -210,73 +208,8 @@ static bool derive_matches_spk(const unsigned char *raw_keypath,
   if (!key_get_derived_key_components(path, path_len, &derived))
     return false;
 
-  bool match = false;
-  uint8_t cand[34];
-  size_t cand_len = 0;
-
-  /* P2WPKH: OP_0 <hash160(pub)> */
-  if (!match &&
-      wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
-                                       WALLY_SCRIPT_HASH160, cand, sizeof(cand),
-                                       &cand_len) == WALLY_OK &&
-      cand_len == target_spk_len && memcmp(cand, target_spk, cand_len) == 0)
-    match = true;
-
-  /* P2TR: OP_1 <push 32> <bip341-tweaked xonly> */
-  if (!match) {
-    uint8_t tweaked[EC_PUBLIC_KEY_LEN];
-    if (wally_ec_public_key_bip341_tweak(derived->pub_key, EC_PUBLIC_KEY_LEN,
-                                         NULL, 0, 0, tweaked,
-                                         sizeof(tweaked)) == WALLY_OK) {
-      cand[0] = 0x51;
-      cand[1] = 0x20;
-      memcpy(cand + 2, tweaked + 1, 32);
-      cand_len = 34;
-      if (cand_len == target_spk_len && memcmp(cand, target_spk, cand_len) == 0)
-        match = true;
-    }
-  }
-
-  /* P2PKH: OP_DUP OP_HASH160 <push 20> <hash160(pub)> OP_EQUALVERIFY
-   * OP_CHECKSIG */
-  if (!match) {
-    uint8_t pkh20[HASH160_LEN];
-    if (wally_hash160(derived->pub_key, EC_PUBLIC_KEY_LEN, pkh20,
-                      HASH160_LEN) == WALLY_OK) {
-      cand[0] = 0x76;
-      cand[1] = 0xa9;
-      cand[2] = 0x14;
-      memcpy(cand + 3, pkh20, 20);
-      cand[23] = 0x88;
-      cand[24] = 0xac;
-      cand_len = 25;
-      if (cand_len == target_spk_len && memcmp(cand, target_spk, cand_len) == 0)
-        match = true;
-    }
-  }
-
-  /* P2SH-P2WPKH: OP_HASH160 <push 20> <hash160(witness_program)> OP_EQUAL */
-  if (!match) {
-    uint8_t witprog[22];
-    size_t witprog_len = 0;
-    if (wally_witness_program_from_bytes(
-            derived->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, witprog,
-            sizeof(witprog), &witprog_len) == WALLY_OK &&
-        witprog_len == 22) {
-      uint8_t sh20[HASH160_LEN];
-      if (wally_hash160(witprog, witprog_len, sh20, HASH160_LEN) == WALLY_OK) {
-        cand[0] = 0xa9;
-        cand[1] = 0x14;
-        memcpy(cand + 2, sh20, 20);
-        cand[22] = 0x87;
-        cand_len = 23;
-        if (cand_len == target_spk_len &&
-            memcmp(cand, target_spk, cand_len) == 0)
-          match = true;
-      }
-    }
-  }
-
+  bool match = script_template_pubkey_matches_spk(
+      derived->pub_key, EC_PUBLIC_KEY_LEN, target_spk, target_spk_len);
   bip32_key_free(derived);
   return match;
 }
@@ -698,39 +631,7 @@ int32_t psbt_detect_account(const struct wally_psbt *psbt) {
 
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet) {
-  if (!script || script_len == 0) {
-    return NULL;
-  }
-
-  size_t script_type = 0;
-  if (wally_scriptpubkey_get_type(script, script_len, &script_type) !=
-      WALLY_OK) {
-    return NULL;
-  }
-
-  char *address = NULL;
-  const char *hrp = is_testnet ? "tb" : "bc";
-  uint32_t network = is_testnet ? WALLY_NETWORK_BITCOIN_TESTNET
-                                : WALLY_NETWORK_BITCOIN_MAINNET;
-
-  if (script_type == WALLY_SCRIPT_TYPE_P2WPKH ||
-      script_type == WALLY_SCRIPT_TYPE_P2WSH ||
-      script_type == WALLY_SCRIPT_TYPE_P2TR) {
-    if (wally_addr_segwit_from_bytes(script, script_len, hrp, 0, &address) !=
-        WALLY_OK) {
-      return NULL;
-    }
-  } else if (script_type == WALLY_SCRIPT_TYPE_P2PKH ||
-             script_type == WALLY_SCRIPT_TYPE_P2SH) {
-    if (wally_scriptpubkey_to_address(script, script_len, network, &address) !=
-        WALLY_OK) {
-      return NULL;
-    }
-  } else if (script_type == WALLY_SCRIPT_TYPE_OP_RETURN) {
-    address = strdup("OP_RETURN");
-  }
-
-  return address;
+  return script_template_address_from_spk(script, script_len, is_testnet);
 }
 
 bool psbt_format_keypath(const unsigned char *raw_keypath,
