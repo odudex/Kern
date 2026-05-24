@@ -99,7 +99,8 @@ bool ss_address(ss_script_type_t script, uint32_t account, uint32_t chain,
  *   84 ↔ SS_SCRIPT_P2WPKH
  *   86 ↔ SS_SCRIPT_P2TR
  * Any other combination returns false.
- * Used by try_match_whitelist (hard enforcement — mismatch means no claim).
+ * Used by whitelist claim matching (hard enforcement — mismatch means no
+ * claim).
  */
 bool purpose_script_binding_check_strict(uint32_t purpose,
                                          ss_script_type_t outer_script);

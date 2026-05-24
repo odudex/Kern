@@ -26,7 +26,7 @@ typedef struct {
       uint32_t coin;
     } whitelist;
     struct {
-      registry_entry_t *entry;
+      const registry_entry_t *entry;
       uint32_t multi_index;
       uint32_t child_num;
     } registry;
@@ -34,15 +34,6 @@ typedef struct {
   uint32_t derived_path[MAX_KEYPATH_TOTAL_DEPTH];
   size_t derived_path_len;
 } claim_t;
-
-typedef struct {
-  uint8_t spk[34];
-  size_t spk_len;
-  uint8_t redeem[256];
-  size_t redeem_len;
-  uint8_t witness[256];
-  size_t witness_len;
-} expected_scripts_t;
 
 typedef enum {
   /* fp doesn't match our master key (or no derivation info present) */
@@ -80,18 +71,9 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet);
 
-bool claim_regenerate(const claim_t *claim, bool is_testnet,
-                      expected_scripts_t *out);
-
 bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
                             unsigned char *out, size_t out_cap,
                             size_t *out_len);
-
-bool try_match_whitelist(const unsigned char *keypath, size_t keypath_len,
-                         bool is_testnet, claim_t *claim_out);
-
-bool try_match_registry(const unsigned char *keypath, size_t keypath_len,
-                        size_t *cursor, claim_t *claim_out);
 
 // Format a raw keypath (4 fp bytes + N little-endian u32 components) into
 // the "m/44'/0'/100'/0/0" form. Returns false if the buffer is too small or
