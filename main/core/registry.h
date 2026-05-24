@@ -39,6 +39,9 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
  * matching session id to `out_id` if non-NULL. */
 bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
                                     size_t out_id_size);
+/* Same lookup when the caller already has the h-normalized BIP-380 checksum. */
+bool registry_session_has_duplicate_checksum(const char checksum[9],
+                                             char *out_id, size_t out_id_size);
 
 void registry_clear(void);
 void registry_init(bool is_testnet);

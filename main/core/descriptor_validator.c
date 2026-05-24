@@ -32,6 +32,7 @@ typedef struct {
   validation_id_loc_cb id_loc_cb;
   void *user_data;
   descriptor_info_t info;
+  char descriptor_checksum[9];
 } validation_context_t;
 
 static validation_context_t *current_ctx = NULL;
@@ -51,6 +52,43 @@ static uint32_t pending_generation = 0;
  * descriptor_validator_get_duplicate_id() and renders the toast itself, so
  * core stays UI-free. Cleared at the start of each validate_and_load call. */
 static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
+
+static uint32_t wallet_descriptor_network(void) {
+  return (wallet_get_network() == WALLET_NETWORK_MAINNET)
+             ? WALLY_NETWORK_BITCOIN_MAINNET
+             : WALLY_NETWORK_BITCOIN_TESTNET;
+}
+
+static uint32_t alternate_descriptor_network(uint32_t network) {
+  return (network == WALLY_NETWORK_BITCOIN_MAINNET)
+             ? WALLY_NETWORK_BITCOIN_TESTNET
+             : WALLY_NETWORK_BITCOIN_MAINNET;
+}
+
+static descriptor_validation_result_t
+parse_descriptor_for_wallet(const char *descriptor_str,
+                            struct wally_descriptor **descriptor_out) {
+  if (!descriptor_str || !descriptor_out)
+    return VALIDATION_INTERNAL_ERROR;
+
+  *descriptor_out = NULL;
+  uint32_t wally_network = wallet_descriptor_network();
+  int ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
+                                   descriptor_out);
+  if (ret == WALLY_OK)
+    return VALIDATION_SUCCESS;
+
+  struct wally_descriptor *other_desc = NULL;
+  if (wally_descriptor_parse(descriptor_str, NULL,
+                             alternate_descriptor_network(wally_network), 0,
+                             &other_desc) == WALLY_OK) {
+    wally_descriptor_free(other_desc);
+    return VALIDATION_NETWORK_MISMATCH;
+  }
+
+  ESP_LOGE(TAG, "Failed to parse descriptor: %d", ret);
+  return VALIDATION_PARSE_ERROR;
+}
 
 static bool ctx_callback_is_live(void) {
   return current_ctx && pending_generation != 0 &&
@@ -241,35 +279,12 @@ static void id_loc_proceed(const char *id, storage_location_t loc,
   complete_validation(VALIDATION_SUCCESS);
 }
 
-static bool descriptor_checksum_for_session_id(const char *descriptor_str,
-                                               char out[9]) {
-  if (!descriptor_str || !out)
-    return false;
-
-  uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                               ? WALLY_NETWORK_BITCOIN_MAINNET
-                               : WALLY_NETWORK_BITCOIN_TESTNET;
-  struct wally_descriptor *desc = NULL;
-  if (wally_descriptor_parse(descriptor_str, NULL, wally_network, 0, &desc) !=
-      WALLY_OK) {
-    return false;
-  }
-
-  bool ok = descriptor_checksum_from_descriptor(desc, out);
-  wally_descriptor_free(desc);
-  if (!ok)
-    return false;
-  return true;
-}
-
 static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
-  char checksum[9];
-  if (!descriptor_checksum_for_session_id(current_ctx->descriptor_str,
-                                          checksum))
+  if (current_ctx->descriptor_checksum[0] == '\0')
     return false;
 
   char base[REGISTRY_ID_MAX_LEN];
-  snprintf(base, sizeof(base), "desc_%s", checksum);
+  snprintf(base, sizeof(base), "desc_%s", current_ctx->descriptor_checksum);
 
   for (size_t i = 0; i < REGISTRY_MAX_ENTRIES; i++) {
     if (i == 0)
@@ -358,27 +373,9 @@ static void psb_warn_confirm_cb(bool confirmed, void *user_data) {
   }
 }
 
-// Re-parse descriptor, verify xpub matches wallet, extract info, and show it.
-static void verify_xpub_and_show_info(void) {
-  uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                               ? WALLY_NETWORK_BITCOIN_MAINNET
-                               : WALLY_NETWORK_BITCOIN_TESTNET;
-
-  struct wally_descriptor *descriptor = NULL;
-  if (wally_descriptor_parse(current_ctx->descriptor_str, NULL, wally_network,
-                             0, &descriptor) != WALLY_OK) {
-    ESP_LOGE(TAG, "Failed to parse descriptor for xpub verification");
-    complete_validation(VALIDATION_PARSE_ERROR);
-    return;
-  }
-
-  int key_index = find_matching_key_index(descriptor);
-  if (key_index < 0) {
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_FINGERPRINT_NOT_FOUND);
-    return;
-  }
-
+// Verify xpub matches wallet, extract info, and show it.
+static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
+                                      int key_index) {
   char *key_str = NULL;
   if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK) {
     wally_descriptor_free(descriptor);
@@ -550,30 +547,11 @@ void descriptor_validate_and_load(const char *descriptor_str,
   current_ctx->id_loc_cb = id_loc_cb;
   current_ctx->user_data = user_data;
 
-  // Parse on the wallet's network; if that fails, probe the other
-  // network so we can return NETWORK_MISMATCH instead of a generic
-  // parse error.
-  uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                               ? WALLY_NETWORK_BITCOIN_MAINNET
-                               : WALLY_NETWORK_BITCOIN_TESTNET;
-
   struct wally_descriptor *descriptor = NULL;
-  int ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
-                                   &descriptor);
-
-  if (ret != WALLY_OK) {
-    uint32_t other_network = (wally_network == WALLY_NETWORK_BITCOIN_MAINNET)
-                                 ? WALLY_NETWORK_BITCOIN_TESTNET
-                                 : WALLY_NETWORK_BITCOIN_MAINNET;
-    struct wally_descriptor *other_desc = NULL;
-    if (wally_descriptor_parse(descriptor_str, NULL, other_network, 0,
-                               &other_desc) == WALLY_OK) {
-      wally_descriptor_free(other_desc);
-      complete_validation(VALIDATION_NETWORK_MISMATCH);
-      return;
-    }
-    ESP_LOGE(TAG, "Failed to parse descriptor: %d", ret);
-    complete_validation(VALIDATION_PARSE_ERROR);
+  descriptor_validation_result_t parse_result =
+      parse_descriptor_for_wallet(current_ctx->descriptor_str, &descriptor);
+  if (parse_result != VALIDATION_SUCCESS) {
+    complete_validation(parse_result);
     return;
   }
 
@@ -586,21 +564,27 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
-  wally_descriptor_free(descriptor);
+  if (!descriptor_checksum_from_descriptor(descriptor,
+                                           current_ctx->descriptor_checksum)) {
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
 
   /* Stage 1.5: dedup against the current in-memory session only. Descriptor
    * files on flash/SD are explicit backups/import sources and must not behave
    * as registered descriptors while persistent registration is disabled. */
   char existing_id[REGISTRY_ID_MAX_LEN];
-  if (registry_session_has_duplicate(current_ctx->descriptor_str, existing_id,
-                                     sizeof(existing_id))) {
+  if (registry_session_has_duplicate_checksum(
+          current_ctx->descriptor_checksum, existing_id, sizeof(existing_id))) {
+    wally_descriptor_free(descriptor);
     strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
     last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
     complete_validation(VALIDATION_DUPLICATE);
     return;
   }
 
-  verify_xpub_and_show_info();
+  verify_xpub_and_show_info(descriptor, key_index);
 }
 
 bool descriptor_validator_get_duplicate_id(char *out, size_t out_len) {

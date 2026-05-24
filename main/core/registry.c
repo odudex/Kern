@@ -182,13 +182,26 @@ bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
   if (!target)
     return false;
 
+  bool found =
+      registry_session_has_duplicate_checksum(target, out_id, out_id_size);
+  free(target);
+  return found;
+}
+
+bool registry_session_has_duplicate_checksum(const char checksum[9],
+                                             char *out_id, size_t out_id_size) {
+  if (out_id && out_id_size > 0)
+    out_id[0] = '\0';
+  if (!checksum || checksum[0] == '\0')
+    return false;
+
   bool found = false;
   for (size_t i = 0; i < registry_len; i++) {
     char entry_cksum[9];
     if (registry_entries[i].desc &&
         descriptor_checksum_from_descriptor(registry_entries[i].desc,
                                             entry_cksum)) {
-      if (strcmp(entry_cksum, target) == 0) {
+      if (strcmp(entry_cksum, checksum) == 0) {
         found = true;
         if (out_id && out_id_size > 0) {
           strncpy(out_id, registry_entries[i].id, out_id_size - 1);
@@ -200,7 +213,6 @@ bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
     }
   }
 
-  free(target);
   return found;
 }
 
