@@ -325,6 +325,53 @@ void theme_apply_transparent_container(lv_obj_t *obj) {
   lv_obj_set_style_pad_all(obj, 0, 0);
 }
 
+lv_obj_t *theme_create_scroll_column(lv_obj_t *parent, int32_t pad,
+                                     int32_t gap) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *cont = lv_obj_create(parent);
+  lv_obj_set_size(cont, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(cont, pad, 0);
+  lv_obj_set_style_pad_gap(cont, gap, 0);
+  theme_apply_screen(cont);
+  lv_obj_add_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+  return cont;
+}
+
+lv_obj_t *theme_create_separator(lv_obj_t *parent, lv_color_t color) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *separator = lv_obj_create(parent);
+  lv_obj_set_size(separator, LV_PCT(100), 2);
+  lv_obj_set_style_bg_color(separator, color, 0);
+  lv_obj_set_style_bg_opa(separator, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(separator, 0, 0);
+  lv_obj_clear_flag(separator, LV_OBJ_FLAG_SCROLLABLE);
+  return separator;
+}
+
+lv_obj_t *theme_create_button_row(lv_obj_t *parent, int32_t gap) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_set_style_pad_gap(row, gap, 0);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  return row;
+}
+
 lv_obj_t *theme_create_flex_row(lv_obj_t *parent) {
   if (!parent)
     return NULL;

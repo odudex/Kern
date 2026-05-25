@@ -150,6 +150,22 @@ static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
 static void descriptor_loaded_info_cb(void *user_data);
 
+static void create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb) {
+  lv_obj_t *button_container = theme_create_button_row(parent, 10);
+  if (!button_container)
+    return;
+
+  lv_obj_t *back_button = theme_create_button(button_container, "Back", false);
+  lv_obj_set_size(back_button, LV_PCT(45), LV_SIZE_CONTENT);
+  lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+  lv_obj_t *sign_button = theme_create_button(button_container, "Sign", false);
+  lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
+  lv_obj_add_event_cb(sign_button, sign_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
+}
+
 // Format satoshis as Bitcoin with visual grouping: "1.00 000 000"
 static void format_btc(char *buf, size_t buf_size, uint64_t sats) {
   uint64_t whole = sats / 100000000ULL;
@@ -914,15 +930,7 @@ static bool create_psbt_info_display(void) {
     output_colors[diagram_idx] = error_color();
   }
 
-  psbt_info_container = lv_obj_create(scan_screen);
-  lv_obj_set_size(psbt_info_container, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(psbt_info_container, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(psbt_info_container, LV_FLEX_ALIGN_START,
-                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(psbt_info_container, 10, 0);
-  lv_obj_set_style_pad_gap(psbt_info_container, 10, 0);
-  theme_apply_screen(psbt_info_container);
-  lv_obj_add_flag(psbt_info_container, LV_OBJ_FLAG_SCROLLABLE);
+  psbt_info_container = theme_create_scroll_column(scan_screen, 10, 10);
 
   lv_obj_update_layout(psbt_info_container);
   int32_t diagram_width = lv_obj_get_width(scan_screen) - 20;
@@ -1055,11 +1063,8 @@ static bool create_psbt_info_display(void) {
     }
   }
 
-  lv_obj_t *separator1 = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(separator1, LV_PCT(100), 2);
-  lv_obj_set_style_bg_color(separator1, main_color(), 0);
-  lv_obj_set_style_bg_opa(separator1, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(separator1, 0, 0);
+  lv_obj_t *separator1 =
+      theme_create_separator(psbt_info_container, main_color());
   lv_obj_set_style_margin_top(separator1, 15, 0);
 
   /* Count self-transfers up-front so we can collapse to a totals row when
@@ -1246,48 +1251,14 @@ static bool create_psbt_info_display(void) {
   }
 
   if (fee > 0) {
-    lv_obj_t *separator2 = lv_obj_create(psbt_info_container);
-    lv_obj_set_size(separator2, LV_PCT(100), 2);
-    lv_obj_set_style_bg_color(separator2, main_color(), 0);
-    lv_obj_set_style_bg_opa(separator2, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(separator2, 0, 0);
+    theme_create_separator(psbt_info_container, main_color());
 
     lv_obj_t *fee_row =
         create_btc_value_row(psbt_info_container, "Fee: ", fee, error_color());
     lv_obj_set_width(fee_row, LV_PCT(100));
   }
 
-  lv_obj_t *button_container = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(button_container, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(button_container, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(button_container, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(button_container, 0, 0);
-  lv_obj_set_style_pad_gap(button_container, 10, 0);
-  lv_obj_set_style_bg_opa(button_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(button_container, 0, 0);
-
-  lv_obj_t *back_button = lv_btn_create(button_container);
-  lv_obj_set_size(back_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(back_button, false);
-  lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
-  lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *back_label = lv_label_create(back_button);
-  lv_label_set_text(back_label, "Back");
-  lv_obj_center(back_label);
-  theme_apply_button_label(back_label, false);
-
-  lv_obj_t *sign_button = lv_btn_create(button_container);
-  lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(sign_button, false);
-  lv_obj_add_event_cb(sign_button, sign_button_cb, LV_EVENT_CLICKED, NULL);
-  lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *sign_label = lv_label_create(sign_button);
-  lv_label_set_text(sign_label, "Sign");
-  lv_obj_center(sign_label);
-  theme_apply_button_label(sign_label, false);
+  create_sign_action_row(psbt_info_container, sign_button_cb);
 
   return true;
 }
@@ -1424,15 +1395,7 @@ static void create_message_sign_display(void) {
     return;
   }
 
-  psbt_info_container = lv_obj_create(scan_screen);
-  lv_obj_set_size(psbt_info_container, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_flex_flow(psbt_info_container, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(psbt_info_container, LV_FLEX_ALIGN_START,
-                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(psbt_info_container, 10, 0);
-  lv_obj_set_style_pad_gap(psbt_info_container, 10, 0);
-  theme_apply_screen(psbt_info_container);
-  lv_obj_add_flag(psbt_info_container, LV_OBJ_FLAG_SCROLLABLE);
+  psbt_info_container = theme_create_scroll_column(scan_screen, 10, 10);
 
   theme_create_page_title(psbt_info_container, "Sign Message");
 
@@ -1454,11 +1417,7 @@ static void create_message_sign_display(void) {
 
   wally_free_string(address);
 
-  lv_obj_t *separator = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(separator, LV_PCT(100), 2);
-  lv_obj_set_style_bg_color(separator, main_color(), 0);
-  lv_obj_set_style_bg_opa(separator, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(separator, 0, 0);
+  theme_create_separator(psbt_info_container, main_color());
 
   lv_obj_t *msg_title =
       theme_create_label(psbt_info_container, "Message:", false);
@@ -1470,38 +1429,7 @@ static void create_message_sign_display(void) {
   lv_obj_set_width(msg_label, LV_PCT(100));
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
 
-  lv_obj_t *button_container = lv_obj_create(psbt_info_container);
-  lv_obj_set_size(button_container, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(button_container, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(button_container, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(button_container, 0, 0);
-  lv_obj_set_style_pad_gap(button_container, 10, 0);
-  lv_obj_set_style_bg_opa(button_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(button_container, 0, 0);
-
-  lv_obj_t *back_button = lv_btn_create(button_container);
-  lv_obj_set_size(back_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(back_button, false);
-  lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
-  lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *back_label = lv_label_create(back_button);
-  lv_label_set_text(back_label, "Back");
-  lv_obj_center(back_label);
-  theme_apply_button_label(back_label, false);
-
-  lv_obj_t *sign_button = lv_btn_create(button_container);
-  lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
-  theme_apply_touch_button(sign_button, false);
-  lv_obj_add_event_cb(sign_button, message_sign_button_cb, LV_EVENT_CLICKED,
-                      NULL);
-  lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-  lv_obj_t *sign_label = lv_label_create(sign_button);
-  lv_label_set_text(sign_label, "Sign");
-  lv_obj_center(sign_label);
-  theme_apply_button_label(sign_label, false);
+  create_sign_action_row(psbt_info_container, message_sign_button_cb);
 }
 
 static void message_sign_button_cb(lv_event_t *e) {
