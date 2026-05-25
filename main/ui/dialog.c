@@ -178,8 +178,9 @@ void dialog_show_info(const char *title, const char *message,
                      msg_y + theme_get_button_height() + 10);
 }
 
-void dialog_show_error(const char *message, dialog_simple_callback_t callback,
-                       int timeout_ms) {
+void dialog_show_error_timeout(const char *message,
+                               dialog_simple_callback_t callback,
+                               int timeout_ms) {
   if (!message)
     return;
 

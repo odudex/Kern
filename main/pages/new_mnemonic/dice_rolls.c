@@ -274,7 +274,7 @@ static bool generate_mnemonic_from_rolls(void) {
 
 static void finish_dice_rolls(void) {
   if (!generate_mnemonic_from_rolls()) {
-    dialog_show_error("Failed to generate mnemonic", NULL, 0);
+    dialog_show_error_timeout("Failed to generate mnemonic", NULL, 0);
     return;
   }
 

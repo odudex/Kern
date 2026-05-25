@@ -982,7 +982,7 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   active_frame_operations = 0;
 
   if (!app_video_is_ready()) {
-    dialog_show_error("Camera not available", return_callback, 0);
+    dialog_show_error_timeout("Camera not available", return_callback, 0);
     return;
   }
 

@@ -30,7 +30,7 @@ static void deferred_wipe_cb(lv_timer_t *timer) {
     dialog_show_info("Wiped", "Flash storage erased", wipe_complete_cb, NULL,
                      DIALOG_STYLE_OVERLAY);
   } else {
-    dialog_show_error("Failed to wipe flash", NULL, 0);
+    dialog_show_error_timeout("Failed to wipe flash", NULL, 0);
   }
 }
 

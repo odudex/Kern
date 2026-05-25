@@ -400,7 +400,8 @@ static void return_from_qr_scanner_cb(void) {
           handle_descriptor_content(desc);
           free(desc);
         } else {
-          dialog_show_error("Failed to parse descriptor", return_callback, 0);
+          dialog_show_error_timeout("Failed to parse descriptor",
+                                    return_callback, 0);
         }
         return;
       } else if (ur_type && strcmp(ur_type, "bytes") == 0) {
@@ -476,7 +477,7 @@ static void return_from_qr_scanner_cb(void) {
         if (addr_is_mainnet == wallet_is_mainnet) {
           handle_address_content(qr_content);
         } else {
-          dialog_show_error(
+          dialog_show_error_timeout(
               addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
                               : "Address is for Testnet, wallet is on Mainnet",
               return_callback, 3000);
@@ -685,11 +686,11 @@ static void return_from_qr_scanner_cb(void) {
       }
 
       if (!create_psbt_info_display()) {
-        dialog_show_error("Invalid PSBT data", return_callback, 0);
+        dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
       }
     }
   } else {
-    dialog_show_error("Unrecognized QR format", return_callback, 0);
+    dialog_show_error_timeout("Unrecognized QR format", return_callback, 0);
   }
 }
 
@@ -760,13 +761,14 @@ static void mnemonic_confirm_cb(bool confirmed, void *user_data) {
   if (!key_load_from_mnemonic(scanned_mnemonic, NULL,
                               net == WALLET_NETWORK_TESTNET)) {
     SECURE_FREE_STRING(scanned_mnemonic);
-    dialog_show_error("Failed to load mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to load mnemonic", return_callback, 0);
     return;
   }
 
   if (!wallet_init(net)) {
     SECURE_FREE_STRING(scanned_mnemonic);
-    dialog_show_error("Failed to initialize wallet", return_callback, 0);
+    dialog_show_error_timeout("Failed to initialize wallet", return_callback,
+                              0);
     return;
   }
 
@@ -781,7 +783,7 @@ static void handle_mnemonic_content(const char *data, size_t len) {
   char *mnemonic = mnemonic_qr_to_mnemonic(data, len, NULL);
   if (!mnemonic || bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     SECURE_FREE_STRING(mnemonic);
-    dialog_show_error("Invalid mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Invalid mnemonic", return_callback, 0);
     return;
   }
 
@@ -1464,7 +1466,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   if (!current_psbt) {
     dismiss_sign_progress();
-    dialog_show_error("No PSBT loaded", NULL, 2000);
+    dialog_show_error_timeout("No PSBT loaded", NULL, 2000);
     return;
   }
 
@@ -1476,7 +1478,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   if (signatures_added == 0) {
     dismiss_sign_progress();
-    dialog_show_error("Failed to sign PSBT", NULL, 2000);
+    dialog_show_error_timeout("Failed to sign PSBT", NULL, 2000);
     return;
   }
 
@@ -1497,7 +1499,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   dismiss_sign_progress();
 
   if (ret != WALLY_OK) {
-    dialog_show_error("Failed to encode PSBT", NULL, 2000);
+    dialog_show_error_timeout("Failed to encode PSBT", NULL, 2000);
     return;
   }
 
@@ -1509,7 +1511,8 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   if (!qr_viewer_page_create_with_format(lv_screen_active(), export_format,
                                          signed_psbt_base64, "Signed PSBT",
                                          return_from_qr_viewer_cb)) {
-    dialog_show_error("Failed to create QR viewer", return_callback, 2000);
+    dialog_show_error_timeout("Failed to create QR viewer", return_callback,
+                              2000);
     return;
   }
 
@@ -1522,7 +1525,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 static void sign_button_cb(lv_event_t *e) {
   (void)e;
   if (!current_psbt) {
-    dialog_show_error("No PSBT loaded", NULL, 2000);
+    dialog_show_error_timeout("No PSBT loaded", NULL, 2000);
     return;
   }
 
@@ -1577,7 +1580,7 @@ static void create_message_sign_display(void) {
   char *address = NULL;
   if (!message_sign_get_address(current_message.derivation_path, testnet,
                                 &address)) {
-    dialog_show_error("Failed to derive address", return_callback, 0);
+    dialog_show_error_timeout("Failed to derive address", return_callback, 0);
     return;
   }
 
@@ -1665,7 +1668,7 @@ static void message_sign_button_cb(lv_event_t *e) {
   char *sig_b64 = NULL;
   if (!message_sign_sign(current_message.derivation_path,
                          current_message.message, &sig_b64)) {
-    dialog_show_error("Failed to sign message", NULL, 2000);
+    dialog_show_error_timeout("Failed to sign message", NULL, 2000);
     return;
   }
 

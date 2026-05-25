@@ -108,9 +108,9 @@ static void poll_timer_cb(lv_timer_t *timer) {
     lv_textarea_set_text(text_input.textarea, "");
 
   if (decrypt_result == KEF_ERR_AUTH) {
-    dialog_show_error("Wrong key", NULL, 0);
+    dialog_show_error_timeout("Wrong key", NULL, 0);
   } else {
-    dialog_show_error(kef_error_str(decrypt_result), NULL, 0);
+    dialog_show_error_timeout(kef_error_str(decrypt_result), NULL, 0);
   }
 }
 
@@ -138,7 +138,7 @@ static void keyboard_ready_cb(lv_event_t *e) {
     SECURE_FREE_BUFFER(key_copy, key_copy_len);
     key_copy_len = 0;
     show_input();
-    dialog_show_error("Task creation failed", NULL, 0);
+    dialog_show_error_timeout("Task creation failed", NULL, 0);
     return;
   }
 

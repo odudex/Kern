@@ -240,7 +240,8 @@ static void derive_confirm_cb(bool confirmed, void *user_data) {
   }
 
   if (!derive_child_mnemonic()) {
-    dialog_show_error("Failed to derive BIP85 mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to derive BIP85 mnemonic",
+                              return_callback, 0);
     return;
   }
 

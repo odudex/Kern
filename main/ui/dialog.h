@@ -23,8 +23,9 @@ void dialog_show_info(const char *title, const char *message,
                       dialog_callback_t callback, void *user_data,
                       dialog_style_t style);
 
-void dialog_show_error(const char *message, dialog_simple_callback_t callback,
-                       int timeout_ms);
+void dialog_show_error_timeout(const char *message,
+                               dialog_simple_callback_t callback,
+                               int timeout_ms);
 
 void dialog_show_confirm(const char *message,
                          dialog_confirm_callback_t callback, void *user_data,

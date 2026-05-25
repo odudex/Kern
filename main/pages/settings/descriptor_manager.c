@@ -367,7 +367,7 @@ static void save_encrypted_cb(void) {
   const registry_entry_t *entry =
       registry_get((size_t)pending_save_descriptor_index);
   if (!entry) {
-    dialog_show_error("No descriptor selected", NULL, 2000);
+    dialog_show_error_timeout("No descriptor selected", NULL, 2000);
     descriptor_manager_page_show();
     return;
   }
@@ -386,7 +386,7 @@ static void save_plaintext_cb(void) {
   const registry_entry_t *entry =
       registry_get((size_t)pending_save_descriptor_index);
   if (!entry) {
-    dialog_show_error("No descriptor selected", NULL, 2000);
+    dialog_show_error_timeout("No descriptor selected", NULL, 2000);
     descriptor_manager_page_show();
     return;
   }
@@ -448,7 +448,7 @@ static void registered_desc_action_cb(size_t index,
   switch (action) {
   case REGISTERED_DESCRIPTOR_ACTION_EXPORT_QR:
     if (!descriptor_string_from_descriptor(entry->desc, &descriptor_string)) {
-      dialog_show_error("Failed to export descriptor", NULL, 2000);
+      dialog_show_error_timeout("Failed to export descriptor", NULL, 2000);
       descriptor_manager_page_show();
       return;
     }

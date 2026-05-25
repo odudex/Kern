@@ -270,7 +270,7 @@ static void deferred_verify_cb(lv_timer_t *timer) {
     break;
   case PIN_VERIFY_WIPED: {
     clear_buffers();
-    dialog_show_error("Device wiped. All data erased.", NULL, 0);
+    dialog_show_error_timeout("Device wiped. All data erased.", NULL, 0);
     lv_timer_t *rt = lv_timer_create(restart_cb, 3000, NULL);
     lv_timer_set_repeat_count(rt, 1);
     break;
@@ -279,7 +279,7 @@ static void deferred_verify_cb(lv_timer_t *timer) {
     clear_buffers();
     // Defer the rebuild until the dialog dismisses; rebuilding now would
     // add the new keyboard above the error modal and hide the message.
-    dialog_show_error("Wrong PIN", wrong_pin_dismissed_cb, 1500);
+    dialog_show_error_timeout("Wrong PIN", wrong_pin_dismissed_cb, 1500);
     break;
   }
 }
@@ -316,7 +316,8 @@ static void input_ready_cb(lv_event_t *e) {
 
   case STATE_SETUP_FULL_PIN: {
     if (len < PIN_MIN_LENGTH) {
-      dialog_show_error("PIN must be at least 6 characters", NULL, 1500);
+      dialog_show_error_timeout("PIN must be at least 6 characters", NULL,
+                                1500);
       return;
     }
     memcpy(setup_pin, text, len);
@@ -334,7 +335,8 @@ static void input_ready_cb(lv_event_t *e) {
       secure_clear_textarea(text_input.textarea);
       // Defer the rebuild until the dialog dismisses; rebuilding now would
       // add the new keyboard above the error modal and hide the message.
-      dialog_show_error("PINs don't match", pin_mismatch_dismissed_cb, 1500);
+      dialog_show_error_timeout("PINs don't match", pin_mismatch_dismissed_cb,
+                                1500);
       return;
     }
     secure_clear_textarea(text_input.textarea);
@@ -647,7 +649,8 @@ static void deferred_pin_save(lv_timer_t *timer) {
   clear_buffers();
   dismiss_processing();
   if (err != ESP_OK) {
-    dialog_show_error("Failed to save PIN. Please try again.", NULL, 2000);
+    dialog_show_error_timeout("Failed to save PIN. Please try again.", NULL,
+                              2000);
     transition_to(STATE_SETUP_FULL_PIN);
     return;
   }
@@ -746,9 +749,9 @@ static void efuse_confirm_result(bool confirmed, void *user_data) {
       lv_obj_delete(progress);
 
     if (err != ESP_OK) {
-      dialog_show_error("eFuse provisioning failed. "
-                        "Anti-phishing will be unavailable.",
-                        NULL, 3000);
+      dialog_show_error_timeout("eFuse provisioning failed. "
+                                "Anti-phishing will be unavailable.",
+                                NULL, 3000);
     }
   }
 

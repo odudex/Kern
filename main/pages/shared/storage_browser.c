@@ -100,7 +100,7 @@ static void inline_delete_refresh_cb(void *user_data) {
     char msg[64];
     snprintf(msg, sizeof(msg), "No %ss found on %s", cfg.item_type_name,
              loc_name);
-    dialog_show_error(msg, back_cb, 0);
+    dialog_show_error_timeout(msg, back_cb, 0);
     return;
   }
 
@@ -134,7 +134,7 @@ static void inline_delete_confirm_cb(bool confirmed, void *user_data) {
                        DIALOG_STYLE_OVERLAY);
     }
   } else {
-    dialog_show_error("Failed to delete", NULL, 0);
+    dialog_show_error_timeout("Failed to delete", NULL, 0);
   }
 }
 
@@ -203,7 +203,7 @@ static void deferred_list_cb(lv_timer_t *timer) {
     char msg[64];
     snprintf(msg, sizeof(msg), "No %ss found on %s", cfg.item_type_name,
              loc_name);
-    dialog_show_error(msg, back_cb, 0);
+    dialog_show_error_timeout(msg, back_cb, 0);
     return;
   }
 

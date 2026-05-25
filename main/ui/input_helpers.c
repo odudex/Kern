@@ -256,7 +256,7 @@ void ui_power_off_confirmed_cb(bool confirmed, void *user_data) {
     if (unload_key) {
       esp_restart();
     } else {
-      dialog_show_error("Power off failed", NULL, DIALOG_STYLE_OVERLAY);
+      dialog_show_error_timeout("Power off failed", NULL, 2000);
     }
   }
 }

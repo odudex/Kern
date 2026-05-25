@@ -346,7 +346,7 @@ void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
   checksum_filter_mode = checksum_filter_last_word;
 
   if (!bip39_filter_init()) {
-    dialog_show_error("Failed to load wordlist", return_cb, 0);
+    dialog_show_error_timeout("Failed to load wordlist", return_cb, 0);
     return;
   }
 

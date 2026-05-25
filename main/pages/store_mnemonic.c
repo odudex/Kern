@@ -70,7 +70,7 @@ static void do_save(void) {
     dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
                      DIALOG_STYLE_OVERLAY);
   } else {
-    dialog_show_error("Failed to save", go_back, 0);
+    dialog_show_error_timeout("Failed to save", go_back, 0);
   }
 }
 
@@ -144,7 +144,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   /* Get mnemonic and convert to compact SeedQR (binary entropy) */
   char *mnemonic = NULL;
   if (!key_get_mnemonic(&mnemonic) || !mnemonic) {
-    dialog_show_error("Failed to get mnemonic", return_cb, 0);
+    dialog_show_error_timeout("Failed to get mnemonic", return_cb, 0);
     return;
   }
 
@@ -156,7 +156,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   wally_free_string(mnemonic);
 
   if (!compact_seedqr_data) {
-    dialog_show_error("Failed to prepare data", return_cb, 0);
+    dialog_show_error_timeout("Failed to prepare data", return_cb, 0);
     return;
   }
 

@@ -284,7 +284,7 @@ static void encrypt_poll_timer_cb(lv_timer_t *timer) {
     lv_textarea_set_text(text_input.textarea, "");
   if (strength_label)
     lv_obj_clear_flag(strength_label, LV_OBJ_FLAG_HIDDEN);
-  dialog_show_error(kef_error_str(encrypt_result), NULL, 0);
+  dialog_show_error_timeout(kef_error_str(encrypt_result), NULL, 0);
 }
 
 /* ---------- Password input with confirmation ---------- */
@@ -321,7 +321,7 @@ static void password_ready_cb(lv_event_t *e) {
       lv_label_set_text(overlay_title, "Encryption Key");
     if (strength_label)
       lv_obj_clear_flag(strength_label, LV_OBJ_FLAG_HIDDEN);
-    dialog_show_error("Keys don't match", NULL, 0);
+    dialog_show_error_timeout("Keys don't match", NULL, 0);
     return;
   }
 
@@ -349,7 +349,7 @@ static void password_ready_cb(lv_event_t *e) {
       progress_dialog = NULL;
     }
     ui_text_input_show(&text_input);
-    dialog_show_error("Task creation failed", NULL, 0);
+    dialog_show_error_timeout("Task creation failed", NULL, 0);
     return;
   }
 
@@ -419,7 +419,7 @@ void kef_encrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
     if (!key_get_fingerprint_hex(fp_hex)) {
       SECURE_FREE_BUFFER(data_copy, data_copy_len);
       data_copy_len = 0;
-      dialog_show_error("Failed to get fingerprint", return_cb, 0);
+      dialog_show_error_timeout("Failed to get fingerprint", return_cb, 0);
       return;
     }
     snprintf(kef_id, sizeof(kef_id), "%s", fp_hex);

@@ -71,7 +71,7 @@ static void do_save_encrypted(void) {
     dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
                      DIALOG_STYLE_OVERLAY);
   } else {
-    dialog_show_error("Failed to save", go_back, 0);
+    dialog_show_error_timeout("Failed to save", go_back, 0);
   }
 }
 
@@ -93,7 +93,7 @@ static void do_save_plaintext(const char *id) {
     dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
                      DIALOG_STYLE_OVERLAY);
   } else {
-    dialog_show_error("Failed to save", go_back, 0);
+    dialog_show_error_timeout("Failed to save", go_back, 0);
   }
 }
 
@@ -185,7 +185,7 @@ static void id_input_ready_cb(lv_event_t *e) {
   (void)e;
   const char *text = lv_textarea_get_text(id_input.textarea);
   if (!text || strlen(text) == 0) {
-    dialog_show_error("Please enter an ID", NULL, 2000);
+    dialog_show_error_timeout("Please enter an ID", NULL, 2000);
     return;
   }
 
@@ -213,7 +213,7 @@ void store_descriptor_page_create_for_descriptor(
 
   if (!descriptor_string_from_descriptor(descriptor, &descriptor_text) ||
       !descriptor_text) {
-    dialog_show_error("No descriptor loaded", return_cb, 0);
+    dialog_show_error_timeout("No descriptor loaded", return_cb, 0);
     return;
   }
   descriptor_checksum_from_descriptor(descriptor, descriptor_default_id);

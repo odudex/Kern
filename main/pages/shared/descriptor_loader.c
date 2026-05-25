@@ -187,25 +187,25 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
                existing_id);
     else
       snprintf(msg, sizeof(msg), "Descriptor already loaded");
-    dialog_show_error(msg, NULL, 2500);
+    dialog_show_error_timeout(msg, NULL, 2500);
     return true;
   }
 
   case VALIDATION_FINGERPRINT_NOT_FOUND:
-    dialog_show_error("Key not found in descriptor", NULL, 2000);
+    dialog_show_error_timeout("Key not found in descriptor", NULL, 2000);
     return true;
 
   case VALIDATION_XPUB_MISMATCH:
-    dialog_show_error("XPub mismatch - check passphrase", NULL, 2000);
+    dialog_show_error_timeout("XPub mismatch - check passphrase", NULL, 2000);
     return true;
 
   case VALIDATION_PARSE_ERROR:
-    dialog_show_error("Invalid descriptor format", NULL, 2000);
+    dialog_show_error_timeout("Invalid descriptor format", NULL, 2000);
     return true;
 
   case VALIDATION_INVALID_HARDENED_NOTATION:
-    dialog_show_error("Descriptor uses 'H'. Use ' or h for hardened.", NULL,
-                      3000);
+    dialog_show_error_timeout("Descriptor uses 'H'. Use ' or h for hardened.",
+                              NULL, 3000);
     return true;
 
   case VALIDATION_NETWORK_MISMATCH: {
@@ -215,13 +215,13 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     char msg[80];
     snprintf(msg, sizeof(msg),
              "Descriptor is for %s. Switch network in Settings.", expected);
-    dialog_show_error(msg, NULL, 3000);
+    dialog_show_error_timeout(msg, NULL, 3000);
     return true;
   }
 
   case VALIDATION_INTERNAL_ERROR:
   default:
-    dialog_show_error("Validation failed", NULL, 2000);
+    dialog_show_error_timeout("Validation failed", NULL, 2000);
     return true;
   }
 }
@@ -245,7 +245,7 @@ static void id_prompt_ready_cb(lv_event_t *e) {
     return;
   const char *text = lv_textarea_get_text(g_id_prompt_ctx->input.textarea);
   if (!text || strlen(text) == 0) {
-    dialog_show_error("Please enter a name", NULL, 2000);
+    dialog_show_error_timeout("Please enter a name", NULL, 2000);
     return;
   }
 
@@ -457,7 +457,7 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
     free(converted);
     free(descriptor_str);
   } else {
-    dialog_show_error("Unsupported descriptor format", NULL, 2000);
+    dialog_show_error_timeout("Unsupported descriptor format", NULL, 2000);
     if (error_cb) {
       error_cb();
     }

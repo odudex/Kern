@@ -324,7 +324,7 @@ static void encrypt_success_cb(const char *id, const uint8_t *envelope,
   size_t b43_len = 0;
   if (!base43_encode(envelope, len, &b43, &b43_len)) {
     kef_encrypt_page_destroy();
-    dialog_show_error("Encoding failed", NULL, 0);
+    dialog_show_error_timeout("Encoding failed", NULL, 0);
     current_qr_type = previous_qr_type;
     lv_dropdown_set_selected(qr_type_dropdown, (uint32_t)current_qr_type);
     return;
@@ -343,7 +343,7 @@ static void start_encrypted_flow(void) {
   previous_qr_type = current_qr_type;
 
   if (!compact_seedqr_data || compact_seedqr_len == 0) {
-    dialog_show_error("No data to encrypt", NULL, 0);
+    dialog_show_error_timeout("No data to encrypt", NULL, 0);
     return;
   }
 

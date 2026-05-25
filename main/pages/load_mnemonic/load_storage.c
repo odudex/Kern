@@ -52,13 +52,13 @@ static void load_selected(int idx, const char *filename) {
   esp_err_t ret = storage_load_mnemonic(storage_browser_get_location(),
                                         filename, &envelope, &envelope_len);
   if (ret != ESP_OK) {
-    dialog_show_error("Failed to load file", NULL, 0);
+    dialog_show_error_timeout("Failed to load file", NULL, 0);
     return;
   }
 
   if (!kef_is_envelope(envelope, envelope_len)) {
     free(envelope);
-    dialog_show_error("Invalid encrypted data", NULL, 0);
+    dialog_show_error_timeout("Invalid encrypted data", NULL, 0);
     return;
   }
 

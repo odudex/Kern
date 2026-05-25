@@ -30,14 +30,15 @@ static void loading_timer_cb(lv_timer_t *timer) {
   if (key_load_from_mnemonic(mnemonic_content, NULL,
                              net == WALLET_NETWORK_TESTNET)) {
     if (!wallet_init(net)) {
-      dialog_show_error("Failed to initialize wallet", return_callback, 0);
+      dialog_show_error_timeout("Failed to initialize wallet", return_callback,
+                                0);
       return;
     }
     registry_init(net == WALLET_NETWORK_TESTNET);
     if (success_callback)
       success_callback();
   } else {
-    dialog_show_error("Failed to load key", return_callback, 0);
+    dialog_show_error_timeout("Failed to load key", return_callback, 0);
   }
 }
 
@@ -108,13 +109,13 @@ void key_confirmation_page_create(lv_obj_t *parent, void (*return_cb)(void),
   SAFE_FREE_STATIC(mnemonic_content);
   mnemonic_content = mnemonic_qr_to_mnemonic(content, content_len, NULL);
   if (!mnemonic_content) {
-    dialog_show_error("Invalid mnemonic phrase", return_callback, 0);
+    dialog_show_error_timeout("Invalid mnemonic phrase", return_callback, 0);
     return;
   }
 
   char fingerprint_hex[BIP32_KEY_FINGERPRINT_LEN * 2 + 1];
   if (!key_mnemonic_fingerprint_hex(mnemonic_content, fingerprint_hex)) {
-    dialog_show_error("Failed to process mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to process mnemonic", return_callback, 0);
     return;
   }
 

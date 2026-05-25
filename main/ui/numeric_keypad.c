@@ -95,7 +95,7 @@ static void submit_value(ui_numeric_keypad_t *keypad) {
 
   if (!parse_value(keypad, &value)) {
     if (invalid_message)
-      dialog_show_error(invalid_message, NULL, 0);
+      dialog_show_error_timeout(invalid_message, NULL, 0);
     return;
   }
 

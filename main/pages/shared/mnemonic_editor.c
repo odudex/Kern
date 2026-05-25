@@ -550,7 +550,7 @@ static void load_btn_cb(lv_event_t *e) {
   }
 
   if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    dialog_show_error("Invalid checksum", NULL, 0);
+    dialog_show_error_timeout("Invalid checksum", NULL, 0);
     return;
   }
 
@@ -709,14 +709,14 @@ void mnemonic_editor_page_create(lv_obj_t *parent, void (*return_cb)(void),
   is_new_mnemonic = new_mnemonic;
 
   if (!bip39_filter_init()) {
-    dialog_show_error("Failed to load wordlist", return_cb, 0);
+    dialog_show_error_timeout("Failed to load wordlist", return_cb, 0);
     return;
   }
 
   parse_mnemonic(mnemonic);
 
   if (total_words == 0) {
-    dialog_show_error("No words in mnemonic", return_cb, 0);
+    dialog_show_error_timeout("No words in mnemonic", return_cb, 0);
     return;
   }
 

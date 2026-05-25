@@ -260,7 +260,7 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
                                      &written) == WALLY_OK);
   if (!valid) {
     free(content);
-    dialog_show_error("Invalid address", invalid_address_cb, 0);
+    dialog_show_error_timeout("Invalid address", invalid_address_cb, 0);
     return;
   }
 

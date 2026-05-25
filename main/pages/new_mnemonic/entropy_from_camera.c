@@ -144,13 +144,13 @@ static void proceed_cb(lv_event_t *e) {
   if (bip39_mnemonic_from_bytes(NULL, entropy_hash, entropy_len, &mnemonic) !=
           WALLY_OK ||
       !mnemonic) {
-    dialog_show_error("Failed to generate mnemonic", NULL, 0);
+    dialog_show_error_timeout("Failed to generate mnemonic", NULL, 0);
     return;
   }
 
   if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     wally_free_string(mnemonic);
-    dialog_show_error("Invalid mnemonic generated", NULL, 0);
+    dialog_show_error_timeout("Invalid mnemonic generated", NULL, 0);
     return;
   }
 

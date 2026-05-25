@@ -80,11 +80,12 @@ static bool apply_wallet_changes(void) {
   wallet_unload();
   if (!key_load_from_mnemonic(mnemonic_content, stored_passphrase,
                               is_testnet)) {
-    dialog_show_error("Failed to reload key", return_callback, 0);
+    dialog_show_error_timeout("Failed to reload key", return_callback, 0);
     return false;
   }
   if (!wallet_init(selected_network)) {
-    dialog_show_error("Failed to initialize wallet", return_callback, 0);
+    dialog_show_error_timeout("Failed to initialize wallet", return_callback,
+                              0);
     return false;
   }
   registry_init(is_testnet);
@@ -239,7 +240,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   // Get current mnemonic for later use
   if (!key_get_mnemonic(&mnemonic_content)) {
-    dialog_show_error("Failed to get mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to get mnemonic", return_callback, 0);
     return;
   }
 
@@ -252,7 +253,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
       bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
                                 &master_key) != WALLY_OK) {
     secure_memzero(seed, sizeof(seed));
-    dialog_show_error("Failed to process mnemonic", return_callback, 0);
+    dialog_show_error_timeout("Failed to process mnemonic", return_callback, 0);
     return;
   }
 
@@ -264,7 +265,8 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   char *fingerprint_hex = NULL;
   if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
                            &fingerprint_hex) != WALLY_OK) {
-    dialog_show_error("Failed to format fingerprint", return_callback, 0);
+    dialog_show_error_timeout("Failed to format fingerprint", return_callback,
+                              0);
     return;
   }
 
