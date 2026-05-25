@@ -1,9 +1,9 @@
 // Wallet source picker — see header for shape.
 
 #include "wallet_source_picker.h"
-#include "../../core/registry.h"
-#include "../../ui/numeric_keypad.h"
-#include "../../ui/theme.h"
+#include "../core/registry.h"
+#include "numeric_keypad.h"
+#include "theme.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

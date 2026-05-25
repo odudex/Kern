@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "../../core/ss_whitelist.h"
+#include "../core/ss_whitelist.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stdint.h>

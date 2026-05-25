@@ -6,7 +6,7 @@
 #include "../../core/wallet.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme.h"
-#include "wallet_source_picker.h"
+#include "../../ui/wallet_source_picker.h"
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>

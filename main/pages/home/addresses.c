@@ -12,9 +12,9 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/theme.h"
+#include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
 #include "../shared/address_checker.h"
-#include "../shared/wallet_source_picker.h"
 #include <lvgl.h>
 #include <stdint.h>
 #include <stdio.h>

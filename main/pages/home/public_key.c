@@ -6,8 +6,8 @@
 #include "../../ui/key_info.h"
 #include "../../ui/settings_row.h"
 #include "../../ui/theme.h"
+#include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
-#include "../shared/wallet_source_picker.h"
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>
