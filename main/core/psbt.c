@@ -379,9 +379,9 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
    *   OWNED_UNSAFE   — derive(raw_keypath) reproduces the spk; factually
    *                     ours, just on a non-standard path
    *   EXPECTED_OWNED — derive doesn't (or can't) reproduce the spk;
-   *                     harness state. The signing-policy gate in scan.c
-   *                     uses the matching settings to decide whether to
-   *                     allow signing. */
+   *                     harness state. The signing-policy gate uses the
+   *                     matching settings to decide whether to allow signing.
+   */
   if (result.raw_keypath_len > 0) {
     if (derive_matches_spk(result.raw_keypath, result.raw_keypath_len,
                            utxo_script, utxo_script_len))
