@@ -15,7 +15,6 @@
 #include "utils/session.h"
 #include "pages/pin/pin_page.h"
 #include "pages/login/login.h"
-#include "ui/nav.h"
 #include "esp_lvgl_port.h"
 #include "utils/bip39_filter.h"
 #include <wally_core.h>
@@ -78,7 +77,6 @@ static void post_unlock_cb(void) {
     /* Show login page (wallet selector / main menu) */
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
-    nav_init(scr);
     login_page_create(scr);
 }
 
@@ -95,7 +93,6 @@ static void splash_done_cb(lv_timer_t *t) {
     if (pin_is_configured()) {
         pin_page_create(scr, PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
     } else {
-        nav_init(scr);
         login_page_create(scr);
     }
 }
