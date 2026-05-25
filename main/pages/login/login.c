@@ -6,6 +6,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
+#include "../../ui/power.h"
 #include "../../ui/theme.h"
 #include <bsp/pmic.h>
 #ifdef DEV_TOOLS_ENABLED

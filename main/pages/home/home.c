@@ -7,6 +7,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
+#include "../../ui/power.h"
 #include "../../ui/theme.h"
 #include "../scan/scan.h"
 #include "../settings/wallet_settings.h"
