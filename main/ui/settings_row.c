@@ -5,6 +5,7 @@
 #include "theme.h"
 
 #include <lvgl.h>
+#include <stdlib.h>
 
 /* Help-button click handler: pulls (title, message) from the button's
  * user_data and shows them in an overlay info dialog. */
@@ -18,6 +19,11 @@ static void help_btn_cb(lv_event_t *e) {
   if (!ht)
     return;
   dialog_show_info(ht->title, ht->msg, NULL, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void help_btn_delete_cb(lv_event_t *e) {
+  help_text_t *ht = (help_text_t *)lv_event_get_user_data(e);
+  free(ht);
 }
 
 /* Common row container: full-width flex row with label + (item slot)
@@ -71,10 +77,15 @@ static lv_obj_t *make_help_icon(lv_obj_t *parent, const char *title,
                                 const char *msg) {
   /* Stash (title, msg) on the icon so the click handler can pull them.
    * Both are expected to be string literals — we don't own this alloc. */
-  help_text_t *ht = lv_malloc(sizeof(*ht));
+  help_text_t *ht = malloc(sizeof(*ht));
+  if (!ht)
+    return make_trailing_icon(parent, ICON_HELP, NULL, NULL);
+
   ht->title = title;
   ht->msg = msg;
-  return make_trailing_icon(parent, ICON_HELP, help_btn_cb, ht);
+  lv_obj_t *icon = make_trailing_icon(parent, ICON_HELP, help_btn_cb, ht);
+  lv_obj_add_event_cb(icon, help_btn_delete_cb, LV_EVENT_DELETE, ht);
+  return icon;
 }
 
 lv_obj_t *settings_row_toggle(lv_obj_t *parent, const char *label, bool initial,
