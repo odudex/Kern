@@ -32,29 +32,20 @@ static void info_ok_cb(lv_event_t *e) {
   free(ctx);
 }
 
-static void confirm_yes_cb(lv_event_t *e) {
+static void confirm_finish(lv_event_t *e, bool confirmed) {
   confirm_context_t *ctx = lv_event_get_user_data(e);
   if (!ctx)
     return;
 
   if (ctx->callback)
-    ctx->callback(true, ctx->user_data);
+    ctx->callback(confirmed, ctx->user_data);
   if (ctx->root)
     lv_obj_del(ctx->root);
   free(ctx);
 }
 
-static void confirm_no_cb(lv_event_t *e) {
-  confirm_context_t *ctx = lv_event_get_user_data(e);
-  if (!ctx)
-    return;
-
-  if (ctx->callback)
-    ctx->callback(false, ctx->user_data);
-  if (ctx->root)
-    lv_obj_del(ctx->root);
-  free(ctx);
-}
+static void confirm_yes_cb(lv_event_t *e) { confirm_finish(e, true); }
+static void confirm_no_cb(lv_event_t *e) { confirm_finish(e, false); }
 
 static void error_timer_cb(lv_timer_t *timer) {
   error_context_t *ctx = lv_timer_get_user_data(timer);
@@ -69,8 +60,7 @@ static void error_timer_cb(lv_timer_t *timer) {
 }
 
 static void message_close_cb(lv_event_t *e) {
-  lv_obj_t *dialog = lv_event_get_user_data(e);
-  lv_obj_del(dialog);
+  lv_obj_del(lv_event_get_user_data(e));
 }
 
 static lv_obj_t *create_dialog_container(dialog_style_t style,
@@ -102,28 +92,45 @@ static lv_obj_t *create_dialog_container(dialog_style_t style,
   return dialog;
 }
 
-/* Adjust overlay dialog height to fit content (capped at 80% of screen).
- * Measures text directly — no layout pass needed. */
+static lv_obj_t *make_message_label(lv_obj_t *parent, const char *text,
+                                    int32_t width_pct) {
+  lv_obj_t *label = theme_create_label(parent, text, false);
+  lv_obj_set_width(label, LV_PCT(width_pct));
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_font(label, theme_font_medium(), 0);
+  return label;
+}
+
+static int32_t add_dialog_title(lv_obj_t *dialog, const char *title) {
+  lv_obj_t *label = make_message_label(dialog, title, 90);
+  lv_obj_set_style_text_color(label, highlight_color(), 0);
+  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_update_layout(label);
+  return lv_obj_get_height(label);
+}
+
+/* Fit an overlay box to its text, capped at 80% of screen. Measures the text
+   directly, so it needs no layout pass first. */
 static void dialog_fit_overlay(lv_obj_t *dialog, dialog_style_t style,
                                const char *text, int32_t extra_h) {
   if (style != DIALOG_STYLE_OVERLAY)
     return;
-  const lv_font_t *font = theme_font_medium();
-  int32_t screen_w = theme_get_screen_width();
-  int32_t screen_h = theme_get_screen_height();
+
   int32_t pad_h = lv_obj_get_style_pad_left(dialog, 0) +
                   lv_obj_get_style_pad_right(dialog, 0);
   int32_t pad_v = lv_obj_get_style_pad_top(dialog, 0) +
                   lv_obj_get_style_pad_bottom(dialog, 0);
   int32_t border = lv_obj_get_style_border_width(dialog, 0);
-  int32_t content_w = screen_w * 90 / 100 - pad_h - border * 2;
+  int32_t content_w = theme_get_screen_width() * 90 / 100 - pad_h - border * 2;
   int32_t label_w = content_w * 90 / 100;
 
   lv_point_t txt_size;
-  lv_text_get_size(&txt_size, text, font, 0, 0, label_w, LV_TEXT_FLAG_NONE);
+  lv_text_get_size(&txt_size, text, theme_font_medium(), 0, 0, label_w,
+                   LV_TEXT_FLAG_NONE);
 
   int32_t needed = txt_size.y + extra_h + pad_v + border * 2;
-  int32_t max_h = screen_h * 80 / 100;
+  int32_t max_h = theme_get_screen_height() * 80 / 100;
   lv_obj_set_height(dialog, needed < max_h ? needed : max_h);
 }
 
@@ -142,40 +149,32 @@ void dialog_show_info(const char *title, const char *message,
 
   lv_obj_t *dialog = create_dialog_container(style, &ctx->root);
 
-  int32_t msg_y = 10;
-  if (title) {
-    lv_obj_t *title_label = theme_create_label(dialog, title, false);
-    lv_obj_set_width(title_label, LV_PCT(90));
-    lv_label_set_long_mode(title_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
-    lv_obj_set_style_text_color(title_label, highlight_color(), 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_update_layout(title_label);
-    msg_y = lv_obj_get_height(title_label) + 10;
-  }
+  int32_t gap = theme_get_small_padding();
+  int32_t btn_h = theme_get_button_height();
+  int32_t msg_y = title ? add_dialog_title(dialog, title) + gap : gap;
 
-  lv_obj_t *msg_label = theme_create_label(dialog, message, false);
-  lv_obj_set_width(msg_label, LV_PCT(90));
-  lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_align(msg_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(msg_label, theme_font_medium(), 0);
-  lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, msg_y);
+  /* Size the box, then carve the space between title and button into a
+     scrollable body so a long message never runs under the OK button. */
+  dialog_fit_overlay(dialog, style, message, msg_y + btn_h + gap);
+  lv_obj_update_layout(dialog);
 
-  lv_obj_t *ok_btn = lv_btn_create(dialog);
-  lv_obj_set_size(ok_btn, LV_PCT(50), theme_get_button_height());
+  int32_t body_h = lv_obj_get_content_height(dialog) - msg_y - btn_h - gap;
+  if (body_h < btn_h)
+    body_h = btn_h;
+
+  lv_obj_t *body = lv_obj_create(dialog);
+  theme_apply_transparent_container(body);
+  lv_obj_set_size(body, LV_PCT(100), body_h);
+  lv_obj_align(body, LV_ALIGN_TOP_MID, 0, msg_y);
+  lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
+
+  lv_obj_align(make_message_label(body, message, 100), LV_ALIGN_TOP_MID, 0, 0);
+
+  lv_obj_t *ok_btn = theme_create_button(dialog, "OK", true);
+  lv_obj_set_size(ok_btn, LV_PCT(50), btn_h);
   lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-  theme_apply_touch_button(ok_btn, true);
   lv_obj_add_event_cb(ok_btn, info_ok_cb, LV_EVENT_CLICKED, ctx);
-
-  lv_obj_t *ok_label = lv_label_create(ok_btn);
-  lv_label_set_text(ok_label, "OK");
-  lv_obj_center(ok_label);
-  lv_obj_set_style_text_color(ok_label, main_color(), 0);
-  lv_obj_set_style_text_font(ok_label, theme_font_medium(), 0);
-
-  dialog_fit_overlay(dialog, style, message,
-                     msg_y + theme_get_button_height() + 10);
 }
 
 void dialog_show_error_timeout(const char *message,
@@ -217,6 +216,19 @@ void dialog_show_error_timeout(const char *message,
   lv_timer_set_repeat_count(timer, 1);
 }
 
+static void add_confirm_button(lv_obj_t *dialog, const char *text, bool primary,
+                               lv_align_t align, lv_color_t color,
+                               lv_event_cb_t cb, void *ctx) {
+  lv_obj_t *btn = theme_create_button(dialog, text, primary);
+  lv_obj_set_size(btn, LV_PCT(40), theme_get_button_height());
+  lv_obj_align(btn, align, 0, 0);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ctx);
+
+  lv_obj_t *label = lv_obj_get_child(btn, 0);
+  if (label)
+    lv_obj_set_style_text_color(label, color, 0);
+}
+
 static void show_confirm_internal(const char *message,
                                   dialog_confirm_callback_t callback,
                                   void *user_data, dialog_style_t style,
@@ -236,34 +248,14 @@ static void show_confirm_internal(const char *message,
   if (danger && style == DIALOG_STYLE_OVERLAY)
     lv_obj_set_style_border_color(dialog, error_color(), 0);
 
-  lv_obj_t *msg_label = theme_create_label(dialog, message, false);
+  lv_obj_t *msg_label = make_message_label(dialog, message, 90);
   lv_label_set_recolor(msg_label, true);
-  lv_obj_set_width(msg_label, LV_PCT(90));
-  lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_align(msg_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(msg_label, theme_font_medium(), 0);
   lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, 10);
 
-  lv_obj_t *no_btn = theme_create_button(dialog, "No", false);
-  lv_obj_set_size(no_btn, LV_PCT(40), theme_get_button_height());
-  lv_obj_align(no_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-  lv_obj_add_event_cb(no_btn, confirm_no_cb, LV_EVENT_CLICKED, ctx);
-  lv_obj_t *no_label = lv_obj_get_child(no_btn, 0);
-  if (no_label) {
-    lv_obj_set_style_text_color(no_label, danger ? yes_color() : no_color(), 0);
-    lv_obj_set_style_text_font(no_label, theme_font_medium(), 0);
-  }
-
-  lv_obj_t *yes_btn = theme_create_button(dialog, "Yes", true);
-  lv_obj_set_size(yes_btn, LV_PCT(40), theme_get_button_height());
-  lv_obj_align(yes_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-  lv_obj_add_event_cb(yes_btn, confirm_yes_cb, LV_EVENT_CLICKED, ctx);
-  lv_obj_t *yes_label = lv_obj_get_child(yes_btn, 0);
-  if (yes_label) {
-    lv_obj_set_style_text_color(yes_label, danger ? no_color() : yes_color(),
-                                0);
-    lv_obj_set_style_text_font(yes_label, theme_font_medium(), 0);
-  }
+  add_confirm_button(dialog, "No", false, LV_ALIGN_BOTTOM_LEFT,
+                     danger ? yes_color() : no_color(), confirm_no_cb, ctx);
+  add_confirm_button(dialog, "Yes", true, LV_ALIGN_BOTTOM_RIGHT,
+                     danger ? no_color() : yes_color(), confirm_yes_cb, ctx);
 
   dialog_fit_overlay(dialog, style, message, theme_get_button_height() + 20);
 }
@@ -285,27 +277,11 @@ lv_obj_t *dialog_show_progress(const char *title, const char *message,
   lv_obj_t *root;
   lv_obj_t *dialog = create_dialog_container(style, &root);
 
-  int32_t msg_y = 5;
-  if (title) {
-    lv_obj_t *title_label = theme_create_label(dialog, title, false);
-    lv_obj_set_width(title_label, LV_PCT(90));
-    lv_label_set_long_mode(title_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
-    lv_obj_set_style_text_color(title_label, highlight_color(), 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_update_layout(title_label);
-    msg_y = lv_obj_get_height(title_label) + 10;
-  }
+  int32_t msg_y = title ? add_dialog_title(dialog, title) + 10 : 5;
 
-  if (message) {
-    lv_obj_t *msg_label = theme_create_label(dialog, message, false);
-    lv_obj_set_width(msg_label, LV_PCT(90));
-    lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(msg_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(msg_label, theme_font_medium(), 0);
-    lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, msg_y);
-  }
+  if (message)
+    lv_obj_align(make_message_label(dialog, message, 90), LV_ALIGN_TOP_MID, 0,
+                 msg_y);
 
   dialog_fit_overlay(dialog, style, message ? message : "", msg_y + 5);
 
