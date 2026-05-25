@@ -33,9 +33,4 @@ lv_obj_t *ui_create_power_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 // Creates settings button at top-right with LV_SYMBOL_SETTINGS
 lv_obj_t *ui_create_settings_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 
-// Dialog confirm callback: attempts PMIC power-off with fallback.
-// If unload_key is true (passed as user_data), unloads wallet first and
-// falls back to esp_restart(). Otherwise shows an error on failure.
-void ui_power_off_confirmed_cb(bool confirmed, void *user_data);
-
 #endif

@@ -1,11 +1,7 @@
 // UI Input Helpers - Shared components for input pages
 
 #include "input_helpers.h"
-#include "../core/wallet.h"
-#include "dialog.h"
 #include "theme.h"
-#include <bsp/pmic.h>
-#include <esp_system.h>
 #include <sdkconfig.h>
 
 #ifdef CONFIG_KERN_BOARD_WAVE_35
@@ -242,23 +238,6 @@ static lv_obj_t *create_top_right_corner_button(lv_obj_t *parent,
 
 lv_obj_t *ui_create_settings_button(lv_obj_t *parent, lv_event_cb_t event_cb) {
   return create_top_right_corner_button(parent, LV_SYMBOL_SETTINGS, event_cb);
-}
-
-/* ---------- Shared power-off callback ---------- */
-
-void ui_power_off_confirmed_cb(bool confirmed, void *user_data) {
-  if (!confirmed)
-    return;
-  bool unload_key = (user_data != NULL);
-  if (unload_key)
-    wallet_unload();
-  if (bsp_pmic_power_off() != ESP_OK) {
-    if (unload_key) {
-      esp_restart();
-    } else {
-      dialog_show_error_timeout("Power off failed", NULL, 2000);
-    }
-  }
 }
 
 /* ---------- Shared text input component ---------- */

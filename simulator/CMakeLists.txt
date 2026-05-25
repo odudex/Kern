@@ -184,6 +184,7 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/keyboard.c
     ${APP_UI_DIR}/menu.c
     ${APP_UI_DIR}/numeric_keypad.c
+    ${APP_UI_DIR}/power.c
     ${APP_UI_DIR}/word_selector.c
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
