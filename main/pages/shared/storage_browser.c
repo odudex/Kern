@@ -173,9 +173,8 @@ static void build_menu(void) {
 
   if (cfg.location == STORAGE_FLASH) {
     ui_menu_add_entry(browser_menu, "Wipe Flash", wipe_flash_cb);
-    int wipe_idx = browser_menu->config.entry_count - 1;
-    lv_obj_t *wipe_label = lv_obj_get_child(browser_menu->buttons[wipe_idx], 0);
-    lv_obj_set_style_text_color(wipe_label, error_color(), 0);
+    int wipe_idx = ui_menu_get_entry_count(browser_menu) - 1;
+    ui_menu_set_entry_text_color(browser_menu, wipe_idx, error_color());
   }
 
   ui_menu_show(browser_menu);

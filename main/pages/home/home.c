@@ -156,9 +156,8 @@ void home_page_create(lv_obj_t *parent) {
     return;
 
   // Replace empty title with key info header
-  lv_obj_add_flag(main_menu->title_label,
-                  LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_t *header = ui_key_info_create(main_menu->container);
+  ui_menu_set_title_visible(main_menu, false);
+  lv_obj_t *header = ui_key_info_create(ui_menu_get_container(main_menu));
   lv_obj_move_to_index(header, 0);
   ui_battery_create(header);
 
