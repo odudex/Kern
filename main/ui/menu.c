@@ -7,6 +7,36 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+  ui_menu_callback_t callback;
+  ui_menu_action_callback_t action_callback;
+  bool enabled;
+} ui_menu_entry_t;
+
+typedef struct {
+  ui_menu_entry_t entries[UI_MENU_MAX_ENTRIES];
+  int entry_count;
+  int selected_index;
+} ui_menu_config_t;
+
+struct ui_menu_t {
+  ui_menu_config_t config;
+  lv_obj_t *container;
+  lv_obj_t *title_label;
+  lv_obj_t *list;
+  lv_obj_t *buttons[UI_MENU_MAX_ENTRIES];
+  lv_obj_t *back_btn;
+  ui_menu_callback_t back_callback;
+};
+
+static lv_obj_t *entry_label(ui_menu_t *menu, int index) {
+  if (!menu || index < 0 || index >= menu->config.entry_count ||
+      !menu->buttons[index])
+    return NULL;
+
+  return lv_obj_get_child(menu->buttons[index], 0);
+}
+
 static void menu_button_event_cb(lv_event_t *e) {
   lv_obj_t *btn = lv_event_get_target(e);
   ui_menu_t *menu = (ui_menu_t *)lv_event_get_user_data(e);
@@ -188,7 +218,7 @@ bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
   }
 
   /* Update label color to reflect enabled/disabled state */
-  lv_obj_t *label = lv_obj_get_child(menu->buttons[index], 0);
+  lv_obj_t *label = entry_label(menu, index);
   if (label) {
     lv_obj_set_style_text_color(label,
                                 enabled ? main_color() : disabled_color(), 0);
@@ -196,8 +226,48 @@ bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
   return true;
 }
 
+bool ui_menu_set_entry_label(ui_menu_t *menu, int index, const char *name) {
+  lv_obj_t *label = entry_label(menu, index);
+  if (!label || !name)
+    return false;
+
+  lv_label_set_text(label, name);
+  return true;
+}
+
+bool ui_menu_set_entry_text_color(ui_menu_t *menu, int index,
+                                  lv_color_t color) {
+  lv_obj_t *label = entry_label(menu, index);
+  if (!label)
+    return false;
+
+  lv_obj_set_style_text_color(label, color, 0);
+  return true;
+}
+
+int ui_menu_get_entry_count(const ui_menu_t *menu) {
+  return menu ? menu->config.entry_count : 0;
+}
+
 int ui_menu_get_selected(ui_menu_t *menu) {
   return menu ? menu->config.selected_index : -1;
+}
+
+void ui_menu_set_title_visible(ui_menu_t *menu, bool visible) {
+  if (!menu || !menu->title_label)
+    return;
+
+  if (visible) {
+    lv_obj_clear_flag(menu->title_label,
+                      LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
+  } else {
+    lv_obj_add_flag(menu->title_label,
+                    LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
+  }
+}
+
+lv_obj_t *ui_menu_get_container(ui_menu_t *menu) {
+  return menu ? menu->container : NULL;
 }
 
 void ui_menu_show(ui_menu_t *menu) {

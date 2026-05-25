@@ -508,12 +508,10 @@ static void refresh_menu_visibility(void) {
 
   if (main_menu) {
     /* Update Load entry label */
-    if (idx_load >= 0 && main_menu->buttons[idx_load]) {
-      lv_obj_t *label = lv_obj_get_child(main_menu->buttons[idx_load], 0);
-      if (label)
-        lv_label_set_text(label, has_desc ? "Load Other Descriptor"
-                                          : "Load Descriptor");
-    }
+    if (idx_load >= 0)
+      ui_menu_set_entry_label(main_menu, idx_load,
+                              has_desc ? "Load Other Descriptor"
+                                       : "Load Descriptor");
 
     /* Toggle session descriptor actions */
     ui_menu_set_entry_enabled(main_menu, idx_registered, has_desc);
