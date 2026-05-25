@@ -194,7 +194,8 @@ void theme_apply_label(lv_obj_t *label, bool is_secondary) {
   if (!label)
     return;
 
-  lv_obj_set_style_text_color(label, COLOR_GRAY, 0);
+  lv_obj_set_style_text_color(label, is_secondary ? COLOR_GRAY : COLOR_WHITE,
+                              0);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
   lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(label, 0, 0);
@@ -204,7 +205,8 @@ void theme_apply_button_label(lv_obj_t *label, bool is_secondary) {
   if (!label)
     return;
 
-  lv_obj_set_style_text_color(label, COLOR_WHITE, 0);
+  lv_obj_set_style_text_color(label, is_secondary ? COLOR_GRAY : COLOR_WHITE,
+                              0);
   lv_obj_set_style_text_font(label, theme_font_medium(), 0);
   lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(label, 0, 0);
@@ -214,9 +216,11 @@ void theme_apply_touch_button(lv_obj_t *btn, bool is_primary) {
   if (!btn)
     return;
 
-  // Default state - minimal transparent background
-  lv_obj_set_style_bg_color(btn, COLOR_BG, LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_30, LV_STATE_DEFAULT);
+  // Default state - primary buttons carry the accent, secondary buttons recede.
+  lv_obj_set_style_bg_color(btn, is_primary ? COLOR_ORANGE : COLOR_BG,
+                            LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(btn, is_primary ? LV_OPA_40 : LV_OPA_30,
+                          LV_STATE_DEFAULT);
   lv_obj_set_style_text_color(btn, COLOR_WHITE, LV_STATE_DEFAULT);
   lv_obj_set_style_border_width(btn, 0, LV_STATE_DEFAULT);
   lv_obj_set_style_radius(btn, 12, LV_STATE_DEFAULT);
