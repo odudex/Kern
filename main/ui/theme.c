@@ -74,18 +74,19 @@ void theme_init(void) {
   scr_h = lv_disp_get_ver_res(NULL);
   scr_min_dim = scr_w < scr_h ? scr_w : scr_h;
 
-  // Pre-compute all proportional sizes. Vertical-axis sizes (heights, touch
-  // targets) use min_dim so they don't blow up the vertical budget on landscape
-  // displays where scr_w is the larger dimension.
-  sz_button_width = scr_w * 5 / 24;        // 150 @ 720
-  sz_button_height = scr_min_dim * 5 / 36; // 100 @ 720
-  sz_button_spacing = scr_w / 36;          //  20 @ 720
-  sz_default_padding = scr_w / 24;         //  30 @ 720
-  sz_min_touch = scr_min_dim / 8;          //  90 @ 720
-  sz_corner_btn_w = scr_w / 6;             // 120 @ 720
-  sz_corner_btn_h = scr_min_dim / 8;       //  90 @ 720
-  sz_small_padding = scr_w / 72;           //  10 @ 720
-  sz_logo = scr_min_dim * 5 / 18;          // 200 @ 720
+  // All sizes scale with min_dim, the shorter axis: in portrait it is the width
+  // (so portrait boards keep their sizes), while on landscape it caps paddings
+  // and controls to the short side rather than letting the wide axis bloat
+  // them.
+  sz_button_width = scr_min_dim * 5 / 24;  // 150
+  sz_button_height = scr_min_dim * 5 / 36; // 100
+  sz_button_spacing = scr_min_dim / 36;    //  20
+  sz_default_padding = scr_min_dim / 24;   //  30
+  sz_min_touch = scr_min_dim / 8;          //  90
+  sz_corner_btn_w = scr_min_dim / 6;       // 120
+  sz_corner_btn_h = scr_min_dim / 8;       //  90
+  sz_small_padding = scr_min_dim / 72;     //  10
+  sz_logo = scr_min_dim * 5 / 18;          // 200
 
   ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
   theme_font_pair_t small = font_pair_for_size(policy.small_px);

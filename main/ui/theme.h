@@ -29,7 +29,8 @@ int theme_get_min_dim(void);
 // True when the display is wider than tall.
 bool theme_is_landscape(void);
 
-// Theme sizing constants (all proportional to screen width)
+// Theme sizing constants, all proportional to min_dim (the shorter screen
+// axis) so they stay compact and tappable in either orientation.
 int theme_get_button_width(void);
 int theme_get_button_height(void);
 int theme_get_button_spacing(void);
