@@ -7,7 +7,6 @@
 #include "../../core/wallet.h"
 #include "../../qr/scanner.h"
 #include "../../ui/assets/icons_36.h"
-#include "../../ui/battery.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
@@ -454,14 +453,14 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(addresses_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(addresses_screen);
   lv_obj_set_style_pad_all(addresses_screen, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_top(addresses_screen, theme_get_small_padding(), 0);
   lv_obj_set_flex_flow(addresses_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(addresses_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(addresses_screen, theme_get_default_padding(), 0);
 
-  // Key info header
-  lv_obj_t *header = ui_key_info_create(addresses_screen);
-  ui_battery_create(header);
+  // Key info bar at top, aligned with the corner buttons.
+  ui_key_info_bar_create(addresses_screen);
 
   // Top row: shared source picker (script type / registered descriptor +
   // account).

@@ -183,15 +183,13 @@ static lv_obj_t *create_top_left_corner_button(lv_obj_t *parent,
   int32_t pad = theme_get_small_padding();
 
   lv_obj_t *btn = lv_btn_create(parent);
+  theme_apply_touch_button(btn, false);
   lv_obj_set_size(btn, theme_get_corner_button_width(),
                   theme_get_corner_button_height());
   lv_obj_align(btn, LV_ALIGN_TOP_LEFT, pad, pad);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_shadow_width(btn, 0, 0);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, symbol);
-  lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_text_font(label, theme_font_medium(), 0);
   lv_obj_center(label);
 

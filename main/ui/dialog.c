@@ -216,10 +216,10 @@ void dialog_show_error_timeout(const char *message,
   lv_timer_set_repeat_count(timer, 1);
 }
 
-static void add_confirm_button(lv_obj_t *dialog, const char *text, bool primary,
+static void add_confirm_button(lv_obj_t *dialog, const char *text,
                                lv_align_t align, lv_color_t color,
                                lv_event_cb_t cb, void *ctx) {
-  lv_obj_t *btn = theme_create_button(dialog, text, primary);
+  lv_obj_t *btn = theme_create_button(dialog, text, true);
   lv_obj_set_size(btn, LV_PCT(40), theme_get_button_height());
   lv_obj_align(btn, align, 0, 0);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ctx);
@@ -252,9 +252,9 @@ static void show_confirm_internal(const char *message,
   lv_label_set_recolor(msg_label, true);
   lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, 10);
 
-  add_confirm_button(dialog, "No", false, LV_ALIGN_BOTTOM_LEFT,
+  add_confirm_button(dialog, "No", LV_ALIGN_BOTTOM_LEFT,
                      danger ? yes_color() : no_color(), confirm_no_cb, ctx);
-  add_confirm_button(dialog, "Yes", true, LV_ALIGN_BOTTOM_RIGHT,
+  add_confirm_button(dialog, "Yes", LV_ALIGN_BOTTOM_RIGHT,
                      danger ? no_color() : yes_color(), confirm_yes_cb, ctx);
 
   dialog_fit_overlay(dialog, style, message, theme_get_button_height() + 20);

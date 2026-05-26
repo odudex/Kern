@@ -156,10 +156,10 @@ void home_page_create(lv_obj_t *parent) {
   if (!main_menu)
     return;
 
-  // Replace empty title with key info header
+  // Replace empty title with key info header inside the nav bar so the
+  // fingerprint/battery row aligns with the power/settings corner buttons.
   ui_menu_set_title_visible(main_menu, false);
-  lv_obj_t *header = ui_key_info_create(ui_menu_get_container(main_menu));
-  lv_obj_move_to_index(header, 0);
+  lv_obj_t *header = ui_key_info_create(ui_menu_get_nav_bar(main_menu));
   ui_battery_create(header);
 
   ui_menu_add_entry(main_menu, ICON_QR_CODE "  Scan", menu_scan_cb);

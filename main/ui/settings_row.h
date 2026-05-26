@@ -5,19 +5,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Uniform settings-page row layout: `[Label] [Item] [?]`.
+/* Settings-page rows.
  *
- * - `settings_row_toggle` and `settings_row_dropdown` produce a row
- *   with a help button on the trailing edge that opens a modal
- *   showing `help_title` + `help_msg` (via dialog_show_info).
- * - `settings_row_action` produces a row with a `>` chevron — tapping
- *   anywhere on the row fires `on_click` (intended for sub-page
- *   navigation). No help button.
- *
- * All three return the created row container so the caller can hold
- * a reference to inspect/update state later. The toggle / dropdown
- * widget itself is stored on the row's user_data for retrieval via
- * `settings_row_get_widget()`.
+ * - `settings_row_toggle` and `settings_row_dropdown` produce a
+ *   `[Label] [Item] [?]` row; the trailing help button opens a modal
+ *   showing `help_title` + `help_msg` (via dialog_show_info). The
+ *   widget is stored on the row's user_data for `settings_row_get_widget()`.
+ * - `settings_row_action` produces a full-width button labelled `label`;
+ *   tapping it fires `on_click` (intended for sub-page navigation).
  *
  * `help_title` and `help_msg` must be statically allocated (string
  * literals) — they are stored by reference, not copied. */

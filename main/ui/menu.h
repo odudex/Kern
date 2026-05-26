@@ -24,6 +24,9 @@ int ui_menu_get_entry_count(const ui_menu_t *menu);
 int ui_menu_get_selected(ui_menu_t *menu);
 void ui_menu_set_title_visible(ui_menu_t *menu, bool visible);
 lv_obj_t *ui_menu_get_container(ui_menu_t *menu);
+/* Top band (height of the corner button) holding the centered title.
+ * Pass to a custom header so it aligns with the corner nav button. */
+lv_obj_t *ui_menu_get_nav_bar(ui_menu_t *menu);
 void ui_menu_show(ui_menu_t *menu);
 void ui_menu_hide(ui_menu_t *menu);
 bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,

@@ -130,20 +130,12 @@ lv_obj_t *settings_row_dropdown(lv_obj_t *parent, const char *label,
 
 lv_obj_t *settings_row_action(lv_obj_t *parent, const char *label,
                               lv_event_cb_t on_click) {
-  lv_obj_t *row = make_row(parent);
-  /* Whole row clickable so tapping the label fires on_click too. */
-  lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *btn = theme_create_button(parent, label, true);
+  lv_obj_set_width(btn, LV_PCT(100));
+  lv_obj_set_style_min_height(btn, theme_get_min_touch_size(), 0);
   if (on_click)
-    lv_obj_add_event_cb(row, on_click, LV_EVENT_CLICKED, NULL);
-
-  make_label(row, label);
-
-  /* `>` rendered via the same trailing-icon helper as `?` so the
-   * trailing edges of action and toggle/dropdown rows line up. */
-  make_trailing_icon(row, LV_SYMBOL_RIGHT, NULL, NULL);
-
-  lv_obj_set_user_data(row, NULL);
-  return row;
+    lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, NULL);
+  return btn;
 }
 
 lv_obj_t *settings_row_get_widget(lv_obj_t *row) {

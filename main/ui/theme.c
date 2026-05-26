@@ -13,7 +13,7 @@
 // Minimalist theme colors
 #define COLOR_BG lv_color_hex(0x000000)       // Black background
 #define COLOR_PANEL lv_color_hex(0x1a1a1a)    // Dark gray panels
-#define COLOR_BUTTON lv_color_hex(0x0a0a0a)   // Button surface
+#define COLOR_BUTTON lv_color_hex(0x333333)   // Button surface
 #define COLOR_WHITE lv_color_hex(0xFFFFFF)    // White text/borders
 #define COLOR_GRAY lv_color_hex(0x888888)     // Gray info text
 #define COLOR_ORANGE lv_color_hex(0xff6600)   // Orange accent
@@ -216,24 +216,27 @@ void theme_apply_button_label(lv_obj_t *label, bool is_secondary) {
 void theme_apply_touch_button(lv_obj_t *btn, bool is_primary) {
   if (!btn)
     return;
-  (void)is_primary;
 
-  // Default state - solid surface so the button reads as tappable.
-  lv_obj_set_style_bg_color(btn, COLOR_BUTTON, LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_DEFAULT);
+  // Shared geometry/text. Default fill: primary = no fill with a thin orange
+  // outline, secondary = solid surface (no border). Both fill orange on press.
   lv_obj_set_style_text_color(btn, COLOR_WHITE, LV_STATE_DEFAULT);
-  lv_obj_set_style_border_width(btn, 0, LV_STATE_DEFAULT);
   lv_obj_set_style_radius(btn, 12, LV_STATE_DEFAULT);
   lv_obj_set_style_pad_all(btn, 15, LV_STATE_DEFAULT);
   lv_obj_set_style_shadow_width(btn, 0, LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_color(btn, is_primary ? COLOR_BG : COLOR_BUTTON,
+                            LV_STATE_DEFAULT);
+  lv_obj_set_style_border_color(btn, COLOR_ORANGE, LV_STATE_DEFAULT);
+  lv_obj_set_style_border_width(btn, is_primary ? 2 : 0, LV_STATE_DEFAULT);
 
-  // Pressed state - orange background
+  // Pressed - both tiers fill orange for unambiguous feedback.
   lv_obj_set_style_bg_color(btn, COLOR_ORANGE, LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
 
-  // Disabled state
+  // Disabled - fade out fill and border.
   lv_obj_set_style_text_color(btn, COLOR_DISABLED, LV_STATE_DISABLED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, LV_STATE_DISABLED);
+  lv_obj_set_style_border_width(btn, 0, LV_STATE_DISABLED);
 
   lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICK_FOCUSABLE);
 }

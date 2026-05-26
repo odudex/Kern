@@ -22,6 +22,7 @@ typedef struct {
 struct ui_menu_t {
   ui_menu_config_t config;
   lv_obj_t *container;
+  lv_obj_t *nav_bar;
   lv_obj_t *title_label;
   lv_obj_t *list;
   lv_obj_t *buttons[UI_MENU_MAX_ENTRIES];
@@ -74,11 +75,23 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   lv_obj_set_flex_align(menu->container, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(menu->container, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_top(menu->container, theme_get_small_padding(), 0);
   lv_obj_set_style_pad_gap(menu->container, theme_get_default_padding(), 0);
   lv_obj_clear_flag(menu->container, LV_OBJ_FLAG_SCROLLABLE);
   theme_apply_screen(menu->container);
 
-  menu->title_label = lv_label_create(menu->container);
+  /* Top nav bar: a band the height of the corner button, so the centered
+     title sits beside (vertically aligned with) the back/power button rather
+     than above it. The button list then flows below this band. */
+  menu->nav_bar = lv_obj_create(menu->container);
+  lv_obj_set_size(menu->nav_bar, LV_PCT(100), theme_get_corner_button_height());
+  theme_apply_transparent_container(menu->nav_bar);
+  lv_obj_set_flex_flow(menu->nav_bar, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(menu->nav_bar, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(menu->nav_bar, LV_OBJ_FLAG_SCROLLABLE);
+
+  menu->title_label = lv_label_create(menu->nav_bar);
   lv_label_set_text(menu->title_label, title);
   lv_obj_set_style_text_font(menu->title_label, theme_font_small(), 0);
   theme_apply_label(menu->title_label, false);
@@ -126,7 +139,7 @@ bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
   lv_obj_set_flex_grow(menu->buttons[idx], 1);
   lv_obj_add_event_cb(menu->buttons[idx], menu_button_event_cb,
                       LV_EVENT_CLICKED, menu);
-  theme_apply_touch_button(menu->buttons[idx], false);
+  theme_apply_touch_button(menu->buttons[idx], true);
 
   lv_obj_t *label = lv_label_create(menu->buttons[idx]);
   lv_label_set_text(label, name);
@@ -172,7 +185,7 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
   lv_obj_set_style_pad_right(menu->buttons[idx], 0, 0);
   lv_obj_add_event_cb(menu->buttons[idx], menu_button_event_cb,
                       LV_EVENT_CLICKED, menu);
-  theme_apply_touch_button(menu->buttons[idx], false);
+  theme_apply_touch_button(menu->buttons[idx], true);
 
   /* Label on the left */
   lv_obj_t *label = lv_label_create(menu->buttons[idx]);
@@ -268,6 +281,10 @@ void ui_menu_set_title_visible(ui_menu_t *menu, bool visible) {
 
 lv_obj_t *ui_menu_get_container(ui_menu_t *menu) {
   return menu ? menu->container : NULL;
+}
+
+lv_obj_t *ui_menu_get_nav_bar(ui_menu_t *menu) {
+  return menu ? menu->nav_bar : NULL;
 }
 
 void ui_menu_show(ui_menu_t *menu) {

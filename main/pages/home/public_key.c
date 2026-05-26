@@ -1,7 +1,6 @@
 #include "public_key.h"
 #include "../../core/key.h"
 #include "../../core/wallet.h"
-#include "../../ui/battery.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/settings_row.h"
@@ -186,14 +185,14 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_style_pad_all(
       public_key_screen,
       landscape ? theme_get_small_padding() : theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_top(public_key_screen, theme_get_small_padding(), 0);
   lv_obj_set_flex_flow(public_key_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(public_key_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(public_key_screen, theme_get_default_padding(), 0);
 
-  // Key info header at top
-  lv_obj_t *header = ui_key_info_create(public_key_screen);
-  ui_battery_create(header);
+  // Key info bar at top, aligned with the corner buttons.
+  ui_key_info_bar_create(public_key_screen);
 
   // Landscape moves the picker + multisig controls into a left column so the
   // content area gets the full remaining height for the QR.

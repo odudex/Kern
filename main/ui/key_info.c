@@ -1,6 +1,7 @@
 #include "key_info.h"
 #include "../core/key.h"
 #include "assets/icons_24.h"
+#include "battery.h"
 #include "theme.h"
 #include <stdio.h>
 
@@ -50,4 +51,22 @@ lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
   }
 
   return cont;
+}
+
+lv_obj_t *ui_key_info_bar_create(lv_obj_t *parent) {
+  lv_obj_t *bar = lv_obj_create(parent);
+  lv_obj_set_size(bar, LV_PCT(100), theme_get_corner_button_height());
+  theme_apply_transparent_container(bar);
+  lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *header = ui_key_info_create(bar);
+  if (!header) {
+    lv_obj_del(bar);
+    return NULL;
+  }
+  ui_battery_create(header);
+  return bar;
 }
