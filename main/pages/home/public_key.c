@@ -16,6 +16,8 @@ static lv_obj_t *public_key_screen = NULL;
 static lv_obj_t *back_button = NULL;
 static lv_obj_t *settings_button = NULL;
 static lv_obj_t *content_wrapper = NULL;
+static lv_obj_t *qr_parent = NULL;
+static lv_obj_t *xpub_parent = NULL;
 static lv_obj_t *picker_row = NULL;
 static lv_obj_t *multisig_switch = NULL;
 static wallet_source_picker_t *picker = NULL;
@@ -57,9 +59,11 @@ static void settings_button_cb(lv_event_t *e) {
 }
 
 static void render_xpub(void) {
-  if (!content_wrapper)
+  if (!qr_parent || !xpub_parent)
     return;
-  lv_obj_clean(content_wrapper);
+  lv_obj_clean(qr_parent);
+  if (xpub_parent != qr_parent)
+    lv_obj_clean(xpub_parent);
 
   uint32_t coin = (wallet_get_network() == WALLET_NETWORK_MAINNET) ? 0 : 1;
 
@@ -88,7 +92,7 @@ static void render_xpub(void) {
   char *xpub_str = NULL;
   if (!key_get_xpub(derivation_path, &xpub_str)) {
     lv_obj_t *error_value =
-        theme_create_label(content_wrapper, "Error: Failed to get XPUB", false);
+        theme_create_label(xpub_parent, "Error: Failed to get XPUB", false);
     lv_obj_set_style_text_color(error_value, error_color(), 0);
     lv_obj_set_width(error_value, LV_PCT(100));
     return;
@@ -99,17 +103,17 @@ static void render_xpub(void) {
            derivation_compact, xpub_str);
 
   lv_obj_update_layout(public_key_screen);
-  int32_t content_w = lv_obj_get_content_width(content_wrapper);
-  int32_t content_h = lv_obj_get_content_height(content_wrapper);
+  int32_t qr_w = lv_obj_get_content_width(qr_parent);
+  int32_t qr_h = lv_obj_get_content_height(qr_parent);
 
-  // Landscape stacks QR over xpub inside the right column, so the QR can use
-  // the column's full width (limited by height that leaves room for the text).
-  int32_t square_size =
-      theme_is_landscape() ? LV_MIN(content_w, content_h * 65 / 100)
-                           : LV_MIN(content_w * 65 / 100, content_h * 70 / 100);
+  // Landscape gives the QR its own quadrant, so it fills that cell. Portrait
+  // shares the column with the xpub below, so leave vertical room for the text.
+  int32_t square_size = theme_is_landscape()
+                            ? LV_MIN(qr_w, qr_h)
+                            : LV_MIN(qr_w * 65 / 100, qr_h * 70 / 100);
 
-  lv_obj_t *qr_container = theme_create_qr_container(
-      content_wrapper, square_size, theme_get_small_padding());
+  lv_obj_t *qr_container = theme_create_qr_container(qr_parent, square_size,
+                                                     theme_get_small_padding());
   lv_obj_update_layout(qr_container);
 
   lv_obj_t *qr = lv_qrcode_create(qr_container);
@@ -117,7 +121,7 @@ static void render_xpub(void) {
   lv_qrcode_update(qr, key_origin, strlen(key_origin));
   lv_obj_center(qr);
 
-  lv_obj_t *xpub_value = theme_create_label(content_wrapper, xpub_str, false);
+  lv_obj_t *xpub_value = theme_create_label(xpub_parent, xpub_str, false);
   lv_obj_set_width(xpub_value, LV_PCT(95));
   lv_label_set_long_mode(xpub_value, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(xpub_value, LV_TEXT_ALIGN_CENTER, 0);
@@ -168,6 +172,19 @@ static void multisig_switch_cb(lv_event_t *e) {
   render_xpub();
 }
 
+// One full-height cell of the landscape bottom row: transparent, grows to fill
+// its half, centers its single child.
+static lv_obj_t *make_bottom_cell(lv_obj_t *parent) {
+  lv_obj_t *cell = lv_obj_create(parent);
+  lv_obj_set_height(cell, LV_PCT(100));
+  lv_obj_set_flex_grow(cell, 1);
+  theme_apply_transparent_container(cell);
+  lv_obj_set_flex_flow(cell, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(cell, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  return cell;
+}
+
 void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   if (!parent || !key_is_loaded() || !wallet_is_initialized())
     return;
@@ -194,33 +211,53 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // Key info bar at top, aligned with the corner buttons.
   ui_key_info_bar_create(public_key_screen);
 
-  // Landscape moves the picker + multisig controls into a left column so the
-  // content area gets the full remaining height for the QR.
-  lv_obj_t *body = public_key_screen;
-  lv_obj_t *controls_parent = public_key_screen;
+  // Landscape arranges the four areas as a 2x2 grid (picker | multisig over
+  // QR | xpub); portrait stacks them down the screen column.
+  lv_obj_t *controls_parent = public_key_screen; // picker_row + multisig toggle
   if (landscape) {
-    body = lv_obj_create(public_key_screen);
+    lv_obj_t *body = lv_obj_create(public_key_screen);
     lv_obj_set_size(body, LV_PCT(100), LV_PCT(100));
     theme_apply_transparent_container(body);
     lv_obj_set_flex_grow(body, 1);
-    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(body, theme_get_small_padding(), 0);
 
+    // Top row: the two controls side by side.
     controls_parent = lv_obj_create(body);
-    lv_obj_set_size(controls_parent, LV_PCT(38), LV_PCT(100));
+    lv_obj_set_size(controls_parent, LV_PCT(100), LV_SIZE_CONTENT);
     theme_apply_transparent_container(controls_parent);
-    lv_obj_set_flex_flow(controls_parent, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(controls_parent, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_flow(controls_parent, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(controls_parent, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(controls_parent, theme_get_default_padding(), 0);
+
+    // Bottom row: QR and xpub text, each in a full-height cell.
+    lv_obj_t *bottom_row = lv_obj_create(body);
+    lv_obj_set_size(bottom_row, LV_PCT(100), LV_PCT(100));
+    theme_apply_transparent_container(bottom_row);
+    lv_obj_set_flex_grow(bottom_row, 1);
+    lv_obj_set_flex_flow(bottom_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bottom_row, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(bottom_row, theme_get_default_padding(), 0);
+
+    qr_parent = make_bottom_cell(bottom_row);
+    xpub_parent = make_bottom_cell(bottom_row);
   }
 
-  // Top row: source picker. Held as a static (`picker_row`) because the
-  // multisig toggle recreates the picker into the same row.
+  // Top-left: source picker. Static (`picker_row`) because the multisig toggle
+  // recreates the picker into the same row.
   picker_row = lv_obj_create(controls_parent);
-  lv_obj_set_size(picker_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_height(picker_row, LV_SIZE_CONTENT);
+  if (landscape) {
+    lv_obj_set_flex_grow(picker_row, 1);
+    // Match the multisig row's min height so both center on the same line.
+    lv_obj_set_style_min_height(picker_row, theme_get_min_touch_size(), 0);
+  } else {
+    lv_obj_set_width(picker_row, LV_PCT(100));
+  }
   theme_apply_transparent_container(picker_row);
   lv_obj_set_flex_flow(picker_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(picker_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
@@ -229,24 +266,29 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
       wallet_source_picker_create(picker_row, WALLET_PICKER_SINGLESIG,
                                   &current_source, picker_changed_cb, NULL);
 
-  // Multisig toggle: switches the picker between singlesig (BIP44/49/84/86)
-  // and multisig BIP48 (P2WSH / P2SH-P2WSH). Disabled for Taproot / Legacy
-  // since BIP48 only covers SegWit multisig.
+  // Top-right: multisig toggle (singlesig BIP44/49/84/86 <-> BIP48 multisig).
   lv_obj_t *multisig_row = settings_row_toggle(
       controls_parent, "Multisig", false, multisig_switch_cb, "Multisig",
       "BIP48 cosigner xpub for multisig wallets. SegWit only (Native or "
       "Nested).");
+  if (landscape)
+    lv_obj_set_flex_grow(multisig_row, 1);
   multisig_switch = settings_row_get_widget(multisig_row);
   update_multisig_switch_state();
 
-  content_wrapper = lv_obj_create(body);
-  lv_obj_set_size(content_wrapper, LV_PCT(100), LV_PCT(100));
-  theme_apply_transparent_container(content_wrapper);
-  lv_obj_set_flex_grow(content_wrapper, 1);
-  lv_obj_set_flex_flow(content_wrapper, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(content_wrapper, LV_FLEX_ALIGN_SPACE_EVENLY,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(content_wrapper, theme_get_default_padding(), 0);
+  // Portrait stacks QR over xpub in one wrapper.
+  if (!landscape) {
+    content_wrapper = lv_obj_create(public_key_screen);
+    lv_obj_set_size(content_wrapper, LV_PCT(100), LV_PCT(100));
+    theme_apply_transparent_container(content_wrapper);
+    lv_obj_set_flex_grow(content_wrapper, 1);
+    lv_obj_set_flex_flow(content_wrapper, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content_wrapper, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(content_wrapper, theme_get_default_padding(), 0);
+    qr_parent = content_wrapper;
+    xpub_parent = content_wrapper;
+  }
 
   render_xpub();
 
@@ -286,6 +328,8 @@ void public_key_page_destroy(void) {
     public_key_screen = NULL;
   }
   content_wrapper = NULL;
+  qr_parent = NULL;
+  xpub_parent = NULL;
   picker_row = NULL;
   multisig_switch = NULL;
   return_callback = NULL;
