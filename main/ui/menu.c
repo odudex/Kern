@@ -5,7 +5,9 @@
 #include "theme.h"
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
+
+#define UI_MENU_PORTRAIT_COLUMNS 1
+#define UI_MENU_LANDSCAPE_COLUMNS 2
 
 typedef struct {
   ui_menu_callback_t callback;
@@ -29,6 +31,57 @@ struct ui_menu_t {
   lv_obj_t *back_btn;
   ui_menu_callback_t back_callback;
 };
+
+static int menu_column_count(void) {
+  return theme_is_landscape() ? UI_MENU_LANDSCAPE_COLUMNS
+                              : UI_MENU_PORTRAIT_COLUMNS;
+}
+
+static int menu_row_count(ui_menu_t *menu) {
+  int count = menu ? menu->config.entry_count : 0;
+  int columns = menu_column_count();
+  return count > 0 ? (count + columns - 1) / columns : 1;
+}
+
+static void apply_list_layout(ui_menu_t *menu) {
+  if (!menu || !menu->list)
+    return;
+
+  lv_obj_set_flex_flow(menu->list, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(menu->list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START);
+}
+
+static void apply_entry_layout(ui_menu_t *menu, int index) {
+  if (!menu || index < 0 || index >= UI_MENU_MAX_ENTRIES ||
+      !menu->buttons[index])
+    return;
+
+  int columns = menu_column_count();
+  int rows = menu_row_count(menu);
+  int count = menu->config.entry_count;
+  int32_t gap = theme_get_default_padding();
+
+  lv_obj_update_layout(menu->container);
+  int32_t width = lv_obj_get_content_width(menu->list);
+  int32_t height = lv_obj_get_content_height(menu->list);
+
+  bool span_row = columns == UI_MENU_LANDSCAPE_COLUMNS &&
+                  count % columns == 1 && index == count - 1;
+  if (!span_row)
+    width = (width - gap * (columns - 1)) / columns;
+  height = (height - gap * (rows - 1)) / rows;
+  lv_obj_set_size(menu->buttons[index],
+                  LV_MAX(width, theme_get_min_touch_size()),
+                  LV_MAX(height, theme_get_min_touch_size()));
+  lv_obj_set_flex_grow(menu->buttons[index], 0);
+}
+
+static void refresh_menu_layout(ui_menu_t *menu) {
+  apply_list_layout(menu);
+  for (int i = 0; menu && i < menu->config.entry_count; i++)
+    apply_entry_layout(menu, i);
+}
 
 static lv_obj_t *entry_label(ui_menu_t *menu, int index) {
   if (!menu || index < 0 || index >= menu->config.entry_count ||
@@ -63,11 +116,9 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   if (!parent || !title)
     return NULL;
 
-  ui_menu_t *menu = malloc(sizeof(ui_menu_t));
+  ui_menu_t *menu = calloc(1, sizeof(ui_menu_t));
   if (!menu)
     return NULL;
-
-  memset(&menu->config, 0, sizeof(ui_menu_config_t));
 
   menu->container = lv_obj_create(parent);
   lv_obj_set_size(menu->container, LV_PCT(100), LV_PCT(100));
@@ -99,17 +150,12 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   menu->list = lv_obj_create(menu->container);
   lv_obj_set_size(menu->list, LV_PCT(100), LV_PCT(100));
   theme_apply_transparent_container(menu->list);
-  lv_obj_set_flex_flow(menu->list, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(menu->list, LV_FLEX_ALIGN_START,
-                        LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER);
+  apply_list_layout(menu);
   lv_obj_set_flex_grow(menu->list, 1);
-  lv_obj_set_style_pad_gap(menu->list, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_row(menu->list, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_column(menu->list, theme_get_default_padding(), 0);
   lv_obj_set_style_outline_width(menu->list, 0, 0);
 
-  for (int i = 0; i < UI_MENU_MAX_ENTRIES; i++)
-    menu->buttons[i] = NULL;
-
-  menu->back_btn = NULL;
   menu->back_callback = back_cb;
 
   if (back_cb) {
@@ -135,8 +181,6 @@ bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
   menu->config.entries[idx].enabled = true;
 
   menu->buttons[idx] = lv_btn_create(menu->list);
-  lv_obj_set_size(menu->buttons[idx], LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_grow(menu->buttons[idx], 1);
   lv_obj_add_event_cb(menu->buttons[idx], menu_button_event_cb,
                       LV_EVENT_CLICKED, menu);
   theme_apply_touch_button(menu->buttons[idx], true);
@@ -148,6 +192,7 @@ bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
   theme_apply_button_label(label, false);
 
   menu->config.entry_count++;
+  refresh_menu_layout(menu);
   return true;
 }
 
@@ -175,8 +220,6 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
 
   /* Main button — row layout */
   menu->buttons[idx] = lv_btn_create(menu->list);
-  lv_obj_set_size(menu->buttons[idx], LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_flex_grow(menu->buttons[idx], 1);
   lv_obj_set_flex_flow(menu->buttons[idx], LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(menu->buttons[idx], LV_FLEX_ALIGN_SPACE_BETWEEN,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -195,11 +238,10 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   theme_apply_button_label(label, false);
 
-  /* Action icon button on the right — matches the label's vertical extent so
-     the touch target fills the row height (LV_PCT(100) can't resolve against
-     a SIZE_CONTENT parent) */
+  /* Action icon button on the right. It stretches vertically because menu
+     buttons have explicit row heights in both portrait and landscape. */
   lv_obj_t *icon_btn = lv_btn_create(menu->buttons[idx]);
-  lv_obj_set_size(icon_btn, theme_get_min_touch_size(), LV_SIZE_CONTENT);
+  lv_obj_set_size(icon_btn, theme_get_min_touch_size(), LV_PCT(100));
   lv_obj_set_style_bg_color(icon_btn, disabled_color(), 0);
   lv_obj_set_style_bg_opa(icon_btn, LV_OPA_COVER, 0);
   lv_obj_set_style_shadow_width(icon_btn, 0, 0);
@@ -216,6 +258,7 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
   lv_obj_set_style_text_color(icon_label, error_color(), 0);
 
   menu->config.entry_count++;
+  refresh_menu_layout(menu);
   return true;
 }
 

@@ -5,15 +5,26 @@
 #include "../../ui/theme.h"
 #include <esp_app_desc.h>
 #include <lvgl.h>
+#include <stdio.h>
 #include <string.h>
 
 static lv_obj_t *about_screen = NULL;
 static void (*return_callback)(void) = NULL;
 
 static void about_screen_event_cb(lv_event_t *e) {
-  lv_event_code_t code = lv_event_get_code(e);
-  if ((code == LV_EVENT_CLICKED || code == LV_EVENT_PRESSED) && return_callback)
+  (void)e;
+  if (return_callback)
     return_callback();
+}
+
+static void create_return_touch_layer(lv_obj_t *parent) {
+  lv_obj_t *touch = lv_obj_create(parent);
+  lv_obj_remove_style_all(touch);
+  lv_obj_set_size(touch, LV_PCT(100), LV_PCT(100));
+  lv_obj_add_flag(touch, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(touch, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(touch, about_screen_event_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_move_foreground(touch);
 }
 
 void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
@@ -23,19 +34,11 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
 
   int32_t pad = theme_get_default_padding();
-  int32_t scr_h = theme_get_screen_height();
   int32_t min_dim = theme_get_min_dim();
   int32_t font_h = lv_font_get_line_height(theme_font_small());
   bool landscape = theme_is_landscape();
 
   about_screen = theme_create_page_container(parent);
-
-  // Full-screen touch layer for "tap to return"
-  lv_obj_t *touch = lv_obj_create(about_screen);
-  lv_obj_remove_style_all(touch);
-  lv_obj_set_size(touch, LV_PCT(100), LV_PCT(100));
-  lv_obj_add_flag(touch, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(touch, about_screen_event_cb, LV_EVENT_CLICKED, NULL);
 
   // Title pinned at top
   theme_create_page_title(about_screen, "About");
@@ -48,7 +51,9 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // the QR; portrait/square stacks them vertically.
   lv_obj_t *body = lv_obj_create(about_screen);
   lv_obj_remove_style_all(body);
-  lv_obj_set_size(body, LV_PCT(100), scr_h - 2 * (pad + font_h + pad));
+  lv_obj_set_size(
+      body, LV_PCT(100),
+      LV_MAX(1, theme_get_screen_height() - 2 * (font_h + 2 * pad)));
   lv_obj_align(body, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_flex_flow(body,
                        landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
@@ -81,6 +86,8 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_qrcode_update(qr, data, strlen(data));
   lv_obj_set_style_border_color(qr, lv_color_white(), 0);
   lv_obj_set_style_border_width(qr, 10, 0);
+
+  create_return_touch_layer(about_screen);
 }
 
 void about_page_show(void) {
