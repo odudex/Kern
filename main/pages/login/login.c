@@ -98,11 +98,12 @@ void login_page_create(lv_obj_t *parent) {
     power_button = ui_create_power_button(login_screen, power_button_cb);
   }
 
-  // Battery indicator at top-right corner, aligned with title
+  // Battery indicator at the right of the title row, vertically centered on it.
   lv_obj_t *bat = ui_battery_create(login_screen);
   if (bat) {
-    int pad = theme_get_default_padding();
-    lv_obj_align(bat, LV_ALIGN_TOP_RIGHT, -pad, pad);
+    lv_obj_update_layout(login_screen);
+    lv_obj_align_to(bat, ui_menu_get_nav_bar(login_menu), LV_ALIGN_RIGHT_MID, 0,
+                    0);
   }
 }
 
