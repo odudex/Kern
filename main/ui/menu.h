@@ -17,6 +17,8 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
                           ui_menu_callback_t back_cb);
 bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
                        ui_menu_callback_t callback);
+bool ui_menu_add_entry_with_icon(ui_menu_t *menu, const char *icon,
+                                 const char *name, ui_menu_callback_t callback);
 bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled);
 bool ui_menu_set_entry_label(ui_menu_t *menu, int index, const char *name);
 bool ui_menu_set_entry_text_color(ui_menu_t *menu, int index, lv_color_t color);
@@ -33,6 +35,10 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
                                    ui_menu_callback_t callback,
                                    const char *action_icon,
                                    ui_menu_action_callback_t action_cb);
+bool ui_menu_add_entry_with_icon_and_action(
+    ui_menu_t *menu, const char *icon, const char *name,
+    ui_menu_callback_t callback, const char *action_icon,
+    ui_menu_action_callback_t action_cb);
 void ui_menu_destroy(ui_menu_t *menu);
 
 #endif

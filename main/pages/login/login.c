@@ -2,6 +2,7 @@
 
 #include <lvgl.h>
 
+#include "../../ui/assets/icons.h"
 #include "../../ui/battery.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
@@ -83,13 +84,16 @@ void login_page_create(lv_obj_t *parent) {
   login_screen = theme_create_page_container(parent);
 
   login_menu = ui_menu_create(login_screen, "Login", NULL);
-  ui_menu_add_entry(login_menu, "Load Mnemonic", load_mnemonic_cb);
-  ui_menu_add_entry(login_menu, "New Mnemonic", new_mnemonic_cb);
-  ui_menu_add_entry(login_menu, "Settings", settings_cb);
+  ui_menu_add_entry_with_icon(login_menu, ICON_KEY, "Load Mnemonic",
+                              load_mnemonic_cb);
+  ui_menu_add_entry_with_icon(login_menu, ICON_ATOM, "New Mnemonic",
+                              new_mnemonic_cb);
+  ui_menu_add_entry_with_icon(login_menu, LV_SYMBOL_SETTINGS, "Settings",
+                              settings_cb);
 #ifdef DEV_TOOLS_ENABLED
   ui_menu_add_entry(login_menu, "Developer Tools", dev_tools_cb);
 #endif
-  ui_menu_add_entry(login_menu, "About", about_cb);
+  ui_menu_add_entry_with_icon(login_menu, ICON_INFO, "About", about_cb);
   ui_menu_show(login_menu);
 
   // Power button at top-left (only useful with PMIC; without it there's

@@ -8,6 +8,8 @@
 
 #define UI_MENU_PORTRAIT_COLUMNS 1
 #define UI_MENU_LANDSCAPE_COLUMNS 2
+#define UI_MENU_TEXT_MEASURE_MAX 10000
+#define UI_MENU_TEXT_WIDTH_PAD 4
 
 typedef struct {
   ui_menu_callback_t callback;
@@ -21,13 +23,21 @@ typedef struct {
   int selected_index;
 } ui_menu_config_t;
 
+typedef struct {
+  lv_obj_t *button;
+  lv_obj_t *content;
+  lv_obj_t *icon;
+  lv_obj_t *label;
+  lv_obj_t *action_button;
+} ui_menu_entry_view_t;
+
 struct ui_menu_t {
   ui_menu_config_t config;
   lv_obj_t *container;
   lv_obj_t *nav_bar;
   lv_obj_t *title_label;
   lv_obj_t *list;
-  lv_obj_t *buttons[UI_MENU_MAX_ENTRIES];
+  ui_menu_entry_view_t views[UI_MENU_MAX_ENTRIES];
   lv_obj_t *back_btn;
   ui_menu_callback_t back_callback;
 };
@@ -52,47 +62,129 @@ static void apply_list_layout(ui_menu_t *menu) {
                         LV_FLEX_ALIGN_START);
 }
 
-static lv_obj_t *entry_label(ui_menu_t *menu, int index) {
-  if (!menu || index < 0 || index >= menu->config.entry_count ||
-      !menu->buttons[index])
+static ui_menu_entry_view_t *entry_view(ui_menu_t *menu, int index) {
+  if (!menu || index < 0 || index >= UI_MENU_MAX_ENTRIES)
     return NULL;
 
-  return lv_obj_get_child(menu->buttons[index], 0);
+  return &menu->views[index];
 }
 
-static void apply_entry_label_layout(ui_menu_t *menu, int index) {
-  lv_obj_t *label = entry_label(menu, index);
-  if (!label)
-    return;
+static lv_obj_t *entry_label(ui_menu_t *menu, int index) {
+  ui_menu_entry_view_t *view = entry_view(menu, index);
+  if (!view || !view->button)
+    return NULL;
 
-  lv_obj_t *btn = menu->buttons[index];
-  int32_t width = lv_obj_get_width(btn);
-  width -=
-      lv_obj_get_style_pad_left(btn, 0) + lv_obj_get_style_pad_right(btn, 0);
+  return view->label;
+}
 
-  if (lv_obj_get_child_count(btn) > 1)
+static void bubble_clicks(lv_obj_t *obj) {
+  if (obj)
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_EVENT_BUBBLE);
+}
+
+static void create_entry_content(ui_menu_entry_view_t *view, const char *icon,
+                                 const char *name) {
+  lv_obj_t *content = lv_obj_create(view->button);
+  theme_apply_transparent_container(content);
+  lv_obj_set_size(content, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+  bubble_clicks(content);
+  view->content = content;
+
+  if (icon) {
+    view->icon = lv_label_create(content);
+    lv_label_set_text(view->icon, icon);
+    theme_apply_button_label(view->icon, false);
+    lv_obj_set_style_text_color(view->icon, highlight_color(), 0);
+    bubble_clicks(view->icon);
+  }
+
+  view->label = lv_label_create(content);
+  lv_label_set_text(view->label, name);
+  lv_label_set_long_mode(view->label, LV_LABEL_LONG_WRAP);
+  theme_apply_button_label(view->label, false);
+  bubble_clicks(view->label);
+}
+
+static int32_t measure_label_text_width(lv_obj_t *label, int32_t max_width) {
+  lv_point_t text_size;
+  lv_text_get_size(&text_size, lv_label_get_text(label),
+                   lv_obj_get_style_text_font(label, 0),
+                   lv_obj_get_style_text_letter_space(label, 0),
+                   lv_obj_get_style_text_line_space(label, 0), max_width,
+                   LV_TEXT_FLAG_NONE);
+  return LV_MAX(text_size.x, 1);
+}
+
+static int32_t entry_available_width(ui_menu_entry_view_t *view) {
+  int32_t width = lv_obj_get_width(view->button);
+  width -= lv_obj_get_style_pad_left(view->button, 0) +
+           lv_obj_get_style_pad_right(view->button, 0);
+  if (view->action_button)
     width -= theme_get_min_touch_size();
 
-  width = LV_MAX(width, 1);
-  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(label, width);
-  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-
-  if (lv_obj_get_child_count(btn) == 1)
-    lv_obj_center(label);
+  return LV_MAX(width, 1);
 }
 
-static void apply_entry_layout(ui_menu_t *menu, int index) {
-  if (!menu || index < 0 || index >= UI_MENU_MAX_ENTRIES ||
-      !menu->buttons[index])
+static void apply_entry_content_layout(ui_menu_t *menu, int index) {
+  ui_menu_entry_view_t *view = entry_view(menu, index);
+  if (!view || !view->button || !view->content || !view->label)
+    return;
+
+  bool has_icon = view->icon != NULL;
+  bool landscape = theme_is_landscape();
+  int32_t gap = has_icon ? theme_get_small_padding() : 0;
+  int32_t available_width = entry_available_width(view);
+  int32_t icon_width =
+      has_icon ? measure_label_text_width(view->icon, UI_MENU_TEXT_MEASURE_MAX)
+               : 0;
+
+  lv_obj_set_flex_flow(view->button, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(view->button,
+                        view->action_button ? LV_FLEX_ALIGN_SPACE_BETWEEN
+                                            : LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(view->button, view->action_button ? 0 : gap, 0);
+
+  lv_obj_set_flex_flow(view->content, has_icon && landscape
+                                          ? LV_FLEX_FLOW_COLUMN
+                                          : LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(view->content, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(view->content, gap, 0);
+
+  int32_t label_max_width = available_width;
+  if (has_icon && !landscape)
+    label_max_width -= icon_width + gap;
+
+  label_max_width = LV_MAX(label_max_width, 1);
+  int32_t natural_label_width =
+      measure_label_text_width(view->label, UI_MENU_TEXT_MEASURE_MAX) +
+      UI_MENU_TEXT_WIDTH_PAD;
+  int32_t label_width = LV_MIN(label_max_width, natural_label_width);
+  int32_t content_width = label_width;
+
+  if (has_icon)
+    content_width = landscape ? LV_MAX(icon_width, label_width)
+                              : icon_width + gap + label_width;
+
+  content_width = LV_MIN(LV_MAX(content_width, 1), available_width);
+  lv_obj_set_width(view->content, content_width);
+  lv_obj_set_height(view->content, LV_SIZE_CONTENT);
+  lv_obj_set_width(view->label, LV_MAX(label_width, 1));
+  lv_label_set_long_mode(view->label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(view->label, LV_TEXT_ALIGN_CENTER, 0);
+}
+
+static void size_entry_button(ui_menu_t *menu, int index) {
+  ui_menu_entry_view_t *view = entry_view(menu, index);
+  if (!view || !view->button)
     return;
 
   int columns = menu_column_count();
   int rows = menu_row_count(menu);
   int count = menu->config.entry_count;
   int32_t gap = theme_get_default_padding();
-
-  lv_obj_update_layout(menu->container);
   int32_t width = lv_obj_get_content_width(menu->list);
   int32_t height = lv_obj_get_content_height(menu->list);
 
@@ -101,25 +193,37 @@ static void apply_entry_layout(ui_menu_t *menu, int index) {
   if (!span_row)
     width = (width - gap * (columns - 1)) / columns;
   height = (height - gap * (rows - 1)) / rows;
-  lv_obj_set_size(menu->buttons[index],
-                  LV_MAX(width, theme_get_min_touch_size()),
+  lv_obj_set_size(view->button, LV_MAX(width, theme_get_min_touch_size()),
                   LV_MAX(height, theme_get_min_touch_size()));
-  lv_obj_set_flex_grow(menu->buttons[index], 0);
-  apply_entry_label_layout(menu, index);
+  lv_obj_set_flex_grow(view->button, 0);
 }
 
+/* Two phases with a single layout pass between them: size every button first,
+   let LVGL settle the geometry, then measure/lay out the content. Doing content
+   layout right after sizing a button would read its stale (pre-resize) width.
+ */
 static void refresh_menu_layout(ui_menu_t *menu) {
+  if (!menu || !menu->list)
+    return;
+
   apply_list_layout(menu);
-  for (int i = 0; menu && i < menu->config.entry_count; i++)
-    apply_entry_layout(menu, i);
+  lv_obj_update_layout(menu->container);
+
+  for (int i = 0; i < menu->config.entry_count; i++)
+    size_entry_button(menu, i);
+
+  lv_obj_update_layout(menu->container);
+
+  for (int i = 0; i < menu->config.entry_count; i++)
+    apply_entry_content_layout(menu, i);
 }
 
 static void menu_button_event_cb(lv_event_t *e) {
-  lv_obj_t *btn = lv_event_get_target(e);
+  lv_obj_t *btn = lv_event_get_current_target(e);
   ui_menu_t *menu = (ui_menu_t *)lv_event_get_user_data(e);
 
   for (int i = 0; i < menu->config.entry_count; i++) {
-    if (menu->buttons[i] == btn) {
+    if (menu->views[i].button == btn) {
       menu->config.selected_index = i;
       if (menu->config.entries[i].enabled && menu->config.entries[i].callback)
         menu->config.entries[i].callback();
@@ -133,6 +237,8 @@ static void menu_back_button_event_cb(lv_event_t *e) {
   if (menu && menu->back_callback)
     menu->back_callback();
 }
+
+static void action_button_event_cb(lv_event_t *e);
 
 ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
                           ui_menu_callback_t back_cb) {
@@ -193,36 +299,76 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   return menu;
 }
 
-bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
-                       ui_menu_callback_t callback) {
+static bool add_entry_internal(ui_menu_t *menu, const char *icon,
+                               const char *name, ui_menu_callback_t callback,
+                               const char *action_icon,
+                               ui_menu_action_callback_t action_cb) {
   if (!menu || !name || !callback ||
       menu->config.entry_count >= UI_MENU_MAX_ENTRIES)
+    return false;
+  if ((action_icon && !action_cb) || (!action_icon && action_cb))
     return false;
 
   int idx = menu->config.entry_count;
   menu->config.entries[idx].callback = callback;
+  menu->config.entries[idx].action_callback = action_cb;
   menu->config.entries[idx].enabled = true;
+  ui_menu_entry_view_t *view = &menu->views[idx];
 
-  menu->buttons[idx] = lv_btn_create(menu->list);
-  lv_obj_add_event_cb(menu->buttons[idx], menu_button_event_cb,
-                      LV_EVENT_CLICKED, menu);
-  theme_apply_touch_button(menu->buttons[idx], true);
+  view->button = lv_btn_create(menu->list);
+  lv_obj_add_event_cb(view->button, menu_button_event_cb, LV_EVENT_CLICKED,
+                      menu);
+  theme_apply_touch_button(view->button, true);
+  if (action_icon)
+    lv_obj_set_style_pad_right(view->button, 0, 0);
+  create_entry_content(view, icon, name);
 
-  lv_obj_t *label = lv_label_create(menu->buttons[idx]);
-  lv_label_set_text(label, name);
-  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_pad_ver(label, 15, 0);
-  lv_obj_center(label);
-  theme_apply_button_label(label, false);
+  if (action_icon) {
+    /* Action button stretches vertically because menu buttons have explicit row
+       heights in both portrait and landscape. */
+    lv_obj_t *icon_btn = lv_btn_create(view->button);
+    view->action_button = icon_btn;
+    lv_obj_set_size(icon_btn, theme_get_min_touch_size(), LV_PCT(100));
+    lv_obj_set_style_bg_color(icon_btn, disabled_color(), 0);
+    lv_obj_set_style_bg_opa(icon_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(icon_btn, 0, 0);
+    lv_obj_set_style_border_width(icon_btn, 0, 0);
+    lv_obj_set_style_pad_hor(icon_btn, 0, 0);
+    lv_obj_set_style_pad_ver(icon_btn, 15, 0);
+    lv_obj_clear_flag(icon_btn, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_user_data(icon_btn, (void *)(intptr_t)idx);
+    lv_obj_add_event_cb(icon_btn, action_button_event_cb, LV_EVENT_CLICKED,
+                        menu);
+
+    lv_obj_t *icon_label = lv_label_create(icon_btn);
+    lv_label_set_text(icon_label, action_icon);
+    lv_obj_center(icon_label);
+    lv_obj_set_style_text_color(icon_label, error_color(), 0);
+    bubble_clicks(icon_label);
+  }
 
   menu->config.entry_count++;
   refresh_menu_layout(menu);
   return true;
 }
 
+bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
+                       ui_menu_callback_t callback) {
+  return add_entry_internal(menu, NULL, name, callback, NULL, NULL);
+}
+
+bool ui_menu_add_entry_with_icon(ui_menu_t *menu, const char *icon,
+                                 const char *name,
+                                 ui_menu_callback_t callback) {
+  if (!icon)
+    return false;
+
+  return add_entry_internal(menu, icon, name, callback, NULL, NULL);
+}
+
 static void action_button_event_cb(lv_event_t *e) {
   ui_menu_t *menu = (ui_menu_t *)lv_event_get_user_data(e);
-  lv_obj_t *btn = lv_event_get_target(e);
+  lv_obj_t *btn = lv_event_get_current_target(e);
   int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
   if (idx >= 0 && idx < menu->config.entry_count &&
       menu->config.entries[idx].action_callback)
@@ -233,58 +379,20 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
                                    ui_menu_callback_t callback,
                                    const char *action_icon,
                                    ui_menu_action_callback_t action_cb) {
-  if (!menu || !name || !callback || !action_icon || !action_cb ||
-      menu->config.entry_count >= UI_MENU_MAX_ENTRIES)
+  if (!action_icon || !action_cb)
     return false;
 
-  int idx = menu->config.entry_count;
-  menu->config.entries[idx].callback = callback;
-  menu->config.entries[idx].action_callback = action_cb;
-  menu->config.entries[idx].enabled = true;
+  return add_entry_internal(menu, NULL, name, callback, action_icon, action_cb);
+}
 
-  /* Main button — row layout */
-  menu->buttons[idx] = lv_btn_create(menu->list);
-  lv_obj_set_flex_flow(menu->buttons[idx], LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(menu->buttons[idx], LV_FLEX_ALIGN_SPACE_BETWEEN,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(menu->buttons[idx], 0, 0);
-  /* Flush the action icon to the right edge of the row */
-  lv_obj_set_style_pad_right(menu->buttons[idx], 0, 0);
-  lv_obj_add_event_cb(menu->buttons[idx], menu_button_event_cb,
-                      LV_EVENT_CLICKED, menu);
-  theme_apply_touch_button(menu->buttons[idx], true);
+bool ui_menu_add_entry_with_icon_and_action(
+    ui_menu_t *menu, const char *icon, const char *name,
+    ui_menu_callback_t callback, const char *action_icon,
+    ui_menu_action_callback_t action_cb) {
+  if (!icon || !action_icon || !action_cb)
+    return false;
 
-  /* Label on the left */
-  lv_obj_t *label = lv_label_create(menu->buttons[idx]);
-  lv_label_set_text(label, name);
-  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_flex_grow(label, 1);
-  lv_obj_set_style_pad_ver(label, 15, 0);
-  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-  theme_apply_button_label(label, false);
-
-  /* Action icon button on the right. It stretches vertically because menu
-     buttons have explicit row heights in both portrait and landscape. */
-  lv_obj_t *icon_btn = lv_btn_create(menu->buttons[idx]);
-  lv_obj_set_size(icon_btn, theme_get_min_touch_size(), LV_PCT(100));
-  lv_obj_set_style_bg_color(icon_btn, disabled_color(), 0);
-  lv_obj_set_style_bg_opa(icon_btn, LV_OPA_COVER, 0);
-  lv_obj_set_style_shadow_width(icon_btn, 0, 0);
-  lv_obj_set_style_border_width(icon_btn, 0, 0);
-  lv_obj_set_style_pad_hor(icon_btn, 0, 0);
-  lv_obj_set_style_pad_ver(icon_btn, 15, 0);
-  lv_obj_clear_flag(icon_btn, LV_OBJ_FLAG_EVENT_BUBBLE);
-  lv_obj_set_user_data(icon_btn, (void *)(intptr_t)idx);
-  lv_obj_add_event_cb(icon_btn, action_button_event_cb, LV_EVENT_CLICKED, menu);
-
-  lv_obj_t *icon_label = lv_label_create(icon_btn);
-  lv_label_set_text(icon_label, action_icon);
-  lv_obj_center(icon_label);
-  lv_obj_set_style_text_color(icon_label, error_color(), 0);
-
-  menu->config.entry_count++;
-  refresh_menu_layout(menu);
-  return true;
+  return add_entry_internal(menu, icon, name, callback, action_icon, action_cb);
 }
 
 bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
@@ -293,9 +401,9 @@ bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
 
   menu->config.entries[index].enabled = enabled;
   if (enabled) {
-    lv_obj_clear_state(menu->buttons[index], LV_STATE_DISABLED);
+    lv_obj_clear_state(menu->views[index].button, LV_STATE_DISABLED);
   } else {
-    lv_obj_add_state(menu->buttons[index], LV_STATE_DISABLED);
+    lv_obj_add_state(menu->views[index].button, LV_STATE_DISABLED);
   }
 
   /* Update label color to reflect enabled/disabled state */
@@ -303,6 +411,11 @@ bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
   if (label) {
     lv_obj_set_style_text_color(label,
                                 enabled ? main_color() : disabled_color(), 0);
+  }
+  if (menu->views[index].icon) {
+    lv_obj_set_style_text_color(menu->views[index].icon,
+                                enabled ? highlight_color() : disabled_color(),
+                                0);
   }
   return true;
 }
@@ -313,7 +426,7 @@ bool ui_menu_set_entry_label(ui_menu_t *menu, int index, const char *name) {
     return false;
 
   lv_label_set_text(label, name);
-  apply_entry_label_layout(menu, index);
+  apply_entry_content_layout(menu, index);
   return true;
 }
 

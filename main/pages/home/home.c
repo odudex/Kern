@@ -162,7 +162,7 @@ void home_page_create(lv_obj_t *parent) {
   lv_obj_t *header = ui_key_info_create(ui_menu_get_nav_bar(main_menu));
   ui_battery_create(header);
 
-  ui_menu_add_entry(main_menu, ICON_QR_CODE "  Scan", menu_scan_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_QR_CODE, "Scan", menu_scan_cb);
   ui_menu_add_entry(main_menu, "Extended Public Key", menu_xpub_cb);
   ui_menu_add_entry(main_menu, "Addresses", menu_addresses_cb);
   ui_menu_add_entry(main_menu, "Back Up", menu_backup_cb);

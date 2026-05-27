@@ -6,8 +6,11 @@
 #define ICON_BITCOIN "\xEE\x82\xB4"     // FontAwesome U+E0B4 = bitcoin-sign
 #define ICON_QR_CODE "\xEF\x80\xA9"     // FontAwesome U+F029 = qrcode
 #define ICON_HELP "\xEF\x81\x99"        // FontAwesome U+F059 = circle-question
+#define ICON_INFO "\xEF\x81\x9A"        // FontAwesome U+F05A = circle-info
+#define ICON_KEY "\xEF\x82\x84"         // FontAwesome U+F084 = key
 #define ICON_DERIVATION "\xEF\x84\xA6"  // FontAwesome U+F126 = code-branch
 #define ICON_FINGERPRINT "\xEF\x95\xB7" // FontAwesome U+F577 = fingerprint
+#define ICON_ATOM "\xEF\x97\x92"        // FontAwesome U+F5D2 = atom
 
 // Backward-compatible aliases for call sites that used size-named symbols.
 #define ICON_QRCODE_36 ICON_QR_CODE

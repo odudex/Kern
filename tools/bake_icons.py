@@ -14,8 +14,11 @@ ICONS = [
     ("ICON_BITCOIN", 0xE0B4, "bitcoin-sign"),
     ("ICON_QR_CODE", 0xF029, "qrcode"),
     ("ICON_HELP", 0xF059, "circle-question"),
+    ("ICON_INFO", 0xF05A, "circle-info"),
+    ("ICON_KEY", 0xF084, "key"),
     ("ICON_DERIVATION", 0xF126, "code-branch"),
     ("ICON_FINGERPRINT", 0xF577, "fingerprint"),
+    ("ICON_ATOM", 0xF5D2, "atom"),
 ]
 
 
