@@ -52,6 +52,36 @@ static void apply_list_layout(ui_menu_t *menu) {
                         LV_FLEX_ALIGN_START);
 }
 
+static lv_obj_t *entry_label(ui_menu_t *menu, int index) {
+  if (!menu || index < 0 || index >= menu->config.entry_count ||
+      !menu->buttons[index])
+    return NULL;
+
+  return lv_obj_get_child(menu->buttons[index], 0);
+}
+
+static void apply_entry_label_layout(ui_menu_t *menu, int index) {
+  lv_obj_t *label = entry_label(menu, index);
+  if (!label)
+    return;
+
+  lv_obj_t *btn = menu->buttons[index];
+  int32_t width = lv_obj_get_width(btn);
+  width -=
+      lv_obj_get_style_pad_left(btn, 0) + lv_obj_get_style_pad_right(btn, 0);
+
+  if (lv_obj_get_child_count(btn) > 1)
+    width -= theme_get_min_touch_size();
+
+  width = LV_MAX(width, 1);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(label, width);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+  if (lv_obj_get_child_count(btn) == 1)
+    lv_obj_center(label);
+}
+
 static void apply_entry_layout(ui_menu_t *menu, int index) {
   if (!menu || index < 0 || index >= UI_MENU_MAX_ENTRIES ||
       !menu->buttons[index])
@@ -75,20 +105,13 @@ static void apply_entry_layout(ui_menu_t *menu, int index) {
                   LV_MAX(width, theme_get_min_touch_size()),
                   LV_MAX(height, theme_get_min_touch_size()));
   lv_obj_set_flex_grow(menu->buttons[index], 0);
+  apply_entry_label_layout(menu, index);
 }
 
 static void refresh_menu_layout(ui_menu_t *menu) {
   apply_list_layout(menu);
   for (int i = 0; menu && i < menu->config.entry_count; i++)
     apply_entry_layout(menu, i);
-}
-
-static lv_obj_t *entry_label(ui_menu_t *menu, int index) {
-  if (!menu || index < 0 || index >= menu->config.entry_count ||
-      !menu->buttons[index])
-    return NULL;
-
-  return lv_obj_get_child(menu->buttons[index], 0);
 }
 
 static void menu_button_event_cb(lv_event_t *e) {
@@ -145,7 +168,7 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   menu->title_label = lv_label_create(menu->nav_bar);
   lv_label_set_text(menu->title_label, title);
   lv_obj_set_style_text_font(menu->title_label, theme_font_small(), 0);
-  theme_apply_label(menu->title_label, false);
+  theme_apply_label(menu->title_label, true);
 
   menu->list = lv_obj_create(menu->container);
   lv_obj_set_size(menu->list, LV_PCT(100), LV_PCT(100));
@@ -187,6 +210,7 @@ bool ui_menu_add_entry(ui_menu_t *menu, const char *name,
 
   lv_obj_t *label = lv_label_create(menu->buttons[idx]);
   lv_label_set_text(label, name);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_pad_ver(label, 15, 0);
   lv_obj_center(label);
   theme_apply_button_label(label, false);
@@ -233,6 +257,7 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
   /* Label on the left */
   lv_obj_t *label = lv_label_create(menu->buttons[idx]);
   lv_label_set_text(label, name);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
   lv_obj_set_flex_grow(label, 1);
   lv_obj_set_style_pad_ver(label, 15, 0);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -288,6 +313,7 @@ bool ui_menu_set_entry_label(ui_menu_t *menu, int index, const char *name) {
     return false;
 
   lv_label_set_text(label, name);
+  apply_entry_label_layout(menu, index);
   return true;
 }
 

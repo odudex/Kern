@@ -127,7 +127,7 @@ const lv_font_t *theme_font_medium(void) { return &font_medium; }
 int theme_get_screen_width(void) { return scr_w; }
 int theme_get_screen_height(void) { return scr_h; }
 int theme_get_min_dim(void) { return scr_min_dim; }
-bool theme_is_landscape(void) { return scr_w > scr_h; }
+bool theme_is_landscape(void) { return scr_w >= scr_h; }
 
 int theme_get_button_width(void) { return sz_button_width; }
 int theme_get_button_height(void) { return sz_button_height; }
