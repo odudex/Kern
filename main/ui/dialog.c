@@ -248,16 +248,28 @@ static void show_confirm_internal(const char *message,
   if (danger && style == DIALOG_STYLE_OVERLAY)
     lv_obj_set_style_border_color(dialog, error_color(), 0);
 
+  int32_t msg_y = 10;
+  if (danger) {
+    lv_obj_t *icon = lv_label_create(dialog);
+    lv_obj_set_style_text_font(icon, theme_font_medium(), 0);
+    lv_obj_set_style_text_color(icon, error_color(), 0);
+    lv_label_set_text(icon, LV_SYMBOL_WARNING);
+    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_update_layout(icon);
+    msg_y = lv_obj_get_height(icon) + 6;
+  }
+
   lv_obj_t *msg_label = make_message_label(dialog, message, 90);
   lv_label_set_recolor(msg_label, true);
-  lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, msg_y);
 
   add_confirm_button(dialog, "No", LV_ALIGN_BOTTOM_LEFT,
                      danger ? yes_color() : no_color(), confirm_no_cb, ctx);
   add_confirm_button(dialog, "Yes", LV_ALIGN_BOTTOM_RIGHT,
                      danger ? no_color() : yes_color(), confirm_yes_cb, ctx);
 
-  dialog_fit_overlay(dialog, style, message, theme_get_button_height() + 20);
+  dialog_fit_overlay(dialog, style, message,
+                     msg_y + theme_get_button_height() + 20);
 }
 
 void dialog_show_confirm(const char *message,
