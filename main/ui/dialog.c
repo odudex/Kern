@@ -196,9 +196,11 @@ void dialog_show_error_timeout(const char *message,
   lv_obj_center(ctx->modal);
   theme_apply_frame(ctx->modal);
 
+  int32_t gap = theme_get_small_padding();
+
   lv_obj_t *title = theme_create_label(ctx->modal, "Error", false);
   theme_apply_label(title, true);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, gap);
 
   lv_obj_t *error = theme_create_label(ctx->modal, message, false);
   theme_apply_label(error, false);
@@ -210,7 +212,7 @@ void dialog_show_error_timeout(const char *message,
 
   lv_obj_t *hint = theme_create_label(ctx->modal, "Returning...", false);
   theme_apply_label(hint, false);
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -gap);
 
   lv_timer_t *timer = lv_timer_create(error_timer_cb, timeout_ms, ctx);
   lv_timer_set_repeat_count(timer, 1);
@@ -248,7 +250,8 @@ static void show_confirm_internal(const char *message,
   if (danger && style == DIALOG_STYLE_OVERLAY)
     lv_obj_set_style_border_color(dialog, error_color(), 0);
 
-  int32_t msg_y = 10;
+  int32_t gap = theme_get_small_padding();
+  int32_t msg_y = gap;
   if (danger) {
     lv_obj_t *icon = lv_label_create(dialog);
     lv_obj_set_style_text_font(icon, theme_font_medium(), 0);
@@ -256,7 +259,7 @@ static void show_confirm_internal(const char *message,
     lv_label_set_text(icon, LV_SYMBOL_WARNING);
     lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_update_layout(icon);
-    msg_y = lv_obj_get_height(icon) + 6;
+    msg_y = lv_obj_get_height(icon) + gap;
   }
 
   lv_obj_t *msg_label = make_message_label(dialog, message, 90);
@@ -269,7 +272,8 @@ static void show_confirm_internal(const char *message,
                      danger ? no_color() : yes_color(), confirm_yes_cb, ctx);
 
   dialog_fit_overlay(dialog, style, message,
-                     msg_y + theme_get_button_height() + 20);
+                     msg_y + theme_get_button_height() +
+                         theme_get_button_spacing());
 }
 
 void dialog_show_confirm(const char *message,
@@ -289,13 +293,14 @@ lv_obj_t *dialog_show_progress(const char *title, const char *message,
   lv_obj_t *root;
   lv_obj_t *dialog = create_dialog_container(style, &root);
 
-  int32_t msg_y = title ? add_dialog_title(dialog, title) + 10 : 5;
+  int32_t gap = theme_get_small_padding();
+  int32_t msg_y = title ? add_dialog_title(dialog, title) + gap : gap / 2;
 
   if (message)
     lv_obj_align(make_message_label(dialog, message, 90), LV_ALIGN_TOP_MID, 0,
                  msg_y);
 
-  dialog_fit_overlay(dialog, style, message ? message : "", msg_y + 5);
+  dialog_fit_overlay(dialog, style, message ? message : "", msg_y + gap / 2);
 
   return root;
 }
