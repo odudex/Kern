@@ -10,7 +10,7 @@
 #define ICON_KEY "\xEF\x82\x84"         // FontAwesome U+F084 = key
 #define ICON_DERIVATION "\xEF\x84\xA6"  // FontAwesome U+F126 = code-branch
 #define ICON_FINGERPRINT "\xEF\x95\xB7" // FontAwesome U+F577 = fingerprint
-#define ICON_ATOM "\xEF\x97\x92"        // FontAwesome U+F5D2 = atom
+#define ICON_DICE "\xEF\x94\xA2"        // FontAwesome U+F522 = dice
 
 // Backward-compatible aliases for call sites that used size-named symbols.
 #define ICON_QRCODE_36 ICON_QR_CODE
