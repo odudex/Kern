@@ -395,6 +395,16 @@ bool ui_menu_add_entry_with_icon_and_action(
   return add_entry_internal(menu, icon, name, callback, action_icon, action_cb);
 }
 
+bool ui_menu_set_entry_secondary(ui_menu_t *menu, int index, bool secondary) {
+  if (!menu || index < 0 || index >= menu->config.entry_count)
+    return false;
+
+  /* Primary entries keep the orange outline; secondary ones get the filled
+     surface with no border so they recede and the primary actions stand out. */
+  theme_apply_touch_button(menu->views[index].button, !secondary);
+  return true;
+}
+
 bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
   if (!menu || index < 0 || index >= menu->config.entry_count)
     return false;
@@ -459,6 +469,10 @@ void ui_menu_set_title_visible(ui_menu_t *menu, bool visible) {
     lv_obj_add_flag(menu->title_label,
                     LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
   }
+}
+
+lv_obj_t *ui_menu_get_title_label(ui_menu_t *menu) {
+  return menu ? menu->title_label : NULL;
 }
 
 lv_obj_t *ui_menu_get_container(ui_menu_t *menu) {

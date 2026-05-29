@@ -314,7 +314,9 @@ lv_obj_t *theme_create_label(lv_obj_t *parent, const char *text,
 }
 
 lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
-  lv_obj_t *label = theme_create_label(parent, text ? text : "", false);
+  // Secondary (grey) so titles read as quiet section headers and don't compete
+  // with the white button text below them. Matches the ui_menu title colour.
+  lv_obj_t *label = theme_create_label(parent, text ? text : "", true);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
   lv_obj_align(label, LV_ALIGN_TOP_MID, 0, theme_get_default_padding());
   return label;

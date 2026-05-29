@@ -25,7 +25,9 @@ bool ui_menu_set_entry_text_color(ui_menu_t *menu, int index, lv_color_t color);
 int ui_menu_get_entry_count(const ui_menu_t *menu);
 int ui_menu_get_selected(ui_menu_t *menu);
 void ui_menu_set_title_visible(ui_menu_t *menu, bool visible);
+bool ui_menu_set_entry_secondary(ui_menu_t *menu, int index, bool secondary);
 lv_obj_t *ui_menu_get_container(ui_menu_t *menu);
+lv_obj_t *ui_menu_get_title_label(ui_menu_t *menu);
 /* Top band (height of the corner button) holding the centered title.
  * Pass to a custom header so it aligns with the corner nav button. */
 lv_obj_t *ui_menu_get_nav_bar(ui_menu_t *menu);
