@@ -3,6 +3,7 @@
 #include <lvgl.h>
 
 #include "../../ui/assets/icons.h"
+#include "../../ui/assets/kern_logo_lvgl.h"
 #include "../../ui/battery.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
@@ -83,10 +84,17 @@ static void about_cb(void) {
 void login_page_create(lv_obj_t *parent) {
   login_screen = theme_create_page_container(parent);
 
-  login_menu = ui_menu_create(login_screen, "Login", NULL);
+  // Match the brand wordmark exactly: white uppercase "KERN" in the medium
+  // font, with a pulsing Kern logo to its left (reusing the screensaver fade).
+  login_menu = ui_menu_create(login_screen, "KERN", NULL);
+  lv_obj_t *title = ui_menu_get_title_label(login_menu);
+  if (title) {
+    lv_obj_set_style_text_font(title, theme_font_medium(), 0);
+    lv_obj_set_style_text_color(title, main_color(), 0);
+  }
   ui_menu_add_entry_with_icon(login_menu, ICON_KEY, "Load Mnemonic",
                               load_mnemonic_cb);
-  ui_menu_add_entry_with_icon(login_menu, ICON_ATOM, "New Mnemonic",
+  ui_menu_add_entry_with_icon(login_menu, ICON_DICE, "New Mnemonic",
                               new_mnemonic_cb);
   ui_menu_add_entry_with_icon(login_menu, LV_SYMBOL_SETTINGS, "Settings",
                               settings_cb);
@@ -94,12 +102,27 @@ void login_page_create(lv_obj_t *parent) {
   ui_menu_add_entry(login_menu, "Developer Tools", dev_tools_cb);
 #endif
   ui_menu_add_entry_with_icon(login_menu, ICON_INFO, "About", about_cb);
+
+  // Visual hierarchy: Load / New Mnemonic are the primary actions (orange
+  // outline); everything below is utility, rendered with the secondary style so
+  // it recedes against the background.
+  for (int i = 2; i < ui_menu_get_entry_count(login_menu); i++)
+    ui_menu_set_entry_secondary(login_menu, i, true);
   ui_menu_show(login_menu);
 
   // Power button at top-left (only useful with PMIC; without it there's
   // no loaded key to unload, so rebooting from login is pointless)
   if (bsp_pmic_is_available()) {
     power_button = ui_create_power_button(login_screen, power_button_cb);
+  }
+
+  // Pulsing Kern logo to the left of the title, sized to the title cap height.
+  if (title) {
+    int32_t logo_sz = lv_font_get_line_height(theme_font_medium());
+    lv_obj_t *logo = kern_logo_create_pulsing(login_screen, logo_sz);
+    lv_obj_update_layout(login_screen);
+    lv_obj_align_to(logo, title, LV_ALIGN_OUT_LEFT_MID,
+                    -theme_get_small_padding(), 0);
   }
 
   // Battery indicator at the right of the title row, vertically centered on it.

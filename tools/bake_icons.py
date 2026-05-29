@@ -18,7 +18,7 @@ ICONS = [
     ("ICON_KEY", 0xF084, "key"),
     ("ICON_DERIVATION", 0xF126, "code-branch"),
     ("ICON_FINGERPRINT", 0xF577, "fingerprint"),
-    ("ICON_ATOM", 0xF5D2, "atom"),
+    ("ICON_DICE", 0xF522, "dice"),
 ]
 
 
@@ -93,7 +93,9 @@ def write_font(path, font_path, size):
     bitmap = []
     max_above = 0
     max_below = 0
-    for _, codepoint, _ in ICONS:
+    # The SPARSE_TINY cmap is binary-searched by LVGL, so the glyphs must be
+    # emitted with strictly ascending codepoints regardless of the ICONS order.
+    for _, codepoint, _ in sorted(ICONS, key=lambda entry: entry[1]):
         glyph = render_glyph(font, codepoint)
         glyph["bitmap_index"] = len(bitmap)
         glyphs.append((codepoint, glyph))
