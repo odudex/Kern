@@ -33,4 +33,7 @@ lv_obj_t *ui_create_power_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 // Creates settings button at top-right with LV_SYMBOL_SETTINGS
 lv_obj_t *ui_create_settings_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 
+// Creates info button at top-right with the circle-info icon
+lv_obj_t *ui_create_info_button(lv_obj_t *parent, lv_event_cb_t event_cb);
+
 #endif

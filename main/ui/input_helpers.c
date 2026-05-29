@@ -1,6 +1,7 @@
 // UI Input Helpers - Shared components for input pages
 
 #include "input_helpers.h"
+#include "assets/icons.h"
 #include "theme.h"
 #include <sdkconfig.h>
 
@@ -215,6 +216,10 @@ lv_obj_t *ui_create_power_button(lv_obj_t *parent, lv_event_cb_t event_cb) {
 lv_obj_t *ui_create_settings_button(lv_obj_t *parent, lv_event_cb_t event_cb) {
   return create_corner_button(parent, LV_ALIGN_TOP_RIGHT, LV_SYMBOL_SETTINGS,
                               event_cb);
+}
+
+lv_obj_t *ui_create_info_button(lv_obj_t *parent, lv_event_cb_t event_cb) {
+  return create_corner_button(parent, LV_ALIGN_TOP_RIGHT, ICON_INFO, event_cb);
 }
 
 /* ---------- Shared text input component ---------- */

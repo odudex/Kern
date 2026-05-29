@@ -22,6 +22,7 @@
 static ui_menu_t *login_menu = NULL;
 static lv_obj_t *login_screen = NULL;
 static lv_obj_t *power_button = NULL;
+static lv_obj_t *about_button = NULL;
 
 static void power_button_cb(lv_event_t *e) {
   (void)e;
@@ -75,7 +76,8 @@ static void dev_tools_cb(void) {
 }
 #endif
 
-static void about_cb(void) {
+static void about_cb(lv_event_t *e) {
+  (void)e;
   login_page_hide();
   about_page_create(lv_screen_active(), return_to_login_cb);
   about_page_show();
@@ -101,7 +103,6 @@ void login_page_create(lv_obj_t *parent) {
 #ifdef DEV_TOOLS_ENABLED
   ui_menu_add_entry(login_menu, "Developer Tools", dev_tools_cb);
 #endif
-  ui_menu_add_entry_with_icon(login_menu, ICON_INFO, "About", about_cb);
 
   // Visual hierarchy: Load / New Mnemonic are the primary actions (orange
   // outline); everything below is utility, rendered with the secondary style so
@@ -116,6 +117,10 @@ void login_page_create(lv_obj_t *parent) {
     power_button = ui_create_power_button(login_screen, power_button_cb);
   }
 
+  // About moved out of the menu into a top-right info button (rarely used, so
+  // it doesn't deserve a full-width tile).
+  about_button = ui_create_info_button(login_screen, about_cb);
+
   // Pulsing Kern logo to the left of the title, sized to the title cap height.
   if (title) {
     int32_t logo_sz = lv_font_get_line_height(theme_font_medium());
@@ -125,12 +130,13 @@ void login_page_create(lv_obj_t *parent) {
                     -theme_get_small_padding(), 0);
   }
 
-  // Battery indicator at the right of the title row, vertically centered on it.
+  // Battery indicator just left of the info button, vertically centered on the
+  // title row.
   lv_obj_t *bat = ui_battery_create(login_screen);
   if (bat) {
     lv_obj_update_layout(login_screen);
-    lv_obj_align_to(bat, ui_menu_get_nav_bar(login_menu), LV_ALIGN_RIGHT_MID, 0,
-                    0);
+    lv_obj_align_to(bat, about_button, LV_ALIGN_OUT_LEFT_MID,
+                    -theme_get_small_padding(), 0);
   }
 }
 
@@ -148,6 +154,10 @@ void login_page_destroy(void) {
   if (power_button) {
     lv_obj_del(power_button);
     power_button = NULL;
+  }
+  if (about_button) {
+    lv_obj_del(about_button);
+    about_button = NULL;
   }
   if (login_menu) {
     ui_menu_destroy(login_menu);
