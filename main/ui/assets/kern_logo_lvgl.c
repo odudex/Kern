@@ -165,31 +165,21 @@ void kern_logo_fade_cycle(lv_obj_t *logo, lv_anim_completed_cb_t done_cb,
   fade_ring(lv_obj_get_child(logo, 0), 2 * LOGO_STAGGER, LOGO_HOLD, NULL, NULL);
 }
 
-static void logo_pulse_loop_cb(lv_anim_t *a) {
-  lv_obj_t *logo = lv_anim_get_user_data(a);
-  kern_logo_fade_cycle(logo, logo_pulse_loop_cb, logo);
+/* Stop a fade cycle by removing the opacity animations from the logo's three
+ * rings, so nothing keeps invalidating (and forcing redraws) once the logo is
+ * hidden or about to be destroyed. Safe on a logo that isn't animating. */
+void kern_logo_stop_fade(lv_obj_t *logo) {
+  if (!logo)
+    return;
+  for (int i = 0; i < 3; i++) {
+    lv_obj_t *ring = lv_obj_get_child(logo, i);
+    if (ring)
+      lv_anim_delete(ring, anim_opa_cb);
+  }
 }
 
-/** Create a logo symbol whose rings continuously fade in and out in place. */
-lv_obj_t *kern_logo_create_pulsing(lv_obj_t *parent, int32_t size) {
-  lv_obj_t *logo = kern_logo_create(parent, 0, 0, size);
-  kern_logo_fade_cycle(logo, logo_pulse_loop_cb, logo);
-  return logo;
-}
-
-/** Create logo with text, horizontally centered at top */
-lv_obj_t *kern_logo_with_text(lv_obj_t *parent, int32_t x, int32_t y) {
-  int32_t sz = theme_get_logo_size() * 160 / 200;
-  lv_obj_t *c =
-      create_flex_container(parent, LV_ALIGN_TOP_MID, sz * TEXT_GAP_PCT / 100);
-  lv_obj_align(c, LV_ALIGN_TOP_MID, x, y);
-  kern_logo_create(c, 0, 0, sz);
-  create_label(c, sz);
-  return c;
-}
-
-/** Same as kern_logo_with_text_inline, with an explicit logo diameter so the
- *  caller can scale the whole symbol+wordmark block to fit a layout budget. */
+/** Logo + "KERN" wordmark as a flex-friendly child, with an explicit logo
+ *  diameter so the caller can scale the whole block to fit a layout budget. */
 lv_obj_t *kern_logo_with_text_inline_sized(lv_obj_t *parent, int32_t sz) {
   lv_obj_t *c = lv_obj_create(parent);
   lv_obj_remove_style_all(c);
@@ -202,12 +192,6 @@ lv_obj_t *kern_logo_with_text_inline_sized(lv_obj_t *parent, int32_t sz) {
   kern_logo_create(c, 0, 0, sz);
   create_label(c, sz);
   return c;
-}
-
-/** Create logo with text as a flex-friendly child (no forced alignment) */
-lv_obj_t *kern_logo_with_text_inline(lv_obj_t *parent) {
-  return kern_logo_with_text_inline_sized(parent,
-                                          theme_get_logo_size() * 160 / 200);
 }
 
 /** Animated logo with text for boot screen, vertically centered */

@@ -87,7 +87,7 @@ void login_page_create(lv_obj_t *parent) {
   login_screen = theme_create_page_container(parent);
 
   // Match the brand wordmark exactly: white uppercase "KERN" in the medium
-  // font, with a pulsing Kern logo to its left (reusing the screensaver fade).
+  // font, with a static Kern logo to its left.
   login_menu = ui_menu_create(login_screen, "KERN", NULL);
   lv_obj_t *title = ui_menu_get_title_label(login_menu);
   if (title) {
@@ -121,10 +121,10 @@ void login_page_create(lv_obj_t *parent) {
   // it doesn't deserve a full-width tile).
   about_button = ui_create_info_button(login_screen, about_cb);
 
-  // Pulsing Kern logo to the left of the title, sized to the title cap height.
+  // Static Kern logo to the left of the title, sized to the title cap height.
   if (title) {
     int32_t logo_sz = lv_font_get_line_height(theme_font_medium());
-    lv_obj_t *logo = kern_logo_create_pulsing(login_screen, logo_sz);
+    lv_obj_t *logo = kern_logo_create(login_screen, 0, 0, logo_sz);
     lv_obj_update_layout(login_screen);
     lv_obj_align_to(logo, title, LV_ALIGN_OUT_LEFT_MID,
                     -theme_get_small_padding(), 0);

@@ -27,16 +27,6 @@ lv_obj_t *kern_logo_create(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
                            lv_coord_t size);
 
 /**
- * Create a logo symbol whose rings continuously fade in and out in place,
- * mirroring the screensaver pulse. Useful as a small animated brand mark.
- *
- * @param parent Parent LVGL object
- * @param size Logo diameter in pixels
- * @return Pointer to created logo container
- */
-lv_obj_t *kern_logo_create_pulsing(lv_obj_t *parent, lv_coord_t size);
-
-/**
  * Run one staggered fade-in/out cycle on a logo's three rings. When the cycle
  * ends, done_cb fires (with user_data set on the animation) — loop it for a
  * continuous pulse, or use it to reposition and restart.
@@ -49,27 +39,21 @@ void kern_logo_fade_cycle(lv_obj_t *logo, lv_anim_completed_cb_t done_cb,
                           void *user_data);
 
 /**
- * Create logo with "KERN" text combo
- * This matches the "Minimal variant" from Typography Combinations
+ * Stop a fade cycle started by kern_logo_fade_cycle, removing the opacity
+ * animations from the logo's rings. Call before hiding or destroying a logo so
+ * a lingering animation can't keep invalidating the screen.
  *
- * @param parent Parent LVGL object
- * @param x X coordinate
- * @param y Y coordinate
- * @return Pointer to created container object
+ * @param logo Logo container from kern_logo_create
  */
-lv_obj_t *kern_logo_with_text(lv_obj_t *parent, lv_coord_t x, lv_coord_t y);
+void kern_logo_stop_fade(lv_obj_t *logo);
 
 /**
- * Create logo with text as a flex-friendly child (no forced alignment)
+ * Create the logo + "KERN" wordmark as a flex-friendly child, with an explicit
+ * logo diameter (px) so the caller can scale the symbol+wordmark block to fit a
+ * layout budget.
  *
  * @param parent Parent LVGL object (typically a flex container)
- * @return Pointer to created container object
- */
-lv_obj_t *kern_logo_with_text_inline(lv_obj_t *parent);
-
-/**
- * Same as kern_logo_with_text_inline, but with an explicit logo diameter (px)
- * so the caller can scale the symbol+wordmark block to fit a layout budget.
+ * @param sz Logo diameter in pixels
  */
 lv_obj_t *kern_logo_with_text_inline_sized(lv_obj_t *parent, lv_coord_t sz);
 
@@ -80,11 +64,6 @@ lv_obj_t *kern_logo_with_text_inline_sized(lv_obj_t *parent, lv_coord_t sz);
  * @param parent Parent LVGL object
  */
 void kern_logo_animated(lv_obj_t *parent);
-
-/**
- * Example usage function
- */
-void kern_logo_example(void);
 
 #ifdef __cplusplus
 }

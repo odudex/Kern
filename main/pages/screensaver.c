@@ -72,7 +72,9 @@ void screensaver_destroy(void) {
   active = false;
   if (!scr_container)
     return;
-  // Deleting the container cascades to the rings, removing their animations.
+  // Stop the ring fade before teardown so no animation callback fires during
+  // the async dismiss; deleting the container then cascades to the rings.
+  kern_logo_stop_fade(logo);
   lv_obj_delete(scr_container);
   scr_container = NULL;
   logo = NULL;
