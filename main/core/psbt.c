@@ -441,6 +441,30 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
     }
   }
 
+  /* Taproot outputs — like the input classifier, libwally stores
+   * PSBT_OUT_TAP_BIP32_DERIVATION entries in a separate map whose value has
+   * the same fp(4)|path shape as the segwit keypaths. Without this, taproot
+   * change/self-transfer outputs are mistaken for external spends. */
+  const struct wally_map *tp_paths = &psbt->outputs[i].taproot_leaf_paths;
+  for (size_t j = 0; j < tp_paths->num_items; j++) {
+    const struct wally_map_item *item = &tp_paths->items[j];
+    const unsigned char *val = item->value;
+    size_t val_len = item->value_len;
+    if (!keypath_matches_fingerprint(val, val_len, our_fp))
+      continue;
+
+    claim_t claim = {0};
+    remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
+                         &result.raw_keypath_len, val, val_len);
+    if (try_match_claim(val, val_len, is_testnet, out_script, out_script_len,
+                        NULL, 0, &claim)) {
+      result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+      result.source = claim;
+      wally_tx_free(global_tx);
+      return result;
+    }
+  }
+
   /* fp matched but no whitelist/registry claim verified. Same harness
    * split as the input classifier: OWNED_UNSAFE if derive verifies,
    * EXPECTED_OWNED otherwise. */
@@ -496,6 +520,14 @@ bool psbt_detect_network(const struct wally_psbt *psbt) {
         check_keypath_network(keypath, keypath_len, &is_testnet)) {
       return is_testnet;
     }
+    // Taproot outputs store derivation in a separate map (PSBT_OUT_TAP_BIP32),
+    // whose value has the same fp(4)|path shape as the segwit keypaths.
+    const struct wally_map *tp = &psbt->outputs[i].taproot_leaf_paths;
+    if (tp->num_items > 0 &&
+        check_keypath_network(tp->items[0].value, tp->items[0].value_len,
+                              &is_testnet)) {
+      return is_testnet;
+    }
   }
 
   // Check inputs as fallback
@@ -509,6 +541,12 @@ bool psbt_detect_network(const struct wally_psbt *psbt) {
         wally_psbt_get_input_keypath(psbt, i, 0, keypath, sizeof(keypath),
                                      &keypath_len) == WALLY_OK &&
         check_keypath_network(keypath, keypath_len, &is_testnet)) {
+      return is_testnet;
+    }
+    const struct wally_map *tp = &psbt->inputs[i].taproot_leaf_paths;
+    if (tp->num_items > 0 &&
+        check_keypath_network(tp->items[0].value, tp->items[0].value_len,
+                              &is_testnet)) {
       return is_testnet;
     }
   }
