@@ -11,12 +11,15 @@ except ImportError as err:
 
 
 ICONS = [
+    ("ICON_XPUB", 0xE001, "custom-xpub-key-badge"),
     ("ICON_BITCOIN", 0xE0B4, "bitcoin-sign"),
     ("ICON_QR_CODE", 0xF029, "qrcode"),
     ("ICON_HELP", 0xF059, "circle-question"),
     ("ICON_INFO", 0xF05A, "circle-info"),
     ("ICON_KEY", 0xF084, "key"),
     ("ICON_DERIVATION", 0xF126, "code-branch"),
+    ("ICON_BOX_ARCHIVE", 0xF187, "box-archive"),
+    ("ICON_TOOLBOX", 0xF552, "toolbox"),
     ("ICON_FINGERPRINT", 0xF577, "fingerprint"),
     ("ICON_DICE", 0xF522, "dice"),
 ]
@@ -26,7 +29,75 @@ def utf8_c_escape(codepoint):
     return "".join(f"\\x{byte:02X}" for byte in chr(codepoint).encode("utf-8"))
 
 
+def pack_bitmap(image):
+    pixels = list(image.getdata())
+    packed = []
+    for pos in range(0, len(pixels), 2):
+        hi = (pixels[pos] + 8) // 17
+        lo = (pixels[pos + 1] + 8) // 17 if pos + 1 < len(pixels) else 0
+        packed.append((hi << 4) | lo)
+    return packed
+
+
+def load_text_font(size):
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
+    ]
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return ImageFont.truetype(str(path), size=size)
+    return ImageFont.load_default(size=size)
+
+
+def render_xpub_badge(font, size):
+    key = chr(0xF084)
+    image = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(image)
+
+    key_size = max(1, int(size * 0.74))
+    key_font = font.font_variant(size=key_size)
+    left, top, right, bottom = key_font.getbbox(key, anchor="ls")
+    key_h = bottom - top
+    key_x = max(0, int(size * 0.01) - left)
+    key_y = max(key_h - bottom, int(size * 0.55))
+    draw.text((key_x, key_y), key, font=key_font, fill=255, anchor="ls")
+
+    badge_text = "pub"
+    badge_font_size = max(6, int(size * 0.38))
+    badge_font = load_text_font(badge_font_size)
+    text_left, text_top, text_right, text_bottom = badge_font.getbbox(badge_text)
+    text_w = text_right - text_left
+    text_h = text_bottom - text_top
+
+    draw.text(
+        (
+            max(0, size - text_w - text_left),
+            max(0, size - text_h - text_top),
+        ),
+        badge_text,
+        font=badge_font,
+        fill=255,
+    )
+
+    bottom_padding = max(1, size // 12)
+    return {
+        "bitmap": pack_bitmap(image),
+        "bitmap_index": 0,
+        "adv_w": size * 16,
+        "box_w": size,
+        "box_h": size,
+        "ofs_x": 0,
+        "ofs_y": -bottom_padding,
+        "bottom": bottom_padding,
+    }
+
+
 def render_glyph(font, codepoint):
+    if codepoint == 0xE001:
+        return render_xpub_badge(font, font.size)
+
     char = chr(codepoint)
     left, top, right, bottom = font.getbbox(char, anchor="ls")
     width = max(0, right - left)
@@ -49,15 +120,8 @@ def render_glyph(font, codepoint):
     draw = ImageDraw.Draw(image)
     draw.text((-left, -top), char, font=font, fill=255, anchor="ls")
 
-    pixels = list(image.getdata())
-    packed = []
-    for pos in range(0, len(pixels), 2):
-        hi = (pixels[pos] + 8) // 17
-        lo = (pixels[pos + 1] + 8) // 17 if pos + 1 < len(pixels) else 0
-        packed.append((hi << 4) | lo)
-
     return {
-        "bitmap": packed,
+        "bitmap": pack_bitmap(image),
         "bitmap_index": 0,
         "adv_w": advance * 16,
         "box_w": width,
@@ -253,8 +317,9 @@ def write_header(path):
         "// The generated 16/24/36 px icon fonts must include these codepoints.",
     ]
     for name, codepoint, label in ICONS:
+        source = "Custom" if label.startswith("custom-") else "FontAwesome"
         lines.append(
-            f'#define {name} "{utf8_c_escape(codepoint)}" // FontAwesome U+{codepoint:04X} = {label}'
+            f'#define {name} "{utf8_c_escape(codepoint)}" // {source} U+{codepoint:04X} = {label}'
         )
     lines.extend(
         [

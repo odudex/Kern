@@ -163,10 +163,14 @@ void home_page_create(lv_obj_t *parent) {
   ui_battery_create(header);
 
   ui_menu_add_entry_with_icon(main_menu, ICON_QR_CODE, "Scan", menu_scan_cb);
-  ui_menu_add_entry(main_menu, "Extended Public Key", menu_xpub_cb);
-  ui_menu_add_entry(main_menu, "Addresses", menu_addresses_cb);
-  ui_menu_add_entry(main_menu, "Back Up", menu_backup_cb);
-  ui_menu_add_entry(main_menu, "Advanced Tools", menu_advanced_tools_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_XPUB, "Extended Public Key",
+                              menu_xpub_cb);
+  ui_menu_add_entry_with_icon(main_menu, LV_SYMBOL_LIST, "Addresses",
+                              menu_addresses_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_BOX_ARCHIVE, "Back Up",
+                              menu_backup_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_TOOLBOX, "Advanced Tools",
+                              menu_advanced_tools_cb);
 
   // Power button at top-left (power-off on PMIC boards, unload+reboot
   // otherwise)
