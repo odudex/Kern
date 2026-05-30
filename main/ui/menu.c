@@ -161,7 +161,16 @@ static void apply_entry_content_layout(ui_menu_t *menu, int index) {
   int32_t natural_label_width =
       measure_label_text_width(view->label, UI_MENU_TEXT_MEASURE_MAX) +
       UI_MENU_TEXT_WIDTH_PAD;
-  int32_t label_width = LV_MIN(label_max_width, natural_label_width);
+  int32_t label_width;
+  if (natural_label_width <= label_max_width) {
+    label_width = natural_label_width;
+  } else {
+    /* Text wraps: size the label to its widest wrapped line, not the full
+       max width, so centered multi-line text stays tight against the icon
+       instead of leaving a gap on the left. */
+    label_width = measure_label_text_width(view->label, label_max_width) +
+                  UI_MENU_TEXT_WIDTH_PAD;
+  }
   int32_t content_width = label_width;
 
   if (has_icon)
