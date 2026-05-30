@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.10] - 2026-05-30
+
+### Added
+- Login screen branding: pulsing logo, dice icon, and an About info button in the top-right corner
+- Menu items can carry an icon
+- CrowPanel 10.1 case
+
+### Changed
+- Landscape layouts for square devices, menus, and the public key page (2x2 grid)
+- Harmonized page titles, corner buttons, two-tier buttons, and theme-based dialog spacing
+- Danger dialogs use a warning icon and semantic colours
+- Bumped libwally-core to 1.5.3
+
+### Fixed
+- Taproot PSBTs: testnet is detected correctly (no longer misread as mainnet) and change/self-transfer outputs are recognized instead of being treated as spends
+- Theme paddings and button widths scale to the smallest screen dimension
+- Mnemonic word-grid and battery icon alignment
+- About page logo/QR sizing in landscape
+
 ## [0.0.9] - 2026-05-23
 
 ### Fixed
