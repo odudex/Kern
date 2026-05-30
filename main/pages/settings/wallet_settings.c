@@ -369,11 +369,17 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 void wallet_settings_page_show(void) {
   if (wallet_settings_screen)
     lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_HIDDEN);
+  // Back button is parented to the screen, not wallet_settings_screen, so its
+  // visibility has to be toggled alongside the page.
+  if (back_button)
+    lv_obj_clear_flag(back_button, LV_OBJ_FLAG_HIDDEN);
 }
 
 void wallet_settings_page_hide(void) {
   if (wallet_settings_screen)
     lv_obj_add_flag(wallet_settings_screen, LV_OBJ_FLAG_HIDDEN);
+  if (back_button)
+    lv_obj_add_flag(back_button, LV_OBJ_FLAG_HIDDEN);
 }
 
 void wallet_settings_page_destroy(void) {
@@ -384,7 +390,13 @@ void wallet_settings_page_destroy(void) {
     lv_obj_del(wallet_settings_screen);
     wallet_settings_screen = NULL;
   }
-  back_button = NULL;
+
+  // Back button lives on the parent screen, not wallet_settings_screen, so
+  // deleting the screen above doesn't take it down — delete it explicitly.
+  if (back_button) {
+    lv_obj_del(back_button);
+    back_button = NULL;
+  }
 
   network_dropdown = NULL;
   title_cont = NULL;
