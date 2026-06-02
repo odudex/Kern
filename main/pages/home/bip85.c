@@ -192,12 +192,12 @@ static void create_result_ui(void) {
 
   result_header = theme_create_flex_row(bip85_screen);
   lv_obj_set_style_pad_column(result_header, 8, 0);
-  lv_obj_align(result_header, LV_ALIGN_TOP_MID, 0, theme_get_default_padding());
+  lv_obj_align(result_header, LV_ALIGN_TOP_MID, 0, theme_default_padding());
 
   lv_obj_t *title = lv_label_create(result_header);
   lv_label_set_text(title, "BIP85>BIP39");
   lv_obj_set_style_text_font(title, theme_font_small(), 0);
-  lv_obj_set_style_text_color(title, main_color(), 0);
+  lv_obj_set_style_text_color(title, primary_color(), 0);
 
   if (key_mnemonic_fingerprint_hex(child_mnemonic, fingerprint_hex)) {
     snprintf(fingerprint_text, sizeof(fingerprint_text), "%s", fingerprint_hex);
@@ -220,13 +220,13 @@ static void create_result_ui(void) {
   lv_obj_set_flex_flow(result_content, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(result_content, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(result_content, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_column(result_content, theme_default_padding(), 0);
 
   create_word_labels(result_content);
 
-  int32_t pad = theme_get_default_padding();
+  int32_t pad = theme_default_padding();
   load_btn = theme_create_button(bip85_screen, "Load", true);
-  lv_obj_set_size(load_btn, 140, theme_get_min_touch_size());
+  lv_obj_set_size(load_btn, 140, theme_min_touch_size());
   lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
   lv_obj_add_event_cb(load_btn, load_btn_cb, LV_EVENT_CLICKED, NULL);
 }

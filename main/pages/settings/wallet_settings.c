@@ -168,7 +168,7 @@ static void update_title_with_passphrase(const char *passphrase) {
   char *passphrase_fp_hex = NULL;
   if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
                            &passphrase_fp_hex) == WALLY_OK) {
-    lv_obj_set_style_pad_left(bar, theme_get_corner_button_width(), 0);
+    lv_obj_set_style_pad_left(bar, theme_corner_button_width(), 0);
 
     // Base fingerprint (not highlighted)
     add_fingerprint_pair(title_cont, base_fingerprint_hex, false);
@@ -288,20 +288,17 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(wallet_settings_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(wallet_settings_screen);
   lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(wallet_settings_screen, theme_get_default_padding(),
-                           0);
-  lv_obj_set_style_pad_top(wallet_settings_screen, theme_get_small_padding(),
-                           0);
+  lv_obj_set_style_pad_all(wallet_settings_screen, theme_default_padding(), 0);
+  lv_obj_set_style_pad_top(wallet_settings_screen, theme_small_padding(), 0);
   lv_obj_set_flex_flow(wallet_settings_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(wallet_settings_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(wallet_settings_screen, theme_get_default_padding(),
-                           0);
+  lv_obj_set_style_pad_gap(wallet_settings_screen, theme_default_padding(), 0);
 
   // Top nav bar: fingerprint pair centered in the corner-button band so it
   // aligns with the back button.
   lv_obj_t *nav_bar = lv_obj_create(wallet_settings_screen);
-  lv_obj_set_size(nav_bar, LV_PCT(100), theme_get_corner_button_height());
+  lv_obj_set_size(nav_bar, LV_PCT(100), theme_corner_button_height());
   theme_apply_transparent_container(nav_bar);
   lv_obj_set_flex_flow(nav_bar, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(nav_bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,

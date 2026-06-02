@@ -122,7 +122,7 @@ static void dialog_fit_overlay(lv_obj_t *dialog, dialog_style_t style,
   int32_t pad_v = lv_obj_get_style_pad_top(dialog, 0) +
                   lv_obj_get_style_pad_bottom(dialog, 0);
   int32_t border = lv_obj_get_style_border_width(dialog, 0);
-  int32_t content_w = theme_get_screen_width() * 90 / 100 - pad_h - border * 2;
+  int32_t content_w = theme_screen_width() * 90 / 100 - pad_h - border * 2;
   int32_t label_w = content_w * 90 / 100;
 
   lv_point_t txt_size;
@@ -130,7 +130,7 @@ static void dialog_fit_overlay(lv_obj_t *dialog, dialog_style_t style,
                    LV_TEXT_FLAG_NONE);
 
   int32_t needed = txt_size.y + extra_h + pad_v + border * 2;
-  int32_t max_h = theme_get_screen_height() * 80 / 100;
+  int32_t max_h = theme_screen_height() * 80 / 100;
   lv_obj_set_height(dialog, needed < max_h ? needed : max_h);
 }
 
@@ -149,8 +149,8 @@ void dialog_show_info(const char *title, const char *message,
 
   lv_obj_t *dialog = create_dialog_container(style, &ctx->root);
 
-  int32_t gap = theme_get_small_padding();
-  int32_t btn_h = theme_get_button_height();
+  int32_t gap = theme_small_padding();
+  int32_t btn_h = theme_button_height();
   int32_t msg_y = title ? add_dialog_title(dialog, title) + gap : gap;
 
   /* Size the box, then carve the space between title and button into a
@@ -196,7 +196,7 @@ void dialog_show_error_timeout(const char *message,
   lv_obj_center(ctx->modal);
   theme_apply_frame(ctx->modal);
 
-  int32_t gap = theme_get_small_padding();
+  int32_t gap = theme_small_padding();
 
   lv_obj_t *title = theme_create_label(ctx->modal, "Error", false);
   theme_apply_label(title, true);
@@ -222,7 +222,7 @@ static void add_confirm_button(lv_obj_t *dialog, const char *text,
                                lv_align_t align, lv_color_t color,
                                lv_event_cb_t cb, void *ctx) {
   lv_obj_t *btn = theme_create_button(dialog, text, true);
-  lv_obj_set_size(btn, LV_PCT(40), theme_get_button_height());
+  lv_obj_set_size(btn, LV_PCT(40), theme_button_height());
   lv_obj_align(btn, align, 0, 0);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, ctx);
 
@@ -250,7 +250,7 @@ static void show_confirm_internal(const char *message,
   if (danger && style == DIALOG_STYLE_OVERLAY)
     lv_obj_set_style_border_color(dialog, error_color(), 0);
 
-  int32_t gap = theme_get_small_padding();
+  int32_t gap = theme_small_padding();
   int32_t msg_y = gap;
   if (danger) {
     lv_obj_t *icon = lv_label_create(dialog);
@@ -274,8 +274,7 @@ static void show_confirm_internal(const char *message,
                      confirm_yes_cb, ctx);
 
   dialog_fit_overlay(dialog, style, message,
-                     msg_y + theme_get_button_height() +
-                         theme_get_button_spacing());
+                     msg_y + theme_button_height() + theme_button_spacing());
 }
 
 void dialog_show_confirm(const char *message,
@@ -295,7 +294,7 @@ lv_obj_t *dialog_show_progress(const char *title, const char *message,
   lv_obj_t *root;
   lv_obj_t *dialog = create_dialog_container(style, &root);
 
-  int32_t gap = theme_get_small_padding();
+  int32_t gap = theme_small_padding();
   int32_t msg_y = title ? add_dialog_title(dialog, title) + gap : gap / 2;
 
   if (message)
@@ -324,7 +323,7 @@ void dialog_show_message(const char *title, const char *message) {
   lv_obj_align(msg_label, LV_ALIGN_CENTER, 0, -10);
 
   lv_obj_t *btn = theme_create_button(modal, "OK", true);
-  lv_obj_set_size(btn, 100, theme_get_min_touch_size());
+  lv_obj_set_size(btn, 100, theme_min_touch_size());
   lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_add_event_cb(btn, message_close_cb, LV_EVENT_CLICKED, modal);
 }

@@ -92,7 +92,7 @@ void login_page_create(lv_obj_t *parent) {
   lv_obj_t *title = ui_menu_get_title_label(login_menu);
   if (title) {
     lv_obj_set_style_text_font(title, theme_font_medium(), 0);
-    lv_obj_set_style_text_color(title, main_color(), 0);
+    lv_obj_set_style_text_color(title, primary_color(), 0);
   }
   ui_menu_add_entry_with_icon(login_menu, ICON_KEY, "Load Mnemonic",
                               load_mnemonic_cb);
@@ -126,8 +126,8 @@ void login_page_create(lv_obj_t *parent) {
     int32_t logo_sz = lv_font_get_line_height(theme_font_medium());
     lv_obj_t *logo = kern_logo_create(login_screen, 0, 0, logo_sz);
     lv_obj_update_layout(login_screen);
-    lv_obj_align_to(logo, title, LV_ALIGN_OUT_LEFT_MID,
-                    -theme_get_small_padding(), 0);
+    lv_obj_align_to(logo, title, LV_ALIGN_OUT_LEFT_MID, -theme_small_padding(),
+                    0);
   }
 
   // Battery indicator just left of the info button, vertically centered on the
@@ -136,7 +136,7 @@ void login_page_create(lv_obj_t *parent) {
   if (bat) {
     lv_obj_update_layout(login_screen);
     lv_obj_align_to(bat, about_button, LV_ALIGN_OUT_LEFT_MID,
-                    -theme_get_small_padding(), 0);
+                    -theme_small_padding(), 0);
   }
 }
 

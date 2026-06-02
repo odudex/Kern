@@ -240,7 +240,7 @@ static void create_grid_overlay(void) {
   int grid_interval = get_grid_interval(modules);
   int divisions = (modules + grid_interval - 1) / grid_interval;
   int32_t cell_px = scale * grid_interval;
-  int32_t label_pad = LV_MAX(theme_get_small_padding(), 2);
+  int32_t label_pad = LV_MAX(theme_small_padding(), 2);
 
   grid_divisions = divisions;
   col_labels = calloc(divisions, sizeof(lv_obj_t *));
@@ -424,12 +424,12 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_flow(mnemonic_qr_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(mnemonic_qr_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(mnemonic_qr_screen, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_gap(mnemonic_qr_screen, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(mnemonic_qr_screen, theme_default_padding(), 0);
+  lv_obj_set_style_pad_gap(mnemonic_qr_screen, theme_default_padding(), 0);
 
-  bool portrait = theme_get_screen_height() > theme_get_screen_width();
-  int32_t ctrl_h = theme_get_min_touch_size();
-  int32_t ctrl_gap = theme_get_small_padding();
+  bool portrait = theme_screen_height() > theme_screen_width();
+  int32_t ctrl_h = theme_min_touch_size();
+  int32_t ctrl_gap = theme_small_padding();
   int32_t ctrl_w_pct = portrait ? PORTRAIT_CONTROL_WIDTH_PCT : 40;
 
   lv_obj_t *top_bar = lv_obj_create(mnemonic_qr_screen);

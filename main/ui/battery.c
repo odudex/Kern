@@ -19,7 +19,7 @@ static void battery_update(lv_obj_t *label) {
     color = good_color();
   } else if (pct >= 40) {
     battery_icon = LV_SYMBOL_BATTERY_3;
-    color = main_color();
+    color = primary_color();
   } else if (pct >= 20) {
     battery_icon = LV_SYMBOL_BATTERY_2;
     color = highlight_color();

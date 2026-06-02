@@ -12,10 +12,11 @@ Colors live in `main/ui/theme.c` and are reached through accessor functions in `
 |---------------------|---------|--------------------------------------------|
 | `bg_color()`        | black   | Screen and overlay backgrounds             |
 | `panel_color()`     | dark gray | Dialog/card backgrounds                  |
-| `main_color()`      | white   | Primary text, button and dialog body labels |
+| `primary_color()`   | white   | Primary text, button and dialog body labels |
 | `secondary_color()` | gray    | Page titles, hints, quiet secondary text   |
 | `highlight_color()` | orange  | Titles, button press, dropdown borders     |
 | `disabled_color()`  | gray    | Disabled text, btnmatrix/dropdown item fills |
+| `accent_color()`    | cyan    | Self-transfer outputs, owned-address emphasis |
 | `error_color()`     | red     | Error text, danger dialog border and icon  |
 | `encourage_color()` | green   | The encouraged choice in a confirm dialog  |
 | `discourage_color()`| red     | The discouraged choice in a confirm dialog |
@@ -53,10 +54,10 @@ Overlay dialogs are ~90% of screen width, height-fitted to their content and cap
 
 Sizing constants scale with the shorter screen axis (`min_dim`) so controls stay compact and tappable in either orientation. Reach for the theme getters instead of hardcoding pixels:
 
-- `theme_get_button_width()` / `theme_get_button_height()` / `theme_get_button_spacing()`
-- `theme_get_default_padding()` / `theme_get_small_padding()`
-- `theme_get_min_touch_size()` — keep interactive elements at least this big
-- `theme_get_corner_button_width()` / `theme_get_corner_button_height()`
-- `theme_get_logo_size()`
+- `theme_button_width()` / `theme_button_height()` / `theme_button_spacing()`
+- `theme_default_padding()` / `theme_small_padding()`
+- `theme_min_touch_size()` — keep interactive elements at least this big
+- `theme_corner_button_width()` / `theme_corner_button_height()`
+- `theme_logo_size()`
 
 See `theme_init()` in `main/ui/theme.c` for the exact formulas.

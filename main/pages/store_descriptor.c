@@ -224,7 +224,7 @@ void store_descriptor_page_create_for_descriptor(
   lv_obj_t *title_label = lv_label_create(main_screen);
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(title_label, main_color(), 0);
+  lv_obj_set_style_text_color(title_label, primary_color(), 0);
   lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 0);
 
   if (encrypted) {

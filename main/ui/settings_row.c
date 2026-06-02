@@ -32,7 +32,7 @@ static void help_btn_delete_cb(lv_event_t *e) {
 static lv_obj_t *make_row(lv_obj_t *parent) {
   lv_obj_t *row = lv_obj_create(parent);
   lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-  lv_obj_set_style_min_height(row, theme_get_min_touch_size(), 0);
+  lv_obj_set_style_min_height(row, theme_min_touch_size(), 0);
   theme_apply_transparent_container(row);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
@@ -47,13 +47,13 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text) {
   lv_obj_t *lbl = lv_label_create(parent);
   lv_label_set_text(lbl, text);
   lv_obj_set_style_text_font(lbl, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(lbl, main_color(), 0);
+  lv_obj_set_style_text_color(lbl, primary_color(), 0);
   lv_obj_set_flex_grow(lbl, 1);
   return lbl;
 }
 
 /* Renders a single-glyph clickable label at a fixed cell width
- * (theme_get_min_touch_size()), used for both the trailing `?` (help)
+ * (theme_min_touch_size()), used for both the trailing `?` (help)
  * and `>` (chevron) markers. Same widget type + same width keeps
  * trailing edges of toggle/dropdown rows visually aligned with action
  * rows. The trailing icon is a label (not lv_btn) to avoid
@@ -63,8 +63,8 @@ static lv_obj_t *make_trailing_icon(lv_obj_t *parent, const char *glyph,
   lv_obj_t *lbl = lv_label_create(parent);
   lv_label_set_text(lbl, glyph);
   lv_obj_set_style_text_font(lbl, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(lbl, main_color(), 0);
-  lv_obj_set_width(lbl, theme_get_min_touch_size());
+  lv_obj_set_style_text_color(lbl, primary_color(), 0);
+  lv_obj_set_width(lbl, theme_min_touch_size());
   lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
   if (on_click) {
     lv_obj_add_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
@@ -132,7 +132,7 @@ lv_obj_t *settings_row_action(lv_obj_t *parent, const char *label,
                               lv_event_cb_t on_click) {
   lv_obj_t *btn = theme_create_button(parent, label, true);
   lv_obj_set_width(btn, LV_PCT(100));
-  lv_obj_set_style_min_height(btn, theme_get_min_touch_size(), 0);
+  lv_obj_set_style_min_height(btn, theme_min_touch_size(), 0);
   if (on_click)
     lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, NULL);
   return btn;

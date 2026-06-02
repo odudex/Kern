@@ -67,15 +67,14 @@ static void view_descriptor_cb(void) {
   lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(title_label, highlight_color(), 0);
-  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, theme_get_default_padding());
+  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, theme_default_padding());
 
-  int32_t top_h =
-      theme_get_corner_button_height() + theme_get_default_padding();
+  int32_t top_h = theme_corner_button_height() + theme_default_padding();
   lv_obj_t *body = theme_create_page_container(detail_screen);
-  lv_obj_set_size(body, LV_PCT(100), theme_get_screen_height() - top_h);
+  lv_obj_set_size(body, LV_PCT(100), theme_screen_height() - top_h);
   lv_obj_align(body, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_pad_all(body, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_gap(body, theme_get_small_padding(), 0);
+  lv_obj_set_style_pad_all(body, theme_default_padding(), 0);
+  lv_obj_set_style_pad_gap(body, theme_small_padding(), 0);
   lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
 
@@ -83,7 +82,7 @@ static void view_descriptor_cb(void) {
   lv_obj_set_width(desc_label, LV_PCT(100));
   lv_label_set_long_mode(desc_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(desc_label, LV_TEXT_ALIGN_LEFT, 0);
-  lv_obj_set_style_text_color(desc_label, main_color(), 0);
+  lv_obj_set_style_text_color(desc_label, primary_color(), 0);
   lv_obj_align(desc_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
   free(desc_str);

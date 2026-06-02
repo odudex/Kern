@@ -335,8 +335,7 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_t *instruction =
       theme_create_label(capture_screen, "Tap to capture", false);
   lv_obj_set_style_text_color(instruction, highlight_color(), 0);
-  lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0,
-               -theme_get_default_padding());
+  lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0, -theme_default_padding());
 
   if (!camera_init()) {
     ESP_LOGE(TAG, "Failed to initialize camera");

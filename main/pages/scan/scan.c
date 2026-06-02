@@ -806,8 +806,9 @@ static bool create_psbt_info_display(void) {
     classified_inputs[i].index = i;
     classified_inputs[i].ownership = own.ownership;
     classified_inputs[i].value = input_amounts[i];
-    input_colors[i] = (own.ownership == PSBT_OWNERSHIP_EXTERNAL) ? error_color()
-                                                                 : main_color();
+    input_colors[i] = (own.ownership == PSBT_OWNERSHIP_EXTERNAL)
+                          ? error_color()
+                          : primary_color();
     format_input_policy(&own, classified_inputs[i].policy,
                         sizeof(classified_inputs[i].policy));
 
@@ -888,7 +889,7 @@ static bool create_psbt_info_display(void) {
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
       output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = cyan_color();
+      output_colors[diagram_idx] = accent_color();
       diagram_idx++;
     }
   }
@@ -904,7 +905,7 @@ static bool create_psbt_info_display(void) {
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_OWNED_UNSAFE) {
       output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = cyan_color();
+      output_colors[diagram_idx] = accent_color();
       diagram_idx++;
     }
   }
@@ -1016,8 +1017,8 @@ static bool create_psbt_info_display(void) {
 
     char prefix[32];
     snprintf(prefix, sizeof(prefix), "Inputs(%zu): ", count);
-    lv_obj_t *row =
-        create_btc_value_row(psbt_info_container, prefix, total, main_color());
+    lv_obj_t *row = create_btc_value_row(psbt_info_container, prefix, total,
+                                         primary_color());
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
 
@@ -1051,8 +1052,9 @@ static bool create_psbt_info_display(void) {
         continue;
       char text[64];
       snprintf(text, sizeof(text), "Input %zu: ", classified_inputs[i].index);
-      lv_obj_t *row = create_btc_value_row(
-          psbt_info_container, text, classified_inputs[i].value, main_color());
+      lv_obj_t *row =
+          create_btc_value_row(psbt_info_container, text,
+                               classified_inputs[i].value, primary_color());
       lv_obj_set_width(row, LV_PCT(100));
       lv_obj_set_style_pad_left(row, 20, 0);
 
@@ -1064,7 +1066,7 @@ static bool create_psbt_info_display(void) {
   }
 
   lv_obj_t *separator1 =
-      theme_create_separator(psbt_info_container, main_color());
+      theme_create_separator(psbt_info_container, primary_color());
   lv_obj_set_style_margin_top(separator1, 15, 0);
 
   /* Count self-transfers up-front so we can collapse to a totals row when
@@ -1086,18 +1088,18 @@ static bool create_psbt_info_display(void) {
     lv_obj_t *title =
         theme_create_label(psbt_info_container, title_text, false);
     theme_apply_label(title, true);
-    lv_obj_set_style_text_color(title, cyan_color(), 0);
+    lv_obj_set_style_text_color(title, accent_color(), 0);
     lv_obj_set_width(title, LV_PCT(100));
 
     lv_obj_t *row = create_btc_value_row(
-        psbt_info_container, "Total: ", total_self_transfer, main_color());
+        psbt_info_container, "Total: ", total_self_transfer, primary_color());
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_style_pad_left(row, 20, 0);
   } else if (self_transfer_count > 0) {
     lv_obj_t *title =
         theme_create_label(psbt_info_container, "Self-Transfer: ", false);
     theme_apply_label(title, true);
-    lv_obj_set_style_text_color(title, cyan_color(), 0);
+    lv_obj_set_style_text_color(title, accent_color(), 0);
     lv_obj_set_width(title, LV_PCT(100));
 
     for (size_t i = 0; i < num_outputs; i++) {
@@ -1107,14 +1109,15 @@ static bool create_psbt_info_display(void) {
       char text[64];
       snprintf(text, sizeof(text),
                "Receive #%u: ", classified_outputs[i].address_index);
-      lv_obj_t *row = create_btc_value_row(
-          psbt_info_container, text, classified_outputs[i].value, main_color());
+      lv_obj_t *row =
+          create_btc_value_row(psbt_info_container, text,
+                               classified_outputs[i].value, primary_color());
       lv_obj_set_width(row, LV_PCT(100));
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_outputs[i].address) {
         create_address_label(psbt_info_container, classified_outputs[i].address,
-                             cyan_color(), ADDRESS_INDENT_PX);
+                             accent_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1146,7 +1149,7 @@ static bool create_psbt_info_display(void) {
         lv_obj_t *title = theme_create_label(
             psbt_info_container, "Owned (non-standard path): ", false);
         theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, cyan_color(), 0);
+        lv_obj_set_style_text_color(title, accent_color(), 0);
         lv_obj_set_style_margin_top(title, 15, 0);
         lv_obj_set_width(title, LV_PCT(100));
         has_owned_unsafe = true;
@@ -1156,14 +1159,15 @@ static bool create_psbt_info_display(void) {
       snprintf(
           text, sizeof(text), "Output %zu (%s): ", classified_outputs[i].index,
           classified_outputs[i].path[0] ? classified_outputs[i].path : "?");
-      lv_obj_t *row = create_btc_value_row(
-          psbt_info_container, text, classified_outputs[i].value, main_color());
+      lv_obj_t *row =
+          create_btc_value_row(psbt_info_container, text,
+                               classified_outputs[i].value, primary_color());
       lv_obj_set_width(row, LV_PCT(100));
       lv_obj_set_style_pad_left(row, 20, 0);
 
       if (classified_outputs[i].address) {
         create_address_label(psbt_info_container, classified_outputs[i].address,
-                             cyan_color(), ADDRESS_INDENT_PX);
+                             accent_color(), ADDRESS_INDENT_PX);
       }
     }
   }
@@ -1185,8 +1189,9 @@ static bool create_psbt_info_display(void) {
       snprintf(
           text, sizeof(text), "Output %zu (%s): ", classified_outputs[i].index,
           classified_outputs[i].path[0] ? classified_outputs[i].path : "?");
-      lv_obj_t *row = create_btc_value_row(
-          psbt_info_container, text, classified_outputs[i].value, main_color());
+      lv_obj_t *row =
+          create_btc_value_row(psbt_info_container, text,
+                               classified_outputs[i].value, primary_color());
       lv_obj_set_width(row, LV_PCT(100));
       lv_obj_set_style_pad_left(row, 20, 0);
 
@@ -1212,8 +1217,9 @@ static bool create_psbt_info_display(void) {
 
       char text[64];
       snprintf(text, sizeof(text), "Output %zu: ", classified_outputs[i].index);
-      lv_obj_t *row = create_btc_value_row(
-          psbt_info_container, text, classified_outputs[i].value, main_color());
+      lv_obj_t *row =
+          create_btc_value_row(psbt_info_container, text,
+                               classified_outputs[i].value, primary_color());
       lv_obj_set_width(row, LV_PCT(100));
       lv_obj_set_style_pad_left(row, 20, 0);
 
@@ -1251,7 +1257,7 @@ static bool create_psbt_info_display(void) {
   }
 
   if (fee > 0) {
-    theme_create_separator(psbt_info_container, main_color());
+    theme_create_separator(psbt_info_container, primary_color());
 
     lv_obj_t *fee_row =
         create_btc_value_row(psbt_info_container, "Fee: ", fee, error_color());
@@ -1417,7 +1423,7 @@ static void create_message_sign_display(void) {
 
   wally_free_string(address);
 
-  theme_create_separator(psbt_info_container, main_color());
+  theme_create_separator(psbt_info_container, primary_color());
 
   lv_obj_t *msg_title =
       theme_create_label(psbt_info_container, "Message:", false);

@@ -235,8 +235,8 @@ static void show_qr_export(void) {
   lv_obj_set_flex_flow(qr_export_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(qr_export_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(qr_export_screen, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_gap(qr_export_screen, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(qr_export_screen, theme_default_padding(), 0);
+  lv_obj_set_style_pad_gap(qr_export_screen, theme_default_padding(), 0);
 
   /* Top bar with format dropdown */
   lv_obj_t *top_bar = lv_obj_create(qr_export_screen);

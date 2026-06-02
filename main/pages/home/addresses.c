@@ -59,7 +59,7 @@ static void return_from_scan_cb(void);
 // Format address as 4-char blocks with alternating main/highlight colors
 static void format_address_colored_blocks(char *dest, size_t dest_size,
                                           const char *address) {
-  lv_color32_t c1 = lv_color_to_32(main_color(), LV_OPA_COVER);
+  lv_color32_t c1 = lv_color_to_32(primary_color(), LV_OPA_COVER);
   lv_color32_t c2 = lv_color_to_32(highlight_color(), LV_OPA_COVER);
   uint32_t hex1 = (c1.red << 16) | (c1.green << 8) | c1.blue;
   uint32_t hex2 = (c2.red << 16) | (c2.green << 8) | c2.blue;
@@ -170,7 +170,7 @@ static lv_obj_t *create_address_label(lv_obj_t *parent, const char *text,
   lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
   lv_obj_set_style_text_align(label, align, 0);
   lv_obj_set_style_text_font(label, font, 0);
-  lv_obj_set_style_text_color(label, main_color(), 0);
+  lv_obj_set_style_text_color(label, primary_color(), 0);
   return label;
 }
 
@@ -234,8 +234,8 @@ static void show_address_detail(int index) {
 
   lv_obj_t *parent = lv_screen_active();
 
-  int32_t pad = theme_get_default_padding();
-  int32_t scr_w = theme_get_screen_width();
+  int32_t pad = theme_default_padding();
+  int32_t scr_w = theme_screen_width();
   bool landscape = theme_is_landscape();
 
   detail_container = lv_obj_create(parent);
@@ -267,7 +267,7 @@ static void show_address_detail(int index) {
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
 
   // QR code in white container
-  int32_t square_size = theme_get_min_dim() * 55 / 100;
+  int32_t square_size = theme_min_dim() * 55 / 100;
   lv_obj_t *qr_container = theme_create_qr_container(content, square_size, 15);
   lv_obj_t *qr = lv_qrcode_create(qr_container);
   lv_qrcode_set_size(qr, square_size - 30); // 15px padding each side
@@ -361,9 +361,8 @@ static void refresh_address_list(void) {
              "%u:", address_offset + NUM_ADDRESSES - 1);
     int32_t index_w =
         text_width_px(max_index_text, font) + ADDRESS_INDEX_FIT_ALLOWANCE;
-    int32_t usable_w =
-        theme_get_screen_width() - 2 * theme_get_default_padding() - 30;
-    int32_t address_w = usable_w - index_w - theme_get_small_padding();
+    int32_t usable_w = theme_screen_width() - 2 * theme_default_padding() - 30;
+    int32_t address_w = usable_w - index_w - theme_small_padding();
     if (address_w < 1)
       address_w = 1;
 
@@ -381,7 +380,7 @@ static void refresh_address_list(void) {
     lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(btn, theme_get_small_padding(), 0);
+    lv_obj_set_style_pad_column(btn, theme_small_padding(), 0);
 
     lv_obj_t *index_label =
         create_address_label(btn, index_text, font, LV_TEXT_ALIGN_RIGHT);
@@ -452,12 +451,12 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   addresses_screen = lv_obj_create(parent);
   lv_obj_set_size(addresses_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(addresses_screen);
-  lv_obj_set_style_pad_all(addresses_screen, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_top(addresses_screen, theme_get_small_padding(), 0);
+  lv_obj_set_style_pad_all(addresses_screen, theme_default_padding(), 0);
+  lv_obj_set_style_pad_top(addresses_screen, theme_small_padding(), 0);
   lv_obj_set_flex_flow(addresses_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(addresses_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(addresses_screen, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_gap(addresses_screen, theme_default_padding(), 0);
 
   // Key info bar at top, aligned with the corner buttons.
   ui_key_info_bar_create(addresses_screen);

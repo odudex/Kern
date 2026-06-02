@@ -223,7 +223,7 @@ void storage_browser_create(lv_obj_t *parent,
   loading_label = lv_label_create(browser_screen);
   lv_label_set_text(loading_label, "Preparing storage...");
   lv_obj_set_style_text_font(loading_label, theme_font_small(), 0);
-  lv_obj_set_style_text_color(loading_label, main_color(), 0);
+  lv_obj_set_style_text_color(loading_label, primary_color(), 0);
   lv_obj_align(loading_label, LV_ALIGN_CENTER, 0, 0);
 
   init_timer = lv_timer_create(deferred_list_cb, 50, NULL);

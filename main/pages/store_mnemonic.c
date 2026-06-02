@@ -167,7 +167,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   lv_obj_t *title_label = lv_label_create(main_screen);
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(title_label, main_color(), 0);
+  lv_obj_set_style_text_color(title_label, primary_color(), 0);
   lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 0);
 
   kef_encrypt_page_create(parent, encrypt_return_cb, encrypt_success_cb,

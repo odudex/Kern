@@ -183,12 +183,12 @@ static lv_obj_t *create_corner_button(lv_obj_t *parent, lv_align_t align,
   if (!parent)
     return NULL;
 
-  int32_t pad = theme_get_small_padding();
+  int32_t pad = theme_small_padding();
 
   lv_obj_t *btn = lv_btn_create(parent);
   theme_apply_touch_button(btn, false);
-  lv_obj_set_size(btn, theme_get_corner_button_width(),
-                  theme_get_corner_button_height());
+  lv_obj_set_size(btn, theme_corner_button_width(),
+                  theme_corner_button_height());
   lv_obj_align(btn, align, align == LV_ALIGN_TOP_RIGHT ? -pad : pad, pad);
 
   lv_obj_t *label = lv_label_create(btn);
@@ -257,7 +257,7 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   lv_textarea_set_placeholder_text(input->textarea, placeholder);
   lv_obj_set_style_text_font(input->textarea, theme_font_small(), 0);
   lv_obj_set_style_bg_color(input->textarea, panel_color(), 0);
-  lv_obj_set_style_text_color(input->textarea, main_color(), 0);
+  lv_obj_set_style_text_color(input->textarea, primary_color(), 0);
   lv_obj_set_style_border_color(input->textarea, secondary_color(), 0);
   lv_obj_set_style_border_width(input->textarea, 1, 0);
   lv_obj_set_style_bg_color(input->textarea, highlight_color(), LV_PART_CURSOR);
@@ -266,8 +266,8 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   /* Eye toggle (password mode only) */
   if (password_mode) {
     input->eye_btn = lv_btn_create(parent);
-    lv_obj_set_size(input->eye_btn, theme_get_min_touch_size(),
-                    theme_get_min_touch_size());
+    lv_obj_set_size(input->eye_btn, theme_min_touch_size(),
+                    theme_min_touch_size());
     lv_obj_align_to(input->eye_btn, input->textarea, LV_ALIGN_OUT_RIGHT_MID, 5,
                     0);
     lv_obj_set_style_bg_opa(input->eye_btn, LV_OPA_TRANSP, 0);
@@ -323,7 +323,7 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   lv_obj_set_style_pad_gap(input->keyboard, 6, 0);
 #endif
   lv_obj_set_style_bg_color(input->keyboard, disabled_color(), LV_PART_ITEMS);
-  lv_obj_set_style_text_color(input->keyboard, main_color(), LV_PART_ITEMS);
+  lv_obj_set_style_text_color(input->keyboard, primary_color(), LV_PART_ITEMS);
   lv_obj_set_style_text_font(input->keyboard, theme_font_small(),
                              LV_PART_ITEMS);
   lv_obj_set_style_border_width(input->keyboard, 0, LV_PART_ITEMS);

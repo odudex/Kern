@@ -369,7 +369,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
 
   // Scrollable content area (between title and buttons)
   lv_coord_t title_h = theme_font_medium()->line_height + 20;
-  lv_coord_t btn_h = theme_get_button_height();
+  lv_coord_t btn_h = theme_button_height();
   lv_obj_t *scroll = lv_obj_create(root);
   lv_obj_set_width(scroll, LV_PCT(100));
   lv_obj_set_height(scroll, LV_VER_RES - title_h - btn_h);
@@ -397,7 +397,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
                     strcasecmp(my_fp, info->keys[i].fingerprint_hex) == 0);
     lv_obj_t *fp_row =
         ui_icon_text_row_create(scroll, ICON_FINGERPRINT, letter_fp,
-                                is_ours ? highlight_color() : main_color());
+                                is_ours ? highlight_color() : primary_color());
     if (i > 0)
       lv_obj_set_style_pad_top(fp_row, 12, 0);
 
@@ -417,7 +417,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
 
   // Button row (fixed at bottom)
   lv_obj_t *no_btn = theme_create_button(root, "No", false);
-  lv_obj_set_size(no_btn, LV_PCT(50), theme_get_button_height());
+  lv_obj_set_size(no_btn, LV_PCT(50), theme_button_height());
   lv_obj_align(no_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_obj_add_event_cb(no_btn, info_confirm_no_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *no_label = lv_obj_get_child(no_btn, 0);
@@ -427,7 +427,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   }
 
   lv_obj_t *yes_btn = theme_create_button(root, "Yes", true);
-  lv_obj_set_size(yes_btn, LV_PCT(50), theme_get_button_height());
+  lv_obj_set_size(yes_btn, LV_PCT(50), theme_button_height());
   lv_obj_align(yes_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_add_event_cb(yes_btn, info_confirm_yes_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *yes_label = lv_obj_get_child(yes_btn, 0);

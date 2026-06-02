@@ -97,7 +97,7 @@ static void update_progress_indicator(int part_index) {
   }
 
   for (int i = 0; i < progress_rectangles_count; i++) {
-    lv_color_t color = (i == part_index) ? highlight_color() : main_color();
+    lv_color_t color = (i == part_index) ? highlight_color() : primary_color();
     lv_obj_set_style_bg_color(progress_rectangles[i], color, 0);
   }
 }
@@ -229,7 +229,7 @@ static bool setup_qr_viewer_ui(lv_obj_t *parent, const char *title) {
     lv_obj_set_style_bg_color(msgbox, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(msgbox, LV_OPA_80, 0);
     lv_obj_set_style_border_width(msgbox, 2, 0);
-    lv_obj_set_style_border_color(msgbox, main_color(), 0);
+    lv_obj_set_style_border_color(msgbox, primary_color(), 0);
     lv_obj_set_style_radius(msgbox, 10, 0);
     lv_obj_set_style_pad_all(msgbox, 20, 0);
     lv_obj_add_flag(msgbox, LV_OBJ_FLAG_FLOATING);

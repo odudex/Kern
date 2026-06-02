@@ -121,7 +121,7 @@ static int32_t entry_available_width(ui_menu_entry_view_t *view) {
   width -= lv_obj_get_style_pad_left(view->button, 0) +
            lv_obj_get_style_pad_right(view->button, 0);
   if (view->action_button)
-    width -= theme_get_min_touch_size();
+    width -= theme_min_touch_size();
 
   return LV_MAX(width, 1);
 }
@@ -133,7 +133,7 @@ static void apply_entry_content_layout(ui_menu_t *menu, int index) {
 
   bool has_icon = view->icon != NULL;
   bool landscape = theme_is_landscape();
-  int32_t gap = has_icon ? theme_get_small_padding() : 0;
+  int32_t gap = has_icon ? theme_small_padding() : 0;
   int32_t available_width = entry_available_width(view);
   int32_t icon_width =
       has_icon ? measure_label_text_width(view->icon, UI_MENU_TEXT_MEASURE_MAX)
@@ -193,7 +193,7 @@ static void size_entry_button(ui_menu_t *menu, int index) {
   int columns = menu_column_count();
   int rows = menu_row_count(menu);
   int count = menu->config.entry_count;
-  int32_t gap = theme_get_default_padding();
+  int32_t gap = theme_default_padding();
   int32_t width = lv_obj_get_content_width(menu->list);
   int32_t height = lv_obj_get_content_height(menu->list);
 
@@ -202,8 +202,8 @@ static void size_entry_button(ui_menu_t *menu, int index) {
   if (!span_row)
     width = (width - gap * (columns - 1)) / columns;
   height = (height - gap * (rows - 1)) / rows;
-  lv_obj_set_size(view->button, LV_MAX(width, theme_get_min_touch_size()),
-                  LV_MAX(height, theme_get_min_touch_size()));
+  lv_obj_set_size(view->button, LV_MAX(width, theme_min_touch_size()),
+                  LV_MAX(height, theme_min_touch_size()));
   lv_obj_set_flex_grow(view->button, 0);
 }
 
@@ -263,9 +263,9 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   lv_obj_set_flex_flow(menu->container, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(menu->container, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(menu->container, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_top(menu->container, theme_get_small_padding(), 0);
-  lv_obj_set_style_pad_gap(menu->container, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(menu->container, theme_default_padding(), 0);
+  lv_obj_set_style_pad_top(menu->container, theme_small_padding(), 0);
+  lv_obj_set_style_pad_gap(menu->container, theme_default_padding(), 0);
   lv_obj_clear_flag(menu->container, LV_OBJ_FLAG_SCROLLABLE);
   theme_apply_screen(menu->container);
 
@@ -273,7 +273,7 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
      title sits beside (vertically aligned with) the back/power button rather
      than above it. The button list then flows below this band. */
   menu->nav_bar = lv_obj_create(menu->container);
-  lv_obj_set_size(menu->nav_bar, LV_PCT(100), theme_get_corner_button_height());
+  lv_obj_set_size(menu->nav_bar, LV_PCT(100), theme_corner_button_height());
   theme_apply_transparent_container(menu->nav_bar);
   lv_obj_set_flex_flow(menu->nav_bar, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(menu->nav_bar, LV_FLEX_ALIGN_CENTER,
@@ -290,8 +290,8 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   theme_apply_transparent_container(menu->list);
   apply_list_layout(menu);
   lv_obj_set_flex_grow(menu->list, 1);
-  lv_obj_set_style_pad_row(menu->list, theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_column(menu->list, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_row(menu->list, theme_default_padding(), 0);
+  lv_obj_set_style_pad_column(menu->list, theme_default_padding(), 0);
   lv_obj_set_style_outline_width(menu->list, 0, 0);
 
   menu->back_callback = back_cb;
@@ -337,7 +337,7 @@ static bool add_entry_internal(ui_menu_t *menu, const char *icon,
        heights in both portrait and landscape. */
     lv_obj_t *icon_btn = lv_btn_create(view->button);
     view->action_button = icon_btn;
-    lv_obj_set_size(icon_btn, theme_get_min_touch_size(), LV_PCT(100));
+    lv_obj_set_size(icon_btn, theme_min_touch_size(), LV_PCT(100));
     lv_obj_set_style_bg_color(icon_btn, disabled_color(), 0);
     lv_obj_set_style_bg_opa(icon_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_shadow_width(icon_btn, 0, 0);
@@ -428,8 +428,8 @@ bool ui_menu_set_entry_enabled(ui_menu_t *menu, int index, bool enabled) {
   /* Update label color to reflect enabled/disabled state */
   lv_obj_t *label = entry_label(menu, index);
   if (label) {
-    lv_obj_set_style_text_color(label,
-                                enabled ? main_color() : disabled_color(), 0);
+    lv_obj_set_style_text_color(
+        label, enabled ? primary_color() : disabled_color(), 0);
   }
   if (menu->views[index].icon) {
     lv_obj_set_style_text_color(menu->views[index].icon,

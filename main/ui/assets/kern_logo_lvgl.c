@@ -64,7 +64,7 @@ static lv_obj_t *create_label(lv_obj_t *parent, int32_t logo_size) {
   lv_obj_t *label = lv_label_create(label_box);
   lv_label_set_text(label, "KERN");
   lv_obj_set_style_text_font(label, font, 0);
-  lv_obj_set_style_text_color(label, main_color(), 0);
+  lv_obj_set_style_text_color(label, primary_color(), 0);
   lv_obj_set_style_text_letter_space(label, -1, 0);
   lv_obj_update_layout(label);
 
@@ -196,7 +196,7 @@ lv_obj_t *kern_logo_with_text_inline_sized(lv_obj_t *parent, int32_t sz) {
 
 /** Animated logo with text for boot screen, vertically centered */
 void kern_logo_animated(lv_obj_t *parent) {
-  int32_t size = theme_get_logo_size();
+  int32_t size = theme_logo_size();
   int32_t t = LV_MAX(size / 80, 1);
 
   lv_obj_t *c =

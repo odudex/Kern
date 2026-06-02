@@ -114,8 +114,8 @@ static void render_xpub(void) {
                             ? LV_MIN(qr_w, qr_h)
                             : LV_MIN(qr_w * 65 / 100, qr_h * 70 / 100);
 
-  lv_obj_t *qr_container = theme_create_qr_container(qr_parent, square_size,
-                                                     theme_get_small_padding());
+  lv_obj_t *qr_container =
+      theme_create_qr_container(qr_parent, square_size, theme_small_padding());
   lv_obj_update_layout(qr_container);
 
   lv_obj_t *qr = lv_qrcode_create(qr_container);
@@ -190,13 +190,12 @@ static lv_obj_t *create_public_key_screen(lv_obj_t *parent, bool landscape) {
   lv_obj_set_size(screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(screen);
   lv_obj_set_style_pad_all(
-      screen,
-      landscape ? theme_get_small_padding() : theme_get_default_padding(), 0);
-  lv_obj_set_style_pad_top(screen, theme_get_small_padding(), 0);
+      screen, landscape ? theme_small_padding() : theme_default_padding(), 0);
+  lv_obj_set_style_pad_top(screen, theme_small_padding(), 0);
   lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(screen, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_gap(screen, theme_default_padding(), 0);
   return screen;
 }
 
@@ -211,17 +210,16 @@ static lv_obj_t *make_bottom_cell(lv_obj_t *parent) {
 static lv_obj_t *create_landscape_layout(void) {
   lv_obj_t *body =
       create_flex_container(public_key_screen, LV_FLEX_FLOW_COLUMN,
-                            LV_FLEX_ALIGN_START, theme_get_small_padding());
+                            LV_FLEX_ALIGN_START, theme_small_padding());
   lv_obj_set_size(body, LV_PCT(100), LV_PCT(100));
   lv_obj_set_flex_grow(body, 1);
 
   lv_obj_t *controls = create_flex_container(
-      body, LV_FLEX_FLOW_ROW, LV_FLEX_ALIGN_START, theme_get_default_padding());
+      body, LV_FLEX_FLOW_ROW, LV_FLEX_ALIGN_START, theme_default_padding());
   lv_obj_set_size(controls, LV_PCT(100), LV_SIZE_CONTENT);
 
-  lv_obj_t *bottom_row =
-      create_flex_container(body, LV_FLEX_FLOW_ROW, LV_FLEX_ALIGN_CENTER,
-                            theme_get_default_padding());
+  lv_obj_t *bottom_row = create_flex_container(
+      body, LV_FLEX_FLOW_ROW, LV_FLEX_ALIGN_CENTER, theme_default_padding());
   lv_obj_set_size(bottom_row, LV_PCT(100), LV_PCT(100));
   lv_obj_set_flex_grow(bottom_row, 1);
 
@@ -236,7 +234,7 @@ static void create_picker_row(lv_obj_t *controls_parent, bool landscape) {
   lv_obj_set_height(picker_row, LV_SIZE_CONTENT);
   if (landscape) {
     lv_obj_set_flex_grow(picker_row, 1);
-    lv_obj_set_style_min_height(picker_row, theme_get_min_touch_size(), 0);
+    lv_obj_set_style_min_height(picker_row, theme_min_touch_size(), 0);
   } else {
     lv_obj_set_width(picker_row, LV_PCT(100));
   }
@@ -257,7 +255,7 @@ static void create_multisig_row(lv_obj_t *controls_parent, bool landscape) {
 static void create_portrait_content(void) {
   lv_obj_t *content = create_flex_container(
       public_key_screen, LV_FLEX_FLOW_COLUMN, LV_FLEX_ALIGN_SPACE_EVENLY,
-      theme_get_default_padding());
+      theme_default_padding());
   lv_obj_set_size(content, LV_PCT(100), LV_PCT(100));
   lv_obj_set_flex_grow(content, 1);
   qr_parent = content;

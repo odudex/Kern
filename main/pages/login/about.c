@@ -33,8 +33,8 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
 
-  int32_t pad = theme_get_default_padding();
-  int32_t min_dim = theme_get_min_dim();
+  int32_t pad = theme_default_padding();
+  int32_t min_dim = theme_min_dim();
   int32_t font_h = lv_font_get_line_height(theme_font_small());
   bool landscape = theme_is_landscape();
 
@@ -51,9 +51,8 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // the QR; portrait/square stacks them vertically.
   lv_obj_t *body = lv_obj_create(about_screen);
   lv_obj_remove_style_all(body);
-  lv_obj_set_size(
-      body, LV_PCT(100),
-      LV_MAX(1, theme_get_screen_height() - 2 * (font_h + 2 * pad)));
+  lv_obj_set_size(body, LV_PCT(100),
+                  LV_MAX(1, theme_screen_height() - 2 * (font_h + 2 * pad)));
   lv_obj_align(body, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_flex_flow(body,
                        landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
@@ -91,7 +90,7 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // The inline logo block scales with its diameter. Build it at the default
   // size, measure its footprint on the shared axis, and rebuild it smaller if
   // it would exceed the per-item budget so it stays balanced with the QR.
-  int32_t logo_sz = theme_get_logo_size() * 160 / 200;
+  int32_t logo_sz = theme_logo_size() * 160 / 200;
   lv_obj_t *logo = kern_logo_with_text_inline_sized(logo_parent, logo_sz);
   lv_obj_update_layout(body);
   int32_t block_main =

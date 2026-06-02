@@ -279,7 +279,7 @@ static void update_progress_indicator(int part_index) {
                               highlight_color(), 0);
     if (previously_parsed >= 0) {
       lv_obj_set_style_bg_color(progress_rectangles[previously_parsed],
-                                main_color(), 0);
+                                primary_color(), 0);
     }
     previously_parsed = part_index;
     bsp_display_unlock();
@@ -440,7 +440,7 @@ static void create_settings_overlay(void) {
     lv_obj_t *ae_title = lv_label_create(panel);
     lv_label_set_text(ae_title, "Exposure");
     lv_obj_set_style_text_font(ae_title, theme_font_small(), 0);
-    lv_obj_set_style_text_color(ae_title, main_color(), 0);
+    lv_obj_set_style_text_color(ae_title, primary_color(), 0);
 
     ae_slider = lv_slider_create(panel);
     lv_slider_set_range(ae_slider, AE_TARGET_MIN, AE_TARGET_MAX);
@@ -455,7 +455,7 @@ static void create_settings_overlay(void) {
     lv_obj_t *focus_title = lv_label_create(panel);
     lv_label_set_text(focus_title, "Focus");
     lv_obj_set_style_text_font(focus_title, theme_font_small(), 0);
-    lv_obj_set_style_text_color(focus_title, main_color(), 0);
+    lv_obj_set_style_text_color(focus_title, primary_color(), 0);
 
     focus_slider = lv_slider_create(panel);
     lv_slider_set_range(focus_slider, 0, FOCUS_POSITION_MAX);

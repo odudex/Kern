@@ -18,8 +18,8 @@ static void cycle_done_cb(lv_anim_t *anim) {
 }
 
 static void start_cycle(void) {
-  int32_t scr_w = theme_get_screen_width();
-  int32_t scr_h = theme_get_screen_height();
+  int32_t scr_w = theme_screen_width();
+  int32_t scr_h = theme_screen_height();
   int32_t logo_sz = lv_obj_get_width(logo);
   int32_t x = esp_random() % LV_MAX(scr_w - logo_sz, 1);
   int32_t y = esp_random() % LV_MAX(scr_h - logo_sz, 1);
@@ -48,9 +48,9 @@ void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb) {
   dismiss_cb = cb;
   active = true;
 
-  int32_t scr_w = theme_get_screen_width();
-  int32_t scr_h = theme_get_screen_height();
-  int32_t logo_sz = theme_get_logo_size();
+  int32_t scr_w = theme_screen_width();
+  int32_t scr_h = theme_screen_height();
+  int32_t logo_sz = theme_logo_size();
 
   scr_container = lv_obj_create(parent);
   lv_obj_remove_style_all(scr_container);

@@ -183,19 +183,19 @@ void ui_numeric_keypad_open(ui_numeric_keypad_t **handle,
   lv_obj_t *back_btn = ui_create_back_button(keypad->container, NULL);
   lv_obj_add_event_cb(back_btn, back_btn_cb, LV_EVENT_CLICKED, keypad);
 
-  int32_t pad = theme_get_default_padding();
+  int32_t pad = theme_default_padding();
 
   lv_obj_t *title = lv_label_create(keypad->container);
   lv_label_set_text(title, keypad->config.title ? keypad->config.title : "");
   lv_obj_set_style_text_font(title, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(title, main_color(), 0);
+  lv_obj_set_style_text_color(title, primary_color(), 0);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, pad);
 
   keypad->input_label = lv_label_create(keypad->container);
   lv_obj_set_style_text_font(keypad->input_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(keypad->input_label, highlight_color(), 0);
   lv_obj_align(keypad->input_label, LV_ALIGN_TOP_MID, 0,
-               theme_get_corner_button_height() + pad * 2);
+               theme_corner_button_height() + pad * 2);
   update_input_display(keypad);
 
   keypad->numpad = lv_btnmatrix_create(keypad->container);

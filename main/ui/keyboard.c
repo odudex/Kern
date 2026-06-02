@@ -123,8 +123,7 @@ ui_keyboard_t *ui_keyboard_create(lv_obj_t *parent, const char *title,
   lv_label_set_text(kb->title_label, title ? title : "");
   lv_obj_set_style_text_color(kb->title_label, secondary_color(), 0);
   lv_obj_set_style_text_font(kb->title_label, theme_font_small(), 0);
-  lv_obj_align(kb->title_label, LV_ALIGN_TOP_MID, 0,
-               theme_get_default_padding());
+  lv_obj_align(kb->title_label, LV_ALIGN_TOP_MID, 0, theme_default_padding());
 
   kb->input_label = lv_label_create(parent);
   lv_label_set_text(kb->input_label, "_");

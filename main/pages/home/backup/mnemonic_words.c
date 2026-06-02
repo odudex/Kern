@@ -82,7 +82,7 @@ void mnemonic_words_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   lv_obj_t *hint = theme_create_label(mnemonic_screen, "Tap to return", false);
   lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -theme_get_default_padding());
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -theme_default_padding());
 }
 
 void mnemonic_words_page_show(void) {

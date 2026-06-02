@@ -10,19 +10,18 @@
 #include "assets/icons_36.h"
 #endif
 
-// Minimalist theme colors
-#define COLOR_BG lv_color_hex(0x000000)       // Black background
-#define COLOR_PANEL lv_color_hex(0x1a1a1a)    // Dark gray panels
-#define COLOR_BUTTON lv_color_hex(0x333333)   // Button surface
-#define COLOR_WHITE lv_color_hex(0xFFFFFF)    // White text/borders
-#define COLOR_GRAY lv_color_hex(0x888888)     // Gray info text
-#define COLOR_ORANGE lv_color_hex(0xff6600)   // Orange accent
-#define COLOR_DISABLED lv_color_hex(0x333333) // Gray disabled
-#define COLOR_ERROR lv_color_hex(0xFF0000)    // Red for errors
-#define COLOR_GREEN                                                            \
-  lv_color_hex(0x00FF00) // Green: encouraged action / good state
-#define COLOR_RED lv_color_hex(0xFF0000)  // Red: discouraged action / bad state
-#define COLOR_CYAN lv_color_hex(0x00FFFF) // Cyan accent
+// Minimalist theme palette: one macro per distinct value. The semantic
+// accessors below map intent onto these, so several may share a macro (e.g.
+// error/discourage/bad all return COLOR_RED).
+#define COLOR_BG lv_color_hex(0x000000)      // Black background
+#define COLOR_PANEL lv_color_hex(0x1a1a1a)   // Dark gray panels
+#define COLOR_SURFACE lv_color_hex(0x333333) // Neutral control fill / disabled
+#define COLOR_WHITE lv_color_hex(0xFFFFFF)   // White text/borders
+#define COLOR_GRAY lv_color_hex(0x888888)    // Gray secondary text
+#define COLOR_ORANGE lv_color_hex(0xff6600)  // Orange accent
+#define COLOR_RED lv_color_hex(0xFF0000)     // Error / discouraged / bad
+#define COLOR_GREEN lv_color_hex(0x00FF00)   // Encouraged / good
+#define COLOR_CYAN lv_color_hex(0x00FFFF)    // Cyan accent
 
 // Mutable font copies with icon fallbacks
 static lv_font_t font_small;
@@ -37,8 +36,8 @@ static int sz_button_height;
 static int sz_button_spacing;
 static int sz_default_padding;
 static int sz_min_touch;
-static int sz_corner_btn_w;
-static int sz_corner_btn_h;
+static int sz_corner_button_width;
+static int sz_corner_button_height;
 static int sz_small_padding;
 static int sz_logo;
 
@@ -79,15 +78,15 @@ void theme_init(void) {
   // (so portrait boards keep their sizes), while on landscape it caps paddings
   // and controls to the short side rather than letting the wide axis bloat
   // them.
-  sz_button_width = scr_min_dim * 5 / 24;  // 150
-  sz_button_height = scr_min_dim * 5 / 36; // 100
-  sz_button_spacing = scr_min_dim / 36;    //  20
-  sz_default_padding = scr_min_dim / 24;   //  30
-  sz_min_touch = scr_min_dim / 8;          //  90
-  sz_corner_btn_w = scr_min_dim / 6;       // 120
-  sz_corner_btn_h = scr_min_dim / 8;       //  90
-  sz_small_padding = scr_min_dim / 72;     //  10
-  sz_logo = scr_min_dim * 5 / 18;          // 200
+  sz_button_width = scr_min_dim * 5 / 24;    // 150
+  sz_button_height = scr_min_dim * 5 / 36;   // 100
+  sz_button_spacing = scr_min_dim / 36;      //  20
+  sz_default_padding = scr_min_dim / 24;     //  30
+  sz_min_touch = scr_min_dim / 8;            //  90
+  sz_corner_button_width = scr_min_dim / 6;  // 120
+  sz_corner_button_height = scr_min_dim / 8; //  90
+  sz_small_padding = scr_min_dim / 72;       //  10
+  sz_logo = scr_min_dim * 5 / 18;            // 200
 
   ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
   theme_font_pair_t small = font_pair_for_size(policy.small_px);
@@ -102,17 +101,17 @@ void theme_init(void) {
 
 lv_color_t bg_color(void) { return COLOR_BG; }
 
-lv_color_t main_color(void) { return COLOR_WHITE; }
+lv_color_t primary_color(void) { return COLOR_WHITE; }
 
 lv_color_t secondary_color(void) { return COLOR_GRAY; }
 
 lv_color_t highlight_color(void) { return COLOR_ORANGE; }
 
-lv_color_t disabled_color(void) { return COLOR_DISABLED; }
+lv_color_t disabled_color(void) { return COLOR_SURFACE; }
 
 lv_color_t panel_color(void) { return COLOR_PANEL; }
 
-lv_color_t error_color(void) { return COLOR_ERROR; }
+lv_color_t error_color(void) { return COLOR_RED; }
 
 // Action-choice colors: green encourages a choice, red discourages it. The
 // label ("Yes"/"No") is independent of which choice is encouraged — e.g. a
@@ -127,27 +126,27 @@ lv_color_t good_color(void) { return COLOR_GREEN; }
 
 lv_color_t bad_color(void) { return COLOR_RED; }
 
-lv_color_t cyan_color(void) { return COLOR_CYAN; }
+lv_color_t accent_color(void) { return COLOR_CYAN; }
 
 // Theme fonts
 const lv_font_t *theme_font_small(void) { return &font_small; }
 
 const lv_font_t *theme_font_medium(void) { return &font_medium; }
 
-int theme_get_screen_width(void) { return scr_w; }
-int theme_get_screen_height(void) { return scr_h; }
-int theme_get_min_dim(void) { return scr_min_dim; }
+int theme_screen_width(void) { return scr_w; }
+int theme_screen_height(void) { return scr_h; }
+int theme_min_dim(void) { return scr_min_dim; }
 bool theme_is_landscape(void) { return scr_w >= scr_h; }
 
-int theme_get_button_width(void) { return sz_button_width; }
-int theme_get_button_height(void) { return sz_button_height; }
-int theme_get_button_spacing(void) { return sz_button_spacing; }
-int theme_get_default_padding(void) { return sz_default_padding; }
-int theme_get_min_touch_size(void) { return sz_min_touch; }
-int theme_get_corner_button_width(void) { return sz_corner_btn_w; }
-int theme_get_corner_button_height(void) { return sz_corner_btn_h; }
-int theme_get_small_padding(void) { return sz_small_padding; }
-int theme_get_logo_size(void) { return sz_logo; }
+int theme_button_width(void) { return sz_button_width; }
+int theme_button_height(void) { return sz_button_height; }
+int theme_button_spacing(void) { return sz_button_spacing; }
+int theme_default_padding(void) { return sz_default_padding; }
+int theme_min_touch_size(void) { return sz_min_touch; }
+int theme_corner_button_width(void) { return sz_corner_button_width; }
+int theme_corner_button_height(void) { return sz_corner_button_height; }
+int theme_small_padding(void) { return sz_small_padding; }
+int theme_logo_size(void) { return sz_logo; }
 
 void theme_apply_screen(lv_obj_t *obj) {
   if (!obj)
@@ -178,15 +177,15 @@ lv_obj_t *theme_create_page_container(lv_obj_t *parent) {
   return container;
 }
 
-void theme_apply_frame(lv_obj_t *target_frame) {
-  if (!target_frame)
+void theme_apply_frame(lv_obj_t *frame) {
+  if (!frame)
     return;
 
-  lv_obj_set_style_bg_color(target_frame, COLOR_PANEL, 0);
-  lv_obj_set_style_bg_opa(target_frame, LV_OPA_90, 0);
-  lv_obj_set_style_border_color(target_frame, COLOR_WHITE, 0);
-  lv_obj_set_style_border_width(target_frame, 2, 0);
-  lv_obj_set_style_radius(target_frame, 6, 0);
+  lv_obj_set_style_bg_color(frame, COLOR_PANEL, 0);
+  lv_obj_set_style_bg_opa(frame, LV_OPA_90, 0);
+  lv_obj_set_style_border_color(frame, COLOR_WHITE, 0);
+  lv_obj_set_style_border_width(frame, 2, 0);
+  lv_obj_set_style_radius(frame, 6, 0);
 }
 
 void theme_apply_solid_rectangle(lv_obj_t *target_rectangle) {
@@ -235,7 +234,7 @@ void theme_apply_touch_button(lv_obj_t *btn, bool is_primary) {
   lv_obj_set_style_pad_all(btn, 15, LV_STATE_DEFAULT);
   lv_obj_set_style_shadow_width(btn, 0, LV_STATE_DEFAULT);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_color(btn, is_primary ? COLOR_BG : COLOR_BUTTON,
+  lv_obj_set_style_bg_color(btn, is_primary ? COLOR_BG : COLOR_SURFACE,
                             LV_STATE_DEFAULT);
   lv_obj_set_style_border_color(btn, COLOR_ORANGE, LV_STATE_DEFAULT);
   lv_obj_set_style_border_width(btn, is_primary ? 2 : 0, LV_STATE_DEFAULT);
@@ -245,7 +244,7 @@ void theme_apply_touch_button(lv_obj_t *btn, bool is_primary) {
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
 
   // Disabled - fade out fill and border.
-  lv_obj_set_style_text_color(btn, COLOR_DISABLED, LV_STATE_DISABLED);
+  lv_obj_set_style_text_color(btn, COLOR_SURFACE, LV_STATE_DISABLED);
   lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, LV_STATE_DISABLED);
   lv_obj_set_style_border_width(btn, 0, LV_STATE_DISABLED);
 
@@ -267,7 +266,7 @@ void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
   lv_obj_set_style_pad_column(btnmatrix, 6, 0);
 
   // Button items - normal state
-  lv_obj_set_style_bg_color(btnmatrix, COLOR_DISABLED, LV_PART_ITEMS);
+  lv_obj_set_style_bg_color(btnmatrix, COLOR_SURFACE, LV_PART_ITEMS);
   lv_obj_set_style_text_color(btnmatrix, COLOR_WHITE, LV_PART_ITEMS);
   lv_obj_set_style_text_font(btnmatrix, theme_font_small(), LV_PART_ITEMS);
   lv_obj_set_style_radius(btnmatrix, 6, LV_PART_ITEMS);
@@ -284,7 +283,7 @@ void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
   // Disabled state
   lv_obj_set_style_bg_opa(btnmatrix, LV_OPA_TRANSP,
                           LV_PART_ITEMS | LV_STATE_DISABLED);
-  lv_obj_set_style_text_color(btnmatrix, COLOR_DISABLED,
+  lv_obj_set_style_text_color(btnmatrix, COLOR_SURFACE,
                               LV_PART_ITEMS | LV_STATE_DISABLED);
 
   // Enable click trigger for all buttons
@@ -328,7 +327,7 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
   // with the white button text below them. Matches the ui_menu title colour.
   lv_obj_t *label = theme_create_label(parent, text ? text : "", true);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
-  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, theme_get_default_padding());
+  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, theme_default_padding());
   return label;
 }
 
@@ -419,7 +418,7 @@ lv_obj_t *theme_create_flex_column(lv_obj_t *parent) {
 static void dropdown_open_cb(lv_event_t *e) {
   lv_obj_t *list = lv_dropdown_get_list(lv_event_get_target(e));
   if (list) {
-    lv_obj_set_style_bg_color(list, COLOR_DISABLED, 0);
+    lv_obj_set_style_bg_color(list, COLOR_SURFACE, 0);
     lv_obj_set_style_text_color(list, COLOR_WHITE, 0);
     lv_obj_set_style_bg_color(list, COLOR_ORANGE,
                               LV_PART_SELECTED | LV_STATE_CHECKED);
@@ -435,7 +434,7 @@ lv_obj_t *theme_create_dropdown(lv_obj_t *parent, const char *options) {
   lv_obj_t *dd = lv_dropdown_create(parent);
   if (options)
     lv_dropdown_set_options(dd, options);
-  lv_obj_set_style_bg_color(dd, COLOR_DISABLED, 0);
+  lv_obj_set_style_bg_color(dd, COLOR_SURFACE, 0);
   lv_obj_set_style_text_color(dd, COLOR_WHITE, 0);
   lv_obj_set_style_text_font(dd, theme_font_small(), 0);
   lv_obj_set_style_border_color(dd, COLOR_ORANGE, 0);

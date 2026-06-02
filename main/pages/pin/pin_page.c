@@ -212,7 +212,7 @@ static void create_content_area(void) {
   lv_obj_set_flex_flow(content_area, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content_area, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(content_area, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(content_area, theme_default_padding(), 0);
   lv_obj_set_style_pad_gap(content_area, 8, 0);
 }
 
@@ -497,7 +497,7 @@ static void pin_keystroke_cb(lv_event_t *e) {
 #ifdef CONFIG_KERN_BOARD_WAVE_35
         if (!continue_btn) {
           continue_btn = theme_create_button(page_screen, "Continue", true);
-          lv_obj_set_size(continue_btn, LV_PCT(60), theme_get_button_height());
+          lv_obj_set_size(continue_btn, LV_PCT(60), theme_button_height());
           lv_obj_align(continue_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
           lv_obj_add_event_cb(continue_btn, continue_btn_cb, LV_EVENT_CLICKED,
                               NULL);
@@ -698,8 +698,8 @@ static void build_split_state(void) {
   lv_obj_set_flex_grow(split_display_label, 1);
 
   split_eye_btn = lv_btn_create(display_row);
-  lv_obj_set_size(split_eye_btn, theme_get_min_touch_size(),
-                  theme_get_min_touch_size());
+  lv_obj_set_size(split_eye_btn, theme_min_touch_size(),
+                  theme_min_touch_size());
   lv_obj_set_style_bg_opa(split_eye_btn, LV_OPA_TRANSP, 0);
   lv_obj_set_style_shadow_width(split_eye_btn, 0, 0);
   lv_obj_set_style_border_width(split_eye_btn, 0, 0);
@@ -718,18 +718,16 @@ static void build_split_state(void) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   left_btn = theme_create_button(btn_row, LV_SYMBOL_LEFT, false);
-  lv_obj_set_size(left_btn, theme_get_button_width(),
-                  theme_get_button_height());
+  lv_obj_set_size(left_btn, theme_button_width(), theme_button_height());
   lv_obj_add_event_cb(left_btn, split_left_cb, LV_EVENT_CLICKED, NULL);
 
   right_btn = theme_create_button(btn_row, LV_SYMBOL_RIGHT, false);
-  lv_obj_set_size(right_btn, theme_get_button_width(),
-                  theme_get_button_height());
+  lv_obj_set_size(right_btn, theme_button_width(), theme_button_height());
   lv_obj_add_event_cb(right_btn, split_right_cb, LV_EVENT_CLICKED, NULL);
 
   // Confirm button
   lv_obj_t *confirm = theme_create_button(content_area, "Confirm", true);
-  lv_obj_set_size(confirm, LV_PCT(60), theme_get_button_height());
+  lv_obj_set_size(confirm, LV_PCT(60), theme_button_height());
   lv_obj_add_event_cb(confirm, split_confirm_cb, LV_EVENT_CLICKED, NULL);
 
   update_split_display();
@@ -848,7 +846,7 @@ static void build_setup_words_deferred(lv_timer_t *timer) {
 
   // Continue button — let user read words before confirming
   lv_obj_t *btn = theme_create_button(content_area, "Continue", true);
-  lv_obj_set_size(btn, LV_PCT(60), theme_get_button_height());
+  lv_obj_set_size(btn, LV_PCT(60), theme_button_height());
   lv_obj_add_event_cb(btn, setup_words_continue_cb, LV_EVENT_CLICKED, NULL);
 }
 
@@ -908,7 +906,7 @@ static void build_delay_state(void) {
            (unsigned long)delay_remaining_sec);
   lv_label_set_text(delay_label, buf);
   lv_obj_set_style_text_font(delay_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(delay_label, main_color(), 0);
+  lv_obj_set_style_text_color(delay_label, primary_color(), 0);
   lv_obj_set_style_text_align(delay_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(delay_label, LV_PCT(100));
 

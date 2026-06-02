@@ -67,11 +67,11 @@ static void show_source_picker(void) {
   ac_overlay = lv_obj_create(lv_screen_active());
   lv_obj_set_size(ac_overlay, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(ac_overlay);
-  lv_obj_set_style_pad_all(ac_overlay, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_all(ac_overlay, theme_default_padding(), 0);
   lv_obj_set_flex_flow(ac_overlay, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(ac_overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(ac_overlay, theme_get_default_padding(), 0);
+  lv_obj_set_style_pad_gap(ac_overlay, theme_default_padding(), 0);
 
   lv_obj_t *picker_row = lv_obj_create(ac_overlay);
   lv_obj_set_size(picker_row, LV_PCT(100), LV_SIZE_CONTENT);

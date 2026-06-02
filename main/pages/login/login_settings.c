@@ -109,7 +109,7 @@ static void show_brightness_page(void) {
   brightness_label = lv_label_create(brightness_screen);
   lv_label_set_text_fmt(brightness_label, "%d%%", (int)cur);
   lv_obj_set_style_text_font(brightness_label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(brightness_label, main_color(), 0);
+  lv_obj_set_style_text_color(brightness_label, primary_color(), 0);
   lv_obj_align(brightness_label, LV_ALIGN_CENTER, 0, -30);
 
   // Slider

@@ -228,7 +228,7 @@ static void update_checksum_ui(void) {
   if (valid) {
     lv_obj_add_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_state(load_btn, LV_STATE_DISABLED);
-    lv_obj_set_style_text_color(load_label, main_color(), 0);
+    lv_obj_set_style_text_color(load_label, primary_color(), 0);
   } else {
     lv_obj_clear_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_state(load_btn, LV_STATE_DISABLED);
@@ -291,7 +291,7 @@ static void update_word_label(int index) {
 
   bool changed = strcmp(entered_words[index], original_words[index]) != 0;
   lv_obj_set_style_text_color(word_labels[index],
-                              changed ? highlight_color() : main_color(), 0);
+                              changed ? highlight_color() : primary_color(), 0);
 }
 
 static void show_word_grid(void) {
@@ -596,7 +596,7 @@ static lv_obj_t *create_word_button(lv_obj_t *parent, int index, int height,
   lv_label_set_text(label, text);
   lv_obj_align(label, LV_ALIGN_LEFT_MID, -10, 0);
   lv_obj_set_style_text_font(label, theme_font_medium(), 0);
-  lv_obj_set_style_text_color(label, main_color(), 0);
+  lv_obj_set_style_text_color(label, primary_color(), 0);
 
   word_labels[index] = label;
   return btn;
@@ -604,14 +604,13 @@ static lv_obj_t *create_word_button(lv_obj_t *parent, int index, int height,
 
 static void create_word_grid(void) {
   bool two_columns = (total_words > 12);
-  int screen_width = theme_get_screen_width();
-  int screen_height = theme_get_screen_height();
-  int margin_h = theme_get_small_padding();
+  int screen_width = theme_screen_width();
+  int screen_height = theme_screen_height();
+  int margin_h = theme_small_padding();
   // Clear the corner back button on top and the load button at the bottom,
   // both sized proportionally to the screen, leaving a small gap each side.
-  int top_offset =
-      theme_get_corner_button_height() + 2 * theme_get_small_padding();
-  int bottom_offset = theme_get_min_touch_size() + theme_get_default_padding();
+  int top_offset = theme_corner_button_height() + 2 * theme_small_padding();
+  int bottom_offset = theme_min_touch_size() + theme_default_padding();
   int grid_width = screen_width - (2 * margin_h);
   int grid_height = screen_height - top_offset - bottom_offset;
 
@@ -656,13 +655,12 @@ static void create_word_grid(void) {
 static void create_ui(void) {
   header_container = theme_create_flex_row(mnemonic_editor_screen);
   lv_obj_set_style_pad_column(header_container, 8, 0);
-  lv_obj_align(header_container, LV_ALIGN_TOP_MID, 0,
-               theme_get_default_padding());
+  lv_obj_align(header_container, LV_ALIGN_TOP_MID, 0, theme_default_padding());
 
   lv_obj_t *title = lv_label_create(header_container);
   lv_label_set_text(title, "Mnemonic");
   lv_obj_set_style_text_font(title, theme_font_small(), 0);
-  lv_obj_set_style_text_color(title, main_color(), 0);
+  lv_obj_set_style_text_color(title, primary_color(), 0);
 
   fingerprint_label = lv_label_create(header_container);
   lv_label_set_text(fingerprint_label, "");
@@ -675,9 +673,9 @@ static void create_ui(void) {
   grid_back_btn = ui_create_back_button(mnemonic_editor_screen, back_btn_cb);
   create_word_grid();
 
-  int32_t pad = theme_get_default_padding();
+  int32_t pad = theme_default_padding();
   load_btn = lv_btn_create(mnemonic_editor_screen);
-  lv_obj_set_size(load_btn, 140, theme_get_min_touch_size());
+  lv_obj_set_size(load_btn, 140, theme_min_touch_size());
   lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
   theme_apply_touch_button(load_btn, true);
   lv_obj_add_event_cb(load_btn, load_btn_cb, LV_EVENT_CLICKED, NULL);
