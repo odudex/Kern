@@ -2,7 +2,7 @@
 
 #include "input_helpers.h"
 #include "assets/icons.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <sdkconfig.h>
 
 #ifdef CONFIG_KERN_BOARD_WAVE_35

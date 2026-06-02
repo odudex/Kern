@@ -5,7 +5,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/keyboard.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/bip39_filter.h"
 #include "../shared/mnemonic_editor.h"

@@ -8,7 +8,7 @@
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
 #include "../../ui/power.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../scan/scan.h"
 #include "../settings/wallet_settings.h"
 #include "addresses.h"

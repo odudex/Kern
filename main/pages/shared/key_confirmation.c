@@ -6,7 +6,7 @@
 #include "../../qr/encoder.h"
 #include "../../ui/assets/icons_36.h"
 #include "../../ui/dialog.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/memory_utils.h"
 #include <lvgl.h>
 #include <string.h>

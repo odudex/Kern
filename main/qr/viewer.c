@@ -2,7 +2,7 @@
 #include "../components/bbqr/src/bbqr.h"
 #include "../components/cUR/src/types/psbt.h"
 #include "../components/cUR/src/ur_encoder.h"
-#include "../ui/theme.h"
+#include "../ui/theme_widgets.h"
 #include "encoder.h"
 #include "parser.h"
 #include <lvgl.h>

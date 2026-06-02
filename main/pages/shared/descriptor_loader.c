@@ -11,7 +11,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>

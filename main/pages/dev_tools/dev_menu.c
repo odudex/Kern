@@ -15,7 +15,7 @@
 
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #ifdef K_QUIRC_DEBUG
 #include "decode_snapshots.h"
 #endif

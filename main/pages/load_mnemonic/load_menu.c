@@ -6,7 +6,7 @@
 #include "../../core/storage.h"
 #include "../../qr/scanner.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../home/home.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"

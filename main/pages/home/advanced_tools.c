@@ -1,6 +1,6 @@
 #include "advanced_tools.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "bip85.h"
 #include <lvgl.h>
 

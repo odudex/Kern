@@ -5,7 +5,7 @@
 #include "../../core/ss_whitelist.h"
 #include "../../core/wallet.h"
 #include "../../ui/dialog.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include <lvgl.h>
 #include <stdlib.h>

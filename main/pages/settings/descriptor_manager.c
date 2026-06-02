@@ -10,7 +10,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
 #include "../store_descriptor.h"

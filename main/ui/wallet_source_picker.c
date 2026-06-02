@@ -3,7 +3,7 @@
 #include "wallet_source_picker.h"
 #include "../core/registry.h"
 #include "numeric_keypad.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

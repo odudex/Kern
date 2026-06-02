@@ -9,7 +9,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/power.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include <bsp/pmic.h>
 #ifdef DEV_TOOLS_ENABLED
 #include "../dev_tools/dev_menu.h"

@@ -1,7 +1,7 @@
 // UI Keyboard - QWERTY grid using lv_buttonmatrix
 
 #include "keyboard.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <stdlib.h>
 #include <string.h>
 

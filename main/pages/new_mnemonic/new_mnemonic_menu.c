@@ -3,7 +3,7 @@
 #include "new_mnemonic_menu.h"
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../home/home.h"
 #include "../load_mnemonic/manual_input.h"
 #include "../shared/key_confirmation.h"

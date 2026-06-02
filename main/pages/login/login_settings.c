@@ -5,7 +5,7 @@
 #include "../../core/settings.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/session.h"
 #include "../pin/pin_page.h"
 #include "../pin/pin_settings.h"

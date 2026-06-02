@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 
 static const char *TAG = "decode_snapshots";
 

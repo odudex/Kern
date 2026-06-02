@@ -10,7 +10,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/settings_row.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../passphrase.h"
 #include "descriptor_manager.h"
 #include <lvgl.h>

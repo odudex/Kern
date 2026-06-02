@@ -6,7 +6,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>

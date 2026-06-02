@@ -2,7 +2,7 @@
 
 #include "about.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include <esp_app_desc.h>
 #include <lvgl.h>
 #include <stdio.h>

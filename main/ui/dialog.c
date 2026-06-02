@@ -1,5 +1,5 @@
 #include "dialog.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <lvgl.h>
 #include <stdlib.h>
 

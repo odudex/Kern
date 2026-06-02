@@ -2,7 +2,7 @@
 #include "../core/key.h"
 #include "assets/icons_24.h"
 #include "battery.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <stdio.h>
 
 lv_obj_t *ui_icon_text_row_create(lv_obj_t *parent, const char *icon,

@@ -5,7 +5,7 @@
 #include "pages/pin/pin_page.h"
 #include "pages/screensaver.h"
 #include "ui/assets/kern_logo_lvgl.h"
-#include "ui/theme.h"
+#include "ui/theme_widgets.h"
 #include "utils/bip39_filter.h"
 #include "utils/session.h"
 #include "video.h"

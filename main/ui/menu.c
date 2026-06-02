@@ -2,7 +2,7 @@
 
 #include "menu.h"
 #include "input_helpers.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <stdint.h>
 #include <stdlib.h>
 

@@ -4,7 +4,7 @@
 #include "../../core/storage.h"
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "wipe_flash_dialog.h"
 #include <lvgl.h>
 #include <stdio.h>

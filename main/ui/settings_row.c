@@ -2,7 +2,7 @@
 
 #include "assets/icons_24.h"
 #include "dialog.h"
-#include "theme.h"
+#include "theme_widgets.h"
 
 #include <lvgl.h>
 #include <stdlib.h>

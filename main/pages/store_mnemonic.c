@@ -5,7 +5,7 @@
 #include "../core/storage.h"
 #include "../qr/encoder.h"
 #include "../ui/dialog.h"
-#include "../ui/theme.h"
+#include "../ui/theme_widgets.h"
 #include "../utils/secure_mem.h"
 #include "shared/kef_encrypt_page.h"
 

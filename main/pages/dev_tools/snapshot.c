@@ -15,7 +15,7 @@
 #include "../../../../components/video/video.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/memory_utils.h"
 
 static const char *TAG = "snapshot";

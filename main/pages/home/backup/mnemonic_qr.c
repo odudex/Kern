@@ -6,7 +6,7 @@
 #include "../../../qr/encoder.h"
 #include "../../../ui/dialog.h"
 #include "../../../ui/input_helpers.h"
-#include "../../../ui/theme.h"
+#include "../../../ui/theme_widgets.h"
 #include "../../shared/kef_encrypt_page.h"
 #include <lvgl.h>
 #include <stdlib.h>

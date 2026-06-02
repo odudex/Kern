@@ -3,7 +3,7 @@
 #include "dice_rolls.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include <lvgl.h>
 #include <stdlib.h>

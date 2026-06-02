@@ -3,7 +3,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/numeric_keypad.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/secure_mem.h"
 #include "../shared/key_confirmation.h"

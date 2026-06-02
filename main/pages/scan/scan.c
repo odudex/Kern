@@ -21,7 +21,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/address_checker.h"

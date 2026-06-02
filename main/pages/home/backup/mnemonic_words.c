@@ -2,7 +2,7 @@
 
 #include "mnemonic_words.h"
 #include "../../../core/key.h"
-#include "../../../ui/theme.h"
+#include "../../../ui/theme_widgets.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>

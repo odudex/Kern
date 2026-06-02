@@ -6,7 +6,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/keyboard.h"
 #include "../../ui/menu.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/bip39_filter.h"
 #include "key_confirmation.h"
 #include <lvgl.h>

@@ -4,7 +4,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/settings_row.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
 #include <lvgl.h>

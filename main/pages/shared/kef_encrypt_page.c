@@ -13,7 +13,7 @@
 #include "../../core/key.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
-#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 
 #include <esp_task_wdt.h>

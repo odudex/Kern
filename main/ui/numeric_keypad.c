@@ -1,7 +1,7 @@
 #include "numeric_keypad.h"
 #include "dialog.h"
 #include "input_helpers.h"
-#include "theme.h"
+#include "theme_widgets.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
