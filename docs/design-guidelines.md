@@ -17,10 +17,12 @@ Colors live in `main/ui/theme.c` and are reached through accessor functions in `
 | `highlight_color()` | orange  | Titles, button press, dropdown borders     |
 | `disabled_color()`  | gray    | Disabled text, btnmatrix/dropdown item fills |
 | `error_color()`     | red     | Error text, danger dialog border and icon  |
-| `yes_color()`       | green   | "Yes" in confirm, "No" in danger confirm   |
-| `no_color()`        | red     | "No" in confirm, "Yes" in danger confirm   |
+| `encourage_color()` | green   | The encouraged choice in a confirm dialog  |
+| `discourage_color()`| red     | The discouraged choice in a confirm dialog |
+| `good_color()`      | green   | A good value/state (battery, key strength) |
+| `bad_color()`       | red     | A bad value/state                          |
 
-The palette assumes a black background. In danger dialogs the Yes/No colors are intentionally swapped so the safe choice ("No") shows green.
+The palette assumes a black background. Action colors describe whether a choice is encouraged or discouraged, independent of its "Yes"/"No" label — so a danger dialog encourages "No" (green) and discourages "Yes" (red), keeping the safe choice prominent.
 
 ## Icons
 

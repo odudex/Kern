@@ -19,9 +19,10 @@
 #define COLOR_ORANGE lv_color_hex(0xff6600)   // Orange accent
 #define COLOR_DISABLED lv_color_hex(0x333333) // Gray disabled
 #define COLOR_ERROR lv_color_hex(0xFF0000)    // Red for errors
-#define COLOR_NO lv_color_hex(0xFF0000)       // Red for negative
-#define COLOR_YES lv_color_hex(0x00FF00)      // Green for positive
-#define COLOR_CYAN lv_color_hex(0x00FFFF)     // Cyan accent
+#define COLOR_GREEN                                                            \
+  lv_color_hex(0x00FF00) // Green: encouraged action / good state
+#define COLOR_RED lv_color_hex(0xFF0000)  // Red: discouraged action / bad state
+#define COLOR_CYAN lv_color_hex(0x00FFFF) // Cyan accent
 
 // Mutable font copies with icon fallbacks
 static lv_font_t font_small;
@@ -113,9 +114,18 @@ lv_color_t panel_color(void) { return COLOR_PANEL; }
 
 lv_color_t error_color(void) { return COLOR_ERROR; }
 
-lv_color_t yes_color(void) { return COLOR_YES; }
+// Action-choice colors: green encourages a choice, red discourages it. The
+// label ("Yes"/"No") is independent of which choice is encouraged — e.g. a
+// danger dialog encourages "No" and discourages "Yes".
+lv_color_t encourage_color(void) { return COLOR_GREEN; }
 
-lv_color_t no_color(void) { return COLOR_NO; }
+lv_color_t discourage_color(void) { return COLOR_RED; }
+
+// State/value colors: green for a good value, red for a bad one (battery level,
+// password strength, change outputs, etc.).
+lv_color_t good_color(void) { return COLOR_GREEN; }
+
+lv_color_t bad_color(void) { return COLOR_RED; }
 
 lv_color_t cyan_color(void) { return COLOR_CYAN; }
 

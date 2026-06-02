@@ -125,7 +125,7 @@ static lv_color_t strength_color(key_strength_t s) {
     return highlight_color();
   case KEY_STRENGTH_GOOD:
   case KEY_STRENGTH_STRONG:
-    return yes_color();
+    return good_color();
   default:
     return lv_color_white();
   }

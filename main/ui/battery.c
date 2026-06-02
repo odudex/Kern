@@ -16,7 +16,7 @@ static void battery_update(lv_obj_t *label) {
   lv_color_t color;
   if (pct >= 76) {
     battery_icon = LV_SYMBOL_BATTERY_FULL;
-    color = yes_color();
+    color = good_color();
   } else if (pct >= 40) {
     battery_icon = LV_SYMBOL_BATTERY_3;
     color = main_color();
@@ -34,7 +34,7 @@ static void battery_update(lv_obj_t *label) {
   char buf[16];
   if (chg == BSP_PMIC_CHG_CHARGING) {
     snprintf(buf, sizeof(buf), "%s %s", battery_icon, LV_SYMBOL_CHARGE);
-    color = yes_color();
+    color = good_color();
     lv_label_set_text(label, buf);
   } else {
     lv_label_set_text(label, battery_icon);

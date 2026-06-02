@@ -896,7 +896,7 @@ static bool create_psbt_info_display(void) {
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
       output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = yes_color();
+      output_colors[diagram_idx] = good_color();
       diagram_idx++;
     }
   }
@@ -1133,8 +1133,8 @@ static bool create_psbt_info_display(void) {
     }
   }
   if (change_count > 0) {
-    lv_obj_t *row = create_btc_value_row(psbt_info_container,
-                                         "Change: ", total_change, yes_color());
+    lv_obj_t *row = create_btc_value_row(
+        psbt_info_container, "Change: ", total_change, good_color());
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_style_margin_top(row, 15, 0);
   }

@@ -422,7 +422,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   lv_obj_add_event_cb(no_btn, info_confirm_no_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *no_label = lv_obj_get_child(no_btn, 0);
   if (no_label) {
-    lv_obj_set_style_text_color(no_label, no_color(), 0);
+    lv_obj_set_style_text_color(no_label, discourage_color(), 0);
     lv_obj_set_style_text_font(no_label, theme_font_medium(), 0);
   }
 
@@ -432,7 +432,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   lv_obj_add_event_cb(yes_btn, info_confirm_yes_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *yes_label = lv_obj_get_child(yes_btn, 0);
   if (yes_label) {
-    lv_obj_set_style_text_color(yes_label, yes_color(), 0);
+    lv_obj_set_style_text_color(yes_label, encourage_color(), 0);
     lv_obj_set_style_text_font(yes_label, theme_font_medium(), 0);
   }
 }

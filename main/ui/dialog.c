@@ -267,9 +267,11 @@ static void show_confirm_internal(const char *message,
   lv_obj_align(msg_label, LV_ALIGN_TOP_MID, 0, msg_y);
 
   add_confirm_button(dialog, "No", LV_ALIGN_BOTTOM_LEFT,
-                     danger ? yes_color() : no_color(), confirm_no_cb, ctx);
+                     danger ? encourage_color() : discourage_color(),
+                     confirm_no_cb, ctx);
   add_confirm_button(dialog, "Yes", LV_ALIGN_BOTTOM_RIGHT,
-                     danger ? no_color() : yes_color(), confirm_yes_cb, ctx);
+                     danger ? discourage_color() : encourage_color(),
+                     confirm_yes_cb, ctx);
 
   dialog_fit_overlay(dialog, style, message,
                      msg_y + theme_get_button_height() +
