@@ -4,6 +4,7 @@
 #include "../../../core/storage.h"
 #include "../../../ui/dialog.h"
 #include "../../../ui/menu.h"
+#include "../../../ui/swipe_back.h"
 #include "../../../ui/theme_widgets.h"
 #include "../../store_mnemonic.h"
 #include "mnemonic_qr.h"
@@ -92,6 +93,7 @@ void backup_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
 
   backup_menu_screen = theme_create_page_container(parent);
+  swipe_back_attach(backup_menu_screen, back_cb);
 
   backup_menu = ui_menu_create(backup_menu_screen, "Back Up", back_cb);
   if (!backup_menu)

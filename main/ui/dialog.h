@@ -8,6 +8,7 @@ typedef enum {
   DIALOG_INFO,
   DIALOG_ERROR,
   DIALOG_CONFIRM,
+  DIALOG_DANGER,
 } dialog_type_t;
 
 typedef enum {

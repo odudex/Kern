@@ -1,6 +1,7 @@
 #include "passphrase.h"
 #include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
+#include "../ui/swipe_back.h"
 #include "../ui/theme_widgets.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -18,6 +19,11 @@ static void back_confirm_cb(bool result, void *user_data) {
 
 static void back_btn_cb(lv_event_t *e) {
   (void)e;
+  dialog_show_confirm("Are you sure you want to go back?", back_confirm_cb,
+                      NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void back_plain_cb(void) {
   dialog_show_confirm("Are you sure you want to go back?", back_confirm_cb,
                       NULL, DIALOG_STYLE_OVERLAY);
 }
@@ -48,6 +54,7 @@ void passphrase_page_create(lv_obj_t *parent, void (*return_cb)(void),
   lv_obj_set_size(passphrase_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(passphrase_screen);
   lv_obj_clear_flag(passphrase_screen, LV_OBJ_FLAG_SCROLLABLE);
+  swipe_back_attach(passphrase_screen, back_plain_cb);
 
   // Create title label
   theme_create_page_title(passphrase_screen, "Enter Passphrase");
