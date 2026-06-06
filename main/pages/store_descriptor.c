@@ -7,6 +7,7 @@
 #include "../core/wallet.h"
 #include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
+#include "../ui/swipe_back.h"
 #include "../ui/theme_widgets.h"
 #include "shared/kef_encrypt_page.h"
 
@@ -39,6 +40,17 @@ static char descriptor_default_id[9] = {0};
 static void go_back(void) {
   if (return_callback)
     return_callback();
+}
+
+static void swipe_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (confirmed)
+    go_back();
+}
+
+static void swipe_back_cb(void) {
+  dialog_show_confirm("Are you sure you want to go back?", swipe_confirm_cb,
+                      NULL, DIALOG_STYLE_OVERLAY);
 }
 
 /* ---------- Save result handling ---------- */
@@ -221,6 +233,7 @@ void store_descriptor_page_create_for_descriptor(
   const char *title =
       (location == STORAGE_FLASH) ? "Save to Flash" : "Save to SD Card";
   main_screen = theme_create_page_container(parent);
+  swipe_back_attach(main_screen, swipe_back_cb);
   lv_obj_t *title_label = lv_label_create(main_screen);
   lv_label_set_text(title_label, title);
   lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);

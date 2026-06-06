@@ -4,6 +4,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/settings_row.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
@@ -34,6 +35,11 @@ static const uint32_t PURPOSE_FOR_SOURCE[4] = {
 
 static wallet_picker_mode_t current_picker_mode(void) {
   return multisig_mode ? WALLET_PICKER_MULTISIG_BIP48 : WALLET_PICKER_SINGLESIG;
+}
+
+static void back_plain_cb(void) {
+  if (return_callback)
+    return_callback();
 }
 
 static void back_button_cb(lv_event_t *e) {
@@ -279,6 +285,7 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   bool landscape = theme_is_landscape();
   public_key_screen = create_public_key_screen(parent, landscape);
+  swipe_back_attach(public_key_screen, back_plain_cb);
   ui_key_info_bar_create(public_key_screen);
 
   lv_obj_t *controls_parent =

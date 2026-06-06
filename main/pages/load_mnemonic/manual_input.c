@@ -5,6 +5,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/keyboard.h"
 #include "../../ui/menu.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/bip39_filter.h"
@@ -177,6 +178,11 @@ static void back_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
   if (confirmed && return_callback)
     return_callback();
+}
+
+static void swipe_back_cb(void) {
+  dialog_show_confirm("Are you sure?", back_confirm_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
 }
 
 static void back_btn_cb(lv_event_t *e) {
@@ -359,6 +365,7 @@ void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
   bip39_filter_clear_last_word_cache();
 
   manual_input_screen = theme_create_page_container(parent);
+  swipe_back_attach(manual_input_screen, swipe_back_cb);
   create_word_count_menu();
 }
 

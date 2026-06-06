@@ -10,6 +10,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
@@ -81,6 +82,11 @@ static void format_address_colored_blocks(char *dest, size_t dest_size,
 }
 
 static void show_address_detail(int index);
+
+static void back_plain_cb(void) {
+  if (return_callback)
+    return_callback();
+}
 
 static void back_button_cb(lv_event_t *e) {
   (void)e;
@@ -457,6 +463,7 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_align(addresses_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(addresses_screen, theme_default_padding(), 0);
+  swipe_back_attach(addresses_screen, back_plain_cb);
 
   // Key info bar at top, aligned with the corner buttons.
   ui_key_info_bar_create(addresses_screen);

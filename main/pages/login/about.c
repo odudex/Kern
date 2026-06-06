@@ -2,6 +2,7 @@
 
 #include "about.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include <esp_app_desc.h>
 #include <lvgl.h>
@@ -10,6 +11,11 @@
 
 static lv_obj_t *about_screen = NULL;
 static void (*return_callback)(void) = NULL;
+
+static void back_plain_cb(void) {
+  if (return_callback)
+    return_callback();
+}
 
 static void about_screen_event_cb(lv_event_t *e) {
   (void)e;
@@ -21,7 +27,7 @@ static void create_return_touch_layer(lv_obj_t *parent) {
   lv_obj_t *touch = lv_obj_create(parent);
   lv_obj_remove_style_all(touch);
   lv_obj_set_size(touch, LV_PCT(100), LV_PCT(100));
-  lv_obj_add_flag(touch, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(touch, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
   lv_obj_clear_flag(touch, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(touch, about_screen_event_cb, LV_EVENT_CLICKED, NULL);
   lv_obj_move_foreground(touch);
@@ -39,6 +45,7 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   bool landscape = theme_is_landscape();
 
   about_screen = theme_create_page_container(parent);
+  swipe_back_attach(about_screen, back_plain_cb);
 
   // Title pinned at top
   theme_create_page_title(about_screen, "About");

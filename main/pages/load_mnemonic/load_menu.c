@@ -6,6 +6,7 @@
 #include "../../core/storage.h"
 #include "../../qr/scanner.h"
 #include "../../ui/menu.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../home/home.h"
 #include "../shared/kef_decrypt_page.h"
@@ -158,6 +159,7 @@ void load_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
   load_menu_screen = theme_create_page_container(parent);
+  swipe_back_attach(load_menu_screen, back_cb);
 
   load_menu = ui_menu_create(load_menu_screen, "Load Mnemonic", back_cb);
   if (!load_menu)

@@ -2,6 +2,8 @@
 
 #include "mnemonic_words.h"
 #include "../../../core/key.h"
+#include "../../../ui/dialog.h"
+#include "../../../ui/swipe_back.h"
 #include "../../../ui/theme_widgets.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -9,6 +11,17 @@
 
 static lv_obj_t *mnemonic_screen = NULL;
 static void (*return_callback)(void) = NULL;
+
+static void back_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (confirmed && return_callback)
+    return_callback();
+}
+
+static void swipe_back_cb(void) {
+  dialog_show_confirm("Are you sure?", back_confirm_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
+}
 
 static void back_cb(lv_event_t *e) {
   (void)e;
@@ -30,6 +43,7 @@ void mnemonic_words_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   mnemonic_screen = theme_create_page_container(parent);
   lv_obj_add_flag(mnemonic_screen, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(mnemonic_screen, back_cb, LV_EVENT_CLICKED, NULL);
+  swipe_back_attach(mnemonic_screen, swipe_back_cb);
 
   theme_create_page_title(mnemonic_screen, "BIP39 Words");
 

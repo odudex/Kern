@@ -2,9 +2,8 @@
 #include "theme.h"
 #include <stdlib.h>
 
-#define EDGE_THRESHOLD 30 // px from left edge to begin gesture
-#define COMMIT_RATIO 30   // % of screen width to commit
-#define FOLLOW_RATIO 40   // screen moves at 40% of finger delta
+#define COMMIT_RATIO 25  // % of screen width to commit back nav
+#define FOLLOW_RATIO 100 // screen tracks finger 1:1
 
 typedef struct {
   lv_obj_t *screen;
@@ -56,8 +55,8 @@ static void pressing_cb(lv_event_t *e) {
   lv_point_t pt;
   lv_indev_get_point(indev, &pt);
   if (!ctx->active) {
-    if (pt.x > EDGE_THRESHOLD)
-      return;
+    if (pt.x > theme_screen_width() / 5)
+      return; // 20% edge zone
     ctx->active = true;
     ctx->start_x = pt.x;
   }

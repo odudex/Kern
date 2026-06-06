@@ -6,6 +6,7 @@
 #include "../../../qr/encoder.h"
 #include "../../../ui/dialog.h"
 #include "../../../ui/input_helpers.h"
+#include "../../../ui/swipe_back.h"
 #include "../../../ui/theme_widgets.h"
 #include "../../shared/kef_encrypt_page.h"
 #include <lvgl.h>
@@ -61,6 +62,17 @@ static qr_type_t previous_qr_type = QR_TYPE_PLAINTEXT;
 
 /* Forward declaration */
 static void update_qr_code(void);
+
+static void back_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (confirmed && return_callback)
+    return_callback();
+}
+
+static void swipe_back_cb(void) {
+  dialog_show_confirm("Are you sure?", back_confirm_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
+}
 
 static void back_cb(lv_event_t *e) {
   (void)e;
@@ -421,6 +433,7 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(mnemonic_qr_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(mnemonic_qr_screen);
   lv_obj_clear_flag(mnemonic_qr_screen, LV_OBJ_FLAG_SCROLLABLE);
+  swipe_back_attach(mnemonic_qr_screen, swipe_back_cb);
   lv_obj_set_flex_flow(mnemonic_qr_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(mnemonic_qr_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

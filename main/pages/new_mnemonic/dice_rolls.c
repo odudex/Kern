@@ -3,6 +3,7 @@
 #include "dice_rolls.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include <lvgl.h>
@@ -87,6 +88,11 @@ static void back_confirm_cb(bool confirmed, void *user_data) {
     if (return_callback)
       return_callback();
   }
+}
+
+static void swipe_back_cb(void) {
+  dialog_show_confirm("Are you sure?", back_confirm_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
 }
 
 static void back_btn_cb(lv_event_t *e) {
@@ -316,6 +322,7 @@ void dice_rolls_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   rolls_string[0] = '\0';
 
   dice_rolls_screen = theme_create_page_container(parent);
+  swipe_back_attach(dice_rolls_screen, swipe_back_cb);
 
   create_word_count_menu();
 }

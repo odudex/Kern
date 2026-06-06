@@ -5,6 +5,7 @@
 #include "../../core/settings.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session.h"
 #include "../pin/pin_page.h"
@@ -215,6 +216,7 @@ static void rebuild_menu(void) {
 void login_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
   settings_screen = theme_create_page_container(parent);
+  swipe_back_attach(settings_screen, settings_back_cb);
   rebuild_menu();
 }
 

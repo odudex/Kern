@@ -10,6 +10,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
@@ -528,6 +529,7 @@ void descriptor_manager_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   current_format = FORMAT_PLAINTEXT_DESC;
 
   manager_screen = theme_create_page_container(parent);
+  swipe_back_attach(manager_screen, main_menu_back_cb);
 
   build_main_menu();
 }

@@ -6,6 +6,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/keyboard.h"
 #include "../../ui/menu.h"
+#include "../../ui/swipe_back.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/bip39_filter.h"
 #include "key_confirmation.h"
@@ -525,6 +526,11 @@ static void back_confirm_cb(bool confirmed, void *user_data) {
     return_callback();
 }
 
+static void swipe_back_cb(void) {
+  dialog_show_confirm("Are you sure?", back_confirm_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
+}
+
 static void back_btn_cb(lv_event_t *e) {
   (void)e;
   dialog_show_confirm("Are you sure?", back_confirm_cb, NULL,
@@ -727,6 +733,7 @@ void mnemonic_editor_page_create(lv_obj_t *parent, void (*return_cb)(void),
   current_mode = MODE_WORD_GRID;
 
   mnemonic_editor_screen = theme_create_page_container(parent);
+  swipe_back_attach(mnemonic_editor_screen, swipe_back_cb);
   create_ui();
 }
 
