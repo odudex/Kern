@@ -290,6 +290,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_clear_flag(wallet_settings_screen, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(wallet_settings_screen, theme_default_padding(), 0);
   lv_obj_set_style_pad_top(wallet_settings_screen, theme_small_padding(), 0);
+  lv_obj_set_style_pad_bottom(wallet_settings_screen, theme_small_padding(), 0);
   lv_obj_set_flex_flow(wallet_settings_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(wallet_settings_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
