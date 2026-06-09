@@ -3,10 +3,8 @@
 #include "input_helpers.h"
 #include "assets/icons.h"
 #include "theme_widgets.h"
-#include <sdkconfig.h>
 
-#ifdef CONFIG_KERN_BOARD_WAVE_35
-// Compact keyboard maps for small (320x480) displays.
+// Compact keyboard maps shared by all boards.
 // Trade fewer keys per row for wider touch targets.
 
 static const char *const compact_kb_map_lc[] = {
@@ -97,47 +95,28 @@ static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_uc_map[] = {
     1,
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
 
-static const char *const compact_kb_map_spec[] = {"1",
-                                                  "2",
-                                                  "3",
-                                                  "4",
-                                                  "5",
-                                                  "6",
-                                                  "7",
-                                                  "8",
-                                                  "9",
-                                                  "0",
-                                                  "\n",
-                                                  "@",
-                                                  "#",
-                                                  "$",
-                                                  "%",
-                                                  "&",
-                                                  "*",
-                                                  "+",
-                                                  "-",
-                                                  "=",
-                                                  "/",
-                                                  "\n",
-                                                  "abc",
-                                                  "(",
-                                                  ")",
-                                                  "[",
-                                                  "]",
-                                                  "_",
-                                                  "?",
-                                                  "!",
-                                                  LV_SYMBOL_BACKSPACE,
-                                                  "\n",
-                                                  "<",
-                                                  ";",
-                                                  " ",
-                                                  ":",
-                                                  ">",
-                                                  LV_SYMBOL_OK,
-                                                  ""};
+// Five rows covering every printable ASCII symbol (',' and '.' live on the
+// letter pages) so any externally created passphrase or KEF key can be typed.
+static const char *const compact_kb_map_spec[] = {
+    "1",  "2", "3",  "4",  "5",  "6",          "7",
+    "8",  "9", "0",  "\n", "@",  "#",          "$",
+    "%",  "&", "*",  "+",  "-",  "=",          "/",
+    "\n", "(", ")",  "[",  "]",  "{",          "}",
+    "<",  ">", "\"", "'",  "\n", "abc",        "!",
+    "?",  ";", ":",  "_",  "\\", "|",          LV_SYMBOL_BACKSPACE,
+    "\n", "~", "^",  "`",  " ",  LV_SYMBOL_OK, ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
     1,
     1,
     1,
@@ -169,11 +148,9 @@ static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
     LV_BUTTONMATRIX_CTRL_CHECKED | 2,
     1,
     1,
+    1,
     5,
-    1,
-    1,
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
-#endif
 
 // Corner buttons (back/power top-left, settings top-right) all share the
 // secondary grey style so they read as one consistent control class.
@@ -237,16 +214,13 @@ static void ui_text_input_eye_cb(lv_event_t *e) {
 void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
                           const char *placeholder, bool password_mode,
                           lv_event_cb_t ready_cb) {
-  /* Textarea */
+  /* Textarea below the corner-button/title zone */
+  const int32_t ta_h = 50;
+  const int32_t ta_y = theme_small_padding() + theme_corner_button_height() +
+                       theme_default_padding();
   input->textarea = lv_textarea_create(parent);
-  lv_obj_set_size(input->textarea, password_mode ? LV_PCT(80) : LV_PCT(90), 50);
-#ifdef CONFIG_KERN_BOARD_WAVE_35
-  // Taller keyboard on small displays; pull the textarea up so it stays
-  // visible.
-  const int32_t ta_y = 80;
-#else
-  const int32_t ta_y = 140;
-#endif
+  lv_obj_set_size(input->textarea, password_mode ? LV_PCT(80) : LV_PCT(90),
+                  ta_h);
   if (password_mode)
     lv_obj_align(input->textarea, LV_ALIGN_TOP_LEFT, LV_HOR_RES * 5 / 100,
                  ta_y);
@@ -291,37 +265,30 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   lv_group_add_obj(input->input_group, input->textarea);
   lv_group_focus_obj(input->textarea);
 
-  /* Keyboard on active screen */
+  /* Keyboard on active screen: fill the space below the textarea, capped at
+   * screen width so tall displays keep a sane key aspect ratio */
+  int32_t kb_h = LV_VER_RES - (ta_y + ta_h + theme_default_padding());
+  if (kb_h > LV_HOR_RES)
+    kb_h = LV_HOR_RES;
   input->keyboard = lv_keyboard_create(lv_screen_active());
-#ifdef CONFIG_KERN_BOARD_WAVE_35
-  // Small display: taller keyboard, fewer keys per row, wider gaps.
-  lv_obj_set_size(input->keyboard, LV_HOR_RES, LV_VER_RES * 70 / 100);
-#else
-  lv_obj_set_size(input->keyboard, LV_HOR_RES, LV_VER_RES * 55 / 100);
-#endif
+  lv_obj_set_size(input->keyboard, LV_HOR_RES, kb_h);
   lv_obj_align(input->keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_keyboard_set_textarea(input->keyboard, input->textarea);
   lv_keyboard_set_mode(input->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
   lv_obj_add_event_cb(input->keyboard, ready_cb, LV_EVENT_READY, NULL);
 
-#ifdef CONFIG_KERN_BOARD_WAVE_35
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER,
                       compact_kb_map_lc, compact_kb_ctrl_lc_map);
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_UPPER,
                       compact_kb_map_uc, compact_kb_ctrl_uc_map);
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_SPECIAL,
                       compact_kb_map_spec, compact_kb_ctrl_spec_map);
-#endif
 
   /* Keyboard dark theme */
   lv_obj_set_style_bg_color(input->keyboard, lv_color_black(), 0);
   lv_obj_set_style_border_width(input->keyboard, 0, 0);
   lv_obj_set_style_pad_all(input->keyboard, 4, 0);
-#ifdef CONFIG_KERN_BOARD_WAVE_35
   lv_obj_set_style_pad_gap(input->keyboard, 8, 0);
-#else
-  lv_obj_set_style_pad_gap(input->keyboard, 6, 0);
-#endif
   lv_obj_set_style_bg_color(input->keyboard, disabled_color(), LV_PART_ITEMS);
   lv_obj_set_style_text_color(input->keyboard, primary_color(), LV_PART_ITEMS);
   lv_obj_set_style_text_font(input->keyboard, theme_font_small(),
