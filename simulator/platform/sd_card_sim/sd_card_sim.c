@@ -107,6 +107,11 @@ esp_err_t sd_card_deinit(void) {
     return ESP_OK;
 }
 
+esp_err_t sd_card_remount(void) {
+    s_mounted = false;
+    return sd_card_init();
+}
+
 bool sd_card_is_mounted(void) {
     return s_mounted;
 }
@@ -146,6 +151,17 @@ esp_err_t sd_card_read_file(const char *path, uint8_t **data_out, size_t *len_ou
     return ESP_OK;
 }
 
+esp_err_t sd_card_file_size(const char *path, size_t *size_out) {
+    if (!path || !size_out) return ESP_ERR_INVALID_ARG;
+    char buf[1024];
+    const char *rpath = rewrite_path(path, buf, sizeof(buf));
+    if (!rpath) return ESP_ERR_INVALID_ARG;
+    struct stat st;
+    if (stat(rpath, &st) != 0) return ESP_ERR_NOT_FOUND;
+    *size_out = (size_t)st.st_size;
+    return ESP_OK;
+}
+
 esp_err_t sd_card_file_exists(const char *path, bool *exists) {
     if (!path || !exists) return ESP_ERR_INVALID_ARG;
     char buf[1024];
@@ -163,42 +179,71 @@ esp_err_t sd_card_delete_file(const char *path) {
     return (remove(rpath) == 0) ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t sd_card_list_files(const char *dir_path, char ***files_out, int *count_out) {
-    if (!dir_path || !files_out || !count_out) return ESP_ERR_INVALID_ARG;
-    *files_out = NULL;
+/* Shared single-pass directory walker behind both listing APIs — mirrors the
+ * hardware component's semantics (mounted check, ESP_FAIL on unreadable dir,
+ * dot-prefixed entries skipped). is_dir_out may be NULL when include_dirs is
+ * false. */
+static esp_err_t list_dir(const char *dir_path, bool include_dirs,
+                          char ***names_out, bool **is_dir_out, int *count_out) {
+    if (!dir_path || !names_out || !count_out) return ESP_ERR_INVALID_ARG;
+    if (!s_mounted) return ESP_ERR_INVALID_STATE;
+    *names_out = NULL;
+    if (is_dir_out) *is_dir_out = NULL;
     *count_out = 0;
 
     char buf[1024];
     const char *rpath = rewrite_path(dir_path, buf, sizeof(buf));
     if (!rpath) return ESP_ERR_INVALID_ARG;
     DIR *d = opendir(rpath);
-    if (!d) return ESP_OK; /* directory doesn't exist → empty list */
+    if (!d) return ESP_FAIL;
 
-    char **files = NULL;
+    char **names = NULL;
+    bool *is_dir = NULL;
     int count = 0;
     struct dirent *entry;
 
     while ((entry = readdir(d)) != NULL) {
-        if (entry->d_name[0] == '.') continue; /* skip . and .. */
-        char **tmp = realloc(files, (size_t)(count + 1) * sizeof(char *));
-        if (!tmp) {
-            sd_card_free_file_list(files, count);
+        if (entry->d_name[0] == '.') continue;
+
+        char full[1280];
+        snprintf(full, sizeof(full), "%s/%s", rpath, entry->d_name);
+        struct stat st;
+        if (stat(full, &st) != 0) continue;
+        bool entry_is_dir = S_ISDIR(st.st_mode);
+        if (!S_ISREG(st.st_mode) && !(include_dirs && entry_is_dir)) continue;
+
+        char **tmp = realloc(names, (size_t)(count + 1) * sizeof(char *));
+        if (tmp) names = tmp;
+        bool *tmp_dir = NULL;
+        if (is_dir_out) {
+            tmp_dir = realloc(is_dir, (size_t)(count + 1) * sizeof(bool));
+            if (tmp_dir) is_dir = tmp_dir;
+        }
+        if (!tmp || (is_dir_out && !tmp_dir) ||
+            !(names[count] = strdup(entry->d_name))) {
+            sd_card_free_file_list(names, count);
+            free(is_dir);
             closedir(d);
             return ESP_ERR_NO_MEM;
         }
-        files = tmp;
-        files[count] = strdup(entry->d_name);
-        if (!files[count]) {
-            sd_card_free_file_list(files, count);
-            closedir(d);
-            return ESP_ERR_NO_MEM;
-        }
+        if (is_dir_out) is_dir[count] = entry_is_dir;
         count++;
     }
     closedir(d);
-    *files_out = files;
+    *names_out = names;
+    if (is_dir_out) *is_dir_out = is_dir;
     *count_out = count;
     return ESP_OK;
+}
+
+esp_err_t sd_card_list_files(const char *dir_path, char ***files_out, int *count_out) {
+    return list_dir(dir_path, false, files_out, NULL, count_out);
+}
+
+esp_err_t sd_card_list_entries(const char *dir_path, char ***names_out,
+                               bool **is_dir_out, int *count_out) {
+    if (!is_dir_out) return ESP_ERR_INVALID_ARG;
+    return list_dir(dir_path, true, names_out, is_dir_out, count_out);
 }
 
 void sd_card_free_file_list(char **files, int count) {

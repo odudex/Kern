@@ -9,6 +9,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/power.h"
 #include "../../ui/theme_widgets.h"
+#include "../load/load.h"
 #include "../scan/scan.h"
 #include "../settings/wallet_settings.h"
 #include "addresses.h"
@@ -27,11 +28,13 @@ static void menu_backup_cb(void);
 static void menu_xpub_cb(void);
 static void menu_addresses_cb(void);
 static void menu_scan_cb(void);
+static void menu_load_cb(void);
 static void menu_advanced_tools_cb(void);
 static void return_from_backup_menu_cb(void);
 static void return_from_public_key_cb(void);
 static void return_from_addresses_cb(void);
 static void return_from_scan_cb(void);
+static void return_from_load_cb(void);
 static void return_from_advanced_tools_cb(void);
 static void return_from_wallet_settings_cb(void);
 
@@ -72,6 +75,13 @@ static void menu_scan_cb(void) {
   home_page_hide();
   scan_page_create(lv_screen_active(), return_from_scan_cb);
   scan_page_show();
+}
+
+static void menu_load_cb(void) {
+  save_key_snapshot();
+  home_page_hide();
+  load_page_create(lv_screen_active(), return_from_load_cb);
+  load_page_show();
 }
 
 static void menu_advanced_tools_cb(void) {
@@ -124,6 +134,15 @@ static void return_from_scan_cb(void) {
   home_page_show();
 }
 
+static void return_from_load_cb(void) {
+  load_page_destroy();
+  if (key_snapshot_changed() || wallet_settings_were_applied()) {
+    home_page_destroy();
+    home_page_create(lv_screen_active());
+  }
+  home_page_show();
+}
+
 static void return_from_advanced_tools_cb(void) {
   advanced_tools_page_destroy();
   if (key_snapshot_changed() || wallet_settings_were_applied()) {
@@ -163,6 +182,7 @@ void home_page_create(lv_obj_t *parent) {
   ui_battery_create(header);
 
   ui_menu_add_entry_with_icon(main_menu, ICON_QR_CODE, "Scan", menu_scan_cb);
+  ui_menu_add_entry_with_icon(main_menu, ICON_SD_CARD, "Load", menu_load_cb);
   ui_menu_add_entry_with_icon(main_menu, ICON_XPUB, "Extended Public Key",
                               menu_xpub_cb);
   ui_menu_add_entry_with_icon(main_menu, LV_SYMBOL_LIST, "Addresses",

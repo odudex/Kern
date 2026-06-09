@@ -27,6 +27,7 @@
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
 #include "psbt_sign_policy.h"
+#include "sd_card.h"
 #include <esp_log.h>
 #include <lvgl.h>
 #include <stdio.h>
@@ -122,6 +123,17 @@ static char *signed_psbt_base64 = NULL;
 static bool is_testnet = false;
 static int scanned_qr_format = FORMAT_NONE;
 
+// Signed-PSBT export context. Set when the source PSBT is parsed and reset at
+// the start of each ingest: where a saved file is written (the folder the PSBT
+// was loaded from on SD, else the card root) and which encoding to mirror
+// (base64 text when the source was base64, otherwise raw binary).
+static char psbt_export_dir[512] = SD_CARD_MOUNT_POINT;
+static bool psbt_source_base64 = false;
+// Original SD file name (no path), used to name the saved file
+// "signed-<name>.psbt". Empty for QR sources, which fall back to "signed-N".
+static char psbt_source_name[128] = "";
+static ui_menu_t *export_menu = NULL;
+
 // Message signing data
 static parsed_sign_message_t current_message = {0};
 static bool is_message_sign = false;
@@ -149,6 +161,11 @@ static void handle_descriptor_content(const char *descriptor_str);
 static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
 static void descriptor_loaded_info_cb(void *user_data);
+static void show_export_choice(void);
+static void export_show_qr_cb(void);
+static void export_save_sd_cb(void);
+static void export_choice_back_cb(void);
+static void finish_export(void);
 
 static void create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb) {
   lv_obj_t *button_container = theme_create_button_row(parent, 10);
@@ -370,6 +387,96 @@ static address_network_t detect_address_network(const char *data) {
   return result;
 }
 
+// Classify an already-assembled blob and route it to the matching review
+// screen. Shared by the QR scanner and the SD-card loader, so it must not touch
+// any qr_scanner_page_* state — the caller tears the scanner down first. Takes
+// ownership of qr_content (frees it). When parse_success is already true on
+// entry (a binary PSBT decoded by layer 1), qr_content must be NULL.
+static void finish_dispatch(char *qr_content, size_t qr_content_len,
+                            bool parse_success, int detected_format) {
+  is_message_sign = false;
+
+  // Layer 2: plaintext/binary heuristics — try each parser in priority order
+  if (!parse_success && qr_content) {
+    // 1. Message
+    if (message_sign_parse(qr_content, &current_message)) {
+      is_message_sign = true;
+      parse_success = true;
+    }
+
+    // 2. PSBT (base64)
+    if (!parse_success) {
+      parse_success = parse_and_display_psbt(qr_content);
+    }
+
+    // 3. Descriptor
+    if (!parse_success && (is_descriptor_prefix(qr_content) ||
+                           is_bluewallet_descriptor(qr_content))) {
+      handle_descriptor_content(qr_content);
+      SECURE_FREE_STRING(qr_content);
+      return;
+    }
+
+    // 4. Address
+    if (!parse_success) {
+      address_network_t addr_net = detect_address_network(qr_content);
+      if (addr_net != ADDRESS_NETWORK_NONE) {
+        bool addr_is_mainnet = (addr_net == ADDRESS_NETWORK_MAINNET);
+        bool wallet_is_mainnet =
+            (wallet_get_network() == WALLET_NETWORK_MAINNET);
+        if (addr_is_mainnet == wallet_is_mainnet) {
+          handle_address_content(qr_content);
+        } else {
+          dialog_show_error_timeout(
+              addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
+                              : "Address is for Testnet, wallet is on Mainnet",
+              return_callback, 3000);
+        }
+        SECURE_FREE_STRING(qr_content);
+        return;
+      }
+    }
+
+    // 5. Mnemonic
+    if (!parse_success) {
+      char *mnemonic =
+          mnemonic_qr_to_mnemonic(qr_content, qr_content_len, NULL);
+      if (mnemonic && bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK) {
+        SECURE_FREE_STRING(mnemonic);
+        handle_mnemonic_content(qr_content, qr_content_len);
+        SECURE_FREE_STRING(qr_content);
+        return;
+      }
+      SECURE_FREE_STRING(mnemonic);
+    }
+
+    SECURE_FREE_STRING(qr_content);
+  }
+
+  if (parse_success) {
+    if (is_message_sign) {
+      create_message_sign_display();
+    } else {
+      scanned_qr_format = detected_format;
+
+      if (check_psbt_mismatch()) {
+        return;
+      }
+
+      if (!psbt_sign_policy_allows_review(current_psbt, is_testnet,
+                                          descriptor_loaded_info_cb)) {
+        return;
+      }
+
+      if (!create_psbt_info_display()) {
+        dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
+      }
+    }
+  } else {
+    dialog_show_error_timeout("Unrecognized format", return_callback, 0);
+  }
+}
+
 // --- Main scanner callback with two-layer detection ---
 
 static void return_from_qr_scanner_cb(void) {
@@ -459,95 +566,120 @@ static void return_from_qr_scanner_cb(void) {
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
   }
 
-  // Layer 2: plaintext/binary heuristics — try each parser in priority order
-  if (!parse_success && qr_content) {
-    // 1. Message
-    if (message_sign_parse(qr_content, &current_message)) {
-      is_message_sign = true;
-      parse_success = true;
-    }
-
-    // 2. PSBT (base64)
-    if (!parse_success) {
-      parse_success = parse_and_display_psbt(qr_content);
-    }
-
-    // 3. Descriptor
-    if (!parse_success && (is_descriptor_prefix(qr_content) ||
-                           is_bluewallet_descriptor(qr_content))) {
-      qr_scanner_page_hide();
-      qr_scanner_page_destroy();
-      handle_descriptor_content(qr_content);
-      free(qr_content);
-      return;
-    }
-
-    // 4. Address
-    if (!parse_success) {
-      address_network_t addr_net = detect_address_network(qr_content);
-      if (addr_net != ADDRESS_NETWORK_NONE) {
-        bool addr_is_mainnet = (addr_net == ADDRESS_NETWORK_MAINNET);
-        bool wallet_is_mainnet =
-            (wallet_get_network() == WALLET_NETWORK_MAINNET);
-        qr_scanner_page_hide();
-        qr_scanner_page_destroy();
-        if (addr_is_mainnet == wallet_is_mainnet) {
-          handle_address_content(qr_content);
-        } else {
-          dialog_show_error_timeout(
-              addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
-                              : "Address is for Testnet, wallet is on Mainnet",
-              return_callback, 3000);
-        }
-        free(qr_content);
-        return;
-      }
-    }
-
-    // 5. Mnemonic
-    if (!parse_success) {
-      char *mnemonic =
-          mnemonic_qr_to_mnemonic(qr_content, qr_content_len, NULL);
-      if (mnemonic && bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK) {
-        free(mnemonic);
-        qr_scanner_page_hide();
-        qr_scanner_page_destroy();
-        handle_mnemonic_content(qr_content, qr_content_len);
-        free(qr_content);
-        return;
-      }
-      SECURE_FREE_STRING(mnemonic);
-    }
-
-    free(qr_content);
-    qr_content = NULL;
-  }
-
   qr_scanner_page_hide();
   qr_scanner_page_destroy();
 
-  if (parse_success) {
-    if (is_message_sign) {
-      create_message_sign_display();
-    } else {
-      scanned_qr_format = detected_format;
+  finish_dispatch(qr_content, qr_content_len, parse_success, detected_format);
+}
 
-      if (check_psbt_mismatch()) {
-        return;
-      }
+// Resets the signed-PSBT export context. A scanned PSBT has no source folder
+// or file name — a saved signature lands at the card root in binary, unless
+// layer 2 detects base64 text; a file load passes the folder it came from and
+// its name.
+static void reset_export_context(const char *save_dir,
+                                 const char *source_name) {
+  psbt_source_base64 = false;
+  snprintf(psbt_export_dir, sizeof(psbt_export_dir), "%s",
+           save_dir ? save_dir : SD_CARD_MOUNT_POINT);
+  snprintf(psbt_source_name, sizeof(psbt_source_name), "%s",
+           source_name ? source_name : "");
+}
 
-      if (!psbt_sign_policy_allows_review(current_psbt, is_testnet,
-                                          descriptor_loaded_info_cb)) {
-        return;
-      }
-
-      if (!create_psbt_info_display()) {
-        dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
-      }
-    }
-  } else {
-    dialog_show_error_timeout("Unrecognized QR format", return_callback, 0);
+// Normalizes a text file's contents into the single string the layer-2
+// detectors expect from a QR: strips a UTF-8 BOM, drops comment and blank
+// lines (a comment's first non-whitespace character is '#'; a descriptor's
+// "#checksum" suffix is mid-line and so survives), trims each line, then
+// rejoins. Editor-wrapped base64 PSBTs and descriptors are joined without a
+// separator; anything else (e.g. a word-per-line mnemonic backup) gets a
+// single space between lines. BlueWallet "Policy:" files keep their layout —
+// that parser reads the lines itself. Returns a heap string, or NULL when no
+// content line exists.
+static char *normalize_file_text(const uint8_t *data, size_t len) {
+  const char *text = (const char *)data;
+  if (len >= 3 && memcmp(text, "\xEF\xBB\xBF", 3) == 0) {
+    text += 3;
+    len -= 3;
   }
+
+  char *out = malloc(len + 1);
+  if (!out)
+    return NULL;
+
+  size_t n = 0;
+  const char *sep = NULL;
+  size_t i = 0;
+  while (i < len) {
+    size_t s = i;
+    while (i < len && text[i] != '\n')
+      i++;
+    size_t e = i;
+    if (i < len)
+      i++; // step past '\n'
+
+    while (s < e && (text[s] == ' ' || text[s] == '\t' || text[s] == '\r'))
+      s++;
+    while (e > s &&
+           (text[e - 1] == ' ' || text[e - 1] == '\t' || text[e - 1] == '\r'))
+      e--;
+    if (s == e || text[s] == '#')
+      continue; // blank or comment line
+
+    if (!sep) { // first content line decides how the rest are joined
+      sep = (e - s >= 6 && (strncmp(text + s, "cHNidP", 6) == 0 ||
+                            is_descriptor_prefix(text + s)))
+                ? ""
+                : " ";
+    } else if (*sep) {
+      out[n++] = ' ';
+    }
+    memcpy(out + n, text + s, e - s);
+    n += e - s;
+  }
+  out[n] = '\0';
+
+  if (n == 0 || strstr(out, "Policy:")) {
+    // BlueWallet files are re-emitted whole; an all-comment/blank file is
+    // reported as having no content.
+    SECURE_FREE_BUFFER(out, n);
+    if (n == 0)
+      return NULL;
+    out = malloc(len + 1);
+    if (!out)
+      return NULL;
+    memcpy(out, text, len);
+    out[len] = '\0';
+  }
+  return out;
+}
+
+void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
+                       const char *save_dir, const char *source_name,
+                       void (*return_cb)(void)) {
+  if (!parent || !data || len == 0)
+    return;
+
+  reset_export_context(save_dir, source_name);
+  return_callback = return_cb;
+  scan_screen = theme_create_page_container(parent);
+
+  // A file may hold a serialized binary PSBT — try that first (mirroring the
+  // BBQr path); otherwise normalize the text for the layer-2 detectors.
+  cleanup_psbt_data();
+  bool parse_success =
+      (wally_psbt_from_bytes(data, len, 0, &current_psbt) == WALLY_OK);
+
+  char *content = NULL;
+  if (!parse_success) {
+    content = normalize_file_text(data, len);
+    if (!content) {
+      dialog_show_error_timeout("No loadable content in file", return_callback,
+                                0);
+      return;
+    }
+  }
+
+  finish_dispatch(content, content ? strlen(content) : len, parse_success,
+                  FORMAT_NONE);
 }
 
 // --- Descriptor handler ---
@@ -712,6 +844,7 @@ static bool parse_and_display_psbt(const char *base64_data) {
     return false;
   }
 
+  psbt_source_base64 = true;
   return true;
 }
 
@@ -1269,12 +1402,19 @@ static bool create_psbt_info_display(void) {
   return true;
 }
 
-static lv_obj_t *sign_progress_dialog = NULL;
+static lv_obj_t *progress_dialog = NULL;
 
-static void dismiss_sign_progress(void) {
-  if (sign_progress_dialog) {
-    lv_obj_del(sign_progress_dialog);
-    sign_progress_dialog = NULL;
+static void dismiss_progress(void) {
+  if (progress_dialog) {
+    lv_obj_del(progress_dialog);
+    progress_dialog = NULL;
+  }
+}
+
+static void destroy_export_menu(void) {
+  if (export_menu) {
+    ui_menu_destroy(export_menu);
+    export_menu = NULL;
   }
 }
 
@@ -1282,7 +1422,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   (void)timer;
 
   if (!current_psbt) {
-    dismiss_sign_progress();
+    dismiss_progress();
     dialog_show_error_timeout("No PSBT loaded", NULL, 2000);
     return;
   }
@@ -1294,7 +1434,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   size_t signatures_added = psbt_sign(current_psbt, is_testnet, sign_policy);
 
   if (signatures_added == 0) {
-    dismiss_sign_progress();
+    dismiss_progress();
     dialog_show_error_timeout("Failed to sign PSBT", NULL, 2000);
     return;
   }
@@ -1313,7 +1453,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     wally_psbt_free(trimmed_psbt);
   }
 
-  dismiss_sign_progress();
+  dismiss_progress();
 
   if (ret != WALLY_OK) {
     dialog_show_error_timeout("Failed to encode PSBT", NULL, 2000);
@@ -1321,6 +1461,26 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   }
 
   saved_return_callback = return_callback;
+  show_export_choice();
+}
+
+// Tears down the chooser, then returns to the caller that opened the
+// scan/sign flow — the return callback owns scan_page_destroy(). Used once a
+// signed PSBT has been exported (QR or SD) or the user backs out of the
+// export choice.
+static void finish_export(void) {
+  destroy_export_menu();
+  if (saved_return_callback) {
+    void (*cb)(void) = saved_return_callback;
+    saved_return_callback = NULL;
+    cb();
+  }
+}
+
+static void export_choice_back_cb(void) { finish_export(); }
+
+static void export_show_qr_cb(void) {
+  destroy_export_menu();
 
   int export_format =
       (scanned_qr_format == -1) ? FORMAT_NONE : scanned_qr_format;
@@ -1333,10 +1493,132 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  scan_page_hide();
+  // Free the review screen early — the viewer return callback's own destroy
+  // then finds nothing left to do (scan_page_destroy is idempotent).
   scan_page_destroy();
 
   qr_viewer_page_show();
+}
+
+static void export_saved_dialog_cb(void *user_data) {
+  (void)user_data;
+  finish_export();
+}
+
+// Writes the signed PSBT to psbt_export_dir under an auto-generated,
+// non-clobbering name, mirroring the source encoding — base64 text saves as
+// .txt, binary as .psbt.
+static void deferred_export_save_cb(lv_timer_t *timer) {
+  (void)timer;
+
+  // The card may have been swapped (no card-detect line) — remount fresh.
+  esp_err_t mret = sd_card_remount();
+  dismiss_progress();
+  if (mret != ESP_OK) {
+    dialog_show_error_timeout("No SD card", show_export_choice, 0);
+    return;
+  }
+
+  // Derive a stem from the original file name (extension stripped); when there
+  // is none (QR source) the file is numbered instead.
+  char base[96];
+  base[0] = '\0';
+  if (psbt_source_name[0]) {
+    size_t blen = strlen(psbt_source_name);
+    const char *dot = strrchr(psbt_source_name, '.');
+    if (dot && dot != psbt_source_name)
+      blen = (size_t)(dot - psbt_source_name);
+    if (blen >= sizeof(base))
+      blen = sizeof(base) - 1;
+    memcpy(base, psbt_source_name, blen);
+    base[blen] = '\0';
+  }
+
+  const char *ext = psbt_source_base64 ? "txt" : "psbt";
+  char path[700];
+  bool found = false;
+  for (int n = 1; n <= 1000; n++) {
+    if (base[0]) {
+      if (n == 1)
+        snprintf(path, sizeof(path), "%s/signed-%s.%s", psbt_export_dir, base,
+                 ext);
+      else
+        snprintf(path, sizeof(path), "%s/signed-%s-%d.%s", psbt_export_dir,
+                 base, n, ext);
+    } else {
+      snprintf(path, sizeof(path), "%s/signed-%d.%s", psbt_export_dir, n, ext);
+    }
+    bool exists = false;
+    if (sd_card_file_exists(path, &exists) != ESP_OK)
+      break;
+    if (!exists) {
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    dialog_show_error_timeout("Could not create file", show_export_choice, 0);
+    return;
+  }
+
+  esp_err_t wret;
+  if (psbt_source_base64) {
+    wret = sd_card_write_file(path, (const uint8_t *)signed_psbt_base64,
+                              strlen(signed_psbt_base64));
+  } else {
+    size_t max_len = (strlen(signed_psbt_base64) * 3) / 4 + 1;
+    uint8_t *bin = malloc(max_len);
+    if (!bin) {
+      dialog_show_error_timeout("Out of memory", show_export_choice, 0);
+      return;
+    }
+    size_t bin_len = 0;
+    if (wally_base64_to_bytes(signed_psbt_base64, 0, bin, max_len, &bin_len) !=
+        WALLY_OK) {
+      free(bin);
+      dialog_show_error_timeout("Failed to encode PSBT", show_export_choice, 0);
+      return;
+    }
+    wret = sd_card_write_file(path, bin, bin_len);
+    free(bin);
+  }
+
+  if (wret != ESP_OK) {
+    dialog_show_error_timeout("Failed to save", show_export_choice, 0);
+    return;
+  }
+
+  char msg[768];
+  snprintf(msg, sizeof(msg), "Saved to:\n%s", path);
+  dialog_show_info("Saved", msg, export_saved_dialog_cb, NULL,
+                   DIALOG_STYLE_OVERLAY);
+}
+
+static void export_save_sd_cb(void) {
+  destroy_export_menu();
+
+  // Remounting probes the card and can take a while — show progress and defer
+  // the work so LVGL gets to render it first.
+  progress_dialog =
+      dialog_show_progress("Save", "Saving...", DIALOG_STYLE_OVERLAY);
+  lv_timer_t *t = lv_timer_create(deferred_export_save_cb, 50, NULL);
+  lv_timer_set_repeat_count(t, 1);
+}
+
+// Offers the signed PSBT as a QR code or an SD-card file. Shown over the
+// (hidden) review screen so a back-out can still return cleanly.
+static void show_export_choice(void) {
+  scan_page_hide();
+
+  export_menu = ui_menu_create(lv_screen_active(), "Export Signed PSBT",
+                               export_choice_back_cb);
+  if (!export_menu) {
+    export_show_qr_cb(); // fall back to the QR viewer if the menu can't build
+    return;
+  }
+  ui_menu_add_entry(export_menu, "Show QR code", export_show_qr_cb);
+  ui_menu_add_entry(export_menu, "Save to SD card", export_save_sd_cb);
+  ui_menu_show(export_menu);
 }
 
 static void sign_button_cb(lv_event_t *e) {
@@ -1348,7 +1630,7 @@ static void sign_button_cb(lv_event_t *e) {
 
   // Signing big PSBTs can take a few seconds — show a progress dialog and
   // defer the work to a one-shot timer so LVGL gets to render it first.
-  sign_progress_dialog =
+  progress_dialog =
       dialog_show_progress("Sign", "Processing...", DIALOG_STYLE_OVERLAY);
   lv_timer_t *t = lv_timer_create(deferred_sign_cb, 50, NULL);
   lv_timer_set_repeat_count(t, 1);
@@ -1464,6 +1746,7 @@ void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   }
 
   return_callback = return_cb;
+  reset_export_context(NULL, NULL);
 
   scan_screen = theme_create_page_container(parent);
   qr_scanner_page_create(NULL, return_from_qr_scanner_cb);
@@ -1483,7 +1766,8 @@ void scan_page_hide(void) {
 }
 
 void scan_page_destroy(void) {
-  dismiss_sign_progress();
+  dismiss_progress();
+  destroy_export_menu();
   qr_scanner_page_destroy();
   load_descriptor_storage_page_destroy();
   descriptor_loader_destroy_source_menu();

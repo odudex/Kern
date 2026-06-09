@@ -11,6 +11,29 @@
 void scan_page_create(lv_obj_t *parent, void (*return_cb)(void));
 
 /**
+ * Process an already-assembled blob (e.g. read from an SD-card file) through
+ * the same classify-and-route pipeline as scanned QRs — PSBT, signed message,
+ * descriptor, address or mnemonic — skipping the UR/BBQr transport handling.
+ * Text content is normalized first (BOM, comment lines, editor line-wrapping).
+ * Sets up the scan page's review screens; return_cb is invoked when the flow
+ * finishes, fails to parse, or is backed out of, and owns the
+ * scan_page_destroy() call.
+ * A signed PSBT can be exported back to the same SD-card folder; pass that
+ * folder as save_dir (NULL targets the card root) and the original file name
+ * as source_name so the saved file is named "signed-<source_name>.<ext>"
+ * (.psbt for binary sources, .txt for base64).
+ * @param parent Parent LVGL object
+ * @param data Raw file contents
+ * @param len Length of data in bytes
+ * @param save_dir Folder to write a saved signed PSBT into, or NULL for root
+ * @param source_name Original file name (no path), or NULL for QR sources
+ * @param return_cb Callback invoked when the user finishes / backs out
+ */
+void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
+                       const char *save_dir, const char *source_name,
+                       void (*return_cb)(void));
+
+/**
  * Show the scan page
  */
 void scan_page_show(void);

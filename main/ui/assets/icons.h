@@ -14,6 +14,7 @@
 #define ICON_TOOLBOX "\xEF\x95\x92"     // FontAwesome U+F552 = toolbox
 #define ICON_FINGERPRINT "\xEF\x95\xB7" // FontAwesome U+F577 = fingerprint
 #define ICON_DICE "\xEF\x94\xA2"        // FontAwesome U+F522 = dice
+#define ICON_SD_CARD "\xEF\x9F\x82"     // FontAwesome U+F7C2 = sd-card
 
 // Backward-compatible aliases for call sites that used size-named symbols.
 #define ICON_QRCODE_36 ICON_QR_CODE

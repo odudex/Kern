@@ -6,7 +6,7 @@
 #include <lvgl.h>
 #include <stdbool.h>
 
-#define UI_MENU_MAX_ENTRIES 10
+#define UI_MENU_MAX_ENTRIES 20
 
 typedef void (*ui_menu_callback_t)(void);
 typedef void (*ui_menu_action_callback_t)(int index);
