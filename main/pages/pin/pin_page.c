@@ -501,8 +501,9 @@ static void pin_keystroke_cb(lv_event_t *e) {
       esp_err_t err = pin_compute_anti_phishing(text, split_pos, &word1, &word2,
                                                 identicon_data);
       if (err == ESP_OK && word1 && word2) {
+        // One word per line: side by side overflows narrow displays
         char words_buf[64];
-        snprintf(words_buf, sizeof(words_buf), " %s %s", word1, word2);
+        snprintf(words_buf, sizeof(words_buf), "%s\n%s", word1, word2);
         lv_label_set_text(words_label, words_buf);
         render_identicon_to(identicon_canvas, identicon_draw_buf,
                             identicon_data);
