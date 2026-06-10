@@ -180,7 +180,13 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
   // with the white button text below them. Matches the ui_menu title colour.
   lv_obj_t *label = theme_create_label(parent, text ? text : "", true);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
-  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, theme_default_padding());
+  // Centered within the corner-button band, matching the ui_menu nav bar, so
+  // page and menu titles align with the back/power button beside them.
+  lv_obj_align(label, LV_ALIGN_TOP_MID, 0,
+               theme_small_padding() +
+                   (theme_corner_button_height() -
+                    lv_font_get_line_height(theme_font_small())) /
+                       2);
   return label;
 }
 

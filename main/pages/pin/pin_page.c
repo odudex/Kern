@@ -8,9 +8,11 @@
 #include "../../core/pin.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
+#include "../../ui/power.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 
+#include <bsp/pmic.h>
 #include <esp_system.h>
 #include <lvgl.h>
 #include <sdkconfig.h>
@@ -358,10 +360,26 @@ static void input_ready_cb(lv_event_t *e) {
 
 static void back_btn_cb(lv_event_t *e);
 
-// Back button (setup/change only) + title
-static void build_chrome(const char *title_text) {
-  if (current_mode != PIN_PAGE_UNLOCK)
+static void power_btn_cb(lv_event_t *e) {
+  (void)e;
+  // No key loaded yet at PIN unlock, so nothing to unload (NULL user_data)
+  dialog_show_confirm("Power off?", ui_power_off_confirmed_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
+}
+
+// Top-left corner: back button whenever a cancel path exists (setup, change,
+// PIN verification from settings). On the boot unlock there is nowhere to go
+// back to, so PMIC boards get a power-off button instead — battery-powered
+// users may have turned the device on by accident.
+static void create_back_or_power_button(void) {
+  if (current_mode != PIN_PAGE_UNLOCK || on_cancel)
     ui_create_back_button(page_screen, back_btn_cb);
+  else if (bsp_pmic_is_available())
+    ui_create_power_button(page_screen, power_btn_cb);
+}
+
+static void build_chrome(const char *title_text) {
+  create_back_or_power_button();
   title_label = theme_create_page_title(page_screen, title_text);
 }
 
@@ -882,6 +900,7 @@ static void build_delay_state(void) {
   uint32_t delay_ms = pin_get_delay_ms();
   delay_remaining_sec = (delay_ms + 999) / 1000;
 
+  create_back_or_power_button();
   title_label = theme_create_page_title(page_screen, "Wrong PIN");
   lv_obj_set_style_text_color(title_label, error_color(), 0);
 
@@ -957,9 +976,6 @@ static void transition_to(pin_flow_state_t state) {
 
 static void back_btn_cb(lv_event_t *e) {
   (void)e;
-  if (current_mode == PIN_PAGE_UNLOCK)
-    return;
-
   clear_buffers();
   if (on_cancel)
     on_cancel();
@@ -980,10 +996,7 @@ void pin_page_create(lv_obj_t *parent, pin_page_mode_t mode,
   on_cancel = cancel_cb;
   clear_buffers();
 
-  page_screen = lv_obj_create(parent);
-  lv_obj_set_size(page_screen, LV_PCT(100), LV_PCT(100));
-  theme_apply_screen(page_screen);
-  lv_obj_clear_flag(page_screen, LV_OBJ_FLAG_SCROLLABLE);
+  page_screen = theme_create_page_container(parent);
 
   switch (mode) {
   case PIN_PAGE_UNLOCK:
