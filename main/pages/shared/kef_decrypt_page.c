@@ -186,10 +186,7 @@ void kef_decrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
   }
 
   /* Screen */
-  kef_screen = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(kef_screen, LV_PCT(100), LV_PCT(100));
-  theme_apply_screen(kef_screen);
-  lv_obj_clear_flag(kef_screen, LV_OBJ_FLAG_SCROLLABLE);
+  kef_screen = theme_create_page_container(lv_screen_active());
 
   /* Title — shows KEF ID if available */
   theme_create_page_title(kef_screen, title);

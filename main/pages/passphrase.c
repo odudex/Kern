@@ -44,10 +44,7 @@ void passphrase_page_create(lv_obj_t *parent, void (*return_cb)(void),
   success_callback = success_cb;
 
   // Screen
-  passphrase_screen = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(passphrase_screen, LV_PCT(100), LV_PCT(100));
-  theme_apply_screen(passphrase_screen);
-  lv_obj_clear_flag(passphrase_screen, LV_OBJ_FLAG_SCROLLABLE);
+  passphrase_screen = theme_create_page_container(lv_screen_active());
 
   // Create title label
   theme_create_page_title(passphrase_screen, "Enter Passphrase");
