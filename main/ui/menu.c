@@ -295,9 +295,17 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   lv_obj_set_flex_align(menu->nav_bar, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(menu->nav_bar, LV_OBJ_FLAG_SCROLLABLE);
+  // Keep the centered title clear of the corner buttons on narrow displays
+  lv_obj_set_style_pad_hor(
+      menu->nav_bar, theme_small_padding() + theme_corner_button_width(), 0);
 
   menu->title_label = lv_label_create(menu->nav_bar);
   lv_label_set_text(menu->title_label, title);
+  // max_width (not width): login.c aligns its logo to this label's box, so it
+  // must stay content-sized until wrapping is actually needed
+  lv_obj_set_style_max_width(menu->title_label, LV_PCT(100), 0);
+  lv_label_set_long_mode(menu->title_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(menu->title_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(menu->title_label, theme_font_small(), 0);
   theme_apply_label(menu->title_label, true);
 
