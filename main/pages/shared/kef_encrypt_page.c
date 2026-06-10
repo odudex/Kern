@@ -195,10 +195,7 @@ static void create_overlay(const char *title, const char *placeholder,
                            bool password_mode, lv_event_cb_t ready_cb) {
   destroy_overlay();
 
-  overlay_screen = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(overlay_screen, LV_PCT(100), LV_PCT(100));
-  theme_apply_screen(overlay_screen);
-  lv_obj_clear_flag(overlay_screen, LV_OBJ_FLAG_SCROLLABLE);
+  overlay_screen = theme_create_page_container(lv_screen_active());
 
   overlay_title = theme_create_page_title(overlay_screen, title);
   ui_create_back_button(overlay_screen, cancel_cb);

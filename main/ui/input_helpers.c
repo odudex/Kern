@@ -160,13 +160,20 @@ static lv_obj_t *create_corner_button(lv_obj_t *parent, lv_align_t align,
   if (!parent)
     return NULL;
 
+  // Offsets are measured from the parent's border rather than its content
+  // area, so the button lands at the same screen position on padded
+  // containers as on standard zero-padding pages.
   int32_t pad = theme_small_padding();
+  int32_t y_ofs = pad - lv_obj_get_style_pad_top(parent, 0);
+  int32_t x_ofs = align == LV_ALIGN_TOP_RIGHT
+                      ? lv_obj_get_style_pad_right(parent, 0) - pad
+                      : pad - lv_obj_get_style_pad_left(parent, 0);
 
   lv_obj_t *btn = lv_btn_create(parent);
   theme_apply_touch_button(btn, false);
   lv_obj_set_size(btn, theme_corner_button_width(),
                   theme_corner_button_height());
-  lv_obj_align(btn, align, align == LV_ALIGN_TOP_RIGHT ? -pad : pad, pad);
+  lv_obj_align(btn, align, x_ofs, y_ofs);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, symbol);

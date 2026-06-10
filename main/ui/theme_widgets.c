@@ -187,12 +187,15 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
   lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   // Centered within the corner-button band, matching the ui_menu nav bar, so
-  // page and menu titles align with the back/power button beside them.
+  // page and menu titles align with the back/power button beside them. The
+  // band is measured from the parent's border so padded containers place the
+  // title at the same screen position as standard zero-padding pages.
   lv_obj_update_layout(label);
-  int32_t y = theme_small_padding() +
-              (theme_corner_button_height() - lv_obj_get_height(label)) / 2;
-  if (y < theme_small_padding())
-    y = theme_small_padding();
+  int32_t band_y = theme_small_padding() - lv_obj_get_style_pad_top(parent, 0);
+  int32_t y =
+      band_y + (theme_corner_button_height() - lv_obj_get_height(label)) / 2;
+  if (y < band_y)
+    y = band_y;
   lv_obj_align(label, LV_ALIGN_TOP_MID, 0, y);
   return label;
 }
