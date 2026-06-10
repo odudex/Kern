@@ -815,6 +815,10 @@ static void build_setup_words_deferred(lv_timer_t *timer) {
   dismiss_processing();
   build_chrome("Record anti-phishing words");
   create_content_area();
+  // Spread description / identicon / button across the page height instead
+  // of packing them together below the title
+  lv_obj_set_flex_align(content_area, LV_FLEX_ALIGN_SPACE_EVENLY,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   // Description
   lv_obj_t *desc = lv_label_create(content_area);
