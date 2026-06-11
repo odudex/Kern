@@ -1,5 +1,6 @@
 #include "key_info.h"
 #include "../core/key.h"
+#include "../core/wallet.h"
 #include "assets/icons_24.h"
 #include "battery.h"
 #include "theme_widgets.h"
@@ -44,6 +45,14 @@ lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
   if (!ui_fingerprint_create(cont, highlight_color())) {
     lv_obj_del(cont);
     return NULL;
+  }
+
+  if (wallet_is_initialized() &&
+      wallet_get_network() == WALLET_NETWORK_TESTNET) {
+    lv_obj_t *net_label = lv_label_create(cont);
+    lv_label_set_text(net_label, "testnet");
+    lv_obj_set_style_text_font(net_label, theme_font_small(), 0);
+    lv_obj_set_style_text_color(net_label, good_color(), 0);
   }
 
   return cont;
