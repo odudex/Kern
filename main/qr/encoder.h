@@ -29,6 +29,34 @@ lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
                               qr_encode_result_t *result);
 
 /**
+ * @brief Create a QR widget with optimal encoding
+ *
+ * Creates an lv_qrcode widget of the given size, centers it in the
+ * parent and, if text is non-NULL, encodes it via qr_update_optimal().
+ * Pass NULL text to fill the widget later.
+ *
+ * @param parent Parent object
+ * @param size Widget size in pixels
+ * @param text Text to encode, or NULL to defer
+ * @return QR widget on success, NULL on failure
+ */
+lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text);
+
+/**
+ * @brief Uppercase a bech32 string for QR alphanumeric mode
+ *
+ * Bech32 is case-insensitive (BIP-173) and its uppercase form fits the
+ * QR alphanumeric charset, yielding a sparser QR. Only converts strings
+ * with a known bech32 HRP prefix (bc1/tb1/bcrt1) that are entirely
+ * lowercase alphanumeric; case-sensitive data (base58) never matches.
+ *
+ * @param text Candidate string
+ * @return Allocated uppercased copy (caller must free), or NULL if the
+ *         string is not a lowercase bech32 string
+ */
+char *qr_bech32_to_upper(const char *text);
+
+/**
  * @brief Mnemonic QR code format types
  */
 typedef enum {

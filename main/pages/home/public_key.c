@@ -1,6 +1,7 @@
 #include "public_key.h"
 #include "../../core/key.h"
 #include "../../core/wallet.h"
+#include "../../qr/encoder.h"
 #include "../../qr/viewer.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
@@ -121,10 +122,8 @@ static void render_xpub(void) {
       theme_create_qr_container(qr_parent, square_size, theme_small_padding());
   lv_obj_update_layout(qr_container);
 
-  lv_obj_t *qr = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr, lv_obj_get_content_width(qr_container));
-  lv_qrcode_update(qr, key_origin, strlen(key_origin));
-  lv_obj_center(qr);
+  qr_create_optimal(qr_container, lv_obj_get_content_width(qr_container),
+                    key_origin);
   qr_viewer_attach_fullscreen(qr_container, key_origin, derivation_path);
 
   lv_obj_t *xpub_value = theme_create_label(xpub_parent, xpub_str, false);

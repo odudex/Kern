@@ -208,13 +208,10 @@ static bool setup_qr_viewer_ui(lv_obj_t *parent, const char *title) {
   }
   int32_t qr_size = (w < h) ? w : h;
 
-  qr_code_obj = lv_qrcode_create(qr_viewer_screen);
+  qr_code_obj = qr_create_optimal(qr_viewer_screen, qr_size, qr_parts[0].data);
   if (!qr_code_obj) {
     return false;
   }
-  lv_qrcode_set_size(qr_code_obj, qr_size);
-  qr_update_optimal(qr_code_obj, qr_parts[0].data, NULL);
-  lv_obj_center(qr_code_obj);
 
   if (qr_parts_count > 1) {
     create_progress_indicators(qr_parts_count);

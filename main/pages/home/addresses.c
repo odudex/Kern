@@ -5,6 +5,7 @@
 #include "../../core/ss_whitelist.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
+#include "../../qr/encoder.h"
 #include "../../qr/scanner.h"
 #include "../../qr/viewer.h"
 #include "../../ui/assets/icons_36.h"
@@ -267,14 +268,15 @@ static void show_address_detail(int index) {
   lv_obj_set_style_pad_gap(content, pad, 0);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
 
-  // QR code in white container
+  // QR code in white container; bech32 is uppercased in the QR payload to
+  // unlock alphanumeric mode (BIP-173), the label keeps the original case.
+  char *upper = qr_bech32_to_upper(address);
+  const char *qr_payload = upper ? upper : address;
   int32_t square_size = theme_min_dim() * 55 / 100;
   lv_obj_t *qr_container = theme_create_qr_container(content, square_size, 15);
-  lv_obj_t *qr = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr, square_size - 30); // 15px padding each side
-  lv_qrcode_update(qr, address, strlen(address));
-  lv_obj_center(qr);
-  qr_viewer_attach_fullscreen(qr_container, address, title);
+  qr_create_optimal(qr_container, square_size - 30, qr_payload);
+  qr_viewer_attach_fullscreen(qr_container, qr_payload, title);
+  free(upper);
 
   // Full address text with alternating colored 4-char blocks
   char colored_addr[512];
