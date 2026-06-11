@@ -153,8 +153,11 @@ wallet_source_picker_t *wallet_source_picker_create(
   lv_obj_add_event_cb(p->dropdown, dropdown_cb, LV_EVENT_VALUE_CHANGED, p);
 
   p->account_btn = lv_btn_create(parent);
-  lv_obj_set_size(p->account_btn, LV_PCT(25), LV_SIZE_CONTENT);
   theme_apply_touch_button(p->account_btn, false);
+  // Match the dropdown height so the row stays as short as the dropdown
+  // alone; the button's own padded content would be slightly taller.
+  lv_obj_update_layout(p->dropdown);
+  lv_obj_set_size(p->account_btn, LV_PCT(25), lv_obj_get_height(p->dropdown));
   p->account_value_label = lv_label_create(p->account_btn);
   lv_obj_set_style_text_font(p->account_value_label, theme_font_small(), 0);
   lv_obj_center(p->account_value_label);

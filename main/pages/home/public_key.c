@@ -2,11 +2,13 @@
 #include "../../core/key.h"
 #include "../../core/wallet.h"
 #include "../../qr/viewer.h"
+#include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
+#include "sd_card.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +21,7 @@ static lv_obj_t *qr_parent = NULL;
 static lv_obj_t *xpub_parent = NULL;
 static lv_obj_t *picker_row = NULL;
 static lv_obj_t *policy_dropdown = NULL;
+static lv_obj_t *progress_dialog = NULL;
 static wallet_source_picker_t *picker = NULL;
 static wallet_source_t current_source = {0, 0};
 static bool multisig_mode = false;
@@ -157,6 +160,91 @@ static void policy_dropdown_cb(lv_event_t *e) {
   render_xpub();
 }
 
+static void dismiss_progress(void) {
+  if (progress_dialog) {
+    lv_obj_del(progress_dialog);
+    progress_dialog = NULL;
+  }
+}
+
+// Writes the current key origin ("[fp/path]xpub") to the card root, named
+// after it ("xpub-<fp>-84h-0h-0h.txt") — same selection, same file, so
+// re-saves overwrite instead of piling up copies.
+static void deferred_save_xpub_cb(lv_timer_t *timer) {
+  (void)timer;
+
+  // The card may have been swapped (no card-detect line) — remount fresh.
+  esp_err_t mret = sd_card_remount();
+  dismiss_progress();
+  if (mret != ESP_OK) {
+    dialog_show_error_timeout("No SD card", NULL, 0);
+    return;
+  }
+
+  char derivation_path[64];
+  char derivation_compact[48];
+  format_derivation(derivation_path, sizeof(derivation_path),
+                    derivation_compact, sizeof(derivation_compact));
+
+  char fingerprint_hex[BIP32_KEY_FINGERPRINT_LEN * 2 + 1];
+  char *xpub_str = NULL;
+  if (!key_get_fingerprint_hex(fingerprint_hex) ||
+      !key_get_xpub(derivation_path, &xpub_str)) {
+    dialog_show_error_timeout("Failed to get XPUB", NULL, 0);
+    return;
+  }
+
+  char key_origin[512];
+  snprintf(key_origin, sizeof(key_origin), "[%s/%s]%s", fingerprint_hex,
+           derivation_compact, xpub_str);
+  wally_free_string(xpub_str);
+
+  char stem[64];
+  snprintf(stem, sizeof(stem), "%s-%s", fingerprint_hex, derivation_compact);
+  for (char *c = stem; *c; c++)
+    if (*c == '/')
+      *c = '-';
+  char path[128];
+  snprintf(path, sizeof(path), "%s/xpub-%s.txt", SD_CARD_MOUNT_POINT, stem);
+
+  if (sd_card_write_file(path, (const uint8_t *)key_origin,
+                         strlen(key_origin)) != ESP_OK) {
+    dialog_show_error_timeout("Failed to save", NULL, 0);
+    return;
+  }
+
+  char msg[160];
+  snprintf(msg, sizeof(msg), "Saved to:\n%s", path);
+  dialog_show_info("Saved", msg, NULL, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void save_sd_button_cb(lv_event_t *e) {
+  (void)e;
+  // Remounting probes the card and can take a while — show progress and defer
+  // the work so LVGL gets to render it first.
+  progress_dialog =
+      dialog_show_progress("Save", "Saving...", DIALOG_STYLE_OVERLAY);
+  lv_timer_t *t = lv_timer_create(deferred_save_xpub_cb, 50, NULL);
+  lv_timer_set_repeat_count(t, 1);
+}
+
+// Styled like the picker's account button, with the policy dropdown's height
+// so the row adds no height beyond the dropdown alone; portrait shares the
+// account button's 25% width too.
+static void create_save_sd_button(lv_obj_t *parent, bool landscape) {
+  lv_obj_t *btn = lv_btn_create(parent);
+  theme_apply_touch_button(btn, false);
+  lv_obj_update_layout(policy_dropdown);
+  lv_obj_set_size(btn, landscape ? theme_min_touch_size() : LV_PCT(25),
+                  lv_obj_get_height(policy_dropdown));
+  lv_obj_t *label = lv_label_create(btn);
+  lv_label_set_text(label, LV_SYMBOL_SD_CARD);
+  lv_obj_set_style_text_font(label, theme_font_small(), 0);
+  lv_obj_set_style_text_color(label, highlight_color(), 0);
+  lv_obj_center(label);
+  lv_obj_add_event_cb(btn, save_sd_button_cb, LV_EVENT_CLICKED, NULL);
+}
+
 static lv_obj_t *create_flex_container(lv_obj_t *parent, lv_flex_flow_t flow,
                                        lv_flex_align_t main_place,
                                        int32_t gap) {
@@ -217,7 +305,9 @@ static void create_picker_row(lv_obj_t *controls_parent, bool landscape) {
                                      LV_FLEX_ALIGN_SPACE_BETWEEN, 0);
   if (landscape) {
     lv_obj_set_height(picker_row, theme_min_touch_size());
-    lv_obj_set_flex_grow(picker_row, 1);
+    // Twice the policy dropdown's share: this row also holds the account
+    // button, and the script names are longer than the policy names.
+    lv_obj_set_flex_grow(picker_row, 2);
   } else {
     lv_obj_set_height(picker_row, LV_SIZE_CONTENT);
     lv_obj_set_width(picker_row, LV_PCT(100));
@@ -225,16 +315,27 @@ static void create_picker_row(lv_obj_t *controls_parent, bool landscape) {
   create_picker();
 }
 
-static void create_policy_dropdown(lv_obj_t *controls_parent, bool landscape) {
-  policy_dropdown =
-      theme_create_dropdown(controls_parent, "Singlesig\nMultisig");
+// In portrait the dropdown shares its row with the save-to-SD button, sized
+// like the picker row below (72% dropdown / 25% button) so the columns align.
+static void create_policy_row(lv_obj_t *controls_parent, bool landscape) {
+  lv_obj_t *parent = controls_parent;
+  if (!landscape) {
+    parent = create_flex_container(controls_parent, LV_FLEX_FLOW_ROW,
+                                   LV_FLEX_ALIGN_SPACE_BETWEEN, 0);
+    lv_obj_set_size(parent, LV_PCT(100), LV_SIZE_CONTENT);
+  }
+
+  policy_dropdown = theme_create_dropdown(parent, "Singlesig\nMultisig");
   lv_dropdown_set_selected(policy_dropdown, multisig_mode ? 1 : 0);
   if (landscape)
     lv_obj_set_flex_grow(policy_dropdown, 1);
   else
-    lv_obj_set_width(policy_dropdown, LV_PCT(100));
+    lv_obj_set_width(policy_dropdown, LV_PCT(72));
   lv_obj_add_event_cb(policy_dropdown, policy_dropdown_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
+
+  if (!landscape)
+    create_save_sd_button(parent, false);
 }
 
 static void create_portrait_content(void) {
@@ -268,9 +369,11 @@ void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   lv_obj_t *controls_parent =
       landscape ? create_landscape_layout() : public_key_screen;
-  create_policy_dropdown(controls_parent, landscape);
+  create_policy_row(controls_parent, landscape);
   create_picker_row(controls_parent, landscape);
-  if (!landscape)
+  if (landscape)
+    create_save_sd_button(controls_parent, true);
+  else
     create_portrait_content();
 
   render_xpub();
@@ -290,6 +393,7 @@ void public_key_page_hide(void) {
 }
 
 void public_key_page_destroy(void) {
+  dismiss_progress();
   wallet_source_picker_destroy(picker);
   picker = NULL;
 
