@@ -12,6 +12,7 @@
 #include <wally_descriptor.h>
 
 #include "descriptor_checksum.h"
+#include "miniscript_policy.h"
 #include "registry.h"
 #include "ss_whitelist.h"
 #include "storage.h"
@@ -236,6 +237,14 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
 
   info->is_miniscript = descriptor_is_miniscript(descriptor);
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
+
+  if (info->is_miniscript) {
+    char *policy = miniscript_policy_string(descriptor);
+    if (policy) {
+      snprintf(info->policy, sizeof(info->policy), "%s", policy);
+      free(policy);
+    }
+  }
   info->num_keys = (num_keys > DESCRIPTOR_INFO_MAX_KEYS)
                        ? DESCRIPTOR_INFO_MAX_KEYS
                        : num_keys;

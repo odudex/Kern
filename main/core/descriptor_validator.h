@@ -53,6 +53,9 @@ typedef struct {
     char xpub[113];
     char derivation[64];
   } keys[DESCRIPTOR_INFO_MAX_KEYS];
+  /* Miniscript only: descriptor with key expressions replaced by their
+   * letter IDs (A, B, ...). Empty if unavailable. */
+  char policy[512];
 } descriptor_info_t;
 
 // UI-agnostic info confirmation callback: show descriptor info, call proceed()

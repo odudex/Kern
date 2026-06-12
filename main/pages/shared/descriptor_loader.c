@@ -2,6 +2,7 @@
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/output.h"
 #include "../../core/key.h"
+#include "../../core/miniscript_policy.h"
 #include "../../core/registry.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
@@ -338,6 +339,139 @@ static void trim_xpub_for_display(const char *xpub, char *out,
   snprintf(out, out_size, "%.12s...%.8s", xpub, xpub + len - 8);
 }
 
+static lv_color_t policy_token_color(const ms_token_t *tok,
+                                     const char *our_letters) {
+  switch (tok->kind) {
+  case MS_TOKEN_PLUMBING:
+  case MS_TOKEN_NOTE:
+    return secondary_color();
+  case MS_TOKEN_OPERATOR:
+  case MS_TOKEN_TIMELOCK:
+    return accent_color();
+  case MS_TOKEN_KEY:
+    return (our_letters && strchr(our_letters, tok->text[0]))
+               ? highlight_color()
+               : primary_color();
+  default:
+    return primary_color();
+  }
+}
+
+// Draw one continuous vertical indent guide per nesting run, under the text.
+// Each child spangroup's level is recovered from its left padding.
+static void policy_guides_draw_cb(lv_event_t *e) {
+  lv_obj_t *cont = lv_event_get_target(e);
+  lv_layer_t *layer = lv_event_get_layer(e);
+  int32_t indent_px = (int32_t)(intptr_t)lv_event_get_user_data(e);
+  if (!layer || indent_px <= 0)
+    return;
+
+  int32_t guide_px = theme_small_padding() / 4;
+  if (guide_px < 1)
+    guide_px = 1;
+  lv_draw_line_dsc_t dsc;
+  lv_draw_line_dsc_init(&dsc);
+  dsc.color = secondary_color();
+  dsc.width = guide_px;
+  dsc.opa = LV_OPA_40;
+
+  lv_area_t content;
+  lv_obj_get_content_coords(cont, &content);
+  int32_t x0 = content.x1;
+  uint32_t child_count = lv_obj_get_child_count(cont);
+  for (int32_t l = 0;; l++) {
+    bool level_exists = false;
+    bool in_run = false;
+    int32_t run_y1 = 0, run_y2 = 0;
+    for (uint32_t i = 0; i < child_count; i++) {
+      lv_obj_t *child = lv_obj_get_child(cont, i);
+      lv_area_t child_area;
+      lv_obj_get_coords(child, &child_area);
+      bool deeper = lv_obj_get_style_pad_left(child, 0) / indent_px > l;
+      if (deeper) {
+        level_exists = true;
+        if (!in_run) {
+          in_run = true;
+          run_y1 = child_area.y1;
+        }
+        run_y2 = child_area.y2;
+      } else {
+        in_run = false;
+      }
+      if ((!deeper || i == child_count - 1) && run_y2 > run_y1) {
+        dsc.p1.x = x0 + l * indent_px;
+        dsc.p1.y = run_y1;
+        dsc.p2.x = dsc.p1.x;
+        dsc.p2.y = run_y2;
+        lv_draw_line(layer, &dsc);
+        run_y1 = run_y2 = 0;
+      }
+    }
+    if (!level_exists)
+      break;
+  }
+}
+
+lv_obj_t *descriptor_policy_view_create(lv_obj_t *parent, const char *policy,
+                                        const char *our_letters) {
+  if (!parent || !policy || !*policy)
+    return NULL;
+
+  const lv_font_t *font = theme_font_small();
+  // Conservative chars-per-line estimate: avg glyph width ~ line_height / 2
+  size_t max_chars =
+      (size_t)((theme_screen_width() - 2 * theme_default_padding()) * 2 /
+               font->line_height);
+  if (max_chars < 20)
+    max_chars = 20;
+
+  ms_policy_view_t view;
+  if (!miniscript_policy_view_build(policy, max_chars, &view))
+    return NULL;
+
+  lv_obj_t *cont = lv_obj_create(parent);
+  lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(cont, 0, 0);
+  lv_obj_set_style_pad_all(cont, 0, 0);
+  lv_obj_set_style_pad_row(cont, theme_small_padding() / 2, 0);
+  lv_obj_set_size(cont, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+
+  int32_t indent_px = theme_default_padding() / 2;
+  lv_obj_add_event_cb(cont, policy_guides_draw_cb, LV_EVENT_DRAW_MAIN,
+                      (void *)(intptr_t)indent_px);
+
+  for (size_t i = 0; i < view.num_lines; i++) {
+    const ms_policy_line_t *line = &view.lines[i];
+    lv_obj_t *sg = lv_spangroup_create(cont);
+    lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
+    lv_obj_set_width(sg, LV_PCT(100));
+    lv_obj_set_height(sg, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_font(sg, font, 0);
+    lv_obj_set_style_pad_left(sg, line->level * indent_px, 0);
+    for (size_t j = 0; j < line->num_tokens; j++) {
+      const ms_token_t *tok = &line->tokens[j];
+      lv_span_t *span = lv_spangroup_add_span(sg);
+      if (!span)
+        continue;
+      if (tok->kind == MS_TOKEN_NOTE) {
+        char text[32];
+        snprintf(text, sizeof(text), " %s", tok->text);
+        lv_span_set_text(span, text);
+      } else {
+        lv_span_set_text(span, tok->text);
+      }
+      lv_style_set_text_color(lv_span_get_style(span),
+                              policy_token_color(tok, our_letters));
+    }
+    lv_spangroup_refresh(sg);
+  }
+
+  miniscript_policy_view_free(&view);
+  return cont;
+}
+
 // UI wrapper for descriptor info confirmation
 static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
                                             void (*proceed)(bool confirmed,
@@ -374,12 +508,15 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   lv_obj_set_width(title_label, LV_PCT(100));
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
 
-  // Scrollable content area (between title and buttons)
+  // Scrollable content area (between title and buttons). Use the root's
+  // content height: the default theme pads the root, so LV_VER_RES would
+  // overlap the bottom buttons.
+  lv_obj_update_layout(root);
   lv_coord_t title_h = theme_font_medium()->line_height + 20;
   lv_coord_t btn_h = theme_button_height();
   lv_obj_t *scroll = lv_obj_create(root);
   lv_obj_set_width(scroll, LV_PCT(100));
-  lv_obj_set_height(scroll, LV_VER_RES - title_h - btn_h);
+  lv_obj_set_height(scroll, lv_obj_get_content_height(root) - title_h - btn_h);
   lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 0, title_h);
   lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(scroll, 0, 0);
@@ -420,6 +557,21 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
     lv_obj_t *deriv_row = ui_icon_text_row_create(
         scroll, ICON_DERIVATION, info->keys[i].derivation, secondary_color());
     lv_obj_set_style_pad_left(deriv_row, 20, 0);
+  }
+
+  // Indented miniscript policy with key letters, our keys highlighted
+  if (info->is_miniscript && info->policy[0]) {
+    char ours[DESCRIPTOR_INFO_MAX_KEYS + 1];
+    size_t n_ours = 0;
+    for (uint32_t i = 0; my_fp[0] != '\0' && i < info->num_keys; i++)
+      if (strcasecmp(my_fp, info->keys[i].fingerprint_hex) == 0)
+        ours[n_ours++] = (char)('A' + i);
+    ours[n_ours] = '\0';
+
+    lv_obj_t *policy_view =
+        descriptor_policy_view_create(scroll, info->policy, ours);
+    if (policy_view)
+      lv_obj_set_style_pad_top(policy_view, theme_small_padding(), 0);
   }
 
   // Button row (fixed at bottom)

@@ -2,14 +2,20 @@
 
 #include "registered_descriptors.h"
 #include "../../core/descriptor_checksum.h"
+#include "../../core/key.h"
+#include "../../core/miniscript_policy.h"
 #include "../../core/registry.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../shared/descriptor_loader.h"
 #include <lvgl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wally_bip32.h>
+#include <wally_descriptor.h>
 
 static lv_obj_t *rd_screen = NULL;
 static ui_menu_t *rd_menu = NULL;
@@ -23,6 +29,27 @@ static int selected_descriptor_index = -1;
 static void build_rd_menu(void);
 
 static void disabled_entry_cb(void) {}
+
+// Letters ('A' + key index) of descriptor keys whose origin fingerprint
+// matches the loaded wallet key. out must hold 27 bytes.
+static void our_key_letters(const struct wally_descriptor *desc, char *out) {
+  size_t n = 0;
+  unsigned char my_fp[BIP32_KEY_FINGERPRINT_LEN];
+  uint32_t num_keys = 0;
+  if (key_get_fingerprint(my_fp) &&
+      wally_descriptor_get_num_keys(desc, &num_keys) == WALLY_OK) {
+    if (num_keys > 26)
+      num_keys = 26;
+    for (uint32_t i = 0; i < num_keys; i++) {
+      unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+      if (wally_descriptor_get_key_origin_fingerprint(desc, i, fp,
+                                                      sizeof(fp)) == WALLY_OK &&
+          memcmp(fp, my_fp, sizeof(fp)) == 0)
+        out[n++] = (char)('A' + i);
+    }
+  }
+  out[n] = '\0';
+}
 
 static void detail_back_cb(lv_event_t *e) {
   (void)e;
@@ -75,15 +102,26 @@ static void view_descriptor_cb(void) {
   lv_obj_align(body, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_style_pad_all(body, theme_default_padding(), 0);
   lv_obj_set_style_pad_gap(body, theme_small_padding(), 0);
+  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
   lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
+
+  // Miniscript: indented policy view above the raw descriptor
+  if (miniscript_policy_is_miniscript(entry->desc)) {
+    char *policy = miniscript_policy_string(entry->desc);
+    if (policy) {
+      char ours[27];
+      our_key_letters(entry->desc, ours);
+      descriptor_policy_view_create(body, policy, ours);
+      free(policy);
+    }
+  }
 
   lv_obj_t *desc_label = theme_create_label(body, desc_str, false);
   lv_obj_set_width(desc_label, LV_PCT(100));
   lv_label_set_long_mode(desc_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(desc_label, LV_TEXT_ALIGN_LEFT, 0);
   lv_obj_set_style_text_color(desc_label, primary_color(), 0);
-  lv_obj_align(desc_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
   free(desc_str);
 }

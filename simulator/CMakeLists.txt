@@ -163,6 +163,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/miniscript_policy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/key.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/message_sign.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c

@@ -66,4 +66,16 @@ char *descriptor_extract_from_scanner(void);
 // Returns new normalized string (caller must free), or NULL if unchanged.
 char *descriptor_to_unambiguous(const char *descriptor);
 
+/**
+ * Render a miniscript policy (keys already replaced by letter IDs) as an
+ * indented tree with semantic colors: logic operators highlighted, timelocks
+ * accented with ~duration/date notes, structural plumbing dimmed. Letters in
+ * `our_letters` (e.g. "AC", may be NULL/empty) get the highlight color.
+ *
+ * @return Container with the rendered lines, or NULL if the policy could not
+ *         be rendered.
+ */
+lv_obj_t *descriptor_policy_view_create(lv_obj_t *parent, const char *policy,
+                                        const char *our_letters);
+
 #endif // DESCRIPTOR_LOADER_H
