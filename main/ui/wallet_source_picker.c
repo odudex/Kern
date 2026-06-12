@@ -55,7 +55,7 @@ static bool source_has_account(const wallet_source_picker_t *p) {
   case WALLET_PICKER_MULTISIG_BIP48:
     return true;
   case WALLET_PICKER_MINISCRIPT:
-    return true;
+    return false; // custom derivation comes from the page's path button
   }
   return false;
 }
