@@ -368,3 +368,46 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   ESP_LOGI(TAG, "added '%s' (%zu entries total)", id, registry_len);
   return true;
 }
+
+bool registry_add_watch_only(const char *id, const char *descriptor_str,
+                             wallet_network_t network) {
+  if (!id || !descriptor_str)
+    return false;
+  if (descriptor_text_has_uppercase_hardened(descriptor_str)) {
+    ESP_LOGE(TAG, "descriptor uses 'H' hardened marker (not accepted)");
+    return false;
+  }
+  if (registry_len >= REGISTRY_MAX_ENTRIES) {
+    ESP_LOGE(TAG, "registry full (%d entries)", REGISTRY_MAX_ENTRIES);
+    return false;
+  }
+
+  uint32_t wally_network = (network == WALLET_NETWORK_MAINNET)
+                               ? WALLY_NETWORK_BITCOIN_MAINNET
+                               : WALLY_NETWORK_BITCOIN_TESTNET;
+  struct wally_descriptor *desc = NULL;
+  if (wally_descriptor_parse(descriptor_str, NULL, wally_network, 0, &desc) !=
+      WALLY_OK) {
+    ESP_LOGE(TAG, "failed to parse watch-only descriptor");
+    return false;
+  }
+
+  uint32_t num_paths = 0;
+  if (wally_descriptor_get_num_paths(desc, &num_paths) != WALLY_OK) {
+    wally_descriptor_free(desc);
+    return false;
+  }
+
+  registry_entry_t *e = &registry_entries[registry_len];
+  memset(e, 0, sizeof *e);
+  strncpy(e->id, id, REGISTRY_ID_MAX_LEN - 1);
+  e->loc = STORAGE_FLASH;
+  e->desc = desc;
+  e->my_key_index = SIZE_MAX; // no key in watch-only mode
+  e->num_paths = (size_t)num_paths;
+  e->origin_path_len = 0;
+  registry_len++;
+
+  ESP_LOGI(TAG, "added watch-only '%s' (%zu entries total)", id, registry_len);
+  return true;
+}

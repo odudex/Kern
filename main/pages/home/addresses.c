@@ -42,6 +42,14 @@ static void (*return_callback)(void) = NULL;
 static wallet_source_picker_t *picker = NULL;
 static wallet_source_t current_source = {0, 0};
 
+// Watch-only: open directly on one registered descriptor. descriptor_only_* is
+// a one-shot input consumed at create into active_descriptor_only, which holds
+// for the page's life: current_source.source is a direct registry slot (no +4
+// offset) and the picker/settings/scan chrome is omitted.
+static bool descriptor_only_mode = false;
+static size_t descriptor_only_index = 0;
+static bool active_descriptor_only = false;
+
 static bool show_change = false;
 static uint32_t address_offset = 0;
 
@@ -258,7 +266,11 @@ static void refresh_address_list(void) {
   uint32_t chain = show_change ? 1 : 0;
 
   const registry_entry_t *reg_entry = NULL;
-  if (current_source.source >= 4) {
+  if (active_descriptor_only) {
+    reg_entry = registry_get((size_t)current_source.source);
+    if (!reg_entry)
+      return;
+  } else if (current_source.source >= 4) {
     reg_entry = registry_get((size_t)(current_source.source - 4));
     if (!reg_entry)
       return;
@@ -385,13 +397,20 @@ static void scan_button_cb(lv_event_t *e) {
 }
 
 void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
-  if (!parent || !wallet_is_initialized())
+  if (!parent || (!wallet_is_initialized() && !wallet_is_watch_only()))
     return;
 
   return_callback = return_cb;
   show_change = false;
   address_offset = 0;
   current_source = (wallet_source_t){0, 0};
+  // Consume the one-shot input into the page-lifetime flag so prev/next/picker
+  // refreshes still resolve the registry slot correctly.
+  active_descriptor_only = descriptor_only_mode;
+  if (active_descriptor_only)
+    current_source.source = (uint16_t)descriptor_only_index;
+  descriptor_only_mode = false;
+  descriptor_only_index = 0;
 
   // Main screen
   addresses_screen = lv_obj_create(parent);
@@ -404,8 +423,14 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(addresses_screen, theme_default_padding(), 0);
 
-  // Key info bar at top, aligned with the corner buttons.
-  ui_key_info_bar_create(addresses_screen);
+  // Key info bar at top, aligned with the corner buttons. With no loaded key
+  // (watch-only) it self-omits; reserve the same corner-button band with a
+  // spacer so the picker stays clear of the absolutely-placed back button.
+  if (!ui_key_info_bar_create(addresses_screen)) {
+    lv_obj_t *spacer = lv_obj_create(addresses_screen);
+    lv_obj_set_size(spacer, LV_PCT(100), theme_corner_button_height());
+    theme_apply_transparent_container(spacer);
+  }
 
   // Top row: shared source picker (script type / registered descriptor +
   // account).
@@ -416,8 +441,10 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_align(top_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   picker = wallet_source_picker_create(
-      top_row, WALLET_PICKER_SINGLESIG_WITH_DESCRIPTORS, &current_source,
-      picker_changed_cb, NULL);
+      top_row,
+      active_descriptor_only ? WALLET_PICKER_DESCRIPTORS_ONLY
+                             : WALLET_PICKER_SINGLESIG_WITH_DESCRIPTORS,
+      &current_source, picker_changed_cb, NULL);
 
   // Bottom row: prev / next / scan — actions specific to the address list.
   lv_obj_t *nav_row = lv_obj_create(addresses_screen);
@@ -431,14 +458,17 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   next_button = create_nav_button(nav_row, ">", LV_PCT(30), next_button_cb);
   lv_obj_add_state(prev_button, LV_STATE_DISABLED);
 
-  scan_button = lv_btn_create(nav_row);
-  lv_obj_set_size(scan_button, LV_PCT(30), LV_SIZE_CONTENT);
-  theme_apply_touch_button(scan_button, false);
-  lv_obj_t *scan_label = lv_label_create(scan_button);
-  lv_label_set_text(scan_label, ICON_QRCODE_36);
-  lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
-  lv_obj_center(scan_label);
-  lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
+  // The address-checker scan isn't offered in watch-only mode.
+  if (!active_descriptor_only) {
+    scan_button = lv_btn_create(nav_row);
+    lv_obj_set_size(scan_button, LV_PCT(30), LV_SIZE_CONTENT);
+    theme_apply_touch_button(scan_button, false);
+    lv_obj_t *scan_label = lv_label_create(scan_button);
+    lv_label_set_text(scan_label, ICON_QRCODE_36);
+    lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
+    lv_obj_center(scan_label);
+    lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
+  }
 
   // Address list container
   address_list_container = lv_obj_create(addresses_screen);
@@ -454,8 +484,15 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // Back button (on parent for absolute positioning)
   back_button = ui_create_back_button(parent, back_button_cb);
 
-  // Settings button at top-right
-  settings_button = ui_create_settings_button(parent, settings_button_cb);
+  // Settings button at top-right. Wallet settings require a loaded key, so it's
+  // omitted in watch-only mode.
+  if (!active_descriptor_only)
+    settings_button = ui_create_settings_button(parent, settings_button_cb);
+}
+
+void addresses_page_set_descriptor_only(size_t registry_index) {
+  descriptor_only_mode = true;
+  descriptor_only_index = registry_index;
 }
 
 void addresses_page_show(void) {
@@ -502,6 +539,9 @@ void addresses_page_destroy(void) {
   show_change = false;
   address_offset = 0;
   current_source = (wallet_source_t){0, 0};
+  descriptor_only_mode = false;
+  descriptor_only_index = 0;
+  active_descriptor_only = false;
   stored_count = 0;
   address_checker_destroy();
 }

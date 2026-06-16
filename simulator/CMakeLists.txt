@@ -253,6 +253,7 @@ set(APP_PAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/pages)
 set(APP_PAGE_SOURCES
     # Login flow
     ${APP_PAGES_DIR}/login/login.c
+    ${APP_PAGES_DIR}/login/login_scan.c
     ${APP_PAGES_DIR}/login/login_settings.c
     ${APP_PAGES_DIR}/login/about.c
     # Load mnemonic

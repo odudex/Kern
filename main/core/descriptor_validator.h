@@ -7,6 +7,7 @@
 
 #include "miniscript_policy.h"
 #include "storage.h"
+#include "wallet.h"
 
 typedef enum {
   VALIDATION_SUCCESS = 0,
@@ -93,6 +94,26 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_info_confirm_cb info_confirm_cb,
                                   validation_id_loc_cb id_loc_cb,
                                   void *user_data);
+
+/* Infer a descriptor's network by trying to parse it as mainnet, then testnet.
+ * Writes the network to *network_out and returns true on success; returns false
+ * if the descriptor parses on neither (xpub keys parse only on mainnet, tpub
+ * only on testnet, so the result is unambiguous for extended-key descriptors).
+ */
+bool descriptor_infer_network(const char *descriptor_str,
+                              wallet_network_t *network_out);
+
+/* Watch-only (keyless) variant of descriptor_validate_and_load: validates and
+ * loads a descriptor for address viewing without a loaded master key. Skips the
+ * key precondition, fingerprint match, and xpub verification; otherwise reuses
+ * the same parse/script checks, the same "Load?" info dialog (info_confirm_cb),
+ * and session dedup. The caller must have set the watch-only network first (via
+ * wallet_set_watch_only). On confirm the descriptor is registered watch-only.
+ */
+void descriptor_validate_and_load_watch_only(
+    const char *descriptor_str, wallet_network_t network,
+    validation_complete_cb callback, validation_info_confirm_cb info_confirm_cb,
+    void *user_data);
 
 /* When a VALIDATION_DUPLICATE result has just been delivered, copy the ID of
  * the existing registry entry into `out` and return true. Returns false if no

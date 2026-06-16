@@ -17,6 +17,10 @@ typedef enum {
   WALLET_PICKER_SINGLESIG_WITH_DESCRIPTORS,
   WALLET_PICKER_MULTISIG_BIP48,
   WALLET_PICKER_MINISCRIPT,
+  // Registered descriptors only (no singlesig rows, no account button). The
+  // dropdown index maps directly to the registry slot. Used by the watch-only
+  // address view, where singlesig key derivation isn't available.
+  WALLET_PICKER_DESCRIPTORS_ONLY,
 } wallet_picker_mode_t;
 
 typedef enum {

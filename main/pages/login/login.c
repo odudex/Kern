@@ -17,6 +17,7 @@
 #include "../load_mnemonic/load_menu.h"
 #include "../new_mnemonic/new_mnemonic_menu.h"
 #include "about.h"
+#include "login_scan.h"
 #include "login_settings.h"
 
 static ui_menu_t *login_menu = NULL;
@@ -53,6 +54,11 @@ static void load_mnemonic_cb(void) {
   login_page_hide();
   load_menu_page_create(lv_screen_active(), return_from_load_menu_cb);
   load_menu_page_show();
+}
+
+static void scan_cb(void) {
+  login_page_hide();
+  login_scan_start(login_page_show);
 }
 
 static void new_mnemonic_cb(void) {
@@ -94,6 +100,7 @@ void login_page_create(lv_obj_t *parent) {
     lv_obj_set_style_text_font(title, theme_font_medium(), 0);
     lv_obj_set_style_text_color(title, primary_color(), 0);
   }
+  ui_menu_add_entry_with_icon(login_menu, ICON_QR_CODE, "Scan", scan_cb);
   ui_menu_add_entry_with_icon(login_menu, ICON_KEY, "Load Mnemonic",
                               load_mnemonic_cb);
   ui_menu_add_entry_with_icon(login_menu, ICON_DICE, "New Mnemonic",

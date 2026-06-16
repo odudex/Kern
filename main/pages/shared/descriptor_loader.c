@@ -692,6 +692,36 @@ void descriptor_loader_process_string(const char *descriptor_str,
   free(converted);
 }
 
+void descriptor_loader_process_string_watch_only(
+    const char *descriptor_str, validation_complete_cb validation_cb,
+    void *user_data) {
+  if (!descriptor_str) {
+    if (validation_cb)
+      validation_cb(VALIDATION_PARSE_ERROR, user_data);
+    return;
+  }
+
+  char *converted = bluewallet_to_descriptor(descriptor_str);
+  const char *to_process = converted ? converted : descriptor_str;
+  char *unambiguous = descriptor_to_unambiguous(to_process);
+  const char *final = unambiguous ? unambiguous : to_process;
+
+  wallet_network_t net;
+  if (!descriptor_infer_network(final, &net)) {
+    if (validation_cb)
+      validation_cb(VALIDATION_PARSE_ERROR, user_data);
+    free(unambiguous);
+    free(converted);
+    return;
+  }
+
+  wallet_set_watch_only(net);
+  descriptor_validate_and_load_watch_only(
+      final, net, validation_cb, descriptor_info_confirm_wrapper, user_data);
+  free(unambiguous);
+  free(converted);
+}
+
 /* ---------- Source selection menu ---------- */
 
 static ui_menu_t *source_menu = NULL;

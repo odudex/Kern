@@ -33,6 +33,17 @@ void descriptor_loader_process_string(const char *descriptor_str,
                                       void *user_data);
 
 /**
+ * Watch-only (keyless) variant of process_string: normalize, infer the network
+ * from the descriptor, enter watch-only mode, and validate/load without a key.
+ * Reuses the same "Load?" dialog. validation_cb receives VALIDATION_PARSE_ERROR
+ * if the string isn't a parseable descriptor (so the caller can treat it as
+ * unidentified content). Used by the login Scan flow.
+ */
+void descriptor_loader_process_string_watch_only(
+    const char *descriptor_str, validation_complete_cb validation_cb,
+    void *user_data);
+
+/**
  * Show a source selection menu for loading descriptors.
  * Presents QR / Flash / SD Card options.
  *
