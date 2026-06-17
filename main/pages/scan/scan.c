@@ -1529,8 +1529,10 @@ static void deferred_export_save_cb(lv_timer_t *timer) {
     return;
   }
 
-  // The card may have been swapped (no card-detect line) — remount fresh.
-  esp_err_t mret = sd_card_remount();
+  // Ensure the SD card is mounted — the card may have been swapped (no card-
+  // detect line), but if it was already mounted (e.g. loaded from SD) the
+  // init is a no-op. If the card was removed, the subsequent write will fail.
+  esp_err_t mret = sd_card_init();
   dismiss_progress();
   if (mret != ESP_OK) {
     dialog_show_error_timeout("No SD card", show_export_choice, 0);
