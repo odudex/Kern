@@ -1,5 +1,6 @@
 #include "key_info.h"
 #include "../core/key.h"
+#include "../core/wallet.h"
 #include "assets/icons_24.h"
 #include "battery.h"
 #include "theme_widgets.h"
@@ -36,18 +37,22 @@ lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
   lv_obj_t *cont = theme_create_flex_row(parent);
   lv_obj_set_style_pad_column(cont, theme_default_padding(), 0);
 
-  // On small screens the row shares space with corner buttons that are
-  // absolutely positioned over the page.  Allow wrapping and constrain
-  // the row width so content stays between the buttons.
-  int btn_zone = theme_corner_button_width();
+  // The parent (menu nav bar or key info bar) reserves the corner-button
+  // zones; wrap as a last resort if the content still doesn't fit.
   lv_obj_set_width(cont, lv_pct(100));
-  lv_obj_set_style_pad_left(cont, btn_zone, 0);
-  lv_obj_set_style_pad_right(cont, btn_zone, 0);
   lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW_WRAP);
 
   if (!ui_fingerprint_create(cont, highlight_color())) {
     lv_obj_del(cont);
     return NULL;
+  }
+
+  if (wallet_is_initialized() &&
+      wallet_get_network() == WALLET_NETWORK_TESTNET) {
+    lv_obj_t *net_label = lv_label_create(cont);
+    lv_label_set_text(net_label, "testnet");
+    lv_obj_set_style_text_font(net_label, theme_font_small(), 0);
+    lv_obj_set_style_text_color(net_label, good_color(), 0);
   }
 
   return cont;
@@ -61,6 +66,10 @@ lv_obj_t *ui_key_info_bar_create(lv_obj_t *parent) {
   lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+  // Same corner-button reservation as the ui_menu nav bar, so headers sit at
+  // identical positions on menu and non-menu pages
+  lv_obj_set_style_pad_hor(
+      bar, theme_small_padding() + theme_corner_button_width(), 0);
 
   lv_obj_t *header = ui_key_info_create(bar);
   if (!header) {

@@ -1,6 +1,7 @@
 // About Page
 
 #include "about.h"
+#include "../../qr/encoder.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
 #include "../../ui/theme_widgets.h"
 #include <esp_app_desc.h>
@@ -114,10 +115,8 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   int32_t qr_total = LV_MIN(main_extent - used - 2 * pad, cross_extent);
   qr_total = LV_CLAMP(min_dim / 6, qr_total, min_dim * 25 / 72); // <=250 @ 720
 
-  lv_obj_t *qr = lv_qrcode_create(body);
-  lv_qrcode_set_size(qr, LV_MAX(qr_total - 2 * qr_border, 1));
-  const char *data = "https://github.com/odudex/Kern";
-  lv_qrcode_update(qr, data, strlen(data));
+  lv_obj_t *qr = qr_create_optimal(body, LV_MAX(qr_total - 2 * qr_border, 1),
+                                   "https://github.com/odudex/Kern");
   lv_obj_set_style_border_color(qr, lv_color_white(), 0);
   lv_obj_set_style_border_width(qr, qr_border, 0);
 

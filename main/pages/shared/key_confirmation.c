@@ -26,7 +26,7 @@ static void loading_timer_cb(lv_timer_t *timer) {
     loading_timer = NULL;
   }
 
-  wallet_network_t net = settings_get_default_network();
+  wallet_network_t net = settings_get_network();
   if (key_load_from_mnemonic(mnemonic_content, NULL,
                              net == WALLET_NETWORK_TESTNET)) {
     if (!wallet_init(net)) {

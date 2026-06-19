@@ -1,4 +1,4 @@
-// Login Settings Page - Pre-login configuration (default wallet preferences)
+// Login Settings Page - Pre-login configuration (PIN, brightness)
 
 #include "login_settings.h"
 #include "../../core/pin.h"
@@ -17,67 +17,14 @@ static ui_menu_t *settings_menu = NULL;
 static lv_obj_t *settings_screen = NULL;
 static void (*return_callback)(void) = NULL;
 
-// -- Default Wallet detail page --
-static lv_obj_t *detail_screen = NULL;
-static lv_obj_t *network_dropdown = NULL;
-
 // -- Brightness detail page --
 static lv_obj_t *brightness_screen = NULL;
 static lv_obj_t *brightness_slider = NULL;
 static lv_obj_t *brightness_label = NULL;
 
 // Forward declarations
-static void show_detail_page(void);
-static void destroy_detail_page(void);
 static void show_brightness_page(void);
 static void destroy_brightness_page(void);
-
-// ── Default Wallet detail page ──
-
-static void network_dropdown_cb(lv_event_t *e) {
-  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-  wallet_network_t net =
-      (sel == 0) ? WALLET_NETWORK_MAINNET : WALLET_NETWORK_TESTNET;
-  settings_set_default_network(net);
-}
-
-static void detail_back_cb(lv_event_t *e) {
-  (void)e;
-  destroy_detail_page();
-  ui_menu_show(settings_menu);
-}
-
-static void show_detail_page(void) {
-  ui_menu_hide(settings_menu);
-
-  detail_screen = theme_create_page_container(lv_screen_active());
-
-  ui_create_back_button(detail_screen, detail_back_cb);
-  theme_create_page_title(detail_screen, "Default Wallet");
-
-  int32_t dd_width = LV_HOR_RES * 35 / 100;
-
-  // Network label + dropdown
-  lv_obj_t *net_label = theme_create_label(detail_screen, "Network", true);
-  lv_obj_align(net_label, LV_ALIGN_CENTER, -(LV_HOR_RES / 4), -30);
-
-  network_dropdown = theme_create_dropdown(detail_screen, "Mainnet\nTestnet");
-  wallet_network_t cur_net = settings_get_default_network();
-  lv_dropdown_set_selected(network_dropdown,
-                           (cur_net == WALLET_NETWORK_MAINNET) ? 0 : 1);
-  lv_obj_set_width(network_dropdown, dd_width);
-  lv_obj_add_event_cb(network_dropdown, network_dropdown_cb,
-                      LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_align_to(network_dropdown, net_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
-}
-
-static void destroy_detail_page(void) {
-  if (detail_screen) {
-    lv_obj_del(detail_screen);
-    detail_screen = NULL;
-  }
-  network_dropdown = NULL;
-}
 
 // ── Screen Brightness detail page ──
 
@@ -187,7 +134,6 @@ static void pin_settings_cb(void) {
 
 // ── Category menu callbacks ──
 
-static void default_wallet_cb(void) { show_detail_page(); }
 static void brightness_cb(void) { show_brightness_page(); }
 
 static void settings_back_cb(void) {
@@ -206,7 +152,6 @@ static void rebuild_menu(void) {
   } else {
     ui_menu_add_entry(settings_menu, "Set Up PIN", setup_pin_cb);
   }
-  ui_menu_add_entry(settings_menu, "Default Wallet", default_wallet_cb);
   ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
 }
 
@@ -230,7 +175,6 @@ void login_settings_page_hide(void) {
 
 void login_settings_page_destroy(void) {
   pin_settings_page_destroy();
-  destroy_detail_page();
   destroy_brightness_page();
   if (settings_menu) {
     ui_menu_destroy(settings_menu);

@@ -214,6 +214,20 @@ static const uint8_t REF_SHMU_REDEEM[] = {
     0xf6, 0x70, 0xf7, 0xa8, 0xba, 0x0b, 0x38, 0x67, 0x79, 0x10, 0x6c, 0xf1,
     0x22, 0x3c, 0x6f, 0xc5, 0xd7, 0xcd, 0x6f, 0xc1, 0x15, 0x52, 0xae};
 
+/* wsh(or_d(pk(key0),and_v(v:pkh(key1),older(65535)))) miniscript:
+ * P2WSH SPK, no redeem, miniscript witness */
+static const uint8_t REF_MS_SPK[] = {
+    0x00, 0x20, 0xdc, 0x3f, 0x0c, 0xa5, 0x22, 0xe9, 0x88, 0x49, 0xdb, 0xcf,
+    0xa3, 0xc8, 0x40, 0x88, 0xe1, 0x57, 0x2d, 0xa4, 0x5d, 0xbe, 0xaa, 0x9f,
+    0x69, 0x1a, 0x2e, 0x37, 0xac, 0xb1, 0xae, 0x73, 0xbf, 0xc9};
+static const uint8_t REF_MS_WITNESS[] = {
+    0x21, 0x03, 0x30, 0xd5, 0x4f, 0xd0, 0xdd, 0x42, 0x0a, 0x6e, 0x5f, 0x8d,
+    0x36, 0x24, 0xf5, 0xf3, 0x48, 0x2c, 0xae, 0x35, 0x0f, 0x79, 0xd5, 0xf0,
+    0x75, 0x3b, 0xf5, 0xbe, 0xef, 0x9c, 0x2d, 0x91, 0xaf, 0x3c, 0xac, 0x73,
+    0x64, 0x76, 0xa9, 0x14, 0xef, 0xdd, 0xfd, 0xb4, 0xcd, 0x52, 0x11, 0xcc,
+    0xd5, 0x45, 0x7e, 0x6c, 0x23, 0x7c, 0xab, 0xca, 0xd1, 0x4d, 0x4f, 0x39,
+    0x88, 0xad, 0x03, 0xff, 0xff, 0x00, 0xb2, 0x68};
+
 /* tr([00000000/86'/0'/0']XPUB_86/0/ *) child_num=0: P2TR SPK, no redeem, no
  * witness */
 static const uint8_t REF_TR_SPK[] = {
@@ -1289,11 +1303,18 @@ make_two_input_psbt(const uint8_t *spk1, size_t spk1_len, const uint8_t *pk1,
   "[11111111/48'/0'/0'/2']" XPUB_86 "/0/*"                                     \
   "))#6nfc46dh"
 
-/* Build a PSBT input that matches the WSH_REGISTRY_DESC entry at
- * multi_index=0, child_num=0. The returned PSBT has the correct spk +
- * witness_script wired in; caller is responsible for any tampering before
- * classification. */
-static struct wally_psbt *make_wsh_registry_psbt(const uint8_t *witness_script,
+#define MS_REGISTRY_DESC                                                       \
+  "wsh(or_d(pk([00000000/48'/0'/0'/2']" XPUB_84 "/0/*),"                       \
+  "and_v(v:pkh([11111111/48'/0'/0'/2']" XPUB_86 "/0/*),"                       \
+  "older(65535))))#xqs0xj7k"
+
+/* Build a PSBT input that matches a registered wsh descriptor with origin
+ * 48'/0'/0'/2' at multi_index=0, child_num=0. The returned PSBT has the
+ * given spk + witness_script wired in; caller is responsible for any
+ * tampering before classification. */
+static struct wally_psbt *make_wsh_registry_psbt(const uint8_t *spk,
+                                                 size_t spk_len,
+                                                 const uint8_t *witness_script,
                                                  size_t witness_script_len) {
   struct ext_key *derived = NULL;
   if (!key_get_derived_key("m/48'/0'/0'/2'/0/0", &derived))
@@ -1310,8 +1331,8 @@ static struct wally_psbt *make_wsh_registry_psbt(const uint8_t *witness_script,
   };
 
   struct wally_psbt *psbt =
-      make_test_psbt(REF_WSH_SPK, sizeof(REF_WSH_SPK), derived->pub_key,
-                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+      make_test_psbt(spk, spk_len, derived->pub_key, sizeof(derived->pub_key),
+                     kp_val, sizeof(kp_val));
   bip32_key_free(derived);
   if (!psbt)
     return NULL;
@@ -1335,7 +1356,8 @@ static void test_psbt_classify_registry_wsh_owned(void) {
   }
 
   struct wally_psbt *psbt =
-      make_wsh_registry_psbt(REF_WSH_WITNESS, sizeof(REF_WSH_WITNESS));
+      make_wsh_registry_psbt(REF_WSH_SPK, sizeof(REF_WSH_SPK), REF_WSH_WITNESS,
+                             sizeof(REF_WSH_WITNESS));
   if (!psbt) {
     FAIL("make_wsh_registry_psbt");
     registry_clear();
@@ -1377,8 +1399,78 @@ static void test_psbt_classify_registry_wsh_tampered_witness(void) {
   memcpy(bad_witness, REF_WSH_WITNESS, sizeof(REF_WSH_WITNESS));
   bad_witness[3] ^= 0xff; /* flip a pubkey byte inside the multisig script */
 
-  struct wally_psbt *psbt =
-      make_wsh_registry_psbt(bad_witness, sizeof(bad_witness));
+  struct wally_psbt *psbt = make_wsh_registry_psbt(
+      REF_WSH_SPK, sizeof(REF_WSH_SPK), bad_witness, sizeof(bad_witness));
+  if (!psbt) {
+    FAIL("make_wsh_registry_psbt");
+    registry_clear();
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED) {
+    FAIL("expected EXPECTED_OWNED on tampered witness");
+    return;
+  }
+  PASS();
+}
+
+/* Positive case for the wsh(miniscript) registry path: same shape as the
+ * sortedmulti case but the witness script is an or_d/and_v/older miniscript
+ * compilation. SPK matches, witness_script matches -> OWNED_SAFE. */
+static void test_psbt_classify_registry_miniscript_owned(void) {
+  TEST("psbt_classify_input: wsh(miniscript) registry-matched -> OWNED_SAFE");
+
+  registry_clear();
+  if (!registry_add_from_string("t", MS_REGISTRY_DESC, STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  struct wally_psbt *psbt = make_wsh_registry_psbt(
+      REF_MS_SPK, sizeof(REF_MS_SPK), REF_MS_WITNESS, sizeof(REF_MS_WITNESS));
+  if (!psbt) {
+    FAIL("make_wsh_registry_psbt");
+    registry_clear();
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("expected OWNED_SAFE");
+    return;
+  }
+  if (r.claim.kind != CLAIM_REGISTRY) {
+    FAIL("expected CLAIM_REGISTRY");
+    return;
+  }
+  PASS();
+}
+
+/* Tampered wsh(miniscript) witness: SPK matches but the witness byte-compare
+ * fails -> EXPECTED_OWNED, same as the sortedmulti tamper case. */
+static void test_psbt_classify_registry_miniscript_tampered(void) {
+  TEST("psbt_classify_input: wsh(miniscript) tampered witness -> "
+       "EXPECTED_OWNED");
+
+  registry_clear();
+  if (!registry_add_from_string("t", MS_REGISTRY_DESC, STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  uint8_t bad_witness[sizeof(REF_MS_WITNESS)];
+  memcpy(bad_witness, REF_MS_WITNESS, sizeof(REF_MS_WITNESS));
+  bad_witness[3] ^= 0xff; /* flip a pubkey byte inside the miniscript */
+
+  struct wally_psbt *psbt = make_wsh_registry_psbt(
+      REF_MS_SPK, sizeof(REF_MS_SPK), bad_witness, sizeof(bad_witness));
   if (!psbt) {
     FAIL("make_wsh_registry_psbt");
     registry_clear();
@@ -1469,6 +1561,30 @@ static void test_psbt_classify_multi_input_mixed(void) {
 
 /* ------------------------------------------------------------------ */
 
+/* Register desc_str and regenerate its scripts into *out.
+ * Returns NULL on success, or the name of the failing step. */
+static const char *regen_registry_scripts(const char *desc_str,
+                                          uint32_t multi_index,
+                                          uint32_t child_num,
+                                          expected_scripts_t *out) {
+  registry_clear();
+  if (!registry_add_from_string("t", desc_str, STORAGE_FLASH, false))
+    return "registry_add_from_string";
+  const registry_entry_t *e = registry_find_by_id("t");
+  if (!e)
+    return "entry not found";
+
+  claim_t claim = {0};
+  claim.kind = CLAIM_REGISTRY;
+  claim.registry.entry = e;
+  claim.registry.multi_index = multi_index;
+  claim.registry.child_num = child_num;
+
+  if (!claim_regenerate(&claim, false, out))
+    return "claim_regenerate returned false";
+  return NULL;
+}
+
 static void test_registry_claim(const char *test_name, const char *desc_str,
                                 uint32_t multi_index, uint32_t child_num,
                                 const uint8_t *ref_spk, size_t ref_spk_len,
@@ -1477,26 +1593,11 @@ static void test_registry_claim(const char *test_name, const char *desc_str,
                                 const uint8_t *ref_witness,
                                 size_t ref_witness_len) {
   TEST(test_name);
-  registry_clear();
-  if (!registry_add_from_string("t", desc_str, STORAGE_FLASH, false)) {
-    FAIL("registry_add_from_string");
-    return;
-  }
-  const registry_entry_t *e = registry_find_by_id("t");
-  if (!e) {
-    FAIL("entry not found");
-    return;
-  }
-
-  claim_t claim = {0};
-  claim.kind = CLAIM_REGISTRY;
-  claim.registry.entry = e;
-  claim.registry.multi_index = multi_index;
-  claim.registry.child_num = child_num;
-
   expected_scripts_t out = {0};
-  if (!claim_regenerate(&claim, false, &out)) {
-    FAIL("claim_regenerate returned false");
+  const char *err =
+      regen_registry_scripts(desc_str, multi_index, child_num, &out);
+  if (err) {
+    FAIL(err);
     return;
   }
 
@@ -1524,6 +1625,62 @@ static void test_registry_claim(const char *test_name, const char *desc_str,
   if (ref_witness_len > 0 &&
       memcmp(out.witness, ref_witness, ref_witness_len) != 0) {
     FAIL("witness mismatch");
+    return;
+  }
+  PASS();
+}
+
+/* sortedmulti witness script size: 3 + 34 * num_keys. 15 keys (513 bytes) is
+ * libwally's generation maximum: CHECKMULTISIG is capped at 15 keys and
+ * sh()/wsh() inner scripts at 520 bytes (PSBT_MAX_INNER_SCRIPT_LEN). */
+#define MS_15_KEYS                                                             \
+  "[00000000/48'/0'/0'/2']" XPUB_84 "/0/*,"                                    \
+  "[11111111/48'/0'/0'/2']" XPUB_86 "/0/*,"                                    \
+  "[22222222/48'/0'/0'/2']" XPUB_84 "/1/*,"                                    \
+  "[33333333/48'/0'/0'/2']" XPUB_86 "/1/*,"                                    \
+  "[44444444/48'/0'/0'/2']" XPUB_84 "/2/*,"                                    \
+  "[55555555/48'/0'/0'/2']" XPUB_86 "/2/*,"                                    \
+  "[66666666/48'/0'/0'/2']" XPUB_84 "/3/*,"                                    \
+  "[77777777/48'/0'/0'/2']" XPUB_86 "/3/*,"                                    \
+  "[88888888/48'/0'/0'/2']" XPUB_84 "/4/*,"                                    \
+  "[99999999/48'/0'/0'/2']" XPUB_86 "/4/*,"                                    \
+  "[aaaaaaaa/48'/0'/0'/2']" XPUB_84 "/5/*,"                                    \
+  "[bbbbbbbb/48'/0'/0'/2']" XPUB_86 "/5/*,"                                    \
+  "[cccccccc/48'/0'/0'/2']" XPUB_84 "/6/*,"                                    \
+  "[dddddddd/48'/0'/0'/2']" XPUB_86 "/6/*,"                                    \
+  "[eeeeeeee/48'/0'/0'/2']" XPUB_84 "/7/*"
+
+static void test_registry_claim_wsh_witness_size(const char *test_name,
+                                                 const char *desc_str,
+                                                 size_t expected_witness_len) {
+  TEST(test_name);
+  expected_scripts_t out = {0};
+  const char *err = regen_registry_scripts(desc_str, 0, 0, &out);
+  if (err) {
+    FAIL(err);
+    return;
+  }
+  if (out.witness_len != expected_witness_len) {
+    FAIL("witness_len mismatch");
+    return;
+  }
+  PASS();
+}
+
+static void test_registry_claim_oversize_wsh_fails(void) {
+  TEST("wsh(sortedmulti 8-of-16): regeneration fails cleanly");
+  /* 16 keys parse (libwally allows up to 20) but cannot generate; descriptor
+   * validation rejects these at load time (VALIDATION_UNSUPPORTED_SCRIPT). */
+  const char *desc = "wsh(sortedmulti(8," MS_15_KEYS
+                     ",[ffffffff/48'/0'/0'/2']" XPUB_86 "/7/*))";
+  expected_scripts_t out = {0};
+  const char *err = regen_registry_scripts(desc, 0, 0, &out);
+  if (!err) {
+    FAIL("expected claim_regenerate to fail");
+    return;
+  }
+  if (strcmp(err, "claim_regenerate returned false") != 0) {
+    FAIL(err);
     return;
   }
   PASS();
@@ -1584,11 +1741,32 @@ int main(void) {
                       "tr([00000000/86'/0'/0']" XPUB_86 "/0/*)", 0, 0,
                       REF_TR_SPK, sizeof(REF_TR_SPK), NULL, 0, NULL, 0);
 
+  test_registry_claim("wsh(or_d(pk(A),and_v(v:pkh(B),older(65535))))",
+                      MS_REGISTRY_DESC, 0, 0, REF_MS_SPK, sizeof(REF_MS_SPK),
+                      NULL, 0, REF_MS_WITNESS, sizeof(REF_MS_WITNESS));
+
   test_registry_claim("sh(wsh(pkh([00000000/49'/0'/0']xpub/0/*)))",
                       "sh(wsh(pkh([00000000/49'/0'/0']" XPUB_84 "/0/*)))", 0, 0,
                       REF_SHWSH_PKH_SPK, sizeof(REF_SHWSH_PKH_SPK),
                       REF_SHWSH_PKH_REDEEM, sizeof(REF_SHWSH_PKH_REDEEM),
                       REF_SHWSH_PKH_WITNESS, sizeof(REF_SHWSH_PKH_WITNESS));
+  test_registry_claim_wsh_witness_size(
+      "wsh(sortedmulti 5-of-8): 275-byte witness regenerates",
+      "wsh(sortedmulti(5,"
+      "[00000000/48'/0'/0'/2']" XPUB_84 "/0/*,"
+      "[11111111/48'/0'/0'/2']" XPUB_86 "/0/*,"
+      "[22222222/48'/0'/0'/2']" XPUB_84 "/1/*,"
+      "[33333333/48'/0'/0'/2']" XPUB_86 "/1/*,"
+      "[44444444/48'/0'/0'/2']" XPUB_84 "/2/*,"
+      "[55555555/48'/0'/0'/2']" XPUB_86 "/2/*,"
+      "[66666666/48'/0'/0'/2']" XPUB_84 "/3/*,"
+      "[77777777/48'/0'/0'/2']" XPUB_86 "/3/*"
+      "))",
+      275);
+  test_registry_claim_wsh_witness_size(
+      "wsh(sortedmulti 8-of-15): 513-byte witness regenerates (max)",
+      "wsh(sortedmulti(8," MS_15_KEYS "))", 513);
+  test_registry_claim_oversize_wsh_fails();
 
   printf("\n=== psbt_classify_input tests ===\n\n");
 
@@ -1631,6 +1809,8 @@ int main(void) {
   test_psbt_classify_multi_input_mixed();
   test_psbt_classify_registry_wsh_owned();
   test_psbt_classify_registry_wsh_tampered_witness();
+  test_psbt_classify_registry_miniscript_owned();
+  test_psbt_classify_registry_miniscript_tampered();
 
   key_unload();
 

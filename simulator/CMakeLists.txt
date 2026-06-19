@@ -163,6 +163,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/miniscript_policy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/key.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/message_sign.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
@@ -185,11 +186,13 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/keyboard.c
     ${APP_UI_DIR}/menu.c
     ${APP_UI_DIR}/numeric_keypad.c
+    ${APP_UI_DIR}/path_keypad.c
     ${APP_UI_DIR}/power.c
     ${APP_UI_DIR}/word_selector.c
     ${APP_UI_DIR}/wallet_source_picker.c
     ${APP_UI_DIR}/battery.c
     ${APP_UI_DIR}/key_info.c
+    ${APP_UI_DIR}/text_fit.c
     ${APP_UI_DIR}/sankey.c
     ${APP_UI_DIR}/settings_row.c
 )
@@ -250,6 +253,7 @@ set(APP_PAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/pages)
 set(APP_PAGE_SOURCES
     # Login flow
     ${APP_PAGES_DIR}/login/login.c
+    ${APP_PAGES_DIR}/login/login_scan.c
     ${APP_PAGES_DIR}/login/login_settings.c
     ${APP_PAGES_DIR}/login/about.c
     # Load mnemonic
@@ -292,6 +296,8 @@ set(APP_PAGE_SOURCES
     # Scan page
     ${APP_PAGES_DIR}/scan/scan.c
     ${APP_PAGES_DIR}/scan/psbt_sign_policy.c
+    # Load page
+    ${APP_PAGES_DIR}/load/load.c
     # Dev tools
     ${APP_PAGES_DIR}/dev_tools/dev_menu.c
     ${APP_PAGES_DIR}/dev_tools/snapshot.c

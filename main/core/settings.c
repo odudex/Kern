@@ -7,7 +7,9 @@
 
 static const char *TAG = "SETTINGS";
 static const char *NVS_NAMESPACE = "settings";
-static const char *KEY_DEFAULT_NET = "def_net";
+/* Key name predates the removal of the "default wallet" settings page;
+ * kept as "def_net" so existing devices retain their network choice. */
+static const char *KEY_NETWORK = "def_net";
 static const char *KEY_BRIGHTNESS = "bright";
 static const char *KEY_AE_TARGET = "ae_tgt";
 static const char *KEY_FOCUS_POS = "focus";
@@ -90,15 +92,14 @@ esp_err_t settings_init(void) {
   return ESP_OK;
 }
 
-wallet_network_t settings_get_default_network(void) {
-  uint8_t val =
-      settings_get_u8_or_default(KEY_DEFAULT_NET, WALLET_NETWORK_MAINNET);
+wallet_network_t settings_get_network(void) {
+  uint8_t val = settings_get_u8_or_default(KEY_NETWORK, WALLET_NETWORK_MAINNET);
   return (val <= WALLET_NETWORK_TESTNET) ? (wallet_network_t)val
                                          : WALLET_NETWORK_MAINNET;
 }
 
-esp_err_t settings_set_default_network(wallet_network_t network) {
-  return settings_set_u8_and_commit(KEY_DEFAULT_NET, (uint8_t)network);
+esp_err_t settings_set_network(wallet_network_t network) {
+  return settings_set_u8_and_commit(KEY_NETWORK, (uint8_t)network);
 }
 
 uint8_t settings_get_brightness(void) {

@@ -2,6 +2,7 @@
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/output.h"
 #include "../../core/key.h"
+#include "../../core/miniscript_policy.h"
 #include "../../core/registry.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
@@ -11,6 +12,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
 #include "../../ui/menu.h"
+#include "../../ui/text_fit.h"
 #include "../../ui/theme_widgets.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -60,6 +62,9 @@ encode:;
 }
 
 // Parse BlueWallet multisig setup file into a standard descriptor.
+// 15 keys is libwally's CHECKMULTISIG generation cap, enforced for all
+// descriptors by VALIDATION_UNSUPPORTED_SCRIPT.
+#define BLUEWALLET_MAX_KEYS 15
 static char *bluewallet_to_descriptor(const char *text) {
   if (!text)
     return NULL;
@@ -72,7 +77,8 @@ static char *bluewallet_to_descriptor(const char *text) {
 
   unsigned int threshold = 0, num_keys = 0;
   if (sscanf(policy_line, "Policy: %u of %u", &threshold, &num_keys) != 2 ||
-      threshold == 0 || num_keys == 0 || threshold > num_keys || num_keys > 15)
+      threshold == 0 || num_keys == 0 || threshold > num_keys ||
+      num_keys > BLUEWALLET_MAX_KEYS)
     return NULL;
 
   char derivation[64] = {0};
@@ -99,8 +105,8 @@ static char *bluewallet_to_descriptor(const char *text) {
     return NULL;
   }
 
-  char fingerprints[15][9];
-  char *xpubs[15];
+  char fingerprints[BLUEWALLET_MAX_KEYS][9];
+  char *xpubs[BLUEWALLET_MAX_KEYS];
   unsigned int found_keys = 0;
   memset(xpubs, 0, sizeof(xpubs));
 
@@ -206,6 +212,15 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   case VALIDATION_INVALID_HARDENED_NOTATION:
     dialog_show_error_timeout("Descriptor uses 'H'. Use ' or h for hardened.",
                               NULL, 3000);
+    return true;
+
+  case VALIDATION_UNSUPPORTED_MINISCRIPT:
+    dialog_show_error_timeout("Only wsh() miniscript is supported", NULL, 3000);
+    return true;
+
+  case VALIDATION_UNSUPPORTED_SCRIPT:
+    dialog_show_error_timeout("Script too large (max 15 multisig keys)", NULL,
+                              3000);
     return true;
 
   case VALIDATION_NETWORK_MISMATCH: {
@@ -322,16 +337,168 @@ static void info_confirm_no_cb(lv_event_t *e) {
   info_confirm_respond(e, false);
 }
 
-// Trim xpub for display: first 12 chars + "..." + last 8 chars
-static void trim_xpub_for_display(const char *xpub, char *out,
-                                  size_t out_size) {
-  size_t len = strlen(xpub);
-  if (len <= 23) {
-    strncpy(out, xpub, out_size - 1);
-    out[out_size - 1] = '\0';
-    return;
+static lv_color_t policy_token_color(const ms_token_t *tok,
+                                     const char *our_letters) {
+  switch (tok->kind) {
+  case MS_TOKEN_PLUMBING:
+  case MS_TOKEN_NOTE:
+    return secondary_color();
+  case MS_TOKEN_OPERATOR:
+  case MS_TOKEN_TIMELOCK:
+    return accent_color();
+  case MS_TOKEN_KEY:
+    return (our_letters && strchr(our_letters, tok->text[0]))
+               ? highlight_color()
+               : primary_color();
+  default:
+    return primary_color();
   }
-  snprintf(out, out_size, "%.12s...%.8s", xpub, xpub + len - 8);
+}
+
+// Recover a child spangroup's nesting level from its left padding.
+static int32_t policy_line_level(lv_obj_t *child, int32_t indent_px) {
+  return lv_obj_get_style_pad_left(child, 0) / indent_px;
+}
+
+// Scanning forward from line i, is there another line at exactly `depth` before
+// a shallower line closes the branch? (i.e. does this branch have more
+// siblings, so its spine should keep descending).
+static bool policy_branch_continues(lv_obj_t *cont, uint32_t n, uint32_t i,
+                                    int32_t depth, int32_t indent_px) {
+  for (uint32_t j = i + 1; j < n; j++) {
+    int32_t lj = policy_line_level(lv_obj_get_child(cont, j), indent_px);
+    if (lj < depth)
+      return false;
+    if (lj == depth)
+      return true;
+  }
+  return false;
+}
+
+// Draw a file-tree style guide: a vertical spine per nesting branch with an
+// elbow joining each line to its parent (tee while siblings remain, corner on
+// the last one). Each child spangroup's level is recovered from its padding.
+static void policy_tree_draw_cb(lv_event_t *e) {
+  lv_obj_t *cont = lv_event_get_target(e);
+  lv_layer_t *layer = lv_event_get_layer(e);
+  int32_t indent_px = (int32_t)(intptr_t)lv_event_get_user_data(e);
+  if (!layer || indent_px <= 0)
+    return;
+
+  int32_t guide_px = theme_small_padding() / 4;
+  if (guide_px < 1)
+    guide_px = 1;
+  int32_t inset = indent_px / 4;
+  if (inset < 2)
+    inset = 2;
+  int32_t gap = lv_obj_get_style_pad_row(cont, 0);
+
+  lv_draw_line_dsc_t dsc;
+  lv_draw_line_dsc_init(&dsc);
+  dsc.color = secondary_color();
+  dsc.width = guide_px;
+  dsc.opa = LV_OPA_50;
+
+  lv_area_t content;
+  lv_obj_get_content_coords(cont, &content);
+  int32_t x0 = content.x1;
+  uint32_t n = lv_obj_get_child_count(cont);
+
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t *child = lv_obj_get_child(cont, i);
+    int32_t level = policy_line_level(child, indent_px);
+    if (level <= 0)
+      continue;
+
+    lv_area_t a;
+    lv_obj_get_coords(child, &a);
+    int32_t mid = (a.y1 + a.y2) / 2;
+    int32_t top = a.y1 - gap; // bridge the inter-row gap up to the parent
+
+    // Ancestor branches still expecting siblings get a pass-through spine.
+    for (int32_t d = 1; d < level; d++) {
+      if (!policy_branch_continues(cont, n, i, d, indent_px))
+        continue;
+      int32_t x = x0 + (d - 1) * indent_px + inset;
+      dsc.p1.x = dsc.p2.x = x;
+      dsc.p1.y = top;
+      dsc.p2.y = a.y2;
+      lv_draw_line(layer, &dsc);
+    }
+
+    // This line's own branch: spine down to the elbow, then across to the text.
+    int32_t x = x0 + (level - 1) * indent_px + inset;
+    bool last = !policy_branch_continues(cont, n, i, level, indent_px);
+    dsc.p1.x = dsc.p2.x = x;
+    dsc.p1.y = top;
+    dsc.p2.y = last ? mid : a.y2;
+    lv_draw_line(layer, &dsc);
+
+    dsc.p1.x = x;
+    dsc.p1.y = dsc.p2.y = mid;
+    dsc.p2.x = x0 + level * indent_px;
+    lv_draw_line(layer, &dsc);
+  }
+}
+
+lv_obj_t *descriptor_policy_view_create(lv_obj_t *parent, const char *policy,
+                                        const char *our_letters) {
+  if (!parent || !policy || !*policy)
+    return NULL;
+
+  const lv_font_t *font = theme_font_small();
+  // Conservative chars-per-line estimate: avg glyph width ~ line_height / 2
+  size_t max_chars =
+      (size_t)((theme_screen_width() - 2 * theme_default_padding()) * 2 /
+               font->line_height);
+  if (max_chars < 20)
+    max_chars = 20;
+
+  ms_policy_view_t view;
+  if (!miniscript_policy_view_build(policy, max_chars, &view))
+    return NULL;
+
+  lv_obj_t *cont = lv_obj_create(parent);
+  lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(cont, 0, 0);
+  lv_obj_set_style_pad_all(cont, 0, 0);
+  lv_obj_set_style_pad_row(cont, theme_small_padding() / 2, 0);
+  lv_obj_set_size(cont, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+
+  int32_t indent_px = theme_default_padding() / 2;
+  lv_obj_add_event_cb(cont, policy_tree_draw_cb, LV_EVENT_DRAW_MAIN,
+                      (void *)(intptr_t)indent_px);
+
+  for (size_t i = 0; i < view.num_lines; i++) {
+    const ms_policy_line_t *line = &view.lines[i];
+    lv_obj_t *sg = lv_spangroup_create(cont);
+    lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
+    lv_obj_set_width(sg, LV_PCT(100));
+    lv_obj_set_height(sg, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_font(sg, font, 0);
+    lv_obj_set_style_pad_left(sg, line->level * indent_px, 0);
+    for (size_t j = 0; j < line->num_tokens; j++) {
+      const ms_token_t *tok = &line->tokens[j];
+      lv_span_t *span = lv_spangroup_add_span(sg);
+      if (!span)
+        continue;
+      if (tok->kind == MS_TOKEN_NOTE) {
+        char text[32];
+        snprintf(text, sizeof(text), " %s", tok->text);
+        lv_span_set_text(span, text);
+      } else {
+        lv_span_set_text(span, tok->text);
+      }
+      lv_style_set_text_color(lv_span_get_style(span),
+                              policy_token_color(tok, our_letters));
+    }
+    lv_spangroup_refresh(sg);
+  }
+
+  miniscript_policy_view_free(&view);
+  return cont;
 }
 
 // UI wrapper for descriptor info confirmation
@@ -354,7 +521,10 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
 
   // Title with "Load?" prompt
   char title[48];
-  if (info->is_multisig) {
+  if (info->is_miniscript) {
+    snprintf(title, sizeof(title), "Miniscript (%u key%s) - Load?",
+             info->num_keys, info->num_keys == 1 ? "" : "s");
+  } else if (info->is_multisig) {
     snprintf(title, sizeof(title), "Multisig (%u of %u) - Load?",
              info->threshold, info->num_keys);
   } else {
@@ -367,12 +537,17 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   lv_obj_set_width(title_label, LV_PCT(100));
   lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
 
-  // Scrollable content area (between title and buttons)
-  lv_coord_t title_h = theme_font_medium()->line_height + 20;
+  // Scrollable content area (between title and buttons). Use the root's
+  // content height: the default theme pads the root, so LV_VER_RES would
+  // overlap the bottom buttons.
+  lv_obj_update_layout(root);
+  // Use the title's laid-out height so a wrapped (multi-line) title on narrow
+  // screens still clears the first key. 10px above (align offset) + 10 below.
+  lv_coord_t title_h = lv_obj_get_height(title_label) + 20;
   lv_coord_t btn_h = theme_button_height();
   lv_obj_t *scroll = lv_obj_create(root);
   lv_obj_set_width(scroll, LV_PCT(100));
-  lv_obj_set_height(scroll, LV_VER_RES - title_h - btn_h);
+  lv_obj_set_height(scroll, lv_obj_get_content_height(root) - title_h - btn_h);
   lv_obj_align(scroll, LV_ALIGN_TOP_LEFT, 0, title_h);
   lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(scroll, 0, 0);
@@ -383,36 +558,69 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
                         LV_FLEX_ALIGN_START);
   lv_obj_add_flag(scroll, LV_OBJ_FLAG_SCROLLABLE);
 
+  // Resolve the scroll's content width so long xpubs can be cropped to fill it.
+  lv_obj_update_layout(root);
+  int32_t scroll_w = lv_obj_get_content_width(scroll);
+
   // Get current wallet fingerprint for highlighting
   char my_fp[9] = {0};
   key_get_fingerprint_hex(my_fp);
 
   // Key entries
   for (uint32_t i = 0; i < info->num_keys; i++) {
-    // Letter + fingerprint on same row
-    char letter_fp[20];
-    snprintf(letter_fp, sizeof(letter_fp), "%c: %s", 'A' + (char)i,
-             info->keys[i].fingerprint_hex);
+    // Identifier letter at line start, then fingerprint icon + hex
+    char letter_icon[12];
+    snprintf(letter_icon, sizeof(letter_icon), "%c: %s", 'A' + (char)i,
+             ICON_FINGERPRINT);
     bool is_ours = (my_fp[0] != '\0' &&
                     strcasecmp(my_fp, info->keys[i].fingerprint_hex) == 0);
-    lv_obj_t *fp_row =
-        ui_icon_text_row_create(scroll, ICON_FINGERPRINT, letter_fp,
-                                is_ours ? highlight_color() : primary_color());
+    lv_obj_t *fp_row = ui_icon_text_row_create(
+        scroll, letter_icon, info->keys[i].fingerprint_hex,
+        is_ours ? highlight_color() : primary_color());
     if (i > 0)
       lv_obj_set_style_pad_top(fp_row, 12, 0);
 
-    // Trimmed xpub (indented)
-    char trimmed[24];
-    trim_xpub_for_display(info->keys[i].xpub, trimmed, sizeof(trimmed));
-    lv_obj_t *xpub_label = theme_create_label(scroll, trimmed, false);
-    lv_obj_set_style_text_color(xpub_label, secondary_color(), 0);
-    lv_obj_set_style_text_font(xpub_label, theme_font_small(), 0);
-    lv_obj_set_style_pad_left(xpub_label, 20, 0);
+    // Indent the following lines to sit under the fingerprint icon, i.e.
+    // past the "X: " identifier prefix on the first line.
+    char prefix[4];
+    snprintf(prefix, sizeof(prefix), "%c: ", 'A' + (char)i);
+    lv_point_t prefix_size = {0};
+    lv_text_get_size(&prefix_size, prefix, theme_font_small(), 0, 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    int32_t indent = prefix_size.x;
 
-    // Derivation path row (indented)
-    lv_obj_t *deriv_row = ui_icon_text_row_create(
-        scroll, ICON_DERIVATION, info->keys[i].derivation, secondary_color());
-    lv_obj_set_style_pad_left(deriv_row, 20, 0);
+    // Derivation path row (indented), hardened marks shown as 'h'
+    char deriv[64];
+    strncpy(deriv, info->keys[i].derivation, sizeof(deriv) - 1);
+    deriv[sizeof(deriv) - 1] = '\0';
+    for (char *p = deriv; *p; p++)
+      if (*p == '\'')
+        *p = 'h';
+    lv_obj_t *deriv_row = ui_icon_text_row_create(scroll, ICON_DERIVATION,
+                                                  deriv, secondary_color());
+    lv_obj_set_style_pad_left(deriv_row, indent, 0);
+
+    // Xpub (indented), middle-cropped to fill the remaining width.
+    ui_text_fit_t xpub_fit = ui_text_fit_middle(
+        info->keys[i].xpub, theme_font_small(), scroll_w - indent);
+    lv_obj_t *xpub_row = ui_text_fit_row_create(
+        scroll, &xpub_fit, theme_font_small(), scroll_w, secondary_color());
+    lv_obj_set_style_pad_left(xpub_row, indent, 0);
+  }
+
+  // Indented miniscript policy with key letters, our keys highlighted
+  if (info->is_miniscript && info->policy[0]) {
+    char ours[DESCRIPTOR_INFO_MAX_KEYS + 1];
+    size_t n_ours = 0;
+    for (uint32_t i = 0; my_fp[0] != '\0' && i < info->num_keys; i++)
+      if (strcasecmp(my_fp, info->keys[i].fingerprint_hex) == 0)
+        ours[n_ours++] = (char)('A' + i);
+    ours[n_ours] = '\0';
+
+    lv_obj_t *policy_view =
+        descriptor_policy_view_create(scroll, info->policy, ours);
+    if (policy_view)
+      lv_obj_set_style_pad_top(policy_view, theme_small_padding(), 0);
   }
 
   // Button row (fixed at bottom)
@@ -480,6 +688,36 @@ void descriptor_loader_process_string(const char *descriptor_str,
                                validation_cb, descriptor_confirm_wrapper,
                                descriptor_info_confirm_wrapper,
                                descriptor_id_loc_wrapper, user_data);
+  free(unambiguous);
+  free(converted);
+}
+
+void descriptor_loader_process_string_watch_only(
+    const char *descriptor_str, validation_complete_cb validation_cb,
+    void *user_data) {
+  if (!descriptor_str) {
+    if (validation_cb)
+      validation_cb(VALIDATION_PARSE_ERROR, user_data);
+    return;
+  }
+
+  char *converted = bluewallet_to_descriptor(descriptor_str);
+  const char *to_process = converted ? converted : descriptor_str;
+  char *unambiguous = descriptor_to_unambiguous(to_process);
+  const char *final = unambiguous ? unambiguous : to_process;
+
+  wallet_network_t net;
+  if (!descriptor_infer_network(final, &net)) {
+    if (validation_cb)
+      validation_cb(VALIDATION_PARSE_ERROR, user_data);
+    free(unambiguous);
+    free(converted);
+    return;
+  }
+
+  wallet_set_watch_only(net);
+  descriptor_validate_and_load_watch_only(
+      final, net, validation_cb, descriptor_info_confirm_wrapper, user_data);
   free(unambiguous);
   free(converted);
 }

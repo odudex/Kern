@@ -398,6 +398,49 @@ lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
   return LV_RESULT_OK;
 }
 
+lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text) {
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *qr = lv_qrcode_create(parent);
+  if (!qr)
+    return NULL;
+
+  lv_qrcode_set_size(qr, size);
+  if (text)
+    qr_update_optimal(qr, text, NULL);
+  lv_obj_center(qr);
+  return qr;
+}
+
+char *qr_bech32_to_upper(const char *text) {
+  if (!text)
+    return NULL;
+
+  static const char *const hrp_prefixes[] = {"bc1", "tb1", "bcrt1"};
+  bool prefix_ok = false;
+  for (size_t i = 0; i < sizeof(hrp_prefixes) / sizeof(hrp_prefixes[0]); i++) {
+    if (strncmp(text, hrp_prefixes[i], strlen(hrp_prefixes[i])) == 0) {
+      prefix_ok = true;
+      break;
+    }
+  }
+  if (!prefix_ok)
+    return NULL;
+
+  for (const char *c = text; *c; c++) {
+    if (!isalnum((unsigned char)*c) || isupper((unsigned char)*c))
+      return NULL;
+  }
+
+  char *upper = strdup(text);
+  if (!upper)
+    return NULL;
+  for (char *c = upper; *c; c++)
+    *c = (char)toupper((unsigned char)*c);
+  return upper;
+}
+
 lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
                               qr_encode_result_t *result) {
   if (!qr_obj || !text || strlen(text) == 0 ||

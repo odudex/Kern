@@ -46,6 +46,7 @@ int theme_corner_button_width(void);
 int theme_corner_button_height(void);
 int theme_small_padding(void);
 int theme_logo_size(void);
+int theme_key_gap(void);
 
 // Widget builders (theme_create_*/theme_apply_*) live in theme_widgets.h.
 

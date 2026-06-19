@@ -3,6 +3,7 @@
 #include "registry.h"
 
 static bool wallet_initialized = false;
+static bool wallet_watch_only = false;
 static wallet_network_t wallet_network = WALLET_NETWORK_MAINNET;
 
 bool wallet_init(wallet_network_t network) {
@@ -27,4 +28,16 @@ void wallet_cleanup(void) {
 void wallet_unload(void) {
   key_unload();
   wallet_cleanup();
+}
+
+void wallet_set_watch_only(wallet_network_t network) {
+  wallet_watch_only = true;
+  wallet_network = network;
+}
+
+bool wallet_is_watch_only(void) { return wallet_watch_only; }
+
+void wallet_clear_watch_only(void) {
+  wallet_watch_only = false;
+  registry_clear();
 }

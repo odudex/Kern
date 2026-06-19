@@ -12,6 +12,8 @@
 #include <wally_descriptor.h>
 
 #include "descriptor_checksum.h"
+#include "miniscript_policy.h"
+#include "psbt_internal.h"
 #include "registry.h"
 #include "ss_whitelist.h"
 #include "storage.h"
@@ -33,6 +35,8 @@ typedef struct {
   void *user_data;
   descriptor_info_t info;
   char descriptor_checksum[9];
+  bool watch_only;                /* keyless: skip key/xpub stages */
+  wallet_network_t watch_network; /* network for the watch-only registry add */
 } validation_context_t;
 
 static validation_context_t *current_ctx = NULL;
@@ -185,6 +189,44 @@ static char *extract_xpub_from_key(const char *key_str) {
   return xpub;
 }
 
+// True if the parsed descriptor contains miniscript-only fragments.
+// libwally sets WALLY_MS_IS_DESCRIPTOR at parse start and clears it when a
+// non-descriptor (miniscript) fragment is found; multi()/sortedmulti() keep it.
+static bool descriptor_is_miniscript(const struct wally_descriptor *desc) {
+  uint32_t features = 0;
+  if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
+    return false;
+  return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
+}
+
+// Miniscript is only supported as segwit v0, i.e. wrapped in a plain wsh().
+static bool
+miniscript_wrapper_is_supported(const struct wally_descriptor *desc) {
+  char *canon = NULL;
+  if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canon) != WALLY_OK ||
+      !canon)
+    return false;
+  bool is_wsh = (strncmp(canon, "wsh(", 4) == 0);
+  wally_free_string(canon);
+  return is_wsh;
+}
+
+// libwally accepts descriptors at parse time that its script generator later
+// rejects: multi()/sortedmulti() above 15 keys and sh()/wsh() inner scripts
+// over PSBT_MAX_INNER_SCRIPT_LEN (520) bytes. Trial-generate the scriptPubKey
+// so unusable descriptors fail at load time instead of at address derivation
+// or signing time. A too-small buffer is reported as WALLY_OK with written >
+// len, hence the explicit written check.
+static bool
+descriptor_scripts_are_generatable(const struct wally_descriptor *desc) {
+  uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t written = 0;
+  return wally_descriptor_to_script(desc, 0, 0, 0, 0, 0, 0, work, sizeof(work),
+                                    &written) == WALLY_OK &&
+         written <= sizeof(work);
+}
+
 // Parse multisig threshold from descriptor string (e.g., "multi(2,..." -> 2)
 static uint32_t parse_multisig_threshold(const char *descriptor_str) {
   const char *multi = strstr(descriptor_str, "multi(");
@@ -211,10 +253,22 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
     return false;
   }
 
-  info->is_multisig = (num_keys > 1);
-  info->num_keys = (num_keys > DESCRIPTOR_INFO_MAX_KEYS)
-                       ? DESCRIPTOR_INFO_MAX_KEYS
-                       : num_keys;
+  info->is_miniscript = descriptor_is_miniscript(descriptor);
+  info->is_multisig = !info->is_miniscript && (num_keys > 1);
+
+  if (info->is_miniscript) {
+    char *policy = miniscript_policy_string(descriptor);
+    if (policy) {
+      snprintf(info->policy, sizeof(info->policy), "%s", policy);
+      free(policy);
+    }
+  }
+  /* Unreachable for loadable descriptors: the script-size guard caps key
+   * counts well below DESCRIPTOR_INFO_MAX_KEYS. Defensive bound for keys[]. */
+  if (num_keys > DESCRIPTOR_INFO_MAX_KEYS) {
+    return false;
+  }
+  info->num_keys = num_keys;
 
   if (info->is_multisig) {
     info->threshold = parse_multisig_threshold(descriptor_str);
@@ -303,7 +357,11 @@ static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
   if (!out)
     return;
 
-  if (current_ctx->info.is_multisig) {
+  if (current_ctx->info.is_miniscript) {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Miniscript (%u key%s)",
+             current_ctx->info.num_keys,
+             current_ctx->info.num_keys == 1 ? "" : "s");
+  } else if (current_ctx->info.is_multisig) {
     snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
              current_ctx->info.threshold, current_ctx->info.num_keys);
   } else {
@@ -319,8 +377,12 @@ static void session_register_current_descriptor(void) {
     return;
   }
 
-  if (!registry_add_from_string(id, current_ctx->descriptor_str, STORAGE_FLASH,
-                                false)) {
+  bool added = current_ctx->watch_only
+                   ? registry_add_watch_only(id, current_ctx->descriptor_str,
+                                             current_ctx->watch_network)
+                   : registry_add_from_string(id, current_ctx->descriptor_str,
+                                              STORAGE_FLASH, false);
+  if (!added) {
     ESP_LOGE(TAG, "Failed to load session descriptor '%s'", id);
     complete_validation(VALIDATION_INTERNAL_ERROR);
     return;
@@ -496,38 +558,34 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
   }
 }
 
-void descriptor_validate_and_load(const char *descriptor_str,
-                                  validation_complete_cb callback,
-                                  validation_confirm_cb confirm_cb,
-                                  validation_info_confirm_cb info_confirm_cb,
-                                  validation_id_loc_cb id_loc_cb,
-                                  void *user_data) {
-  // Clean up any previous context
+/* Shared prologue for both validate entry points: guards, context allocation,
+ * descriptor copy, common callback wiring, parse, and the keyless static checks
+ * (miniscript wrapper, script generatability). On success returns
+ * VALIDATION_SUCCESS with *out set to the parsed descriptor (caller owns it);
+ * on failure the result is already delivered and *out is NULL. */
+static descriptor_validation_result_t
+validation_begin(const char *descriptor_str, validation_complete_cb callback,
+                 validation_info_confirm_cb info_confirm_cb, void *user_data,
+                 struct wally_descriptor **out) {
+  *out = NULL;
   cleanup_context();
   last_duplicate_id[0] = '\0';
 
   if (!descriptor_str || !callback) {
-    if (callback) {
+    if (callback)
       callback(VALIDATION_INTERNAL_ERROR, user_data);
-    }
-    return;
-  }
-
-  if (!key_is_loaded() || !wallet_is_initialized()) {
-    callback(VALIDATION_INTERNAL_ERROR, user_data);
-    return;
+    return VALIDATION_INTERNAL_ERROR;
   }
 
   if (descriptor_text_has_uppercase_hardened(descriptor_str)) {
     callback(VALIDATION_INVALID_HARDENED_NOTATION, user_data);
-    return;
+    return VALIDATION_INVALID_HARDENED_NOTATION;
   }
 
-  // Allocate context
   current_ctx = malloc(sizeof(validation_context_t));
   if (!current_ctx) {
     callback(VALIDATION_INTERNAL_ERROR, user_data);
-    return;
+    return VALIDATION_INTERNAL_ERROR;
   }
   memset(current_ctx, 0, sizeof(validation_context_t));
   current_ctx->generation = next_generation++;
@@ -538,13 +596,11 @@ void descriptor_validate_and_load(const char *descriptor_str,
   if (!current_ctx->descriptor_str) {
     cleanup_context();
     callback(VALIDATION_INTERNAL_ERROR, user_data);
-    return;
+    return VALIDATION_INTERNAL_ERROR;
   }
 
   current_ctx->callback = callback;
-  current_ctx->confirm_cb = confirm_cb;
   current_ctx->info_confirm_cb = info_confirm_cb;
-  current_ctx->id_loc_cb = id_loc_cb;
   current_ctx->user_data = user_data;
 
   struct wally_descriptor *descriptor = NULL;
@@ -552,10 +608,72 @@ void descriptor_validate_and_load(const char *descriptor_str,
       parse_descriptor_for_wallet(current_ctx->descriptor_str, &descriptor);
   if (parse_result != VALIDATION_SUCCESS) {
     complete_validation(parse_result);
+    return parse_result;
+  }
+
+  if (descriptor_is_miniscript(descriptor) &&
+      !miniscript_wrapper_is_supported(descriptor)) {
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_UNSUPPORTED_MINISCRIPT);
+    return VALIDATION_UNSUPPORTED_MINISCRIPT;
+  }
+
+  if (!descriptor_scripts_are_generatable(descriptor)) {
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_UNSUPPORTED_SCRIPT);
+    return VALIDATION_UNSUPPORTED_SCRIPT;
+  }
+
+  *out = descriptor;
+  return VALIDATION_SUCCESS;
+}
+
+/* Store the descriptor checksum, then reject duplicates already in the
+ * in-memory session (h-normalized BIP-380 checksum match). Descriptor files on
+ * flash/SD are explicit import sources, not registered descriptors, so dedup is
+ * session-scoped. On failure frees `descriptor`, delivers the result, and
+ * returns false; the caller must stop. */
+static bool checksum_and_dedup(struct wally_descriptor *descriptor) {
+  if (!descriptor_checksum_from_descriptor(descriptor,
+                                           current_ctx->descriptor_checksum)) {
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return false;
+  }
+
+  char existing_id[REGISTRY_ID_MAX_LEN];
+  if (registry_session_has_duplicate_checksum(
+          current_ctx->descriptor_checksum, existing_id, sizeof(existing_id))) {
+    wally_descriptor_free(descriptor);
+    strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
+    last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
+    complete_validation(VALIDATION_DUPLICATE);
+    return false;
+  }
+  return true;
+}
+
+void descriptor_validate_and_load(const char *descriptor_str,
+                                  validation_complete_cb callback,
+                                  validation_confirm_cb confirm_cb,
+                                  validation_info_confirm_cb info_confirm_cb,
+                                  validation_id_loc_cb id_loc_cb,
+                                  void *user_data) {
+  if (descriptor_str && callback &&
+      (!key_is_loaded() || !wallet_is_initialized())) {
+    cleanup_context();
+    callback(VALIDATION_INTERNAL_ERROR, user_data);
     return;
   }
 
-  // Stage 1: Find our key by fingerprint
+  struct wally_descriptor *descriptor = NULL;
+  if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
+                       &descriptor) != VALIDATION_SUCCESS)
+    return;
+
+  current_ctx->confirm_cb = confirm_cb;
+  current_ctx->id_loc_cb = id_loc_cb;
+
   int key_index = find_matching_key_index(descriptor);
   if (key_index < 0) {
     ESP_LOGE(TAG, "Wallet fingerprint not found in descriptor");
@@ -564,27 +682,65 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
-  if (!descriptor_checksum_from_descriptor(descriptor,
-                                           current_ctx->descriptor_checksum)) {
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_INTERNAL_ERROR);
+  if (!checksum_and_dedup(descriptor))
     return;
-  }
-
-  /* Stage 1.5: dedup against the current in-memory session only. Descriptor
-   * files on flash/SD are explicit backups/import sources and must not behave
-   * as registered descriptors while persistent registration is disabled. */
-  char existing_id[REGISTRY_ID_MAX_LEN];
-  if (registry_session_has_duplicate_checksum(
-          current_ctx->descriptor_checksum, existing_id, sizeof(existing_id))) {
-    wally_descriptor_free(descriptor);
-    strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
-    last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
-    complete_validation(VALIDATION_DUPLICATE);
-    return;
-  }
 
   verify_xpub_and_show_info(descriptor, key_index);
+}
+
+// Watch-only: extract info and show the "Load?" dialog, skipping the xpub
+// verification and PSB warning that the keyed path performs.
+static void watch_only_show_info(struct wally_descriptor *descriptor) {
+  extract_descriptor_info(descriptor, current_ctx->descriptor_str,
+                          &current_ctx->info);
+  wally_descriptor_free(descriptor);
+
+  if (current_ctx->info_confirm_cb) {
+    pending_generation = current_ctx->generation;
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+  } else {
+    info_confirm_proceed(true, NULL);
+  }
+}
+
+bool descriptor_infer_network(const char *descriptor_str,
+                              wallet_network_t *network_out) {
+  if (!descriptor_str || !network_out)
+    return false;
+  struct wally_descriptor *desc = NULL;
+  if (wally_descriptor_parse(descriptor_str, NULL,
+                             WALLY_NETWORK_BITCOIN_MAINNET, 0,
+                             &desc) == WALLY_OK) {
+    wally_descriptor_free(desc);
+    *network_out = WALLET_NETWORK_MAINNET;
+    return true;
+  }
+  if (wally_descriptor_parse(descriptor_str, NULL,
+                             WALLY_NETWORK_BITCOIN_TESTNET, 0,
+                             &desc) == WALLY_OK) {
+    wally_descriptor_free(desc);
+    *network_out = WALLET_NETWORK_TESTNET;
+    return true;
+  }
+  return false;
+}
+
+void descriptor_validate_and_load_watch_only(
+    const char *descriptor_str, wallet_network_t network,
+    validation_complete_cb callback, validation_info_confirm_cb info_confirm_cb,
+    void *user_data) {
+  struct wally_descriptor *descriptor = NULL;
+  if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
+                       &descriptor) != VALIDATION_SUCCESS)
+    return;
+
+  current_ctx->watch_only = true;
+  current_ctx->watch_network = network;
+
+  if (!checksum_and_dedup(descriptor))
+    return;
+
+  watch_only_show_info(descriptor);
 }
 
 bool descriptor_validator_get_duplicate_id(char *out, size_t out_len) {

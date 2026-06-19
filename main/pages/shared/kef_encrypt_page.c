@@ -195,10 +195,7 @@ static void create_overlay(const char *title, const char *placeholder,
                            bool password_mode, lv_event_cb_t ready_cb) {
   destroy_overlay();
 
-  overlay_screen = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(overlay_screen, LV_PCT(100), LV_PCT(100));
-  theme_apply_screen(overlay_screen);
-  lv_obj_clear_flag(overlay_screen, LV_OBJ_FLAG_SCROLLABLE);
+  overlay_screen = theme_create_page_container(lv_screen_active());
 
   overlay_title = theme_create_page_title(overlay_screen, title);
   ui_create_back_button(overlay_screen, cancel_cb);
@@ -207,16 +204,6 @@ static void create_overlay(const char *title, const char *placeholder,
                        ready_cb);
 
   if (password_mode) {
-    if (LV_VER_RES <= 480) {
-      // Leave room below textarea for the strength label above the taller
-      // keyboard.
-      lv_obj_align(text_input.textarea, LV_ALIGN_TOP_LEFT, LV_HOR_RES * 5 / 100,
-                   55);
-      if (text_input.eye_btn)
-        lv_obj_align_to(text_input.eye_btn, text_input.textarea,
-                        LV_ALIGN_OUT_RIGHT_MID, 5, 0);
-    }
-
     strength_label = lv_label_create(overlay_screen);
     lv_label_set_text(strength_label, "");
     lv_obj_set_style_text_font(strength_label, theme_font_small(), 0);
@@ -224,6 +211,18 @@ static void create_overlay(const char *title, const char *placeholder,
                     LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
     lv_obj_add_event_cb(text_input.keyboard, key_changed_cb,
                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Shrink the bottom-anchored keyboard if the textarea-keyboard gap can't
+    // fit the strength label.
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t ta_area, kb_area;
+    lv_obj_get_coords(text_input.textarea, &ta_area);
+    lv_obj_get_coords(text_input.keyboard, &kb_area);
+    int32_t needed = lv_font_get_line_height(theme_font_small()) + 2 * 5;
+    int32_t deficit = needed - (kb_area.y1 - ta_area.y2 - 1);
+    if (deficit > 0)
+      lv_obj_set_height(text_input.keyboard,
+                        lv_area_get_height(&kb_area) - deficit);
   }
 }
 

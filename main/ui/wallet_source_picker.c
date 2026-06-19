@@ -54,6 +54,10 @@ static bool source_has_account(const wallet_source_picker_t *p) {
     return p->state.source < 4;
   case WALLET_PICKER_MULTISIG_BIP48:
     return true;
+  case WALLET_PICKER_MINISCRIPT:
+    return false; // custom derivation comes from the page's path button
+  case WALLET_PICKER_DESCRIPTORS_ONLY:
+    return false; // descriptors carry their own derivation
   }
   return false;
 }
@@ -124,6 +128,24 @@ static void build_options(wallet_picker_mode_t mode, char *out, size_t out_sz) {
   case WALLET_PICKER_MULTISIG_BIP48:
     snprintf(out, out_sz, "Native SegWit\nNested SegWit");
     return;
+  case WALLET_PICKER_MINISCRIPT:
+    snprintf(out, out_sz, "Native SegWit");
+    return;
+  case WALLET_PICKER_DESCRIPTORS_ONLY: {
+    size_t written = 0;
+    size_t reg_count = registry_count();
+    for (size_t ri = 0; ri < reg_count && written < out_sz - 1; ri++) {
+      const registry_entry_t *entry = registry_get(ri);
+      const char *label = entry->label[0] ? entry->label : entry->id;
+      int n = snprintf(out + written, out_sz - written, ri == 0 ? "%s" : "\n%s",
+                       label);
+      if (n > 0)
+        written += (size_t)n;
+    }
+    if (written == 0)
+      snprintf(out, out_sz, " ");
+    return;
+  }
   }
 }
 
@@ -153,8 +175,11 @@ wallet_source_picker_t *wallet_source_picker_create(
   lv_obj_add_event_cb(p->dropdown, dropdown_cb, LV_EVENT_VALUE_CHANGED, p);
 
   p->account_btn = lv_btn_create(parent);
-  lv_obj_set_size(p->account_btn, LV_PCT(25), LV_SIZE_CONTENT);
   theme_apply_touch_button(p->account_btn, false);
+  // Match the dropdown height so the row stays as short as the dropdown
+  // alone; the button's own padded content would be slightly taller.
+  lv_obj_update_layout(p->dropdown);
+  lv_obj_set_size(p->account_btn, LV_PCT(25), lv_obj_get_height(p->dropdown));
   p->account_value_label = lv_label_create(p->account_btn);
   lv_obj_set_style_text_font(p->account_value_label, theme_font_small(), 0);
   lv_obj_center(p->account_value_label);

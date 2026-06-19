@@ -483,9 +483,7 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_update_layout(qr_container);
   qr_widget_size = lv_obj_get_content_width(qr_container);
 
-  qr_code = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr_code, qr_widget_size);
-  lv_obj_center(qr_code);
+  qr_code = qr_create_optimal(qr_container, qr_widget_size, NULL);
 
   lv_obj_add_flag(qr_container, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(qr_container, qr_area_tap_cb, LV_EVENT_CLICKED, NULL);

@@ -9,6 +9,7 @@
 
 #include "ss_whitelist.h"
 #include "storage.h"
+#include "wallet.h"
 
 #define REGISTRY_MAX_ENTRIES 16
 #define REGISTRY_ID_MAX_LEN 32
@@ -33,6 +34,12 @@ bool registry_set_label(const char *id, const char *label);
 bool registry_remove(const char *id);
 bool registry_add_from_string(const char *id, const char *descriptor_str,
                               storage_location_t loc, bool persist);
+
+/* Watch-only (keyless) session add: registers a descriptor for address viewing
+ * without requiring the loaded key's fingerprint to be present. `my_key_index`
+ * is set to SIZE_MAX and the origin path is left empty. Never persisted. */
+bool registry_add_watch_only(const char *id, const char *descriptor_str,
+                             wallet_network_t network);
 
 /* Look up whether `descriptor_str` is already loaded in the in-memory
  * session registry. Compares h-normalized BIP-380 checksums and writes the

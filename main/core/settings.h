@@ -13,8 +13,8 @@
 #define FOCUS_POSITION_DEFAULT 500
 
 esp_err_t settings_init(void);
-wallet_network_t settings_get_default_network(void);
-esp_err_t settings_set_default_network(wallet_network_t network);
+wallet_network_t settings_get_network(void);
+esp_err_t settings_set_network(wallet_network_t network);
 uint8_t settings_get_brightness(void);
 esp_err_t settings_set_brightness(uint8_t brightness);
 uint8_t settings_get_ae_target(void);

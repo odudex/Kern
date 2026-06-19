@@ -113,16 +113,16 @@ void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
   lv_obj_set_style_border_width(btnmatrix, 0, 0);
   lv_obj_set_style_shadow_width(btnmatrix, 0, 0);
 
-  // Padding
+  // Inter-key gap scales with screen so it stays proportional to key size
   lv_obj_set_style_pad_all(btnmatrix, 4, 0);
-  lv_obj_set_style_pad_row(btnmatrix, 6, 0);
-  lv_obj_set_style_pad_column(btnmatrix, 6, 0);
+  lv_obj_set_style_pad_row(btnmatrix, theme_key_gap(), 0);
+  lv_obj_set_style_pad_column(btnmatrix, theme_key_gap(), 0);
 
   // Button items - normal state
   lv_obj_set_style_bg_color(btnmatrix, COLOR_SURFACE, LV_PART_ITEMS);
   lv_obj_set_style_text_color(btnmatrix, COLOR_WHITE, LV_PART_ITEMS);
   lv_obj_set_style_text_font(btnmatrix, theme_font_small(), LV_PART_ITEMS);
-  lv_obj_set_style_radius(btnmatrix, 6, LV_PART_ITEMS);
+  lv_obj_set_style_radius(btnmatrix, theme_key_gap(), LV_PART_ITEMS);
   lv_obj_set_style_border_width(btnmatrix, 0, LV_PART_ITEMS);
   lv_obj_set_style_shadow_width(btnmatrix, 0, LV_PART_ITEMS);
   lv_obj_set_style_outline_width(btnmatrix, 0, LV_PART_ITEMS);
@@ -180,7 +180,23 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
   // with the white button text below them. Matches the ui_menu title colour.
   lv_obj_t *label = theme_create_label(parent, text ? text : "", true);
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
-  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, theme_default_padding());
+  // Constrained to the space between the corner buttons and wrapped, so long
+  // titles can't overlap the back button on narrow displays.
+  int32_t reserved = 2 * theme_small_padding() + theme_corner_button_width();
+  lv_obj_set_width(label, LV_HOR_RES - 2 * reserved);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  // Centered within the corner-button band, matching the ui_menu nav bar, so
+  // page and menu titles align with the back/power button beside them. The
+  // band is measured from the parent's border so padded containers place the
+  // title at the same screen position as standard zero-padding pages.
+  lv_obj_update_layout(label);
+  int32_t band_y = theme_small_padding() - lv_obj_get_style_pad_top(parent, 0);
+  int32_t y =
+      band_y + (theme_corner_button_height() - lv_obj_get_height(label)) / 2;
+  if (y < band_y)
+    y = band_y;
+  lv_obj_align(label, LV_ALIGN_TOP_MID, 0, y);
   return label;
 }
 

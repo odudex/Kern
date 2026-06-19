@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.0.11] - 2026-06-16
+
+### Added
+- Miniscript policy support: new wallet policy type, indented policy view, custom derivation-path editor, and a file-tree nesting guide in the descriptor view
+- Watch-only login: scan and load descriptors without entering a key or mnemonic
+- Load files from SD card: browse and import PSBT, descriptor, mnemonic, message, or address files
+- Public key page: save xpub with key origin to SD card, and a testnet indicator in the key info header
+- Tap xpub and address QR codes to view them fullscreen
+- PIN delay state: visual countdown arc with attempt-severity styling
+- Power-off and back buttons on the PIN page
+- Waveshare 4.3" enclosure
+- UI design guidelines doc (colour, icons, typography, dialogs)
+
+### Changed
+- Public key page: replaced the multisig toggle row with a policy dropdown; confirm before accepting unhardened path nodes
+- Settings: removed the default-wallet page; network now persists from wallet settings
+- Theme: colours named by intent (encourage/discourage, good/bad); widget factory split into theme_widgets
+- Compact text keyboard on all boards, covering the full printable ASCII set
+- Shared smart QR encoding across all UI QR codes
+
+### Fixed
+- Descriptors: handle large wsh scripts and enforce generation limits at load
+- PSBT/scan: save the full untrimmed PSBT to SD card; default to UR encoding when exporting a file-loaded PSBT; return home after a signed-PSBT export
+- KEF encrypt: keep the key-strength label clear of the keyboard at any resolution
+- Camera: clamp PPA snap-crop fallback to crop_max
+- PIN anti-phishing words: stack vertically and distribute evenly on narrow displays
+- UI layout: constrain and wrap page/menu titles to avoid corner-button overlap; standardize header positions; prevent menu label clipping; tighten icon-to-text gap
+- Wallet settings: remove needless scrollbar; destroy back button on exit
+
 ## [0.0.10] - 2026-05-30
 
 ### Added

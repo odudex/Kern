@@ -225,6 +225,22 @@ static void refresh_menu_layout(ui_menu_t *menu) {
 
   for (int i = 0; i < menu->config.entry_count; i++)
     apply_entry_content_layout(menu, i);
+
+  /* size_entry_button divides the visible list height between rows, which can
+     leave buttons shorter than their content (icon-above-label columns in
+     landscape, wrapped names). Grow such buttons to fit — the list scrolls,
+     clipped text doesn't. */
+  lv_obj_update_layout(menu->container);
+
+  for (int i = 0; i < menu->config.entry_count; i++) {
+    ui_menu_entry_view_t *view = entry_view(menu, i);
+    if (!view || !view->button || !view->content)
+      continue;
+    int32_t grow = lv_obj_get_height(view->content) -
+                   lv_obj_get_content_height(view->button);
+    if (grow > 0)
+      lv_obj_set_height(view->button, lv_obj_get_height(view->button) + grow);
+  }
 }
 
 static void menu_button_event_cb(lv_event_t *e) {
@@ -279,9 +295,17 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   lv_obj_set_flex_align(menu->nav_bar, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(menu->nav_bar, LV_OBJ_FLAG_SCROLLABLE);
+  // Keep the centered title clear of the corner buttons on narrow displays
+  lv_obj_set_style_pad_hor(
+      menu->nav_bar, theme_small_padding() + theme_corner_button_width(), 0);
 
   menu->title_label = lv_label_create(menu->nav_bar);
   lv_label_set_text(menu->title_label, title);
+  // max_width (not width): login.c aligns its logo to this label's box, so it
+  // must stay content-sized until wrapping is actually needed
+  lv_obj_set_style_max_width(menu->title_label, LV_PCT(100), 0);
+  lv_label_set_long_mode(menu->title_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(menu->title_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(menu->title_label, theme_font_small(), 0);
   theme_apply_label(menu->title_label, true);
 
@@ -290,8 +314,8 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   theme_apply_transparent_container(menu->list);
   apply_list_layout(menu);
   lv_obj_set_flex_grow(menu->list, 1);
-  lv_obj_set_style_pad_row(menu->list, theme_default_padding(), 0);
-  lv_obj_set_style_pad_column(menu->list, theme_default_padding(), 0);
+  lv_obj_set_style_pad_row(menu->list, theme_button_spacing(), 0);
+  lv_obj_set_style_pad_column(menu->list, theme_button_spacing(), 0);
   lv_obj_set_style_outline_width(menu->list, 0, 0);
 
   menu->back_callback = back_cb;
@@ -328,6 +352,9 @@ static bool add_entry_internal(ui_menu_t *menu, const char *icon,
   lv_obj_add_event_cb(view->button, menu_button_event_cb, LV_EVENT_CLICKED,
                       menu);
   theme_apply_touch_button(view->button, true);
+  /* Slimmer side padding than the stock touch button: every horizontal pixel
+     counts against long labels wrapping on narrow displays. */
+  lv_obj_set_style_pad_hor(view->button, theme_small_padding(), 0);
   if (action_icon)
     lv_obj_set_style_pad_right(view->button, 0, 0);
   create_entry_content(view, icon, name);

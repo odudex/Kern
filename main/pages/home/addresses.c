@@ -5,11 +5,14 @@
 #include "../../core/ss_whitelist.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
+#include "../../qr/encoder.h"
 #include "../../qr/scanner.h"
+#include "../../qr/viewer.h"
 #include "../../ui/assets/icons_36.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
+#include "../../ui/text_fit.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include "../settings/wallet_settings.h"
@@ -24,12 +27,6 @@
 
 #define NUM_ADDRESSES 8
 #define ADDRESS_INDEX_FIT_ALLOWANCE 6
-#define ADDRESS_PART_LEN 128
-
-typedef struct {
-  char prefix[ADDRESS_PART_LEN];
-  char suffix[ADDRESS_PART_LEN];
-} address_display_t;
 
 static lv_obj_t *addresses_screen = NULL;
 static lv_obj_t *prev_button = NULL;
@@ -44,6 +41,14 @@ static void (*return_callback)(void) = NULL;
 
 static wallet_source_picker_t *picker = NULL;
 static wallet_source_t current_source = {0, 0};
+
+// Watch-only: open directly on one registered descriptor. descriptor_only_* is
+// a one-shot input consumed at create into active_descriptor_only, which holds
+// for the page's life: current_source.source is a direct registry slot (no +4
+// offset) and the picker/settings/scan chrome is omitted.
+static bool descriptor_only_mode = false;
+static size_t descriptor_only_index = 0;
+static bool active_descriptor_only = false;
 
 static bool show_change = false;
 static uint32_t address_offset = 0;
@@ -127,41 +132,6 @@ static void next_button_cb(lv_event_t *e) {
   refresh_address_list();
 }
 
-static int32_t text_width_px(const char *text, const lv_font_t *font) {
-  lv_point_t size = {0};
-  lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  return size.x;
-}
-
-static address_display_t address_display_fit(const char *address,
-                                             const lv_font_t *font,
-                                             int32_t max_width) {
-  address_display_t display = {0};
-  size_t addr_len = strlen(address);
-  int32_t ellipsis_w = text_width_px("...", font);
-
-  snprintf(display.prefix, sizeof(display.prefix), "%s", address);
-  if (text_width_px(display.prefix, font) <= max_width)
-    return display;
-  if (ellipsis_w > max_width)
-    return (address_display_t){0};
-
-  for (size_t visible = addr_len - 1; visible > 1; visible--) {
-    size_t prefix = visible * 55 / 100;
-    size_t suffix = visible - prefix;
-    snprintf(display.prefix, sizeof(display.prefix), "%.*s", (int)prefix,
-             address);
-    snprintf(display.suffix, sizeof(display.suffix), "%s",
-             address + addr_len - suffix);
-    if (text_width_px(display.prefix, font) + ellipsis_w +
-            text_width_px(display.suffix, font) <=
-        max_width)
-      return display;
-  }
-
-  return (address_display_t){0};
-}
-
 static lv_obj_t *create_address_label(lv_obj_t *parent, const char *text,
                                       const lv_font_t *font,
                                       lv_text_align_t align) {
@@ -172,26 +142,6 @@ static lv_obj_t *create_address_label(lv_obj_t *parent, const char *text,
   lv_obj_set_style_text_font(label, font, 0);
   lv_obj_set_style_text_color(label, primary_color(), 0);
   return label;
-}
-
-static void create_address_display(lv_obj_t *parent,
-                                   const address_display_t *display,
-                                   const lv_font_t *font, int32_t width) {
-  lv_obj_t *row = lv_obj_create(parent);
-  lv_obj_set_size(row, width, LV_SIZE_CONTENT);
-  theme_apply_transparent_container(row);
-  lv_obj_set_flex_grow(row, 1);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-  create_address_label(row, display->prefix, font, LV_TEXT_ALIGN_LEFT);
-  if (display->suffix[0] != '\0') {
-    create_address_label(row, "...", font, LV_TEXT_ALIGN_CENTER);
-    create_address_label(row, display->suffix, font, LV_TEXT_ALIGN_RIGHT);
-  }
 }
 
 // Detail view back button callback
@@ -266,13 +216,15 @@ static void show_address_detail(int index) {
   lv_obj_set_style_pad_gap(content, pad, 0);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
 
-  // QR code in white container
+  // QR code in white container; bech32 is uppercased in the QR payload to
+  // unlock alphanumeric mode (BIP-173), the label keeps the original case.
+  char *upper = qr_bech32_to_upper(address);
+  const char *qr_payload = upper ? upper : address;
   int32_t square_size = theme_min_dim() * 55 / 100;
   lv_obj_t *qr_container = theme_create_qr_container(content, square_size, 15);
-  lv_obj_t *qr = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr, square_size - 30); // 15px padding each side
-  lv_qrcode_update(qr, address, strlen(address));
-  lv_obj_center(qr);
+  qr_create_optimal(qr_container, square_size - 30, qr_payload);
+  qr_viewer_attach_fullscreen(qr_container, qr_payload, title);
+  free(upper);
 
   // Full address text with alternating colored 4-char blocks
   char colored_addr[512];
@@ -314,7 +266,11 @@ static void refresh_address_list(void) {
   uint32_t chain = show_change ? 1 : 0;
 
   const registry_entry_t *reg_entry = NULL;
-  if (current_source.source >= 4) {
+  if (active_descriptor_only) {
+    reg_entry = registry_get((size_t)current_source.source);
+    if (!reg_entry)
+      return;
+  } else if (current_source.source >= 4) {
     reg_entry = registry_get((size_t)(current_source.source - 4));
     if (!reg_entry)
       return;
@@ -360,7 +316,7 @@ static void refresh_address_list(void) {
     snprintf(max_index_text, sizeof(max_index_text),
              "%u:", address_offset + NUM_ADDRESSES - 1);
     int32_t index_w =
-        text_width_px(max_index_text, font) + ADDRESS_INDEX_FIT_ALLOWANCE;
+        ui_text_width_px(max_index_text, font) + ADDRESS_INDEX_FIT_ALLOWANCE;
     int32_t usable_w = theme_screen_width() - 2 * theme_default_padding() - 30;
     int32_t address_w = usable_w - index_w - theme_small_padding();
     if (address_w < 1)
@@ -369,8 +325,8 @@ static void refresh_address_list(void) {
     char index_text[16];
     snprintf(index_text, sizeof(index_text), "%u:", idx);
 
-    address_display_t address_display =
-        address_display_fit(stored_addresses[si], font, address_w);
+    ui_text_fit_t address_display =
+        ui_text_fit_middle(stored_addresses[si], font, address_w);
 
     /* Create clickable button */
     lv_obj_t *btn = lv_btn_create(address_list_container);
@@ -386,7 +342,9 @@ static void refresh_address_list(void) {
         create_address_label(btn, index_text, font, LV_TEXT_ALIGN_RIGHT);
     lv_obj_set_width(index_label, index_w);
 
-    create_address_display(btn, &address_display, font, address_w);
+    lv_obj_t *address_row = ui_text_fit_row_create(btn, &address_display, font,
+                                                   address_w, primary_color());
+    lv_obj_set_flex_grow(address_row, 1);
 
     lv_obj_add_event_cb(btn, address_button_cb, LV_EVENT_CLICKED,
                         (void *)(intptr_t)si);
@@ -439,13 +397,20 @@ static void scan_button_cb(lv_event_t *e) {
 }
 
 void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
-  if (!parent || !wallet_is_initialized())
+  if (!parent || (!wallet_is_initialized() && !wallet_is_watch_only()))
     return;
 
   return_callback = return_cb;
   show_change = false;
   address_offset = 0;
   current_source = (wallet_source_t){0, 0};
+  // Consume the one-shot input into the page-lifetime flag so prev/next/picker
+  // refreshes still resolve the registry slot correctly.
+  active_descriptor_only = descriptor_only_mode;
+  if (active_descriptor_only)
+    current_source.source = (uint16_t)descriptor_only_index;
+  descriptor_only_mode = false;
+  descriptor_only_index = 0;
 
   // Main screen
   addresses_screen = lv_obj_create(parent);
@@ -458,8 +423,14 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(addresses_screen, theme_default_padding(), 0);
 
-  // Key info bar at top, aligned with the corner buttons.
-  ui_key_info_bar_create(addresses_screen);
+  // Key info bar at top, aligned with the corner buttons. With no loaded key
+  // (watch-only) it self-omits; reserve the same corner-button band with a
+  // spacer so the picker stays clear of the absolutely-placed back button.
+  if (!ui_key_info_bar_create(addresses_screen)) {
+    lv_obj_t *spacer = lv_obj_create(addresses_screen);
+    lv_obj_set_size(spacer, LV_PCT(100), theme_corner_button_height());
+    theme_apply_transparent_container(spacer);
+  }
 
   // Top row: shared source picker (script type / registered descriptor +
   // account).
@@ -470,8 +441,10 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_align(top_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   picker = wallet_source_picker_create(
-      top_row, WALLET_PICKER_SINGLESIG_WITH_DESCRIPTORS, &current_source,
-      picker_changed_cb, NULL);
+      top_row,
+      active_descriptor_only ? WALLET_PICKER_DESCRIPTORS_ONLY
+                             : WALLET_PICKER_SINGLESIG_WITH_DESCRIPTORS,
+      &current_source, picker_changed_cb, NULL);
 
   // Bottom row: prev / next / scan — actions specific to the address list.
   lv_obj_t *nav_row = lv_obj_create(addresses_screen);
@@ -485,14 +458,17 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   next_button = create_nav_button(nav_row, ">", LV_PCT(30), next_button_cb);
   lv_obj_add_state(prev_button, LV_STATE_DISABLED);
 
-  scan_button = lv_btn_create(nav_row);
-  lv_obj_set_size(scan_button, LV_PCT(30), LV_SIZE_CONTENT);
-  theme_apply_touch_button(scan_button, false);
-  lv_obj_t *scan_label = lv_label_create(scan_button);
-  lv_label_set_text(scan_label, ICON_QRCODE_36);
-  lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
-  lv_obj_center(scan_label);
-  lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
+  // The address-checker scan isn't offered in watch-only mode.
+  if (!active_descriptor_only) {
+    scan_button = lv_btn_create(nav_row);
+    lv_obj_set_size(scan_button, LV_PCT(30), LV_SIZE_CONTENT);
+    theme_apply_touch_button(scan_button, false);
+    lv_obj_t *scan_label = lv_label_create(scan_button);
+    lv_label_set_text(scan_label, ICON_QRCODE_36);
+    lv_obj_set_style_text_font(scan_label, theme_font_medium(), 0);
+    lv_obj_center(scan_label);
+    lv_obj_add_event_cb(scan_button, scan_button_cb, LV_EVENT_CLICKED, NULL);
+  }
 
   // Address list container
   address_list_container = lv_obj_create(addresses_screen);
@@ -508,8 +484,15 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   // Back button (on parent for absolute positioning)
   back_button = ui_create_back_button(parent, back_button_cb);
 
-  // Settings button at top-right
-  settings_button = ui_create_settings_button(parent, settings_button_cb);
+  // Settings button at top-right. Wallet settings require a loaded key, so it's
+  // omitted in watch-only mode.
+  if (!active_descriptor_only)
+    settings_button = ui_create_settings_button(parent, settings_button_cb);
+}
+
+void addresses_page_set_descriptor_only(size_t registry_index) {
+  descriptor_only_mode = true;
+  descriptor_only_index = registry_index;
 }
 
 void addresses_page_show(void) {
@@ -556,6 +539,9 @@ void addresses_page_destroy(void) {
   show_change = false;
   address_offset = 0;
   current_source = (wallet_source_t){0, 0};
+  descriptor_only_mode = false;
+  descriptor_only_index = 0;
+  active_descriptor_only = false;
   stored_count = 0;
   address_checker_destroy();
 }

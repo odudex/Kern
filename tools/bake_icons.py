@@ -22,6 +22,7 @@ ICONS = [
     ("ICON_TOOLBOX", 0xF552, "toolbox"),
     ("ICON_FINGERPRINT", 0xF577, "fingerprint"),
     ("ICON_DICE", 0xF522, "dice"),
+    ("ICON_SD_CARD", 0xF7C2, "sd-card"),
 ]
 
 

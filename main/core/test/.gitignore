@@ -10,3 +10,4 @@ test_psbt_regen_registry
 test_psbt_key.o
 combined.o
 libwally.a
+test_miniscript_policy

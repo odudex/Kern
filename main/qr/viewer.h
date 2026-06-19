@@ -27,6 +27,16 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
                                        void (*return_cb)(void));
 
 /**
+ * Make a widget open the QR viewer fullscreen when tapped (tap again to
+ * return). Copies content/title; frees them when the widget is deleted.
+ * @param obj Widget to make tappable (e.g. a small QR container)
+ * @param content Content to display as QR code
+ * @param title Optional title to display (can be NULL)
+ */
+void qr_viewer_attach_fullscreen(lv_obj_t *obj, const char *content,
+                                 const char *title);
+
+/**
  * Show the QR viewer page
  */
 void qr_viewer_page_show(void);

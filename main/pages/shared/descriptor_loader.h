@@ -33,6 +33,17 @@ void descriptor_loader_process_string(const char *descriptor_str,
                                       void *user_data);
 
 /**
+ * Watch-only (keyless) variant of process_string: normalize, infer the network
+ * from the descriptor, enter watch-only mode, and validate/load without a key.
+ * Reuses the same "Load?" dialog. validation_cb receives VALIDATION_PARSE_ERROR
+ * if the string isn't a parseable descriptor (so the caller can treat it as
+ * unidentified content). Used by the login Scan flow.
+ */
+void descriptor_loader_process_string_watch_only(
+    const char *descriptor_str, validation_complete_cb validation_cb,
+    void *user_data);
+
+/**
  * Show a source selection menu for loading descriptors.
  * Presents QR / Flash / SD Card options.
  *
@@ -65,5 +76,17 @@ char *descriptor_extract_from_scanner(void);
 // without them. Strips any existing checksum.
 // Returns new normalized string (caller must free), or NULL if unchanged.
 char *descriptor_to_unambiguous(const char *descriptor);
+
+/**
+ * Render a miniscript policy (keys already replaced by letter IDs) as an
+ * indented tree with semantic colors: logic operators highlighted, timelocks
+ * accented with ~duration/date notes, structural plumbing dimmed. Letters in
+ * `our_letters` (e.g. "AC", may be NULL/empty) get the highlight color.
+ *
+ * @return Container with the rendered lines, or NULL if the policy could not
+ *         be rendered.
+ */
+lv_obj_t *descriptor_policy_view_create(lv_obj_t *parent, const char *policy,
+                                        const char *our_letters);
 
 #endif // DESCRIPTOR_LOADER_H

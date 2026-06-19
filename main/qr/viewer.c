@@ -208,13 +208,10 @@ static bool setup_qr_viewer_ui(lv_obj_t *parent, const char *title) {
   }
   int32_t qr_size = (w < h) ? w : h;
 
-  qr_code_obj = lv_qrcode_create(qr_viewer_screen);
+  qr_code_obj = qr_create_optimal(qr_viewer_screen, qr_size, qr_parts[0].data);
   if (!qr_code_obj) {
     return false;
   }
-  lv_qrcode_set_size(qr_code_obj, qr_size);
-  qr_update_optimal(qr_code_obj, qr_parts[0].data, NULL);
-  lv_obj_center(qr_code_obj);
 
   if (qr_parts_count > 1) {
     create_progress_indicators(qr_parts_count);
@@ -272,6 +269,49 @@ void qr_viewer_page_create(lv_obj_t *parent, const char *qr_content,
   }
 
   setup_qr_viewer_ui(parent, title);
+}
+
+typedef struct {
+  char *content;
+  char *title;
+} fullscreen_ctx_t;
+
+static void fullscreen_close_cb(void) { qr_viewer_page_destroy(); }
+
+static void fullscreen_clicked_cb(lv_event_t *e) {
+  fullscreen_ctx_t *ctx = lv_event_get_user_data(e);
+  if (qr_viewer_screen)
+    return;
+  qr_viewer_page_create(lv_screen_active(), ctx->content, ctx->title,
+                        fullscreen_close_cb);
+}
+
+static void fullscreen_delete_cb(lv_event_t *e) {
+  fullscreen_ctx_t *ctx = lv_event_get_user_data(e);
+  free(ctx->content);
+  free(ctx->title);
+  free(ctx);
+}
+
+void qr_viewer_attach_fullscreen(lv_obj_t *obj, const char *content,
+                                 const char *title) {
+  if (!obj || !content)
+    return;
+
+  fullscreen_ctx_t *ctx = calloc(1, sizeof(*ctx));
+  if (!ctx)
+    return;
+  ctx->content = strdup(content);
+  ctx->title = title ? strdup(title) : NULL;
+  if (!ctx->content) {
+    free(ctx->title);
+    free(ctx);
+    return;
+  }
+
+  lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(obj, fullscreen_clicked_cb, LV_EVENT_CLICKED, ctx);
+  lv_obj_add_event_cb(obj, fullscreen_delete_cb, LV_EVENT_DELETE, ctx);
 }
 
 void qr_viewer_page_show(void) {

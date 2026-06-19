@@ -274,9 +274,7 @@ static void show_qr_export(void) {
   lv_obj_update_layout(qr_container);
   int32_t qr_widget_size = lv_obj_get_content_width(qr_container);
 
-  qr_code = lv_qrcode_create(qr_container);
-  lv_qrcode_set_size(qr_code, qr_widget_size);
-  lv_obj_center(qr_code);
+  qr_code = qr_create_optimal(qr_container, qr_widget_size, NULL);
 
   current_format = FORMAT_PLAINTEXT_DESC;
   update_qr_display();

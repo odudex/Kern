@@ -149,15 +149,17 @@ PSBT_PRIVATE bool claim_regenerate(const claim_t *claim, bool is_testnet,
 
   /* depth=0 generation reuses the output buffer as workspace for the inner
    * script before hashing, so it needs max(inner_script_len, spk_len) bytes.
-   * Use a 520-byte local buffer (P2SH redeem script max) then copy the SPK. */
-  uint8_t spk_work[520];
+   * Borrow out->witness as that workspace (it is still zeroed/unused here
+   * and gets overwritten by the depth=1/2 calls below), then copy the SPK.
+   * libwally reports a too-small buffer as WALLY_OK with written > len and
+   * the buffer untouched, hence the explicit written checks. */
   size_t spk_work_len = 0;
-  if (wally_descriptor_to_script(e->desc, 0, 0, 0, mi, cn, 0, spk_work,
-                                 sizeof(spk_work), &spk_work_len) != WALLY_OK)
+  if (wally_descriptor_to_script(e->desc, 0, 0, 0, mi, cn, 0, out->witness,
+                                 sizeof(out->witness),
+                                 &spk_work_len) != WALLY_OK ||
+      spk_work_len > sizeof(out->spk))
     return false;
-  if (spk_work_len > sizeof(out->spk))
-    return false;
-  memcpy(out->spk, spk_work, spk_work_len);
+  memcpy(out->spk, out->witness, spk_work_len);
   out->spk_len = spk_work_len;
 
   size_t spk_type = 0;
@@ -166,13 +168,15 @@ PSBT_PRIVATE bool claim_regenerate(const claim_t *claim, bool is_testnet,
   if (spk_type == WALLY_SCRIPT_TYPE_P2WSH) {
     if (wally_descriptor_to_script(e->desc, 1, 0, 0, mi, cn, 0, out->witness,
                                    sizeof(out->witness),
-                                   &out->witness_len) != WALLY_OK)
+                                   &out->witness_len) != WALLY_OK ||
+        out->witness_len > sizeof(out->witness))
       return false;
 
   } else if (spk_type == WALLY_SCRIPT_TYPE_P2SH) {
     if (wally_descriptor_to_script(e->desc, 1, 0, 0, mi, cn, 0, out->redeem,
                                    sizeof(out->redeem),
-                                   &out->redeem_len) != WALLY_OK)
+                                   &out->redeem_len) != WALLY_OK ||
+        out->redeem_len > sizeof(out->redeem))
       return false;
 
     /* sh(wsh(...)): if redeem is itself a P2WSH witness program,
@@ -182,10 +186,12 @@ PSBT_PRIVATE bool claim_regenerate(const claim_t *claim, bool is_testnet,
     if (redeem_type == WALLY_SCRIPT_TYPE_P2WSH) {
       if (wally_descriptor_to_script(e->desc, 2, 0, 0, mi, cn, 0, out->witness,
                                      sizeof(out->witness),
-                                     &out->witness_len) != WALLY_OK)
+                                     &out->witness_len) != WALLY_OK ||
+          out->witness_len > sizeof(out->witness))
         return false;
     }
-    /* sh(multi(...)): redeem is not P2WSH; out->witness_len stays 0. */
+    /* sh(multi(...)): redeem is not P2WSH; out->witness_len stays 0 so the
+     * stale workspace bytes left in out->witness are never read. */
   }
   /* Other types (P2WPKH, P2TR, etc.): no inner scripts needed. */
 
@@ -196,7 +202,7 @@ static bool input_inner_scripts_match(const struct wally_psbt *psbt,
                                       size_t input_i,
                                       const expected_scripts_t *exp) {
   if (exp->redeem_len > 0) {
-    unsigned char buf[256];
+    unsigned char buf[PSBT_MAX_INNER_SCRIPT_LEN];
     size_t psbt_len = 0, written = 0;
     if (wally_psbt_get_input_redeem_script_len(psbt, input_i, &psbt_len) !=
             WALLY_OK ||
@@ -210,7 +216,7 @@ static bool input_inner_scripts_match(const struct wally_psbt *psbt,
   }
 
   if (exp->witness_len > 0) {
-    unsigned char buf[256];
+    unsigned char buf[PSBT_MAX_INNER_SCRIPT_LEN];
     size_t psbt_len = 0, written = 0;
     if (wally_psbt_get_input_witness_script_len(psbt, input_i, &psbt_len) !=
             WALLY_OK ||
@@ -231,7 +237,7 @@ static bool claim_matches_spk(const claim_t *claim, bool is_testnet,
                               size_t target_spk_len,
                               const struct wally_psbt *input_psbt,
                               size_t input_i) {
-  expected_scripts_t exp = {0};
+  expected_scripts_t exp; /* zeroed by claim_regenerate */
   if (!claim_regenerate(claim, is_testnet, &exp) ||
       exp.spk_len != target_spk_len ||
       memcmp(exp.spk, target_spk, target_spk_len) != 0) {
@@ -654,6 +660,9 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
 
   size_t signatures_added = 0;
 
+  /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
+  wally_psbt_signing_cache_enable(psbt, 0);
+
   for (size_t i = 0; i < num_inputs; i++) {
     input_ownership_t ownership = psbt_classify_input(psbt, i, is_testnet);
 
@@ -712,6 +721,8 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
     }
   }
+
+  wally_psbt_signing_cache_disable(psbt);
 
   return signatures_added;
 }

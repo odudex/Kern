@@ -395,7 +395,9 @@ uint32_t app_video_ppa_snap_crop(uint32_t crop_max, uint32_t target) {
     if (c <= crop_max)
       return c;
   }
-  return target;
+  // No exact Q4.4 crop fits; never exceed crop_max or the caller's
+  // centering offset (in_dim - crop) / 2 underflows.
+  return target <= crop_max ? target : crop_max;
 }
 
 esp_err_t app_video_get_resolution(uint32_t *width, uint32_t *height) {
