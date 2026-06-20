@@ -2,6 +2,7 @@
 
 #include "mnemonic_words.h"
 #include "../../../core/key.h"
+#include "../../../ui/theme.h"
 #include "../../../ui/theme_widgets.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -45,35 +46,65 @@ void mnemonic_words_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_EVENLY,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-  char word_list[512];
-  int offset = 0;
-
   if (word_count == 12) {
+    lv_obj_t *col = theme_create_flex_column(content);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(col, 6, 0);
+    lv_obj_add_flag(col, LV_OBJ_FLAG_EVENT_BUBBLE);
+
     for (size_t i = 0; i < word_count; i++) {
-      offset += snprintf(word_list + offset, sizeof(word_list) - offset,
-                         "%s%zu. %s", i > 0 ? "\n" : "", i + 1, words[i]);
+      lv_obj_t *row = theme_create_flex_row(col);
+      lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                            LV_FLEX_ALIGN_START);
+      lv_obj_set_style_pad_column(row, 6, 0);
+      lv_obj_add_flag(row, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+      char num_buf[12];
+      snprintf(num_buf, sizeof(num_buf), "%u.", (unsigned)(i + 1));
+
+      lv_obj_t *num = theme_create_label(row, num_buf, false);
+      lv_obj_set_style_text_font(num, theme_font_medium(), 0);
+      lv_obj_set_style_text_color(num, secondary_color(), 0);
+
+      lv_obj_t *word = theme_create_label(row, words[i], false);
+      lv_obj_set_style_text_font(word, theme_font_medium(), 0);
+      lv_obj_set_style_text_color(word, primary_color(), 0);
     }
-    lv_obj_t *label = theme_create_label(content, word_list, false);
-    lv_obj_set_style_text_font(label, theme_font_medium(), 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
 
   } else if (word_count == 24) {
-    for (size_t i = 0; i < 12; i++) {
-      offset += snprintf(word_list + offset, sizeof(word_list) - offset,
-                         "%s%zu. %s", i > 0 ? "\n" : "", i + 1, words[i]);
-    }
-    lv_obj_t *left = theme_create_label(content, word_list, false);
-    lv_obj_set_style_text_font(left, theme_font_medium(), 0);
-    lv_obj_set_style_text_align(left, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_t *left_col = theme_create_flex_column(content);
+    lv_obj_set_flex_align(left_col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(left_col, 6, 0);
+    lv_obj_add_flag(left_col, LV_OBJ_FLAG_EVENT_BUBBLE);
 
-    offset = 0;
-    for (size_t i = 12; i < 24; i++) {
-      offset += snprintf(word_list + offset, sizeof(word_list) - offset,
-                         "%s%zu. %s", i > 12 ? "\n" : "", i + 1, words[i]);
+    lv_obj_t *right_col = theme_create_flex_column(content);
+    lv_obj_set_flex_align(right_col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(right_col, 6, 0);
+    lv_obj_add_flag(right_col, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    for (size_t i = 0; i < 24; i++) {
+      lv_obj_t *col = (i < 12) ? left_col : right_col;
+
+      lv_obj_t *row = theme_create_flex_row(col);
+      lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                            LV_FLEX_ALIGN_START);
+      lv_obj_set_style_pad_column(row, 6, 0);
+      lv_obj_add_flag(row, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+      char num_buf[12];
+      snprintf(num_buf, sizeof(num_buf), "%u.", (unsigned)(i + 1));
+
+      lv_obj_t *num = theme_create_label(row, num_buf, false);
+      lv_obj_set_style_text_font(num, theme_font_medium(), 0);
+      lv_obj_set_style_text_color(num, secondary_color(), 0);
+
+      lv_obj_t *word = theme_create_label(row, words[i], false);
+      lv_obj_set_style_text_font(word, theme_font_medium(), 0);
+      lv_obj_set_style_text_color(word, primary_color(), 0);
     }
-    lv_obj_t *right = theme_create_label(content, word_list, false);
-    lv_obj_set_style_text_font(right, theme_font_medium(), 0);
-    lv_obj_set_style_text_align(right, LV_TEXT_ALIGN_LEFT, 0);
   }
 
   for (size_t i = 0; i < word_count; i++)
