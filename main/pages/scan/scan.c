@@ -1084,6 +1084,66 @@ static bool create_psbt_info_display(void) {
     sankey_diagram_render(tx_diagram);
   }
 
+  // Compact legend: one ● Label per color that actually appears
+  {
+    bool leg_self = false, leg_change = false, leg_send = false;
+    for (size_t i = 0; i < num_outputs; i++) {
+      output_type_t t = classified_outputs[i].type;
+      if (t == OUTPUT_TYPE_SELF_TRANSFER || t == OUTPUT_TYPE_OWNED_UNSAFE)
+        leg_self = true;
+      else if (t == OUTPUT_TYPE_CHANGE)
+        leg_change = true;
+      else if (t == OUTPUT_TYPE_SPEND)
+        leg_send = true;
+    }
+    bool leg_fee = (fee > 0);
+
+    if (leg_self || leg_change || leg_send || leg_fee) {
+      lv_obj_t *legend = lv_obj_create(psbt_info_container);
+      lv_obj_set_size(legend, LV_PCT(100), LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(legend, LV_FLEX_FLOW_ROW);
+      lv_obj_set_flex_align(legend, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                            LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_all(legend, 0, 0);
+      lv_obj_set_style_pad_column(legend, 12, 0);
+      lv_obj_set_style_bg_opa(legend, LV_OPA_TRANSP, 0);
+      lv_obj_set_style_border_width(legend, 0, 0);
+
+#define LEGEND_ENTRY(color_fn, text)                                           \
+  do {                                                                         \
+    lv_obj_t *entry = lv_obj_create(legend);                                   \
+    lv_obj_set_size(entry, LV_SIZE_CONTENT, LV_SIZE_CONTENT);                  \
+    lv_obj_set_flex_flow(entry, LV_FLEX_FLOW_ROW);                             \
+    lv_obj_set_flex_align(entry, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,   \
+                          LV_FLEX_ALIGN_CENTER);                               \
+    lv_obj_set_style_pad_all(entry, 0, 0);                                     \
+    lv_obj_set_style_pad_column(entry, 4, 0);                                  \
+    lv_obj_set_style_bg_opa(entry, LV_OPA_TRANSP, 0);                          \
+    lv_obj_set_style_border_width(entry, 0, 0);                                \
+    lv_obj_t *dot = lv_obj_create(entry);                                      \
+    lv_obj_set_size(dot, 8, 8);                                                \
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);                         \
+    lv_obj_set_style_bg_color(dot, color_fn(), 0);                             \
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);                             \
+    lv_obj_set_style_border_width(dot, 0, 0);                                  \
+    lv_obj_t *lbl = lv_label_create(entry);                                    \
+    lv_obj_set_style_text_font(lbl, theme_font_small(), 0);                    \
+    lv_label_set_text(lbl, text);                                              \
+  } while (0)
+
+      if (leg_self)
+        LEGEND_ENTRY(accent_color, "Self");
+      if (leg_change)
+        LEGEND_ENTRY(good_color, "Change");
+      if (leg_send)
+        LEGEND_ENTRY(highlight_color, "Send");
+      if (leg_fee)
+        LEGEND_ENTRY(error_color, "Fee");
+
+#undef LEGEND_ENTRY
+    }
+  }
+
   size_t input_overflow = sankey_diagram_get_input_overflow(tx_diagram);
   size_t output_overflow = sankey_diagram_get_output_overflow(tx_diagram);
 
