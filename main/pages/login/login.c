@@ -120,7 +120,7 @@ void login_page_create(lv_obj_t *parent) {
 
   // Power button at top-left (only useful with PMIC; without it there's
   // no loaded key to unload, so rebooting from login is pointless)
-  if (bsp_pmic_is_available()) {
+  if (bsp_pmic_can_power_off()) {
     power_button = ui_create_power_button(login_screen, power_button_cb);
   }
 

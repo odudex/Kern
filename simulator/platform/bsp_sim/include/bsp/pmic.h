@@ -18,3 +18,4 @@ esp_err_t bsp_pmic_get_battery_mv(uint16_t *mv);
 esp_err_t bsp_pmic_get_charge_status(bsp_pmic_chg_t *status);
 bool bsp_pmic_is_vbus_present(void);
 bool bsp_pmic_is_available(void);
+bool bsp_pmic_can_power_off(void);

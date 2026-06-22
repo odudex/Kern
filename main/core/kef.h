@@ -103,4 +103,14 @@ const char *kef_error_str(kef_error_t err);
  */
 bool kef_is_envelope(const uint8_t *data, size_t len);
 
+/*
+ * Extract a raw KEF envelope from arbitrary file bytes, accepting either a raw
+ * binary envelope or a base64-armored one (with optional trailing whitespace,
+ * as Kern stores KEF on SD). Returns a heap-allocated raw envelope (caller
+ * frees) and its length via out_len, or NULL if the bytes are not a KEF
+ * envelope.
+ */
+uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
+                                 size_t *out_len);
+
 #endif /* KEF_H */

@@ -13,12 +13,16 @@ extern "C" {
 
 #define SD_CARD_MOUNT_POINT "/sdcard"
 
+/* Ensure the card is mounted and responsive. A live mount is reused; a stale
+ * one (card swapped or removed — there is no card-detect line) or an absent one
+ * is (re)probed, retrying and falling back to a lower bus speed. Cheap and safe
+ * to call before every access. */
 esp_err_t sd_card_init(void);
 esp_err_t sd_card_deinit(void);
 
-/* Force a fresh remount (unmount if needed, then mount). Use when a card may
- * have been physically swapped — there is no card-detect line, so an existing
- * mount can be stale. */
+/* Equivalent to sd_card_init(): ensures a live mount, re-probing only when the
+ * cached handle no longer responds. Retained for call sites that read as
+ * "pick up a possibly-swapped card". */
 esp_err_t sd_card_remount(void);
 
 bool sd_card_is_mounted(void);

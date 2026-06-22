@@ -18,3 +18,9 @@ esp_err_t bsp_pmic_get_battery_mv(uint16_t *mv);
 esp_err_t bsp_pmic_get_charge_status(bsp_pmic_chg_t *status);
 bool bsp_pmic_is_vbus_present(void);
 bool bsp_pmic_is_available(void);
+
+/* True only if bsp_pmic_power_off() can actually cut power in software.
+   A board may have an available PMIC for battery telemetry yet have no
+   software power-off (e.g. crowpanel's TP4059 + STC8H, which relies on a
+   physical switch). Distinct from bsp_pmic_is_available(). */
+bool bsp_pmic_can_power_off(void);

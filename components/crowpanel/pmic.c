@@ -199,3 +199,7 @@ bool bsp_pmic_is_vbus_present(void) {
 }
 
 bool bsp_pmic_is_available(void) { return pmic_available; }
+
+/* The STC8H + TP4059 has no software power-off; power is cut by the
+   physical sliding switch only. */
+bool bsp_pmic_can_power_off(void) { return false; }

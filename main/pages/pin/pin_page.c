@@ -365,12 +365,13 @@ static void power_btn_cb(lv_event_t *e) {
 
 // Top-left corner: back button whenever a cancel path exists (setup, change,
 // PIN verification from settings). On the boot unlock there is nowhere to go
-// back to, so PMIC boards get a power-off button instead — battery-powered
-// users may have turned the device on by accident.
+// back to, so boards that can power off in software get a power-off button
+// instead — battery-powered users may have turned the device on by accident.
+// Boards without software power-off (e.g. crowpanel) use the physical switch.
 static void create_back_or_power_button(void) {
   if (current_mode != PIN_PAGE_UNLOCK || on_cancel)
     ui_create_back_button(page_screen, back_btn_cb);
-  else if (bsp_pmic_is_available())
+  else if (bsp_pmic_can_power_off())
     ui_create_power_button(page_screen, power_btn_cb);
 }
 

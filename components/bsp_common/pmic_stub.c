@@ -21,3 +21,4 @@ esp_err_t bsp_pmic_get_charge_status(bsp_pmic_chg_t *status) {
 }
 bool bsp_pmic_is_vbus_present(void) { return false; }
 bool bsp_pmic_is_available(void) { return false; }
+bool bsp_pmic_can_power_off(void) { return false; }

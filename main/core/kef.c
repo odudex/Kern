@@ -14,6 +14,7 @@
 /* Raw deflate compress / decompress (wbits = 10) */
 #include "../../components/bbqr/src/miniz.h"
 
+#include <mbedtls/base64.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -760,6 +761,52 @@ bool kef_is_envelope(const uint8_t *data, size_t len) {
                      (has_exposed ? vi->auth_size : 0);
 
   return len >= min_total;
+}
+
+uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
+                                 size_t *out_len) {
+  if (!data || len == 0 || !out_len)
+    return NULL;
+
+  if (kef_is_envelope(data, len)) {
+    uint8_t *copy = malloc(len);
+    if (!copy)
+      return NULL;
+    memcpy(copy, data, len);
+    *out_len = len;
+    return copy;
+  }
+
+  /* Base64-armored envelope. Trim trailing whitespace an editor may have
+   * appended, then require both a clean decode and a valid KEF header before
+   * accepting it (a plaintext descriptor contains '(' and fails to decode). */
+  size_t eff = len;
+  while (eff > 0 && (data[eff - 1] == '\n' || data[eff - 1] == '\r' ||
+                     data[eff - 1] == '\t' || data[eff - 1] == ' '))
+    eff--;
+  if (eff == 0)
+    return NULL;
+
+  size_t decoded_len = 0;
+  if (mbedtls_base64_decode(NULL, 0, &decoded_len, data, eff) !=
+      MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
+    return NULL;
+
+  uint8_t *decoded = malloc(decoded_len);
+  if (!decoded)
+    return NULL;
+  if (mbedtls_base64_decode(decoded, decoded_len, &decoded_len, data, eff) !=
+      0) {
+    free(decoded);
+    return NULL;
+  }
+
+  if (!kef_is_envelope(decoded, decoded_len)) {
+    free(decoded);
+    return NULL;
+  }
+  *out_len = decoded_len;
+  return decoded;
 }
 
 /* ------------------------------------------------------------------ */

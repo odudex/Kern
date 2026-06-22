@@ -48,10 +48,22 @@ static void save_success_dialog_cb(void *user_data) {
   go_back();
 }
 
+static void show_saved(const char *path) {
+  char msg[128];
+  snprintf(msg, sizeof(msg), "Saved to:\n%s", path);
+  dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
+                   DIALOG_STYLE_OVERLAY);
+}
+
 static void do_save_encrypted(void) {
   esp_err_t ret =
       storage_save_descriptor(target_location, pending_id, pending_envelope,
                               pending_envelope_len, true);
+
+  /* Build the path before the cleanup below frees pending_id (page-owned). */
+  char path[96];
+  storage_descriptor_path(target_location, pending_id, true, path,
+                          sizeof(path));
 
   pending_envelope = NULL;
   pending_envelope_len = 0;
@@ -63,16 +75,10 @@ static void do_save_encrypted(void) {
   }
   kef_encrypt_page_destroy();
 
-  if (ret == ESP_OK) {
-    const char *loc_name =
-        (target_location == STORAGE_FLASH) ? "flash" : "SD card";
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Descriptor saved to %s", loc_name);
-    dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
-                     DIALOG_STYLE_OVERLAY);
-  } else {
+  if (ret == ESP_OK)
+    show_saved(path);
+  else
     dialog_show_error_timeout("Failed to save", go_back, 0);
-  }
 }
 
 static void do_save_plaintext(const char *id) {
@@ -86,12 +92,9 @@ static void do_save_plaintext(const char *id) {
   }
 
   if (ret == ESP_OK) {
-    const char *loc_name =
-        (target_location == STORAGE_FLASH) ? "flash" : "SD card";
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Descriptor saved to %s", loc_name);
-    dialog_show_info("Saved", msg, save_success_dialog_cb, NULL,
-                     DIALOG_STYLE_OVERLAY);
+    char path[96];
+    storage_descriptor_path(target_location, id, false, path, sizeof(path));
+    show_saved(path);
   } else {
     dialog_show_error_timeout("Failed to save", go_back, 0);
   }

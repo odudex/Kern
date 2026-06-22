@@ -169,4 +169,13 @@ esp_err_t storage_delete_descriptor(storage_location_t loc,
 bool storage_descriptor_exists(storage_location_t loc, const char *id,
                                bool encrypted);
 
+/**
+ * Build the full filesystem path a descriptor with the given ID would be saved
+ * to, matching storage_save_descriptor's convention (flash: /spiffs/d_<id>.ext;
+ * SD: /sdcard/kern/descriptors/<id>.ext). out is always NUL-terminated. No
+ * filesystem access.
+ */
+void storage_descriptor_path(storage_location_t loc, const char *id,
+                             bool encrypted, char *out, size_t out_size);
+
 #endif /* STORAGE_H */

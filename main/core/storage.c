@@ -216,11 +216,12 @@ static esp_err_t item_init_location(const storage_item_config_t *cfg,
   if (loc == STORAGE_FLASH)
     return storage_init();
 
-  if (!sd_card_is_mounted()) {
-    esp_err_t ret = sd_card_init();
-    if (ret != ESP_OK)
-      return ret;
-  }
+  /* Call unconditionally: sd_card_init() reuses a live mount but re-probes a
+   * stale handle (a card swapped since the last op, with no card-detect line).
+   */
+  esp_err_t ret = sd_card_init();
+  if (ret != ESP_OK)
+    return ret;
   mkdir("/sdcard/kern", 0775);
   mkdir(cfg->sd_dir, 0775);
   return ESP_OK;
@@ -549,6 +550,22 @@ bool storage_descriptor_exists(storage_location_t loc, const char *id,
   const char *ext =
       encrypted ? STORAGE_DESCRIPTOR_EXT_KEF : STORAGE_DESCRIPTOR_EXT_TXT;
   return item_exists(&descriptor_config, loc, id, ext);
+}
+
+void storage_descriptor_path(storage_location_t loc, const char *id,
+                             bool encrypted, char *out, size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+
+  char sanitized[STORAGE_MAX_SANITIZED_ID_LEN + 1];
+  storage_sanitize_id(id, sanitized, sizeof(sanitized));
+
+  const char *ext =
+      encrypted ? STORAGE_DESCRIPTOR_EXT_KEF : STORAGE_DESCRIPTOR_EXT_TXT;
+  char filename[STORAGE_MAX_SANITIZED_ID_LEN + 8];
+  item_build_filename(&descriptor_config, loc, sanitized, ext, filename,
+                      sizeof(filename));
+  item_build_path(&descriptor_config, loc, filename, out, out_size);
 }
 
 /* ========== Shared utilities ========== */

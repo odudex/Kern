@@ -94,7 +94,7 @@ static void menu_advanced_tools_cb(void) {
 static void power_button_cb(lv_event_t *e) {
   (void)e;
   const char *msg =
-      bsp_pmic_is_available() ? "Power off?" : "Unload key and reboot?";
+      bsp_pmic_can_power_off() ? "Power off?" : "Unload key and reboot?";
   // Pass non-NULL user_data to signal "unload key before power-off"
   static const bool unload = true;
   dialog_show_confirm(msg, ui_power_off_confirmed_cb, (void *)&unload,

@@ -6,6 +6,7 @@
 #include "scan.h"
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/psbt.h"
+#include "../../core/kef.h"
 #include "../../core/key.h"
 #include "../../core/message_sign.h"
 #include "../../core/psbt.h"
@@ -26,6 +27,7 @@
 #include "../load_descriptor_storage.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
+#include "../shared/kef_decrypt_page.h"
 #include "psbt_sign_policy.h"
 #include "sd_card.h"
 #include <esp_log.h>
@@ -164,6 +166,8 @@ static void message_sign_button_cb(lv_event_t *e);
 static void handle_descriptor_content(const char *descriptor_str);
 static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
+static void scan_kef_return_cb(void);
+static void scan_kef_success_cb(const uint8_t *data, size_t len);
 static void descriptor_loaded_info_cb(void *user_data);
 static void show_export_choice(void);
 static void export_show_qr_cb(void);
@@ -454,6 +458,23 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
       SECURE_FREE_STRING(mnemonic);
     }
 
+    // 6. Encrypted (KEF) envelope — e.g. a base64-armored descriptor or
+    // mnemonic backup. Tried last so a base64 PSBT is recognized as a PSBT
+    // first. On success the decrypted payload is re-dispatched.
+    if (!parse_success) {
+      size_t env_len = 0;
+      uint8_t *envelope = kef_envelope_from_bytes((const uint8_t *)qr_content,
+                                                  qr_content_len, &env_len);
+      if (envelope) {
+        SECURE_FREE_STRING(qr_content);
+        kef_decrypt_page_create(lv_screen_active(), scan_kef_return_cb,
+                                scan_kef_success_cb, envelope, env_len);
+        kef_decrypt_page_show();
+        free(envelope);
+        return;
+      }
+    }
+
     SECURE_FREE_STRING(qr_content);
   }
 
@@ -656,6 +677,32 @@ static char *normalize_file_text(const uint8_t *data, size_t len) {
   return out;
 }
 
+// --- Encrypted (KEF) payload handling ---
+
+static void scan_kef_return_cb(void) {
+  kef_decrypt_page_destroy();
+  if (return_callback)
+    return_callback();
+}
+
+static void scan_kef_success_cb(const uint8_t *data, size_t len) {
+  // Copy before destroying the page (data is page-owned) and NUL-terminate so
+  // the layer-2 text detectors can treat it as a C string.
+  char *content = malloc(len + 1);
+  if (content) {
+    memcpy(content, data, len);
+    content[len] = '\0';
+  }
+  kef_decrypt_page_destroy();
+  if (!content) {
+    dialog_show_error_timeout("Out of memory", return_callback, 0);
+    return;
+  }
+  // The decrypted payload is a descriptor (text) or mnemonic (compact SeedQR
+  // bytes) — re-run the layer-2 heuristics on it.
+  finish_dispatch(content, len, false, FORMAT_NONE);
+}
+
 void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                        const char *save_dir, const char *source_name,
                        void (*return_cb)(void), void (*complete_cb)(void)) {
@@ -695,13 +742,24 @@ static void descriptor_loaded_info_cb(void *user_data) {
     return_callback();
 }
 
+// A descriptor finished loading — nothing left to browse for, so return to the
+// opener (home) when a completion callback is set; the QR scanner path has none
+// and falls back to its own return.
+static void descriptor_load_done_cb(void *user_data) {
+  (void)user_data;
+  if (complete_callback)
+    complete_callback();
+  else if (return_callback)
+    return_callback();
+}
+
 static void scan_descriptor_validation_cb(descriptor_validation_result_t result,
                                           void *user_data) {
   (void)user_data;
 
   if (result == VALIDATION_SUCCESS) {
     dialog_show_info("Descriptor Loaded", "Wallet descriptor added to session",
-                     descriptor_loaded_info_cb, NULL, DIALOG_STYLE_FULLSCREEN);
+                     descriptor_load_done_cb, NULL, DIALOG_STYLE_FULLSCREEN);
     return;
   }
 
@@ -819,7 +877,7 @@ static void handle_mnemonic_content(const char *data, size_t len) {
       msg, sizeof(msg),
       "Replace current key?\n\n"
       "  %s > #%06X %s#\n\n"
-      "Passphrase and descriptor will be discarded.",
+      "Passphrase and descriptors will be discarded.",
       current_fp,
       (unsigned)((lv_color_to_32(highlight_color(), LV_OPA_COVER).red << 16) |
                  (lv_color_to_32(highlight_color(), LV_OPA_COVER).green << 8) |

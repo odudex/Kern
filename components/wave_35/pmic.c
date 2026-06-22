@@ -160,3 +160,6 @@ bool bsp_pmic_is_vbus_present(void) {
 }
 
 bool bsp_pmic_is_available(void) { return pmic_available; }
+
+/* The AXP2101 supports software power-off (SOFT_PWROFF). */
+bool bsp_pmic_can_power_off(void) { return pmic_available; }

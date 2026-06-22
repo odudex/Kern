@@ -9,12 +9,18 @@
 #include "esp_ldo_regulator.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "sdmmc_cmd.h"
 
 static const char *TAG = "sd_card";
 
 static sdmmc_card_t *s_card = NULL;
 static bool s_mounted = false;
+
+/* Probe attempts on a (re)mount, and the settle delay between them. */
+#define SD_CARD_MOUNT_ATTEMPTS 3
+#define SD_CARD_RETRY_DELAY_MS 20
 
 #define SD_CARD_HAS_CUSTOM_GPIO                                                \
   (CONFIG_SD_CLK_GPIO != -1 || CONFIG_SD_CMD_GPIO != -1 ||                     \
@@ -86,9 +92,28 @@ static esp_err_t sd_card_configure_slot(sdmmc_slot_config_t *slot_config) {
   return ESP_OK;
 }
 
+/* CMD13 (SEND_STATUS) round-trips to the card. With no card-detect line a card
+ * swapped out, swapped for another, or removed leaves a cached handle that
+ * fails here (a fresh card has not been assigned the old RCA), so this tells a
+ * genuinely live mount from one that only looks mounted via the cached flag. */
+static bool sd_card_handle_is_live(void) {
+  return s_mounted && s_card && sdmmc_get_status(s_card) == ESP_OK;
+}
+
+static void sd_card_clear_mount(void) {
+  if (s_card)
+    esp_vfs_fat_sdcard_unmount(SD_CARD_MOUNT_POINT, s_card);
+  s_card = NULL;
+  s_mounted = false;
+}
+
 esp_err_t sd_card_init(void) {
-  if (s_mounted)
+  /* Reuse a live mount; only a stale or absent one is (re)probed. A cached but
+   * dead handle must be torn down first, or the mount below early-returns on
+   * the stale flag. */
+  if (sd_card_handle_is_live())
     return ESP_OK;
+  sd_card_clear_mount();
 
   ESP_LOGI(TAG, "Initializing SD card");
 
@@ -104,18 +129,31 @@ esp_err_t sd_card_init(void) {
 
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
   host.slot = SDMMC_HOST_SLOT_0;
-  host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
 
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
   ret = sd_card_configure_slot(&slot_config);
   if (ret != ESP_OK)
     return ret;
 
-  ret = esp_vfs_fat_sdmmc_mount(SD_CARD_MOUNT_POINT, &host, &slot_config,
-                                &mount_config, &s_card);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Mount failed: %s", esp_err_to_name(ret));
+  /* Some cards/wiring are marginal at high speed or need a second probe right
+   * after power-up. Retry, dropping to default speed after the first attempt.
+   * esp_vfs_fat_sdmmc_mount() deinits the host on failure, so re-calling it is
+   * safe. */
+  for (int attempt = 0; attempt < SD_CARD_MOUNT_ATTEMPTS; attempt++) {
+    host.max_freq_khz =
+        (attempt == 0) ? SDMMC_FREQ_HIGHSPEED : SDMMC_FREQ_DEFAULT;
+    ret = esp_vfs_fat_sdmmc_mount(SD_CARD_MOUNT_POINT, &host, &slot_config,
+                                  &mount_config, &s_card);
+    if (ret == ESP_OK)
+      break;
     s_card = NULL;
+    ESP_LOGW(TAG, "Mount attempt %d/%d at %d kHz failed: %s", attempt + 1,
+             SD_CARD_MOUNT_ATTEMPTS, host.max_freq_khz, esp_err_to_name(ret));
+    vTaskDelay(pdMS_TO_TICKS(SD_CARD_RETRY_DELAY_MS));
+  }
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Mount failed after %d attempts: %s", SD_CARD_MOUNT_ATTEMPTS,
+             esp_err_to_name(ret));
     return ret;
   }
 
@@ -141,15 +179,10 @@ esp_err_t sd_card_deinit(void) {
 }
 
 esp_err_t sd_card_remount(void) {
-  /* Force a fresh mount. The boards have no card-detect line
-   * (SDMMC_SLOT_NO_CD), so a card swapped out and back in leaves a stale
-   * handle that fails reads with 0x107. Unmount (ignoring errors — the old
-   * card may be gone) and clear state unconditionally so the re-init actually
-   * re-probes the card instead of early-returning on s_mounted. */
-  if (s_mounted && s_card)
-    esp_vfs_fat_sdcard_unmount(SD_CARD_MOUNT_POINT, s_card);
-  s_card = NULL;
-  s_mounted = false;
+  /* sd_card_init() already reuses a live mount and re-probes a stale one via
+   * CMD13, so a healthy card mounted by another flow is kept rather than torn
+   * down: a gratuitous unmount/mount cycle is itself a chance for a transient
+   * driver failure that would surface as a spurious "no card". */
   return sd_card_init();
 }
 
