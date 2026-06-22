@@ -22,7 +22,7 @@ A 3D-printable enclosure for the [Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3](https:
 - **Infill:** 15% cross hatch
 - **Orientation:** Print as designed (flat on build plate)
 
-The `.3mf` file contains the following plates for Bambu Studio:
+The `.3mf` file contains the following plates for slicer software (eg Orca Slicer/Bambu Studio):
 
 | Plate | Contents |
 |---|---|
