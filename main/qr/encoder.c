@@ -8,6 +8,60 @@
 #include <wally_bip39.h>
 #include <wally_core.h>
 
+_Static_assert(QR_CODE_BUF_LEN == qrcodegen_BUFFER_LEN_MAX,
+               "QR_CODE_BUF_LEN must match qrcodegen_BUFFER_LEN_MAX");
+
+// Draw modules [x0,x0+w) x [y0,y0+h) of qr_buf onto qr_obj's I1 canvas at the
+// given scale, centering a (cell*scale) px block. cell == modules draws the
+// full QR; cell == interval magnifies one region at a constant module size.
+static void qr_blit_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0,
+                           int y0, int w, int h, int scale, int cell) {
+  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
+  if (!draw_buf || scale <= 0)
+    return;
+
+  int32_t canvas_size = draw_buf->header.w;
+  int32_t margin = (canvas_size - cell * scale) / 2;
+  if (margin < 0)
+    margin = 0;
+
+  lv_draw_buf_clear(draw_buf, NULL);
+  lv_canvas_set_palette(qr_obj, 0,
+                        lv_color_to_32(lv_color_white(), LV_OPA_COVER));
+  lv_canvas_set_palette(qr_obj, 1,
+                        lv_color_to_32(lv_color_black(), LV_OPA_COVER));
+
+  uint8_t *buf = (uint8_t *)draw_buf->data + 8;
+  uint32_t stride = draw_buf->header.stride;
+
+  for (int ry = 0; ry < h; ry++) {
+    int32_t py = margin + ry * scale;
+    if (py < 0 || py >= canvas_size)
+      continue;
+    for (int rx = 0; rx < w; rx++) {
+      if (qrcodegen_getModule(qr_buf, x0 + rx, y0 + ry)) {
+        int32_t px = margin + rx * scale;
+        for (int32_t dx = 0; dx < scale; dx++) {
+          int32_t x = px + dx;
+          if (x < 0 || x >= canvas_size)
+            continue;
+          buf[py * stride + (x >> 3)] |= (0x80 >> (x & 7));
+        }
+      }
+    }
+    uint8_t *src_row = buf + py * stride;
+    for (int32_t dy = 1; dy < scale; dy++) {
+      int32_t yy = py + dy;
+      if (yy >= canvas_size)
+        break;
+      memcpy(buf + yy * stride, src_row, stride);
+    }
+  }
+
+  lv_image_cache_drop(draw_buf);
+  lv_obj_invalidate(qr_obj);
+}
+
 static bool is_all_digits(const char *data, size_t len) {
   for (size_t i = 0; i < len; i++) {
     if (!isdigit((unsigned char)data[i])) {
@@ -327,74 +381,50 @@ unsigned char *mnemonic_to_compact_seedqr(const char *mnemonic,
   return result;
 }
 
-lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
-                             size_t len, qr_encode_result_t *result) {
-  if (!qr_obj || !data || len == 0 || len > qrcodegen_BUFFER_LEN_MAX) {
-    return LV_RESULT_INVALID;
-  }
+int qr_encode_binary(const uint8_t *data, size_t len, uint8_t *qr_buf) {
+  if (!data || !qr_buf || len == 0 || len > qrcodegen_BUFFER_LEN_MAX)
+    return 0;
 
-  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
-  if (!draw_buf) {
-    return LV_RESULT_INVALID;
-  }
+  // encodeBinary consumes its data buffer as scratch, so copy into a temp.
+  uint8_t *scratch = malloc(qrcodegen_BUFFER_LEN_MAX);
+  if (!scratch)
+    return 0;
 
-  int32_t canvas_size = draw_buf->header.w;
-  uint8_t *qr_code = malloc(qrcodegen_BUFFER_LEN_MAX);
-  uint8_t *data_buf = malloc(qrcodegen_BUFFER_LEN_MAX);
-  if (!qr_code || !data_buf) {
-    free(qr_code);
-    free(data_buf);
-    return LV_RESULT_INVALID;
-  }
-
-  memcpy(data_buf, data, len);
-  bool ok = qrcodegen_encodeBinary(data_buf, len, qr_code, qrcodegen_Ecc_LOW,
+  memcpy(scratch, data, len);
+  bool ok = qrcodegen_encodeBinary(scratch, len, qr_buf, qrcodegen_Ecc_LOW,
                                    qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
                                    qrcodegen_Mask_AUTO, true);
-  free(data_buf);
-  if (!ok) {
-    free(qr_code);
+  free(scratch);
+  return ok ? qrcodegen_getSize(qr_buf) : 0;
+}
+
+lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
+                             size_t len, qr_encode_result_t *result) {
+  if (!qr_obj)
+    return LV_RESULT_INVALID;
+
+  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
+  if (!draw_buf)
+    return LV_RESULT_INVALID;
+
+  uint8_t *qr_buf = malloc(QR_CODE_BUF_LEN);
+  if (!qr_buf)
+    return LV_RESULT_INVALID;
+
+  int modules = qr_encode_binary(data, len, qr_buf);
+  if (modules <= 0) {
+    free(qr_buf);
     return LV_RESULT_INVALID;
   }
 
-  int32_t qr_size = qrcodegen_getSize(qr_code);
-  int32_t scale = canvas_size / qr_size;
-  int32_t margin = (canvas_size - (qr_size * scale)) / 2;
-
+  int32_t scale = draw_buf->header.w / modules;
   if (result) {
-    result->modules = qr_size;
+    result->modules = modules;
     result->scale = scale;
   }
 
-  lv_draw_buf_clear(draw_buf, NULL);
-  lv_canvas_set_palette(qr_obj, 0,
-                        lv_color_to_32(lv_color_white(), LV_OPA_COVER));
-  lv_canvas_set_palette(qr_obj, 1,
-                        lv_color_to_32(lv_color_black(), LV_OPA_COVER));
-
-  uint8_t *buf = (uint8_t *)draw_buf->data + 8;
-  uint32_t stride = draw_buf->header.stride;
-
-  for (int32_t qy = 0; qy < qr_size; qy++) {
-    int32_t py = margin + qy * scale;
-    for (int32_t qx = 0; qx < qr_size; qx++) {
-      if (qrcodegen_getModule(qr_code, qx, qy)) {
-        int32_t px = margin + qx * scale;
-        for (int32_t dx = 0; dx < scale; dx++) {
-          int32_t x = px + dx;
-          buf[py * stride + (x >> 3)] |= (0x80 >> (x & 7));
-        }
-      }
-    }
-    uint8_t *src_row = buf + py * stride;
-    for (int32_t dy = 1; dy < scale; dy++) {
-      memcpy(buf + (py + dy) * stride, src_row, stride);
-    }
-  }
-
-  free(qr_code);
-  lv_image_cache_drop(draw_buf);
-  lv_obj_invalidate(qr_obj);
+  qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules);
+  free(qr_buf);
   return LV_RESULT_OK;
 }
 
@@ -411,6 +441,13 @@ lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text) {
     qr_update_optimal(qr, text, NULL);
   lv_obj_center(qr);
   return qr;
+}
+
+void qr_resize(lv_obj_t *qr_obj, int32_t size) {
+  if (!qr_obj || size <= 0)
+    return;
+  lv_qrcode_set_size(qr_obj, size);
+  lv_obj_center(qr_obj);
 }
 
 char *qr_bech32_to_upper(const char *text) {
@@ -441,77 +478,67 @@ char *qr_bech32_to_upper(const char *text) {
   return upper;
 }
 
-lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
-                              qr_encode_result_t *result) {
-  if (!qr_obj || !text || strlen(text) == 0 ||
-      strlen(text) > qrcodegen_BUFFER_LEN_MAX) {
-    return LV_RESULT_INVALID;
-  }
+int qr_encode_optimal(const char *text, uint8_t *qr_buf) {
+  if (!text || !qr_buf || strlen(text) == 0 ||
+      strlen(text) > qrcodegen_BUFFER_LEN_MAX)
+    return 0;
 
-  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
-  if (!draw_buf) {
-    return LV_RESULT_INVALID;
-  }
-
-  int32_t canvas_size = draw_buf->header.w;
-  uint8_t *qr_code = malloc(qrcodegen_BUFFER_LEN_MAX);
   uint8_t *temp_buf = malloc(qrcodegen_BUFFER_LEN_MAX);
-  if (!qr_code || !temp_buf) {
-    free(qr_code);
-    free(temp_buf);
-    return LV_RESULT_INVALID;
-  }
+  if (!temp_buf)
+    return 0;
 
   // Use LOW ECC with boost for optimal density while maximizing error
   // correction within the chosen version. encodeText auto-selects
   // numeric/alphanumeric/byte mode.
-  bool ok = qrcodegen_encodeText(text, temp_buf, qr_code, qrcodegen_Ecc_LOW,
+  bool ok = qrcodegen_encodeText(text, temp_buf, qr_buf, qrcodegen_Ecc_LOW,
                                  qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
                                  qrcodegen_Mask_AUTO, true);
   free(temp_buf);
-  if (!ok) {
-    free(qr_code);
+  return ok ? qrcodegen_getSize(qr_buf) : 0;
+}
+
+lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
+                              qr_encode_result_t *result) {
+  if (!qr_obj)
+    return LV_RESULT_INVALID;
+
+  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
+  if (!draw_buf)
+    return LV_RESULT_INVALID;
+
+  uint8_t *qr_buf = malloc(QR_CODE_BUF_LEN);
+  if (!qr_buf)
+    return LV_RESULT_INVALID;
+
+  int modules = qr_encode_optimal(text, qr_buf);
+  if (modules <= 0) {
+    free(qr_buf);
     return LV_RESULT_INVALID;
   }
 
-  int32_t qr_size = qrcodegen_getSize(qr_code);
-  int32_t scale = canvas_size / qr_size;
-  int32_t margin = (canvas_size - (qr_size * scale)) / 2;
-
-  // Populate result if requested
+  int32_t scale = draw_buf->header.w / modules;
   if (result) {
-    result->modules = qr_size;
+    result->modules = modules;
     result->scale = scale;
   }
 
-  lv_draw_buf_clear(draw_buf, NULL);
-  lv_canvas_set_palette(qr_obj, 0,
-                        lv_color_to_32(lv_color_white(), LV_OPA_COVER));
-  lv_canvas_set_palette(qr_obj, 1,
-                        lv_color_to_32(lv_color_black(), LV_OPA_COVER));
-
-  uint8_t *buf = (uint8_t *)draw_buf->data + 8; // Skip palette
-  uint32_t stride = draw_buf->header.stride;
-
-  for (int32_t qy = 0; qy < qr_size; qy++) {
-    int32_t py = margin + qy * scale;
-    for (int32_t qx = 0; qx < qr_size; qx++) {
-      if (qrcodegen_getModule(qr_code, qx, qy)) {
-        int32_t px = margin + qx * scale;
-        for (int32_t dx = 0; dx < scale; dx++) {
-          int32_t x = px + dx;
-          buf[py * stride + (x >> 3)] |= (0x80 >> (x & 7));
-        }
-      }
-    }
-    uint8_t *src_row = buf + py * stride;
-    for (int32_t dy = 1; dy < scale; dy++) {
-      memcpy(buf + (py + dy) * stride, src_row, stride);
-    }
-  }
-
-  free(qr_code);
-  lv_image_cache_drop(draw_buf);
-  lv_obj_invalidate(qr_obj);
+  qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules);
+  free(qr_buf);
   return LV_RESULT_OK;
+}
+
+void qr_draw_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0, int y0,
+                    int w, int h, int cell) {
+  if (!qr_obj || !qr_buf || w <= 0 || h <= 0 || cell < 1)
+    return;
+
+  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
+  if (!draw_buf)
+    return;
+
+  int scale = draw_buf->header.w / cell;
+  if (scale < 1)
+    scale = 1;
+
+  qr_blit_region(qr_obj, qr_buf, x0, y0, w, h, scale, cell);
 }

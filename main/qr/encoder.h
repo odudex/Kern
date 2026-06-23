@@ -4,6 +4,14 @@
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+
+/**
+ * @brief Bytes a qrcodegen output buffer needs (== qrcodegen_BUFFER_LEN_MAX for
+ * version 40). Defined here so callers can allocate a qr_buf without pulling in
+ * the qrcodegen header; a _Static_assert in encoder.c keeps them in sync.
+ */
+#define QR_CODE_BUF_LEN 3918
 
 /**
  * @brief Result from QR encoding with module information
@@ -41,6 +49,49 @@ lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
  * @return QR widget on success, NULL on failure
  */
 lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text);
+
+/**
+ * @brief Resize an existing QR widget's canvas.
+ *
+ * Reallocates the draw buffer and clears it, so the caller must re-encode
+ * (qr_update_optimal/qr_update_binary) afterwards to repaint.
+ *
+ * @param qr_obj QR widget created by qr_create_optimal()
+ * @param size New widget size in pixels
+ */
+void qr_resize(lv_obj_t *qr_obj, int32_t size);
+
+/**
+ * @brief Encode text/binary into a module buffer without drawing.
+ *
+ * Mirrors the encode step of qr_update_optimal/qr_update_binary (LOW ECC, auto
+ * version/mask, boost). The buffer must hold at least QR_CODE_BUF_LEN bytes.
+ * Module bits can then be read with the qrcodegen API or drawn via
+ * qr_draw_region(). Returns the module count (side length), or 0 on failure.
+ *
+ * @param text/data Source to encode
+ * @param qr_buf Output buffer (>= QR_CODE_BUF_LEN bytes)
+ * @return Module count on success, 0 on failure
+ */
+int qr_encode_optimal(const char *text, uint8_t *qr_buf);
+int qr_encode_binary(const uint8_t *data, size_t len, uint8_t *qr_buf);
+
+/**
+ * @brief Draw a sub-rectangle of an encoded QR onto a widget's canvas.
+ *
+ * Draws modules [x0,x0+w) x [y0,y0+h) of qr_buf, scaled so a span of `cell`
+ * modules fills the canvas, centered. Pass cell == w == h == modules to draw
+ * the whole QR, or cell == grid interval to magnify one region at a constant
+ * module size. The caller retains ownership of qr_buf.
+ *
+ * @param qr_obj QR widget (canvas)
+ * @param qr_buf Buffer previously filled by qr_encode_optimal/binary
+ * @param x0,y0 Top-left module of the region
+ * @param w,h Module extent to draw (clamped by the caller)
+ * @param cell Module span used to compute scale/centering (>= 1)
+ */
+void qr_draw_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0, int y0,
+                    int w, int h, int cell);
 
 /**
  * @brief Uppercase a bech32 string for QR alphanumeric mode

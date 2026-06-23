@@ -31,10 +31,16 @@ typedef enum {
   QR_TYPE_ENCRYPTED = 3
 } qr_type_t;
 
+typedef enum {
+  VIEW_STANDARD = 0,
+  VIEW_REGIONS = 1,
+  VIEW_ZOOMED = 2
+} view_mode_t;
+
 static lv_obj_t *mnemonic_qr_screen = NULL;
 static lv_obj_t *back_button = NULL;
 static lv_obj_t *qr_type_dropdown = NULL;
-static lv_obj_t *grid_btn = NULL;
+static lv_obj_t *view_dropdown = NULL;
 static lv_obj_t *qr_code = NULL;
 static lv_obj_t *qr_container = NULL;
 static lv_obj_t *grid_overlay = NULL;
@@ -48,19 +54,32 @@ static char *seedqr_data = NULL;
 static unsigned char *compact_seedqr_data = NULL;
 static size_t compact_seedqr_len = 0;
 static qr_type_t current_qr_type = QR_TYPE_PLAINTEXT;
-static bool grid_visible = false;
+static view_mode_t view_mode = VIEW_STANDARD;
 static bool shade_mode_active = false;
 static int32_t qr_widget_size = 0;
-static int shade_region_index = 0;
+static int32_t qr_box_size = 0;
+static int32_t qr_pad_grid = 0;
+static int32_t qr_pad_plain = 0;
+static int32_t qr_pad_zoom = 0;
+static int shade_region_index = 0; /* doubles as the zoomed-region cursor */
 static int grid_divisions = 0;
 static qr_encode_result_t last_qr_result = {0, 0};
+
+/* Zoomed-view state: QR encoded once into zoom_qr_buf, regions drawn from it */
+static uint8_t *zoom_qr_buf = NULL;
+static int zoom_modules = 0;
+static qr_type_t zoom_buf_type = (qr_type_t)-1;
+static lv_obj_t *zoom_label_overlay = NULL;
 
 /* Encrypted QR state */
 static char *encrypted_qr_data = NULL;
 static qr_type_t previous_qr_type = QR_TYPE_PLAINTEXT;
 
-/* Forward declaration */
+/* Forward declarations */
 static void update_qr_code(void);
+static void render_zoom(void);
+static int ensure_zoom_encoded(void);
+static void destroy_zoom_labels(void);
 
 static void back_cb(lv_event_t *e) {
   (void)e;
@@ -190,23 +209,26 @@ static void create_shade_overlay(void) {
 
 static void qr_area_tap_cb(lv_event_t *e) {
   (void)e;
-  if (!grid_visible)
-    return;
 
-  int modules = last_qr_result.modules;
-  int grid_interval = get_grid_interval(modules);
-  int divisions = (modules + grid_interval - 1) / grid_interval;
-  int total_regions = divisions * divisions;
+  if (view_mode == VIEW_REGIONS) {
+    int modules = last_qr_result.modules;
+    int grid_interval = get_grid_interval(modules);
+    int divisions = (modules + grid_interval - 1) / grid_interval;
+    int total_regions = divisions * divisions;
 
-  if (!shade_mode_active) {
-    shade_region_index = 0;
-    create_shade_overlay();
-  } else {
-    shade_region_index++;
-    if (shade_region_index >= total_regions)
-      reset_shade_mode();
-    else
+    if (!shade_mode_active) {
+      shade_region_index = 0;
       create_shade_overlay();
+    } else {
+      shade_region_index++;
+      if (shade_region_index >= total_regions)
+        reset_shade_mode();
+      else
+        create_shade_overlay();
+    }
+  } else if (view_mode == VIEW_ZOOMED) {
+    shade_region_index++; /* render_zoom() wraps past the last region to 0 */
+    render_zoom();
   }
 }
 
@@ -298,15 +320,34 @@ static void create_grid_overlay(void) {
   }
 }
 
-static void grid_btn_cb(lv_event_t *e) {
-  (void)e;
-  grid_visible = !grid_visible;
-  if (grid_visible) {
-    create_grid_overlay();
-  } else {
-    reset_shade_mode();
-    destroy_grid_overlay();
-  }
+static void apply_qr_sizing(void) {
+  if (!qr_container || !qr_code)
+    return;
+  int32_t pad = (view_mode == VIEW_REGIONS)  ? qr_pad_grid
+                : (view_mode == VIEW_ZOOMED) ? qr_pad_zoom
+                                             : qr_pad_plain;
+  int32_t size = qr_box_size - 2 * pad;
+  if (size <= 0 || size == qr_widget_size)
+    return;
+  lv_obj_set_style_pad_all(qr_container, pad, 0);
+  qr_resize(qr_code, size);
+  qr_widget_size = size;
+}
+
+static void view_mode_cb(lv_event_t *e) {
+  view_mode_t new_mode =
+      (view_mode_t)lv_dropdown_get_selected(lv_event_get_target(e));
+  if (new_mode == view_mode)
+    return;
+
+  reset_shade_mode();
+  destroy_grid_overlay();
+  destroy_zoom_labels();
+  shade_region_index = 0; /* fresh region cursor for grid/zoom */
+
+  view_mode = new_mode;
+  apply_qr_sizing();
+  update_qr_code();
 }
 
 /* ---------- Encrypted QR flow (via kef_encrypt_page) ---------- */
@@ -336,6 +377,10 @@ static void encrypt_success_cb(const char *id, const uint8_t *envelope,
 
   current_qr_type = QR_TYPE_ENCRYPTED;
   lv_dropdown_set_selected(qr_type_dropdown, 3);
+  /* Same type but fresh data (new GCM IV): force the zoom cache to re-encode.
+   */
+  zoom_buf_type = (qr_type_t)-1;
+  shade_region_index = 0;
   update_qr_code();
 }
 
@@ -352,10 +397,138 @@ static void start_encrypted_flow(void) {
                           compact_seedqr_len, NULL);
 }
 
+static void destroy_zoom_labels(void) {
+  if (zoom_label_overlay) {
+    lv_obj_del(zoom_label_overlay);
+    zoom_label_overlay = NULL;
+  }
+}
+
+/* Encode the current QR into zoom_qr_buf, cached by type. Returns module count.
+ */
+static int ensure_zoom_encoded(void) {
+  if (!zoom_qr_buf)
+    return 0;
+  if (zoom_modules > 0 && zoom_buf_type == current_qr_type)
+    return zoom_modules;
+
+  int modules = 0;
+  if (current_qr_type == QR_TYPE_COMPACT_SEEDQR) {
+    if (compact_seedqr_data && compact_seedqr_len > 0)
+      modules = qr_encode_binary(compact_seedqr_data, compact_seedqr_len,
+                                 zoom_qr_buf);
+  } else if (current_qr_type == QR_TYPE_ENCRYPTED) {
+    if (encrypted_qr_data)
+      modules = qr_encode_optimal(encrypted_qr_data, zoom_qr_buf);
+  } else {
+    const char *data = (current_qr_type == QR_TYPE_PLAINTEXT) ? mnemonic_data
+                       : (current_qr_type == QR_TYPE_SEEDQR)  ? seedqr_data
+                                                              : NULL;
+    if (data)
+      modules = qr_encode_optimal(data, zoom_qr_buf);
+  }
+
+  zoom_modules = modules;
+  zoom_buf_type = (modules > 0) ? current_qr_type : (qr_type_t)-1;
+  return modules;
+}
+
+static void add_zoom_label(const char *txt, bool is_row, int32_t qr_x,
+                           int32_t qr_y, int32_t qr_w, int32_t qr_h,
+                           int32_t label_pad) {
+  lv_obj_t *lbl = lv_label_create(zoom_label_overlay);
+  lv_label_set_text(lbl, txt);
+  lv_obj_set_style_text_color(lbl, highlight_color(), 0);
+  lv_obj_set_style_text_font(lbl, theme_font_medium(), 0);
+  lv_obj_update_layout(lbl);
+  int32_t lw = lv_obj_get_width(lbl);
+  int32_t lh = lv_obj_get_height(lbl);
+  if (is_row)
+    lv_obj_set_pos(lbl, qr_x - label_pad - lw, qr_y + (qr_h - lh) / 2);
+  else
+    lv_obj_set_pos(lbl, qr_x + (qr_w - lw) / 2, qr_y - label_pad - lh);
+}
+
+static void add_zoom_gridline(int32_t x, int32_t y, int32_t w, int32_t h) {
+  lv_obj_t *line = lv_obj_create(zoom_label_overlay);
+  lv_obj_remove_style_all(line);
+  lv_obj_set_pos(line, x, y);
+  lv_obj_set_size(line, w, h);
+  lv_obj_set_style_bg_color(line, highlight_color(), 0);
+  lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
+}
+
+static void render_zoom(void) {
+  int modules = ensure_zoom_encoded();
+  if (modules <= 0)
+    return;
+
+  int interval = get_grid_interval(modules);
+  int divisions = (modules + interval - 1) / interval;
+  int total = divisions * divisions;
+  if (shade_region_index < 0 || shade_region_index >= total)
+    shade_region_index = 0;
+
+  int row = shade_region_index / divisions;
+  int col = shade_region_index % divisions;
+  int x0 = col * interval;
+  int y0 = row * interval;
+  int w = LV_MIN(interval, modules - x0);
+  int h = LV_MIN(interval, modules - y0);
+
+  /* cell == interval keeps a constant module size; edge regions leave blanks */
+  qr_draw_region(qr_code, zoom_qr_buf, x0, y0, w, h, interval);
+
+  destroy_zoom_labels();
+  lv_obj_update_layout(qr_code);
+  lv_area_t qr_coords, content_coords;
+  lv_obj_get_coords(qr_code, &qr_coords);
+  lv_obj_get_coords(content_area, &content_coords);
+  int32_t qr_x = qr_coords.x1 - content_coords.x1;
+  int32_t qr_y = qr_coords.y1 - content_coords.y1;
+  int32_t qr_w = lv_obj_get_width(qr_code);
+  int32_t qr_h = lv_obj_get_height(qr_code);
+  int32_t label_pad = LV_MAX(theme_small_padding(), 2);
+
+  zoom_label_overlay = lv_obj_create(content_area);
+  lv_obj_remove_style_all(zoom_label_overlay);
+  lv_obj_set_size(zoom_label_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_clear_flag(zoom_label_overlay,
+                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(zoom_label_overlay, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+  /* Inter-cell grid; same scale/centering as qr_draw_region so lines land on
+   * the module boundaries. */
+  int32_t scale = qr_w / interval;
+  int32_t margin = (qr_w - interval * scale) / 2;
+  int32_t gx = qr_x + margin;
+  int32_t gy = qr_y + margin;
+  int32_t span_w = w * scale;
+  int32_t span_h = h * scale;
+  int32_t line_w = LV_MAX(1, scale / 40);
+  for (int i = 0; i <= w; i++)
+    add_zoom_gridline(gx + i * scale - line_w / 2, gy, line_w, span_h);
+  for (int j = 0; j <= h; j++)
+    add_zoom_gridline(gx, gy + j * scale - line_w / 2, span_w, line_w);
+
+  char num[12];
+  snprintf(num, sizeof(num), "%d", col + 1);
+  add_zoom_label(num, false, qr_x, qr_y, qr_w, qr_h, label_pad);
+  char letter[2] = {(char)('A' + row), '\0'};
+  add_zoom_label(letter, true, qr_x, qr_y, qr_w, qr_h, label_pad);
+}
+
 static void update_qr_code(void) {
   if (!qr_code)
     return;
 
+  if (view_mode == VIEW_ZOOMED) {
+    reset_shade_mode();
+    render_zoom();
+    return;
+  }
+
+  destroy_zoom_labels();
   if (current_qr_type == QR_TYPE_COMPACT_SEEDQR) {
     if (compact_seedqr_data && compact_seedqr_len > 0)
       qr_update_binary(qr_code, compact_seedqr_data, compact_seedqr_len,
@@ -372,7 +545,7 @@ static void update_qr_code(void) {
   }
 
   reset_shade_mode();
-  if (grid_visible)
+  if (view_mode == VIEW_REGIONS)
     create_grid_overlay();
 }
 
@@ -388,6 +561,7 @@ static void dropdown_cb(lv_event_t *e) {
                                     : QR_TYPE_COMPACT_SEEDQR;
   if (new_type != current_qr_type) {
     current_qr_type = new_type;
+    shade_region_index = 0; /* region cursor invalid for the new QR */
     update_qr_code();
   }
 }
@@ -415,7 +589,11 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   }
 
   current_qr_type = QR_TYPE_PLAINTEXT;
-  grid_visible = false;
+  view_mode = VIEW_STANDARD;
+  shade_region_index = 0;
+  zoom_qr_buf = malloc(QR_CODE_BUF_LEN);
+  zoom_modules = 0;
+  zoom_buf_type = (qr_type_t)-1;
 
   mnemonic_qr_screen = lv_obj_create(parent);
   lv_obj_set_size(mnemonic_qr_screen, LV_PCT(100), LV_PCT(100));
@@ -426,6 +604,9 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(mnemonic_qr_screen, theme_default_padding(), 0);
   lv_obj_set_style_pad_gap(mnemonic_qr_screen, theme_default_padding(), 0);
+  // Top control row doubles as the page title; pull it up to small_padding so
+  // it lines up with the overlaid back button (which sits there on parent).
+  lv_obj_set_style_pad_top(mnemonic_qr_screen, theme_small_padding(), 0);
 
   bool portrait = theme_screen_height() > theme_screen_width();
   int32_t ctrl_h = theme_min_touch_size();
@@ -438,8 +619,11 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   theme_apply_transparent_container(top_bar);
   lv_obj_set_flex_flow(top_bar,
                        portrait ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(top_bar, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
+  // Landscape lays the dropdowns in a row; right-align them so they clear the
+  // back button overlaid at the top-left rather than centering under it.
+  lv_obj_set_flex_align(top_bar,
+                        portrait ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_END,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(top_bar, ctrl_gap, 0);
   lv_obj_clear_flag(top_bar, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -451,15 +635,10 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_add_event_cb(qr_type_dropdown, dropdown_cb, LV_EVENT_VALUE_CHANGED,
                       NULL);
 
-  grid_btn = lv_btn_create(top_bar);
-  lv_obj_set_size(grid_btn, portrait ? LV_PCT(ctrl_w_pct) : ctrl_h, ctrl_h);
-  theme_apply_touch_button(grid_btn, false);
-  lv_obj_add_event_cb(grid_btn, grid_btn_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *grid_label = lv_label_create(grid_btn);
-  lv_label_set_text(grid_label, "#");
-  theme_apply_button_label(grid_label, false);
-  lv_obj_center(grid_label);
+  view_dropdown = theme_create_dropdown(top_bar, "Standard\nRegions\nZoomed");
+  lv_obj_set_size(view_dropdown, LV_PCT(ctrl_w_pct), ctrl_h);
+  lv_obj_add_event_cb(view_dropdown, view_mode_cb, LV_EVENT_VALUE_CHANGED,
+                      NULL);
 
   content_area = lv_obj_create(mnemonic_qr_screen);
   lv_obj_set_size(content_area, LV_PCT(100), LV_PCT(100));
@@ -477,8 +656,19 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   int32_t legend = LV_MAX(24, lv_font_get_line_height(theme_font_small()) +
                                   2 * LV_MAX(ctrl_gap, 2));
 
+  // Grid mode reserves `legend` padding for the row/column labels; with the
+  // grid hidden only a scanner quiet zone is needed, so the QR grows to fill
+  // the reclaimed space and is easier to scan.
+  qr_box_size = container_size;
+  qr_pad_grid = legend;
+  qr_pad_plain = LV_MIN(legend, theme_default_padding());
+  // Zoomed view labels the region with the larger medium font; reserve enough
+  // top/left padding for it to sit above/left of the magnified region.
+  qr_pad_zoom = LV_MAX(legend, lv_font_get_line_height(theme_font_medium()) +
+                                   2 * LV_MAX(ctrl_gap, 2));
+
   qr_container =
-      theme_create_qr_container(content_area, container_size, legend);
+      theme_create_qr_container(content_area, container_size, qr_pad_plain);
 
   lv_obj_update_layout(qr_container);
   qr_widget_size = lv_obj_get_content_width(qr_container);
@@ -506,6 +696,13 @@ void mnemonic_qr_page_destroy(void) {
 
   reset_shade_mode();
   destroy_grid_overlay();
+  destroy_zoom_labels();
+
+  if (zoom_qr_buf) {
+    secure_memzero(zoom_qr_buf, QR_CODE_BUF_LEN);
+    free(zoom_qr_buf);
+    zoom_qr_buf = NULL;
+  }
 
   if (mnemonic_data) {
     secure_memzero(mnemonic_data, strlen(mnemonic_data));
@@ -529,13 +726,21 @@ void mnemonic_qr_page_destroy(void) {
   }
 
   qr_type_dropdown = NULL;
-  grid_btn = NULL;
+  view_dropdown = NULL;
+  zoom_label_overlay = NULL;
   qr_code = NULL;
   qr_container = NULL;
   content_area = NULL;
   return_callback = NULL;
   current_qr_type = QR_TYPE_PLAINTEXT;
-  grid_visible = false;
+  view_mode = VIEW_STANDARD;
+  zoom_modules = 0;
+  zoom_buf_type = (qr_type_t)-1;
+  shade_region_index = 0;
   qr_widget_size = 0;
+  qr_box_size = 0;
+  qr_pad_grid = 0;
+  qr_pad_plain = 0;
+  qr_pad_zoom = 0;
   last_qr_result = (qr_encode_result_t){0, 0};
 }
