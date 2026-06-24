@@ -129,13 +129,22 @@ ui_keyboard_t *ui_keyboard_create(lv_obj_t *parent, const char *title,
   lv_label_set_text(kb->input_label, "_");
   lv_obj_set_style_text_color(kb->input_label, highlight_color(), 0);
   lv_obj_set_style_text_font(kb->input_label, theme_font_medium(), 0);
-  lv_obj_align(kb->input_label, LV_ALIGN_TOP_MID, 0, 130);
 
   kb->btnmatrix = lv_buttonmatrix_create(parent);
   lv_buttonmatrix_set_map(kb->btnmatrix, kb_map);
-  lv_obj_align(kb->btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_size(kb->btnmatrix, LV_PCT(100), LV_PCT(50));
+  lv_obj_align(kb->btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   theme_apply_btnmatrix(kb->btnmatrix);
+
+  // Center the input label in the gap between the title and the keypad so it
+  // follows the screen geometry instead of a fixed pixel offset.
+  lv_obj_update_layout(parent);
+  int32_t title_bottom =
+      lv_obj_get_y(kb->title_label) + lv_obj_get_height(kb->title_label);
+  int32_t keypad_top = lv_obj_get_y(kb->btnmatrix);
+  int32_t input_height = lv_obj_get_height(kb->input_label);
+  lv_obj_align(kb->input_label, LV_ALIGN_TOP_MID, 0,
+               title_bottom + (keypad_top - title_bottom - input_height) / 2);
 
   lv_obj_add_event_cb(kb->btnmatrix, kb_event_handler, LV_EVENT_VALUE_CHANGED,
                       kb);

@@ -12,6 +12,7 @@ typedef void (*ui_numeric_keypad_cancel_cb)(void *user_data);
 typedef struct {
   const char *title;
   uint32_t initial_value;
+  uint32_t min_value;
   uint32_t max_value;
   uint8_t max_digits;
   const char *invalid_message;

@@ -82,6 +82,9 @@ static bool parse_value(const ui_numeric_keypad_t *keypad,
     value = value * 10 + digit;
   }
 
+  if (value < keypad->config.min_value)
+    return false;
+
   *value_out = value;
   return true;
 }
@@ -144,6 +147,11 @@ static void numpad_event_cb(lv_event_t *e) {
 
 static void seed_initial_value(ui_numeric_keypad_t *keypad) {
   uint32_t initial = keypad->config.initial_value;
+  if (initial < keypad->config.min_value) {
+    keypad->input_buf[0] = '\0';
+    keypad->input_len = 0;
+    return;
+  }
   if (initial > keypad->config.max_value)
     initial = keypad->config.max_value;
 

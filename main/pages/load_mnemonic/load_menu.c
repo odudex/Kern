@@ -10,13 +10,17 @@
 #include "../home/home.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"
+#include "../shared/mnemonic_editor.h"
 #include "load_storage.h"
 #include "manual_input.h"
+#include "word_numbers_input.h"
 #include <lvgl.h>
 #include <stdlib.h>
 
 static ui_menu_t *load_menu = NULL;
 static lv_obj_t *load_menu_screen = NULL;
+static ui_menu_t *manual_method_menu = NULL;
+static lv_obj_t *manual_method_screen = NULL;
 static void (*return_callback)(void) = NULL;
 
 static void return_from_key_confirmation_cb(void) {
@@ -90,14 +94,37 @@ static void return_from_qr_scanner_cb(void) {
   }
 }
 
-static void return_from_manual_input_cb(void) {
+static void show_manual_method_menu(void);
+
+static void return_from_words_input_cb(void) {
+  mnemonic_editor_page_destroy();
   manual_input_page_destroy();
-  load_menu_page_show();
+  show_manual_method_menu();
+}
+
+static void return_from_word_numbers_cb(void) {
+  mnemonic_editor_page_destroy();
+  word_numbers_input_page_destroy();
+  show_manual_method_menu();
+}
+
+static void destroy_manual_method_menu(void) {
+  if (manual_method_menu) {
+    ui_menu_destroy(manual_method_menu);
+    manual_method_menu = NULL;
+  }
+  if (manual_method_screen) {
+    lv_obj_del(manual_method_screen);
+    manual_method_screen = NULL;
+  }
 }
 
 static void success_from_manual_input_cb(void) {
   key_confirmation_page_destroy();
+  mnemonic_editor_page_destroy();
   manual_input_page_destroy();
+  word_numbers_input_page_destroy();
+  destroy_manual_method_menu();
   load_menu_page_destroy();
   home_page_create(lv_screen_active());
   home_page_show();
@@ -109,11 +136,53 @@ static void from_qr_code_cb(void) {
   qr_scanner_page_show();
 }
 
-static void from_manual_input_cb(void) {
-  load_menu_page_hide();
-  manual_input_page_create(lv_screen_active(), return_from_manual_input_cb,
+static void words_input_cb(void) {
+  if (manual_method_menu)
+    ui_menu_hide(manual_method_menu);
+  manual_input_page_create(lv_screen_active(), return_from_words_input_cb,
                            success_from_manual_input_cb, false);
   manual_input_page_show();
+}
+
+static void word_numbers_input_cb(void) {
+  if (manual_method_menu)
+    ui_menu_hide(manual_method_menu);
+  word_numbers_input_page_create(lv_screen_active(),
+                                 return_from_word_numbers_cb,
+                                 success_from_manual_input_cb);
+  word_numbers_input_page_show();
+}
+
+static void manual_method_back_cb(void) {
+  destroy_manual_method_menu();
+  load_menu_page_show();
+}
+
+static void show_manual_method_menu(void) {
+  if (!manual_method_screen) {
+    manual_method_screen = theme_create_page_container(lv_screen_active());
+    if (!manual_method_screen) {
+      load_menu_page_show();
+      return;
+    }
+    manual_method_menu = ui_menu_create(manual_method_screen, "Manual Input",
+                                        manual_method_back_cb);
+    if (!manual_method_menu) {
+      lv_obj_del(manual_method_screen);
+      manual_method_screen = NULL;
+      load_menu_page_show();
+      return;
+    }
+    ui_menu_add_entry(manual_method_menu, "Words", words_input_cb);
+    ui_menu_add_entry(manual_method_menu, "Word Numbers",
+                      word_numbers_input_cb);
+  }
+  ui_menu_show(manual_method_menu);
+}
+
+static void from_manual_input_cb(void) {
+  load_menu_page_hide();
+  show_manual_method_menu();
 }
 
 /* --- Load from Flash / SD --- */
@@ -181,6 +250,7 @@ void load_menu_page_hide(void) {
 }
 
 void load_menu_page_destroy(void) {
+  destroy_manual_method_menu();
   if (load_menu) {
     ui_menu_destroy(load_menu);
     load_menu = NULL;

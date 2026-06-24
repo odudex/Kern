@@ -9,6 +9,7 @@
 #include "src/drivers/sdl/lv_sdl_window.h"
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 #include "ui/theme.h"
+#include "ui/theme_widgets.h"
 #include "ui/assets/kern_logo_lvgl.h"
 #include "core/settings.h"
 #include "core/pin.h"

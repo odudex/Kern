@@ -55,7 +55,6 @@ static int filtered_count = 0;
 static editor_mode_t current_mode = MODE_WORD_GRID;
 static char pending_word[16] = {0};
 static bool is_new_mnemonic = false;
-static lv_obj_t *checksum_error_label = NULL;
 
 static void create_ui(void);
 static void create_word_grid(void);
@@ -220,19 +219,26 @@ static void update_fingerprint_display(void) {
 }
 
 static void update_checksum_ui(void) {
-  if (!checksum_error_label || !load_btn || !load_label)
+  if (!load_btn || !load_label)
     return;
 
   bool valid = is_checksum_valid();
 
   if (valid) {
-    lv_obj_add_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_state(load_btn, LV_STATE_DISABLED);
     lv_obj_set_style_text_color(load_label, primary_color(), 0);
   } else {
-    lv_obj_clear_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_state(load_btn, LV_STATE_DISABLED);
     lv_obj_set_style_text_color(load_label, disabled_color(), 0);
+  }
+
+  if (total_words > 0 && word_labels[total_words - 1]) {
+    bool changed = strcmp(entered_words[total_words - 1],
+                          original_words[total_words - 1]) != 0;
+    lv_color_t color = !valid    ? error_color()
+                       : changed ? highlight_color()
+                                 : primary_color();
+    lv_obj_set_style_text_color(word_labels[total_words - 1], color, 0);
   }
 
   update_fingerprint_display();
@@ -285,7 +291,7 @@ static void update_word_label(int index) {
   if (index < 0 || index >= total_words || !word_labels[index])
     return;
 
-  char text[24];
+  char text[32];
   snprintf(text, sizeof(text), "%2d. %s", index + 1, entered_words[index]);
   lv_label_set_text(word_labels[index], text);
 
@@ -318,8 +324,6 @@ static void hide_word_grid(void) {
     lv_obj_add_flag(header_container, LV_OBJ_FLAG_HIDDEN);
   if (load_btn)
     lv_obj_add_flag(load_btn, LV_OBJ_FLAG_HIDDEN);
-  if (checksum_error_label)
-    lv_obj_add_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void return_to_word_grid(void) {
@@ -337,9 +341,10 @@ static void word_clicked_cb(lv_event_t *e) {
     return;
 
   editing_word_index = index;
-  strncpy(current_prefix, entered_words[index], BIP39_MAX_PREFIX_LEN);
-  current_prefix[BIP39_MAX_PREFIX_LEN] = '\0';
-  prefix_len = strlen(current_prefix);
+  // Start the replacement input empty. Keep the existing word in the grid
+  // until the user confirms a new one, but do not make them erase it first.
+  current_prefix[0] = '\0';
+  prefix_len = 0;
 
   hide_word_grid();
   show_keyboard_for_word(index);
@@ -550,7 +555,7 @@ static void load_btn_cb(lv_event_t *e) {
   }
 
   if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    dialog_show_error_timeout("Invalid checksum", NULL, 0);
+    secure_memzero(mnemonic, sizeof(mnemonic));
     return;
   }
 
@@ -559,6 +564,7 @@ static void load_btn_cb(lv_event_t *e) {
                                return_from_key_confirmation_cb,
                                success_callback, mnemonic, strlen(mnemonic));
   key_confirmation_page_show();
+  secure_memzero(mnemonic, sizeof(mnemonic));
 }
 
 static lv_obj_t *create_column(lv_obj_t *parent, int x, int width, int height) {
@@ -580,7 +586,7 @@ static lv_obj_t *create_column(lv_obj_t *parent, int x, int width, int height) {
 
 static lv_obj_t *create_word_button(lv_obj_t *parent, int index, int height,
                                     lv_color_t bg) {
-  char text[24];
+  char text[32];
   snprintf(text, sizeof(text), "%2d. %s", index + 1, entered_words[index]);
 
   lv_obj_t *btn = lv_btn_create(parent);
@@ -685,14 +691,6 @@ static void create_ui(void) {
   lv_obj_center(load_label);
   theme_apply_button_label(load_label, false);
 
-  checksum_error_label = lv_label_create(mnemonic_editor_screen);
-  lv_label_set_text(checksum_error_label, "Invalid checksum");
-  lv_obj_set_style_text_color(checksum_error_label, error_color(), 0);
-  lv_obj_set_style_text_font(checksum_error_label, theme_font_small(), 0);
-  lv_obj_align_to(checksum_error_label, load_btn, LV_ALIGN_OUT_LEFT_MID, -10,
-                  0);
-  lv_obj_add_flag(checksum_error_label, LV_OBJ_FLAG_HIDDEN);
-
   if (!is_new_mnemonic)
     update_checksum_ui();
 }
@@ -766,7 +764,6 @@ void mnemonic_editor_page_destroy(void) {
   load_label = NULL;
   header_container = NULL;
   fingerprint_label = NULL;
-  checksum_error_label = NULL;
   is_new_mnemonic = false;
   memset(word_labels, 0, sizeof(word_labels));
   secure_memzero(entered_words, sizeof(entered_words));
