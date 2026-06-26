@@ -279,16 +279,44 @@ int main(int argc, char *argv[]) {
      * Main loop
      * SDL_QUIT is handled by LVGL's SDL driver which calls exit(0)
      * --------------------------------------------------------------------- */
+    static uint32_t render_history[8] = {0};
+    static size_t   render_history_idx = 0;
+    static size_t   warmup_frames = 0;
+    static uint32_t adaptive_cap = 33;
+
     while (1) {
+        uint32_t start = SDL_GetTicks();
+
         lvgl_port_lock(0);
         uint32_t ms_til_next = lv_timer_handler();
         lvgl_port_unlock();
-        /* Cap delay to ~33ms (~30fps).  Background threads (camera stream)
-         * update LVGL image sources via lv_img_set_src() which marks the
-         * widget dirty, but SDL2 can only render from the main thread.
-         * A short cap ensures lv_timer_handler() redraws promptly. */
-        if (ms_til_next > 33) ms_til_next = 33;
-        SDL_Delay(ms_til_next < 1 ? 1 : ms_til_next);
+
+        uint32_t render_time = SDL_GetTicks() - start;
+
+        /* Use a fixed 33ms cap until the moving-average window is full. */
+        if (warmup_frames < 8) {
+            warmup_frames++;
+            SDL_Delay(ms_til_next > 33 ? 33 : (ms_til_next < 1 ? 1 : ms_til_next));
+            continue;
+        }
+
+        /* Update 8-sample moving average of render time. */
+        render_history[render_history_idx] = render_time;
+        render_history_idx = (render_history_idx + 1) % 8;
+
+        uint32_t avg_render = 0;
+        for (size_t i = 0; i < 8; i++) avg_render += render_history[i];
+        avg_render /= 8;
+
+        /* Three-tier cap: 60 / 45 / 30 fps.
+         * Floor of 16ms ensures the main thread keeps pace with the camera
+         * thread which delivers frames every ~33ms. */
+        if (avg_render < 15)      adaptive_cap = 16;   /* 60 fps */
+        else if (avg_render < 25) adaptive_cap = 22;   /* 45 fps */
+        else                      adaptive_cap = 33;   /* 30 fps */
+
+        uint32_t delay = ms_til_next > adaptive_cap ? adaptive_cap : ms_til_next;
+        SDL_Delay(delay < 1 ? 1 : delay);
     }
 
     return 0;
