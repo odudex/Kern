@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
@@ -37,6 +38,8 @@ typedef struct {
   char descriptor_checksum[9];
   bool watch_only;                /* keyless: skip key/xpub stages */
   wallet_network_t watch_network; /* network for the watch-only registry add */
+  bool psb_warn; /* purpose/script-binding warning pending after the gates */
+  char psb_msg[160]; /* stashed PSB warning text (descriptor freed early) */
 } validation_context_t;
 
 static validation_context_t *current_ctx = NULL;
@@ -245,8 +248,146 @@ static uint32_t parse_multisig_threshold(const char *descriptor_str) {
 }
 
 // Extract descriptor info (policy type, keys) from parsed descriptor
+/* BIP341 "nothing up my sleeve" point H = lift_x(0x5092...), the conventional
+ * provably-unspendable taproot internal key used to force script-path-only
+ * spends. Stored x-only (the output-key y parity is irrelevant). Per-wallet
+ * tweaked variants (H + r*G) are by design indistinguishable from real keys and
+ * cannot be detected here. */
+static const char *const NUMS_XONLY_HEX[] = {
+    "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0",
+};
+
+static bool xonly_hex_is_nums(const char *xonly) {
+  for (size_t i = 0; i < sizeof(NUMS_XONLY_HEX) / sizeof(NUMS_XONLY_HEX[0]);
+       i++) {
+    if (strncasecmp(xonly, NUMS_XONLY_HEX[i], 64) == 0)
+      return true;
+  }
+  return false;
+}
+
+/* True if the tr() internal key (descriptor key index 0) is a known NUMS point.
+ * Handles both the bare-pubkey form (x-only 64 hex / compressed 66 hex) and the
+ * extended-key form used by coordinators (an xpub whose base public key is H,
+ * e.g. xpub6...QuVxqNUS); non-hardened derivation only tweaks H, so comparing
+ * the xpub's base key to H is sufficient — matches Krux/embit's NUMS check. */
+static bool tr_internal_key_is_nums(struct wally_descriptor *descriptor) {
+  char *key_str = NULL;
+  if (wally_descriptor_get_key(descriptor, 0, &key_str) != WALLY_OK || !key_str)
+    return false;
+
+  const char *p = key_str;
+  if (*p == '[') { /* skip any [origin] prefix */
+    const char *close = strchr(p, ']');
+    if (close)
+      p = close + 1;
+  }
+
+  bool is_nums = false;
+  size_t len = strlen(p);
+  if (len == 64) {
+    is_nums = xonly_hex_is_nums(p);
+  } else if (len == 66 &&
+             (strncmp(p, "02", 2) == 0 || strncmp(p, "03", 2) == 0)) {
+    is_nums = xonly_hex_is_nums(p + 2);
+  } else {
+    /* Extended key: decode and compare its base pubkey's x coordinate to H. */
+    struct ext_key xkey;
+    if (bip32_key_from_base58(p, &xkey) == WALLY_OK) {
+      char xonly[65];
+      for (int i = 0; i < 32; i++)
+        snprintf(xonly + i * 2, 3, "%02x", xkey.pub_key[i + 1]);
+      is_nums = xonly_hex_is_nums(xonly);
+      wally_bzero(&xkey, sizeof(xkey));
+    }
+  }
+  wally_free_string(key_str);
+  return is_nums;
+}
+
+static bool descriptor_is_tr(struct wally_descriptor *descriptor) {
+  char *canon = NULL;
+  bool is_tr = false;
+  if (wally_descriptor_canonicalize(descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canon) == WALLY_OK &&
+      canon) {
+    is_tr = strncmp(canon, "tr(", 3) == 0;
+    wally_free_string(canon);
+  }
+  return is_tr;
+}
+
+/* True if the descriptor is tr() carrying a script tree, i.e. tr(KEY,<tree>)
+ * rather than plain key-path tr(KEY) (BIP86). A key expression has no top-level
+ * comma or paren, so the first ',' before the closing ')' marks a tree.
+ * Note: descriptor_is_miniscript() is unreliable here — a taptree of pure
+ * descriptor leaves (pk/multi_a) keeps WALLY_MS_IS_DESCRIPTOR set. */
+static bool tr_has_script_tree(struct wally_descriptor *descriptor) {
+  char *canon = NULL;
+  bool has_tree = false;
+  if (wally_descriptor_canonicalize(descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canon) == WALLY_OK &&
+      canon) {
+    if (strncmp(canon, "tr(", 3) == 0) {
+      const char *p = canon + 3;
+      while (*p && *p != ',' && *p != ')')
+        p++;
+      has_tree = (*p == ',');
+    }
+    wally_free_string(canon);
+  }
+  return has_tree;
+}
+
+/* True if the tr() internal key (index 0) carries key-origin info ([fp/path]).
+ * An origin-bearing key is attributable to a participant; a bare key without
+ * one can only be trusted if it is a known NUMS point. */
+static bool tr_internal_key_has_origin(struct wally_descriptor *descriptor) {
+  unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+  return wally_descriptor_get_key_origin_fingerprint(descriptor, 0, fp,
+                                                     sizeof(fp)) == WALLY_OK;
+}
+
+/* Reject a tr() script-tree descriptor whose internal (key-path) key is a bare
+ * key with no origin that is not a known NUMS point: it is neither provably
+ * unspendable nor attributable to a participant, so its (unknown) holder could
+ * key-path spend and bypass the script policy. Mirrors Krux's wallet.py reject.
+ * Plain key-path tr(KEY) (BIP86, no tree) is exempt — it has no policy to
+ * bypass. Structural check; independent of whether the wallet holds a key. */
+static bool
+tr_internal_keypath_unprovable(struct wally_descriptor *descriptor) {
+  if (!tr_has_script_tree(descriptor))
+    return false;
+  if (tr_internal_key_has_origin(descriptor))
+    return false;
+  return !tr_internal_key_is_nums(descriptor);
+}
+
+/* Classify the taproot internal (key-path) key. `our_key_index` is the
+ * descriptor key index matching the wallet, or < 0 when unknown (watch-only).
+ * Returns TR_KEYPATH_NONE for non-tr() descriptors. Bare no-origin non-NUMS
+ * key-paths are rejected upstream (tr_internal_keypath_unprovable), so a key
+ * reaching TR_KEYPATH_EXTERNAL here is an origin-bearing external key. */
+static tr_keypath_class_t
+classify_tr_keypath(struct wally_descriptor *descriptor, int our_key_index) {
+  if (!descriptor_is_tr(descriptor))
+    return TR_KEYPATH_NONE;
+
+  if (our_key_index == 0)
+    return TR_KEYPATH_OURS;
+  if (tr_internal_key_is_nums(descriptor))
+    return TR_KEYPATH_NUMS;
+  /* Watch-only can't assert the key-path isn't the user's own key elsewhere;
+   * only flag an external (bypass-capable) key-path when a wallet key is
+   * known to sit deeper in the tree. */
+  if (our_key_index < 0)
+    return TR_KEYPATH_NONE;
+  return TR_KEYPATH_EXTERNAL;
+}
+
 static bool extract_descriptor_info(struct wally_descriptor *descriptor,
                                     const char *descriptor_str,
+                                    int our_key_index,
                                     descriptor_info_t *info) {
   memset(info, 0, sizeof(descriptor_info_t));
 
@@ -257,6 +398,7 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
 
   info->is_miniscript = descriptor_is_miniscript(descriptor);
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
+  info->tr_keypath = classify_tr_keypath(descriptor, our_key_index);
 
   if (info->is_miniscript) {
     char *policy = miniscript_policy_string(descriptor);
@@ -437,6 +579,38 @@ static void psb_warn_confirm_cb(bool confirmed, void *user_data) {
   }
 }
 
+/* Run the purpose/script-binding warning (if pending) then the info dialog.
+ * Reached directly, or after the external-keypath gate is acknowledged. */
+static void proceed_psb_or_info(void) {
+  if (current_ctx->psb_warn) {
+    if (current_ctx->confirm_cb) {
+      pending_generation = current_ctx->generation;
+      current_ctx->confirm_cb(current_ctx->psb_msg, psb_warn_confirm_cb);
+    } else {
+      complete_validation(VALIDATION_USER_DECLINED);
+    }
+    return;
+  }
+  if (current_ctx->info_confirm_cb) {
+    pending_generation = current_ctx->generation;
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+  } else {
+    info_confirm_proceed(true, NULL);
+  }
+}
+
+static void ext_keypath_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
+  if (!confirmed) {
+    complete_validation(VALIDATION_USER_DECLINED);
+    return;
+  }
+  proceed_psb_or_info();
+}
+
 // Verify xpub matches wallet, extract info, and show it.
 static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
                                       int key_index) {
@@ -534,30 +708,33 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
   }
 
   // Extract descriptor info before freeing.
-  extract_descriptor_info(descriptor, current_ctx->descriptor_str,
+  extract_descriptor_info(descriptor, current_ctx->descriptor_str, key_index,
                           &current_ctx->info);
   wally_descriptor_free(descriptor);
 
-  // If purpose-script binding mismatch: gate behind a WARN confirmation
-  // rendered by the page layer.
-  if (psb_result == PSB_WARN) {
+  // Stash the purpose-script binding warning to run after the keypath gate.
+  current_ctx->psb_warn = (psb_result == PSB_WARN);
+  if (current_ctx->psb_warn)
+    snprintf(current_ctx->psb_msg, sizeof(current_ctx->psb_msg), "%s", psb_msg);
+
+  // Most severe gate first: an external taproot key-path can spend these funds
+  // alone, bypassing the entire script policy. Require explicit
+  // acknowledgement.
+  if (current_ctx->info.tr_keypath == TR_KEYPATH_EXTERNAL) {
     if (current_ctx->confirm_cb) {
       pending_generation = current_ctx->generation;
-      current_ctx->confirm_cb(psb_msg, psb_warn_confirm_cb);
+      current_ctx->confirm_cb("Taproot key-path uses an external key.\n"
+                              "It can spend these funds alone,\n"
+                              "bypassing the script policy.\n"
+                              "Register anyway?",
+                              ext_keypath_confirm_cb);
     } else {
-      // No way to prompt the user: treat as declined.
       complete_validation(VALIDATION_USER_DECLINED);
     }
     return;
   }
 
-  // PSB_OK or PSB_NA: proceed to info confirmation.
-  if (current_ctx->info_confirm_cb) {
-    pending_generation = current_ctx->generation;
-    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
-  } else {
-    info_confirm_proceed(true, NULL);
-  }
+  proceed_psb_or_info();
 }
 
 /* Shared prologue for both validate entry points: guards, context allocation,
@@ -624,6 +801,12 @@ validation_begin(const char *descriptor_str, validation_complete_cb callback,
     wally_descriptor_free(descriptor);
     complete_validation(VALIDATION_UNSUPPORTED_SCRIPT);
     return VALIDATION_UNSUPPORTED_SCRIPT;
+  }
+
+  if (tr_internal_keypath_unprovable(descriptor)) {
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE);
+    return VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE;
   }
 
   *out = descriptor;
@@ -693,7 +876,7 @@ void descriptor_validate_and_load(const char *descriptor_str,
 // Watch-only: extract info and show the "Load?" dialog, skipping the xpub
 // verification and PSB warning that the keyed path performs.
 static void watch_only_show_info(struct wally_descriptor *descriptor) {
-  extract_descriptor_info(descriptor, current_ctx->descriptor_str,
+  extract_descriptor_info(descriptor, current_ctx->descriptor_str, -1,
                           &current_ctx->info);
   wally_descriptor_free(descriptor);
 
