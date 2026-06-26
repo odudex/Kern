@@ -215,7 +215,8 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     return true;
 
   case VALIDATION_UNSUPPORTED_MINISCRIPT:
-    dialog_show_error_timeout("Only wsh() miniscript is supported", NULL, 3000);
+    dialog_show_error_timeout("Only wsh() and tr() miniscript is supported",
+                              NULL, 3000);
     return true;
 
   case VALIDATION_UNSUPPORTED_SCRIPT:

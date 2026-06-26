@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <wally_bip32.h>
+#include <wally_descriptor.h>
 
 static int storage_save_descriptor_call_count = 0;
 static int storage_delete_descriptor_call_count = 0;
@@ -41,6 +42,13 @@ bool key_get_fingerprint(unsigned char *fp) {
   return true;
 }
 wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
+
+int wallet_descriptor_parse(const char *descriptor,
+                            const struct wally_map *vars_in, uint32_t network,
+                            struct wally_descriptor **output) {
+  uint32_t flags = KERN_DESCRIPTOR_MAX_DEPTH << WALLY_MINISCRIPT_DEPTH_SHIFT;
+  return wally_descriptor_parse(descriptor, vars_in, network, flags, output);
+}
 
 esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
                                   const uint8_t *data, size_t len,
