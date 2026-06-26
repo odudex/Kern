@@ -104,6 +104,21 @@ int main(void) {
   test_soft("wpkh/purpose-99 → NA", "wpkh([00000000/99'/0'/0']" XPUB_84 ")",
             PSB_NA);
 
+  /* NA: taproot script-tree (miniscript) at BIP48 purpose 48 — the policy, not
+   * the purpose, binds the script, so the single-sig convention does not apply
+   * (would otherwise WARN since 48 expects wsh). */
+  test_soft("tr+tree/purpose-48 → NA",
+            "tr([00000000/48'/0'/0']" XPUB_84 ",pk([00000000/48'/0'/0']" XPUB_86
+            "))",
+            PSB_NA);
+
+  /* NA: wsh miniscript — the policy binds the script, not the purpose, so the
+   * convention does not apply (would otherwise WARN since 84 expects wpkh).
+   * Plain multisig (sortedmulti, above) is still checked. */
+  test_soft("wsh miniscript/purpose-84 → NA",
+            "wsh(and_v(v:pk([00000000/84'/0'/0']" XPUB_84 "),older(6)))",
+            PSB_NA);
+
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,
          tests_failed);
   return tests_failed > 0 ? 1 : 0;
