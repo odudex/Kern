@@ -1,6 +1,6 @@
 [submodule "components/libwally-core/upstream"]
 	path = components/libwally-core/upstream
-	url = https://github.com/ElementsProject/libwally-core.git
+	url = https://github.com/odudex/libwally-core.git
 [submodule "components/cUR"]
 	path = components/cUR
 	url = https://github.com/odudex/cUR.git

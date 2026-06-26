@@ -26,7 +26,7 @@ WALLY_PRIV_INCS = \
 	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/surjection \
 	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/whitelist
 
-WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_ELEMENTS=0
+WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_ELEMENTS=0 -DBUILD_STANDARD_SECP=1
 WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS) \
 	-Wno-nonnull-compare -Wno-unused-function -Wno-type-limits \
 	-Wno-unterminated-string-initialization
