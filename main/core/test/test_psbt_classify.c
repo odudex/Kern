@@ -6,6 +6,7 @@
 
 /* Wally types needed by stubs */
 #include <wally_bip32.h>
+#include <wally_descriptor.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
 #include <wally_script.h>
@@ -64,6 +65,13 @@ void storage_free_file_list(char **files, int count) {
 
 /* --- Wallet stubs --- */
 wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
+
+int wallet_descriptor_parse(const char *descriptor,
+                            const struct wally_map *vars_in, uint32_t network,
+                            struct wally_descriptor **output) {
+  uint32_t flags = KERN_DESCRIPTOR_MAX_DEPTH << WALLY_MINISCRIPT_DEPTH_SHIFT;
+  return wally_descriptor_parse(descriptor, vars_in, network, flags, output);
+}
 
 /* --- Settings stub: permissive signing disabled in tests --- */
 #include "core/settings.h"

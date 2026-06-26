@@ -115,7 +115,7 @@ static bool reject_expected_owned(const sign_policy_review_t *review,
            "%s %zu's path %s matches our fingerprint but the script "
            "cannot be re-derived from it -- wallet bug or attacker-crafted "
            "input.\n"
-           "If multisig: Load the wallet descriptor.\n"
+           "If multisig or miniscript: Load the wallet descriptor.\n"
            "To sign anyway: Enable 'Expected-owned signing' in Wallet "
            "settings. The device will then trust the PSBT's keypath without "
            "verification.",

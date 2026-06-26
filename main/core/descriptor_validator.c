@@ -77,15 +77,15 @@ parse_descriptor_for_wallet(const char *descriptor_str,
 
   *descriptor_out = NULL;
   uint32_t wally_network = wallet_descriptor_network();
-  int ret = wally_descriptor_parse(descriptor_str, NULL, wally_network, 0,
-                                   descriptor_out);
+  int ret = wallet_descriptor_parse(descriptor_str, NULL, wally_network,
+                                    descriptor_out);
   if (ret == WALLY_OK)
     return VALIDATION_SUCCESS;
 
   struct wally_descriptor *other_desc = NULL;
-  if (wally_descriptor_parse(descriptor_str, NULL,
-                             alternate_descriptor_network(wally_network), 0,
-                             &other_desc) == WALLY_OK) {
+  if (wallet_descriptor_parse(descriptor_str, NULL,
+                              alternate_descriptor_network(wally_network),
+                              &other_desc) == WALLY_OK) {
     wally_descriptor_free(other_desc);
     return VALIDATION_NETWORK_MISMATCH;
   }
@@ -199,7 +199,8 @@ static bool descriptor_is_miniscript(const struct wally_descriptor *desc) {
   return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
 }
 
-// Miniscript is only supported as segwit v0, i.e. wrapped in a plain wsh().
+// Miniscript is supported wrapped in a plain wsh() (segwit v0) or tr()
+// (taproot script-path). Bare miniscript and other wrappers are rejected.
 static bool
 miniscript_wrapper_is_supported(const struct wally_descriptor *desc) {
   char *canon = NULL;
@@ -207,9 +208,10 @@ miniscript_wrapper_is_supported(const struct wally_descriptor *desc) {
                                     &canon) != WALLY_OK ||
       !canon)
     return false;
-  bool is_wsh = (strncmp(canon, "wsh(", 4) == 0);
+  bool supported =
+      strncmp(canon, "wsh(", 4) == 0 || strncmp(canon, "tr(", 3) == 0;
   wally_free_string(canon);
-  return is_wsh;
+  return supported;
 }
 
 // libwally accepts descriptors at parse time that its script generator later
@@ -708,16 +710,16 @@ bool descriptor_infer_network(const char *descriptor_str,
   if (!descriptor_str || !network_out)
     return false;
   struct wally_descriptor *desc = NULL;
-  if (wally_descriptor_parse(descriptor_str, NULL,
-                             WALLY_NETWORK_BITCOIN_MAINNET, 0,
-                             &desc) == WALLY_OK) {
+  if (wallet_descriptor_parse(descriptor_str, NULL,
+                              WALLY_NETWORK_BITCOIN_MAINNET,
+                              &desc) == WALLY_OK) {
     wally_descriptor_free(desc);
     *network_out = WALLET_NETWORK_MAINNET;
     return true;
   }
-  if (wally_descriptor_parse(descriptor_str, NULL,
-                             WALLY_NETWORK_BITCOIN_TESTNET, 0,
-                             &desc) == WALLY_OK) {
+  if (wallet_descriptor_parse(descriptor_str, NULL,
+                              WALLY_NETWORK_BITCOIN_TESTNET,
+                              &desc) == WALLY_OK) {
     wally_descriptor_free(desc);
     *network_out = WALLET_NETWORK_TESTNET;
     return true;
