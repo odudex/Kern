@@ -1,7 +1,7 @@
 // Mnemonic Editor Page - Review and edit mnemonic words before loading
 
 #include "mnemonic_editor.h"
-#include "../../ui/assets/icons_24.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/keyboard.h"

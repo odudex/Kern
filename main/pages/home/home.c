@@ -1,7 +1,7 @@
 #include "home.h"
 #include "../../core/key.h"
 #include "../../core/wallet.h"
-#include "../../ui/assets/icons_24.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/battery.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"

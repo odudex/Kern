@@ -18,7 +18,7 @@
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
 #include "../../qr/viewer.h"
-#include "../../ui/assets/icons_24.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"

@@ -13,8 +13,24 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = REPO_ROOT / "main/ui/font_policy.def"
-ICON_FONT_SIZES = (16, 24, 36)
-ICON_FONT_SIZE_SET = set(ICON_FONT_SIZES)
+ICON_ASSET_DIR = REPO_ROOT / "main/ui/assets"
+
+
+def discover_icon_font_sizes(asset_dir=ICON_ASSET_DIR):
+    """Available icon sizes are whatever icons_<size>.c assets exist.
+
+    bake_icons.py emits one icons_<size>.c per size, so the asset files are the
+    single source of truth and stay in sync without a second hardcoded list.
+    """
+    pattern = re.compile(r"^icons_(\d+)\.c$")
+    sizes = []
+    for path in asset_dir.glob("icons_*.c"):
+        match = pattern.match(path.name)
+        if match:
+            sizes.append(int(match.group(1)))
+    if not sizes:
+        raise SystemExit(f"No icons_<size>.c assets found in {asset_dir}")
+    return tuple(sorted(sizes))
 
 
 def read_policy(path):
@@ -46,15 +62,16 @@ def select_policy(rows, width, height):
     return rows[-1][1], rows[-1][2]
 
 
-def emit_cmake_icon_defs(selected_sizes):
+def emit_cmake_icon_defs(selected_sizes, available_sizes):
     selected = set(selected_sizes)
-    unknown = selected - ICON_FONT_SIZE_SET
+    available = set(available_sizes)
+    unknown = selected - available
     if unknown:
         sizes = ", ".join(str(size) for size in sorted(unknown))
         raise SystemExit(f"Unsupported icon font size in policy: {sizes}")
 
     return ";".join(
-        f"ICONS_{size}=0" for size in ICON_FONT_SIZES if size not in selected
+        f"ICONS_{size}=0" for size in sorted(available) if size not in selected
     )
 
 
@@ -75,7 +92,8 @@ def main():
     if args.emit == "tiers":
         print(f"{small} {medium}")
     elif args.emit == "cmake-icon-defs":
-        print(emit_cmake_icon_defs((small, medium)))
+        available = discover_icon_font_sizes()
+        print(emit_cmake_icon_defs((small, medium), available))
 
 
 if __name__ == "__main__":

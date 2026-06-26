@@ -2,7 +2,8 @@
 #define ICONS_H
 
 // Font Awesome symbol definitions (UTF-8 encoded).
-// The generated 16/24/36 px icon fonts must include these codepoints.
+// The generated 16/22/24/28/30/32/34/40 px icon fonts must include these
+// codepoints.
 #define ICON_XPUB "\xEE\x80\x81"        // Custom U+E001 = custom-xpub-key-badge
 #define ICON_BITCOIN "\xEE\x82\xB4"     // FontAwesome U+E0B4 = bitcoin-sign
 #define ICON_QR_CODE "\xEF\x80\xA9"     // FontAwesome U+F029 = qrcode

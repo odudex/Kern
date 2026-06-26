@@ -1,7 +1,7 @@
 #include "key_info.h"
 #include "../core/key.h"
 #include "../core/wallet.h"
-#include "assets/icons_24.h"
+#include "assets/icons.h"
 #include "battery.h"
 #include "theme_widgets.h"
 #include <stdio.h>

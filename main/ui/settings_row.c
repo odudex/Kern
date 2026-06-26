@@ -1,6 +1,6 @@
 #include "settings_row.h"
 
-#include "assets/icons_24.h"
+#include "assets/icons.h"
 #include "dialog.h"
 #include "theme_widgets.h"
 

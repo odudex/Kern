@@ -134,8 +134,13 @@ set(SIM_SOURCES
     ${APP_UI_DIR}/assets/kern_logo_lvgl.c
     ${APP_UI_DIR}/assets/kern_logo_font.c
     ${APP_UI_DIR}/assets/icons_16.c
+    ${APP_UI_DIR}/assets/icons_22.c
     ${APP_UI_DIR}/assets/icons_24.c
-    ${APP_UI_DIR}/assets/icons_36.c
+    ${APP_UI_DIR}/assets/icons_28.c
+    ${APP_UI_DIR}/assets/icons_30.c
+    ${APP_UI_DIR}/assets/icons_32.c
+    ${APP_UI_DIR}/assets/icons_34.c
+    ${APP_UI_DIR}/assets/icons_40.c
 )
 
 # --- ESP-IDF stubs (NVS, FreeRTOS, eFuse, storage) ---

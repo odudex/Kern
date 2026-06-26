@@ -1,14 +1,5 @@
 #include "theme.h"
 #include "font_policy.h"
-#if !defined(ICONS_16) || ICONS_16
-#include "assets/icons_16.h"
-#endif
-#if !defined(ICONS_24) || ICONS_24
-#include "assets/icons_24.h"
-#endif
-#if !defined(ICONS_36) || ICONS_36
-#include "assets/icons_36.h"
-#endif
 #include "theme_palette.h"
 
 // Mutable font copies with icon fallbacks
@@ -35,28 +26,10 @@ typedef struct {
   const lv_font_t *icon;
 } theme_font_pair_t;
 
-static theme_font_pair_t font_pair_for_size(uint16_t size) {
-  switch (size) {
-#if LV_FONT_MONTSERRAT_16 && (!defined(ICONS_16) || ICONS_16)
-  case 16:
-    return (theme_font_pair_t){&lv_font_montserrat_16, &icons_16};
-#endif
-#if LV_FONT_MONTSERRAT_24 && (!defined(ICONS_24) || ICONS_24)
-  case 24:
-    return (theme_font_pair_t){&lv_font_montserrat_24, &icons_24};
-#endif
-#if LV_FONT_MONTSERRAT_36 && (!defined(ICONS_36) || ICONS_36)
-  case 36:
-    return (theme_font_pair_t){&lv_font_montserrat_36, &icons_36};
-#endif
-  default:
-#if LV_FONT_MONTSERRAT_24 && (!defined(ICONS_24) || ICONS_24)
-    return (theme_font_pair_t){&lv_font_montserrat_24, &icons_24};
-#else
-#error "theme requires LV_FONT_MONTSERRAT_24 and icons_24"
-#endif
-  }
-}
+// Icon font includes and font_pair_for_size() are generated from the
+// tools/bake_icons.py SIZES list. Retune fonts via tools/derive_font_sizes.py,
+// never here.
+#include "assets/icons_fonts.h"
 
 void theme_init(void) {
   scr_w = lv_disp_get_hor_res(NULL);

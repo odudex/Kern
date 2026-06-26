@@ -8,7 +8,7 @@
 #include "../../qr/encoder.h"
 #include "../../qr/scanner.h"
 #include "../../qr/viewer.h"
-#include "../../ui/assets/icons_36.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
