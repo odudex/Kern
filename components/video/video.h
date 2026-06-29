@@ -27,10 +27,9 @@ typedef enum {
   APP_VIDEO_FMT_RAW10 =
       V4L2_PIX_FMT_SBGGR10,               /**< 10-bit raw Bayer BGGR format */
   APP_VIDEO_FMT_GREY = V4L2_PIX_FMT_GREY, /**< 8-bit greyscale format */
-  APP_VIDEO_FMT_RGB565 = V4L2_PIX_FMT_RGB565,  /**< RGB565 16-bit format */
-  APP_VIDEO_FMT_RGB888 = V4L2_PIX_FMT_RGB24,   /**< RGB888 24-bit format */
-  APP_VIDEO_FMT_YUV422 = V4L2_PIX_FMT_YUV422P, /**< YUV422 planar format */
-  APP_VIDEO_FMT_YUV420 = V4L2_PIX_FMT_YUV420,  /**< YUV420 planar format */
+  APP_VIDEO_FMT_RGB565 = V4L2_PIX_FMT_RGB565, /**< RGB565 16-bit format */
+  APP_VIDEO_FMT_RGB888 = V4L2_PIX_FMT_RGB24,  /**< RGB888 24-bit format */
+  APP_VIDEO_FMT_YUV420 = V4L2_PIX_FMT_YUV420, /**< YUV420 planar format */
 } video_fmt_t;
 
 /**
