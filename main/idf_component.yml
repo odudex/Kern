@@ -1,7 +1,7 @@
 ## IDF Component Manager Manifest File
 dependencies:
   lvgl/lvgl:
-    version: "9.3.*"
+    version: "9.5.*"
     public: true
   esp_video:
-    version: ">=0.1.0"
+    version: "^2"

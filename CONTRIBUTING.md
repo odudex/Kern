@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Kern! This document outlines the 
 
 1. Fork the repository and clone it locally.
 2. Initialize submodules: `git submodule update --init --recursive`
-3. Set up ESP-IDF v5.5.3 and source the environment: `source ~/esp/esp-idf/export.sh`
+3. Set up ESP-IDF v6.0.2 and source the environment: `source ~/esp/esp-idf/export.sh`
 4. Build the project: `idf.py build` (or `just build`)
 
 ## Development Guidelines

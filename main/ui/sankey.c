@@ -1,4 +1,5 @@
 #include "sankey.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 #include "theme.h"
 #include <stdlib.h>
 #include <string.h>

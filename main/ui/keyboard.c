@@ -2,6 +2,7 @@
 
 #include "keyboard.h"
 #include "theme_widgets.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 

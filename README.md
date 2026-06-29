@@ -35,10 +35,10 @@ An OV5647 camera module is required for all boards.
 
 ## Prerequisites
 
-Kern targets [ESP-IDF v6.0.1](https://docs.espressif.com/projects/esp-idf/en/v6.0.1/esp32p4/get-started/index.html). Install it for the `esp32p4` target:
+Kern targets [ESP-IDF v6.0.2](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/get-started/index.html). Install it for the `esp32p4` target:
 
 ```bash
-git clone --depth 1 --recurse-submodules --shallow-submodules -b v6.0.1 https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+git clone --depth 1 --recurse-submodules --shallow-submodules -b v6.0.2 https://github.com/espressif/esp-idf.git ~/esp/esp-idf
 ~/esp/esp-idf/install.sh esp32p4
 . ~/esp/esp-idf/export.sh
 ```
@@ -77,7 +77,7 @@ just build wave_43      # Build for wave_43
 just build crowpanel    # Build for CrowPanel 7" / 10.1"
 just flash wave_5       # Flash for wave_5
 just monitor            # Serial monitor
-just clean              # Required when switching boards
+just clean              # Wipe all build_<board> dirs + sdkconfig
 ```
 
 Or using `idf.py` directly:
@@ -99,7 +99,7 @@ idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_43' bui
 idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.crowpanel' build
 ```
 
-> **Note:** Switching between boards requires a clean build (`just clean`) because sdkconfig is board-specific.
+> **Note:** `just` builds each board into its own `build_<board>/` directory, so switching boards needs no clean. The raw `idf.py` commands above share the default `build/` directory and `sdkconfig` — run `idf.py fullclean && rm sdkconfig` when switching boards that way.
 
 ### Desktop Simulator
 

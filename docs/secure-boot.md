@@ -811,8 +811,8 @@ With secure boot enabled, the anti-phishing words (Phase 2) become a strong tamp
 
 ## 12. References
 
-- [ESP-IDF Secure Boot v2 Documentation](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32p4/security/secure-boot-v2.html)
-- [ESP-IDF Anti-Rollback](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32p4/api-reference/system/ota.html#anti-rollback)
+- [ESP-IDF Secure Boot v2 Documentation](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/security/secure-boot-v2.html)
+- [ESP-IDF Anti-Rollback](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/api-reference/system/ota.html#anti-rollback)
 - [espefuse.py Reference](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/espefuse/)
 - [espsecure.py Reference](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/espsecure/)
 - [Kern Security Plan](security-plan.md) — full security roadmap and eFuse allocation table

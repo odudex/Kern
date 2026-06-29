@@ -11,6 +11,7 @@
 #include "shared/kef_encrypt_page.h"
 
 #include <lvgl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 

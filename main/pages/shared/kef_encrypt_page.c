@@ -20,6 +20,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/idf_additions.h>
 #include <freertos/task.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 

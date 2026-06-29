@@ -8,6 +8,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include <lvgl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
