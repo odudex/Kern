@@ -852,6 +852,20 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
         wally_psbt_set_input_taproot_signature(trimmed, i, tap_sig, written);
       }
     }
+
+    // Copy taproot script-path signatures (TAP_SCRIPT_SIG). These live in a
+    // separate map from the key-path signature above; without this, script-path
+    // (tapscript) spends would export with no signature.
+    const struct wally_map *tap_sigs = &psbt->inputs[i].taproot_leaf_signatures;
+    for (size_t j = 0; j < tap_sigs->num_items; j++) {
+      const struct wally_map_item *item = &tap_sigs->items[j];
+      if (item->key && item->key_len > 0 && item->value &&
+          item->value_len > 0) {
+        wally_psbt_input_add_taproot_leaf_signature(
+            &trimmed->inputs[i], item->key, item->key_len, item->value,
+            item->value_len);
+      }
+    }
   }
 
   return trimmed;
