@@ -14,6 +14,7 @@
 
 #include "../components/video/video.h"
 #include "../ui/dialog.h"
+#include "../ui/input_helpers.h"
 #include "../ui/theme_widgets.h"
 #include "../utils/memory_utils.h"
 #include "../utils/secure_mem.h"
@@ -81,6 +82,15 @@ static void low_entropy_prompt_cb(bool retry, void *user_data) {
       return_callback();
   }
   // If retry (Yes), do nothing - user stays on camera page
+}
+
+static void back_btn_cb(lv_event_t *e) {
+  (void)e;
+  if (closing)
+    return;
+  closing = true;
+  if (return_callback)
+    return_callback();
 }
 
 static uint8_t *allocate_buffer(size_t size) {
@@ -336,6 +346,8 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
       theme_create_label(capture_screen, "Tap to capture", false);
   lv_obj_set_style_text_color(instruction, highlight_color(), 0);
   lv_obj_align(instruction, LV_ALIGN_BOTTOM_MID, 0, -theme_default_padding());
+
+  ui_create_back_button(capture_screen, back_btn_cb);
 
   if (!camera_init()) {
     ESP_LOGE(TAG, "Failed to initialize camera");
