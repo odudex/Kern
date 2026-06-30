@@ -129,7 +129,7 @@ static void build_options(wallet_picker_mode_t mode, char *out, size_t out_sz) {
     snprintf(out, out_sz, "Native SegWit\nNested SegWit");
     return;
   case WALLET_PICKER_MINISCRIPT:
-    snprintf(out, out_sz, "Native SegWit");
+    snprintf(out, out_sz, "Native SegWit\nTaproot");
     return;
   case WALLET_PICKER_DESCRIPTORS_ONLY: {
     size_t written = 0;

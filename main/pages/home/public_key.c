@@ -110,6 +110,15 @@ static void format_derivation(char *path, size_t path_size, char *compact,
   snprintf(compact, compact_size, "%uh/%uh/%uh", purpose, coin, account);
 }
 
+// Seeds the editable miniscript path to the BIP48 default for the selected
+// script type: subscript 2h for Native SegWit (wsh), 3h for Taproot (tr).
+static void seed_miniscript_path(void) {
+  uint32_t coin = (wallet_get_network() == WALLET_NETWORK_MAINNET) ? 0 : 1;
+  uint32_t subscript = (current_source.source == 1) ? 3 : 2;
+  snprintf(miniscript_path, sizeof(miniscript_path), "m/48h/%uh/%uh/%uh", coin,
+           current_source.account, subscript);
+}
+
 static void render_xpub(void) {
   if (!qr_parent || !xpub_parent)
     return;
@@ -177,6 +186,10 @@ static void render_xpub(void) {
 static void picker_changed_cb(const wallet_source_t *src, void *user_data) {
   (void)user_data;
   current_source = *src;
+  // In miniscript mode the dropdown selects the script type (wsh/tr), which
+  // re-seeds the default path; any custom Path edit is intentionally reset.
+  if (policy == POLICY_MINISCRIPT)
+    seed_miniscript_path();
   render_xpub();
 }
 
@@ -234,14 +247,10 @@ static void policy_dropdown_cb(lv_event_t *e) {
     return;
   policy = now;
 
-  if (policy == POLICY_MINISCRIPT) {
-    uint32_t coin = (wallet_get_network() == WALLET_NETWORK_MAINNET) ? 0 : 1;
-    snprintf(miniscript_path, sizeof(miniscript_path), "m/48h/%uh/%uh/2h", coin,
-             current_source.account);
-  }
-
   // Reset the script index when picker option sets change, but keep account.
   current_source = (wallet_source_t){0, current_source.account};
+  if (policy == POLICY_MINISCRIPT)
+    seed_miniscript_path();
   wallet_source_picker_destroy(picker);
   create_picker();
   render_xpub();
