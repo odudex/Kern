@@ -178,10 +178,11 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     }
 
     ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    if (ur_decoder_receive_part(decoder, data)) {
-      if (ur_decoder_is_complete(decoder)) {
-        return 0; // Single-part UR, complete immediately
-      }
+    ur_decoder_state_t state = ur_decoder_receive_part(decoder, data);
+    if (state == UR_DECODER_OK) {
+      return 0; // Single-part UR, complete immediately
+    }
+    if (state == UR_DECODER_PROCESSING) {
       size_t processed = ur_decoder_processed_parts_count(decoder);
       return (int)processed - 1;
     }
@@ -198,10 +199,19 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
   return -1;
 }
 
+bool qr_parser_is_failed(QRPartParser *parser) {
+  if (parser->format == FORMAT_UR && parser->ur_decoder) {
+    ur_decoder_state_t state =
+        ur_decoder_get_state((ur_decoder_t *)parser->ur_decoder);
+    return ur_decoder_state_is_terminal(state) && state != UR_DECODER_OK;
+  }
+  return false;
+}
+
 bool qr_parser_is_complete(QRPartParser *parser) {
   if (parser->format == FORMAT_UR && parser->ur_decoder) {
     ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    return ur_decoder_is_complete(decoder) && ur_decoder_is_success(decoder);
+    return ur_decoder_get_state(decoder) == UR_DECODER_OK;
   }
 
   if (parser->total == -1)
@@ -487,7 +497,7 @@ bool qr_parser_get_ur_result(QRPartParser *parser, const char **ur_type_out,
   }
 
   ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-  if (!ur_decoder_is_complete(decoder) || !ur_decoder_is_success(decoder)) {
+  if (ur_decoder_get_state(decoder) != UR_DECODER_OK) {
     return false;
   }
 

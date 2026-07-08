@@ -110,6 +110,7 @@ static uint8_t *rgb565_gray_lut = NULL;
 
 static volatile bool closing = false;
 static volatile bool scan_completed = false;
+static volatile bool scan_failed = false;
 static volatile bool is_fully_initialized = false;
 static volatile bool destruction_in_progress = false;
 
@@ -161,7 +162,7 @@ static void create_progress_indicators(int total_parts);
 static void update_progress_indicator(int part_index);
 static void cleanup_progress_indicators(void);
 static void create_ur_progress_bar(void);
-static void update_ur_progress_bar(double percent_complete);
+static void update_ur_progress_bar(float percent_complete);
 static void cleanup_ur_progress_bar(void);
 
 #ifdef QR_PERF_DEBUG
@@ -318,7 +319,7 @@ static void create_ur_progress_bar(void) {
   bsp_display_unlock();
 }
 
-static void update_ur_progress_bar(double percent_complete) {
+static void update_ur_progress_bar(float percent_complete) {
   if (!ur_progress_bar || !ur_progress_indicator ||
       ur_progress_bar_inner_width <= 0)
     return;
@@ -342,7 +343,7 @@ static void cleanup_ur_progress_bar(void) {
 }
 
 static void completion_timer_cb(lv_timer_t *timer) {
-  if (scan_completed && return_callback && !closing &&
+  if ((scan_completed || scan_failed) && return_callback && !closing &&
       !destruction_in_progress) {
     closing = true;
     lv_timer_del(completion_timer);
@@ -352,7 +353,11 @@ static void completion_timer_cb(lv_timer_t *timer) {
       xEventGroupClearBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
 
     vTaskDelay(pdMS_TO_TICKS(50));
-    return_callback();
+    if (scan_failed)
+      dialog_show_error_timeout("Invalid QR sequence: checksum mismatch",
+                                return_callback, 0);
+    else
+      return_callback();
   }
 }
 
@@ -614,7 +619,7 @@ static void qr_decode_task(void *pvParameters) {
                        qr_parser->ur_decoder) {
               if (!ur_progress_bar)
                 create_ur_progress_bar();
-              double percent_complete = ur_decoder_estimated_percent_complete(
+              float percent_complete = ur_decoder_estimated_percent_complete(
                   (ur_decoder_t *)qr_parser->ur_decoder);
               update_ur_progress_bar(percent_complete);
             } else if (qr_parser->format == FORMAT_BBQR) {
@@ -629,6 +634,11 @@ static void qr_decode_task(void *pvParameters) {
               scan_completed = true;
               break;
             }
+          }
+
+          if (qr_parser_is_failed(qr_parser)) {
+            scan_failed = true;
+            break;
           }
         }
       }
@@ -978,6 +988,7 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
   closing = false;
   scan_completed = false;
+  scan_failed = false;
   is_fully_initialized = false;
   active_frame_operations = 0;
 
@@ -1075,6 +1086,7 @@ void qr_scanner_page_destroy(void) {
     completion_timer = NULL;
   }
   scan_completed = false;
+  scan_failed = false;
 
   if (camera_event_group) {
     xEventGroupClearBits(camera_event_group, CAMERA_EVENT_TASK_RUN);

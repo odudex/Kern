@@ -153,6 +153,17 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
 bool qr_parser_is_complete(QRPartParser *parser);
 
 /**
+ * @brief Check if parsing has failed permanently
+ *
+ * True when the decoder reached a terminal failure state (e.g. UR
+ * checksum mismatch) and feeding more parts can never complete the scan.
+ *
+ * @param parser Parser instance
+ * @return true if parsing can never complete, false otherwise
+ */
+bool qr_parser_is_failed(QRPartParser *parser);
+
+/**
  * @brief Get the assembled result from all parsed parts
  *
  * Combines all parsed parts in the correct order to produce
