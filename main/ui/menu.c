@@ -33,6 +33,8 @@ typedef struct {
 
 struct ui_menu_t {
   ui_menu_config_t config;
+  bool layout_dirty;
+  bool shown;
   lv_obj_t *container;
   lv_obj_t *nav_bar;
   lv_obj_t *title_label;
@@ -193,7 +195,7 @@ static void size_entry_button(ui_menu_t *menu, int index) {
   int columns = menu_column_count();
   int rows = menu_row_count(menu);
   int count = menu->config.entry_count;
-  int32_t gap = theme_default_padding();
+  int32_t gap = theme_button_spacing();
   int32_t width = lv_obj_get_content_width(menu->list);
   int32_t height = lv_obj_get_content_height(menu->list);
 
@@ -241,6 +243,8 @@ static void refresh_menu_layout(ui_menu_t *menu) {
     if (grow > 0)
       lv_obj_set_height(view->button, lv_obj_get_height(view->button) + grow);
   }
+
+  menu->layout_dirty = false;
 }
 
 static void menu_button_event_cb(lv_event_t *e) {
@@ -384,7 +388,9 @@ static bool add_entry_internal(ui_menu_t *menu, const char *icon,
   }
 
   menu->config.entry_count++;
-  refresh_menu_layout(menu);
+  menu->layout_dirty = true;
+  if (menu->shown)
+    refresh_menu_layout(menu);
   return true;
 }
 
@@ -520,13 +526,20 @@ lv_obj_t *ui_menu_get_nav_bar(ui_menu_t *menu) {
 }
 
 void ui_menu_show(ui_menu_t *menu) {
-  if (menu && menu->container)
-    lv_obj_clear_flag(menu->container, LV_OBJ_FLAG_HIDDEN);
+  if (!menu || !menu->container)
+    return;
+
+  if (menu->layout_dirty)
+    refresh_menu_layout(menu);
+  lv_obj_clear_flag(menu->container, LV_OBJ_FLAG_HIDDEN);
+  menu->shown = true;
 }
 
 void ui_menu_hide(ui_menu_t *menu) {
-  if (menu && menu->container)
+  if (menu && menu->container) {
     lv_obj_add_flag(menu->container, LV_OBJ_FLAG_HIDDEN);
+    menu->shown = false;
+  }
 }
 
 void ui_menu_destroy(ui_menu_t *menu) {
