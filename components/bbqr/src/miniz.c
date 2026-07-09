@@ -18,6 +18,7 @@
 /* LZ77 parameters */
 #define MATCH_LEN_MIN 3
 #define MATCH_LEN_MAX 258
+#define MZ_MAX_ALLOC_SIZE (16 * 1024 * 1024)
 
 /* Adler32 checksum */
 static uint32_t adler32(uint32_t adler, const uint8_t *ptr, size_t len) {
@@ -680,8 +681,9 @@ int mz_inflate_raw(uint8_t *dest, size_t *dest_len, const uint8_t *source,
 
 uint8_t *mz_inflate_raw_alloc(const uint8_t *source, size_t source_len,
                               size_t *dest_len) {
-  /* Estimate output size - start with 4x input */
-  size_t alloc_size = source_len * 4;
+  /* Estimate output size - start with 4x input, cap to prevent overflow */
+  size_t alloc_size =
+      (source_len > MZ_MAX_ALLOC_SIZE / 4) ? MZ_MAX_ALLOC_SIZE : source_len * 4;
   if (alloc_size < 1024)
     alloc_size = 1024;
 
@@ -698,9 +700,9 @@ uint8_t *mz_inflate_raw_alloc(const uint8_t *source, size_t source_len,
       return dest;
     } else if (status == MZ_BUF_ERROR) {
       free(dest);
-      alloc_size *= 2;
-      if (alloc_size > 16 * 1024 * 1024) /* Cap at 16MB */
+      if (alloc_size > MZ_MAX_ALLOC_SIZE / 2) /* Cap at 16MB before doubling */
         return NULL;
+      alloc_size *= 2;
       continue;
     } else {
       free(dest);
@@ -750,7 +752,9 @@ uint8_t *mz_uncompress_alloc(const uint8_t *source, size_t source_len,
   if (source_len < 6)
     return NULL;
 
-  size_t alloc_size = (source_len - 6) * 4;
+  size_t payload = source_len - 6;
+  size_t alloc_size =
+      (payload > MZ_MAX_ALLOC_SIZE / 4) ? MZ_MAX_ALLOC_SIZE : payload * 4;
   if (alloc_size < 1024)
     alloc_size = 1024;
 
@@ -767,9 +771,9 @@ uint8_t *mz_uncompress_alloc(const uint8_t *source, size_t source_len,
       return dest;
     } else if (status == MZ_BUF_ERROR) {
       free(dest);
-      alloc_size *= 2;
-      if (alloc_size > 16 * 1024 * 1024)
+      if (alloc_size > MZ_MAX_ALLOC_SIZE / 2) /* Cap at 16MB before doubling */
         return NULL;
+      alloc_size *= 2;
       continue;
     } else {
       free(dest);
