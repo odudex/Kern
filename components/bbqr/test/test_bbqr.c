@@ -273,6 +273,98 @@ void test_bbqr_roundtrip(void) {
   PASS();
 }
 
+/* Test BBQr output remains in QR alphanumeric mode without Base32 padding. */
+void test_bbqr_unpadded_base32(void) {
+  TEST("bbqr omits base32 padding");
+
+  const uint8_t original[] = {'f'};
+  BBQrParts *parts =
+      bbqr_encode(original, sizeof(original), BBQR_TYPE_PSBT, 400);
+
+  if (!parts) {
+    FAIL("Encode failed");
+    return;
+  }
+
+  if (parts->count != 1 || parts->encoding != BBQR_ENCODING_BASE32 ||
+      strcmp(parts->parts[0], "B$2P0100MY") != 0 ||
+      strchr(parts->parts[0], '=') != NULL) {
+    bbqr_parts_free(parts);
+    FAIL("Output is not unpadded BBQr Base32");
+    return;
+  }
+
+  bbqr_parts_free(parts);
+  PASS();
+}
+
+/* Test direct Base32 emission across multiple contiguous part buffers. */
+void test_bbqr_multipart_streaming(void) {
+  TEST("bbqr streams multipart output");
+
+  uint8_t original[512];
+  uint32_t state = 0x6d2b79f5;
+  for (size_t i = 0; i < sizeof(original); i++) {
+    state = state * 1664525u + 1013904223u;
+    original[i] = (uint8_t)(state >> 24);
+  }
+
+  const int max_chars = 56;
+  const size_t max_payload = max_chars - BBQR_HEADER_LEN;
+  BBQrParts *parts =
+      bbqr_encode(original, sizeof(original), BBQR_TYPE_PSBT, max_chars);
+  if (!parts) {
+    FAIL("Encode failed");
+    return;
+  }
+
+  size_t payload_len = 0;
+  bool valid = parts->count > 1 && parts->storage != NULL;
+  for (int i = 0; valid && i < parts->count; i++) {
+    size_t part_len = strlen(parts->parts[i]);
+    size_t this_payload_len = part_len - BBQR_HEADER_LEN;
+    valid = part_len <= (size_t)max_chars &&
+            strchr(parts->parts[i], '=') == NULL &&
+            (i == parts->count - 1 || this_payload_len == max_payload);
+    if (i > 0) {
+      valid = valid && parts->parts[i] == parts->parts[i - 1] +
+                                              strlen(parts->parts[i - 1]) + 1;
+    }
+    payload_len += this_payload_len;
+  }
+
+  char *payload = valid ? (char *)malloc(payload_len) : NULL;
+  if (!payload) {
+    bbqr_parts_free(parts);
+    FAIL("Invalid part layout or allocation failed");
+    return;
+  }
+
+  size_t offset = 0;
+  for (int i = 0; i < parts->count; i++) {
+    size_t this_payload_len = strlen(parts->parts[i]) - BBQR_HEADER_LEN;
+    memcpy(payload + offset, parts->parts[i] + BBQR_HEADER_LEN,
+           this_payload_len);
+    offset += this_payload_len;
+  }
+
+  size_t decoded_len = 0;
+  uint8_t *decoded =
+      bbqr_decode_payload(parts->encoding, payload, payload_len, &decoded_len);
+  free(payload);
+  if (!decoded || decoded_len != sizeof(original) ||
+      memcmp(decoded, original, sizeof(original)) != 0) {
+    free(decoded);
+    bbqr_parts_free(parts);
+    FAIL("Multipart output did not round-trip");
+    return;
+  }
+
+  free(decoded);
+  bbqr_parts_free(parts);
+  PASS();
+}
+
 /* Expected PSBT data (base64 decoded) for test_real_bbqr_decode */
 static const uint8_t EXPECTED_PSBT[] = {
     0x70, 0x73, 0x62, 0x74, 0xff, 0x01, 0x00, 0xf6, 0x02, 0x00, 0x00, 0x00,
@@ -560,6 +652,8 @@ int main(void) {
   test_bbqr_parse_header();
   test_miniz_roundtrip();
   test_bbqr_roundtrip();
+  test_bbqr_unpadded_base32();
+  test_bbqr_multipart_streaming();
   test_real_bbqr_decode();
   test_vectors();
 

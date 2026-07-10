@@ -26,8 +26,14 @@ static const int8_t BASE32_DECODE_TABLE[128] = {
 };
 
 size_t base32_encoded_len(size_t input_len) {
-  // Each 5 bytes becomes 8 characters
-  return ((input_len + 4) / 5) * 8;
+  // BBQr omits RFC 4648 padding, so partial groups use 2, 4, 5, or 7 chars.
+  static const uint8_t chars_per_remainder[] = {0, 2, 4, 5, 7};
+  size_t full_groups = input_len / 5;
+  size_t remainder_chars = chars_per_remainder[input_len % 5];
+  if (full_groups > (SIZE_MAX - remainder_chars) / 8) {
+    return 0;
+  }
+  return full_groups * 8 + remainder_chars;
 }
 
 size_t base32_decoded_len(size_t input_len) {
@@ -35,18 +41,12 @@ size_t base32_decoded_len(size_t input_len) {
   return (input_len * 5) / 8;
 }
 
-size_t base32_encode(const uint8_t *input, size_t input_len, char *output,
-                     size_t output_size) {
-  if (!input || !output || input_len == 0) {
-    return 0;
+bool base32_encode_write(const uint8_t *input, size_t input_len,
+                         base32_write_fn write, void *context) {
+  if (!input || !write || input_len == 0) {
+    return false;
   }
 
-  size_t encoded_len = base32_encoded_len(input_len);
-  if (output_size < encoded_len + 1) {
-    return 0;
-  }
-
-  size_t out_idx = 0;
   size_t in_idx = 0;
 
   // Process input in groups of 5 bytes -> 8 chars
@@ -60,7 +60,6 @@ size_t base32_encode(const uint8_t *input, size_t input_len, char *output,
       bytes_in_group++;
     }
 
-    // Calculate how many base32 chars we need for this group
     // 1 byte (8 bits) -> 2 chars
     // 2 bytes (16 bits) -> 4 chars
     // 3 bytes (24 bits) -> 5 chars
@@ -68,20 +67,60 @@ size_t base32_encode(const uint8_t *input, size_t input_len, char *output,
     // 5 bytes (40 bits) -> 8 chars
     static const int chars_per_bytes[] = {0, 2, 4, 5, 7, 8};
     int num_chars = chars_per_bytes[bytes_in_group];
+    char encoded[8];
 
-    // Extract 5-bit groups from high bits
-    for (int i = 0; i < 8; i++) {
-      if (i < num_chars) {
-        int idx = (buffer >> (35 - i * 5)) & 0x1F;
-        output[out_idx++] = BASE32_ALPHABET[idx];
-      } else {
-        output[out_idx++] = '=';
-      }
+    for (int i = 0; i < num_chars; i++) {
+      int idx = (buffer >> (35 - i * 5)) & 0x1F;
+      encoded[i] = BASE32_ALPHABET[idx];
+    }
+
+    if (!write(context, encoded, (size_t)num_chars)) {
+      return false;
     }
   }
 
-  output[out_idx] = '\0';
-  return out_idx;
+  return true;
+}
+
+typedef struct {
+  char *output;
+  size_t output_size;
+  size_t output_len;
+} base32_buffer_writer_t;
+
+static bool write_to_buffer(void *context, const char *data, size_t len) {
+  base32_buffer_writer_t *writer = (base32_buffer_writer_t *)context;
+  if (len > writer->output_size - writer->output_len - 1) {
+    return false;
+  }
+
+  memcpy(writer->output + writer->output_len, data, len);
+  writer->output_len += len;
+  return true;
+}
+
+size_t base32_encode(const uint8_t *input, size_t input_len, char *output,
+                     size_t output_size) {
+  if (!input || !output || input_len == 0) {
+    return 0;
+  }
+
+  size_t encoded_len = base32_encoded_len(input_len);
+  if (output_size < encoded_len + 1) {
+    return 0;
+  }
+
+  base32_buffer_writer_t writer = {
+      .output = output,
+      .output_size = output_size,
+      .output_len = 0,
+  };
+  if (!base32_encode_write(input, input_len, write_to_buffer, &writer)) {
+    return 0;
+  }
+
+  output[writer.output_len] = '\0';
+  return writer.output_len;
 }
 
 bool base32_decode(const char *input, size_t input_len, uint8_t *output,

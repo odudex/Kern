@@ -171,23 +171,9 @@ static const base32_test_vector_t test_vectors[] = {
 
 #define NUM_TEST_VECTORS (sizeof(test_vectors) / sizeof(test_vectors[0]))
 
-/* Helper to strip padding from encoded string */
-static void strip_padding(const char *input, char *output, size_t output_size) {
-  size_t len = strlen(input);
-  while (len > 0 && input[len - 1] == '=') {
-    len--;
-  }
-  if (len >= output_size) {
-    len = output_size - 1;
-  }
-  memcpy(output, input, len);
-  output[len] = '\0';
-}
-
 /* Test encoding with all test vectors */
 void test_base32_encode_vectors(void) {
   char output[1024];
-  char stripped[1024];
 
   printf("\n=== Base32 Encoding Tests ===\n");
 
@@ -205,29 +191,26 @@ void test_base32_encode_vectors(void) {
       continue;
     }
 
-    /* Strip padding from output to compare with expected (without padding) */
-    strip_padding(output, stripped, sizeof(stripped));
-
-    if (strcmp(stripped, tv->encoded) == 0) {
+    if (strcmp(output, tv->encoded) == 0) {
       PASS();
     } else {
       printf("\n  Expected: %s\n", tv->encoded);
-      printf("  Got:      %s\n", stripped);
+      printf("  Got:      %s\n", output);
       FAIL("encoding mismatch");
     }
   }
 }
 
-/* Test encoding produces correct padded output */
-void test_base32_encode_padded(void) {
+/* Test encoding never emits the padding forbidden by BBQr */
+void test_base32_encode_unpadded(void) {
   char output[1024];
 
-  printf("\n=== Base32 Padded Encoding Tests ===\n");
+  printf("\n=== Base32 Unpadded Encoding Tests ===\n");
 
   for (size_t i = 0; i < NUM_TEST_VECTORS; i++) {
     const base32_test_vector_t *tv = &test_vectors[i];
     char test_name[64];
-    snprintf(test_name, sizeof(test_name), "base32_encode_padded vector %zu",
+    snprintf(test_name, sizeof(test_name), "base32_encode_unpadded vector %zu",
              i);
     TEST(test_name);
 
@@ -239,12 +222,12 @@ void test_base32_encode_padded(void) {
       continue;
     }
 
-    if (strcmp(output, tv->encoded_padded) == 0) {
+    if (strcmp(output, tv->encoded) == 0 && strchr(output, '=') == NULL) {
       PASS();
     } else {
-      printf("\n  Expected: %s\n", tv->encoded_padded);
+      printf("\n  Expected: %s\n", tv->encoded);
       printf("  Got:      %s\n", output);
-      FAIL("padded encoding mismatch");
+      FAIL("unpadded encoding mismatch");
     }
   }
 }
@@ -458,7 +441,7 @@ void test_base32_invalid_input(void) {
 
   /* Test encode with insufficient output buffer */
   TEST("base32_encode small buffer");
-  len = base32_encode(dummy, 4, output, 2); /* needs 8 chars + null */
+  len = base32_encode(dummy, 4, output, 2); /* needs 7 chars + null */
   if (len == 0) {
     PASS();
   } else {
@@ -542,10 +525,10 @@ void test_base32_length_functions(void) {
   }
 
   TEST("base32_encoded_len 1 byte");
-  if (base32_encoded_len(1) == 8) {
+  if (base32_encoded_len(1) == 2) {
     PASS();
   } else {
-    printf("got %zu, expected 8\n", base32_encoded_len(1));
+    printf("got %zu, expected 2\n", base32_encoded_len(1));
     FAIL("wrong length");
   }
 
@@ -558,10 +541,10 @@ void test_base32_length_functions(void) {
   }
 
   TEST("base32_encoded_len 6 bytes");
-  if (base32_encoded_len(6) == 16) {
+  if (base32_encoded_len(6) == 10) {
     PASS();
   } else {
-    printf("got %zu, expected 16\n", base32_encoded_len(6));
+    printf("got %zu, expected 10\n", base32_encoded_len(6));
     FAIL("wrong length");
   }
 
@@ -631,7 +614,7 @@ int main(void) {
 
   /* Run all tests */
   test_base32_encode_vectors();
-  test_base32_encode_padded();
+  test_base32_encode_unpadded();
   test_base32_decode_unpadded();
   test_base32_decode_padded();
   test_base32_roundtrip();

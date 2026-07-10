@@ -45,6 +45,8 @@ typedef struct {
   int count;      // Number of parts
   char encoding;  // Encoding used
   char file_type; // File type
+  char *storage;  // Backing storage for all part strings; free only via
+                  // bbqr_parts_free()
 } BBQrParts;
 
 /**
