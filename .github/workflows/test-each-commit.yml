@@ -72,8 +72,8 @@ jobs:
       - name: Show commit
         run: git log -1 --oneline
 
-      - name: Install clang-format
-        run: apt-get update && apt-get install -y clang-format
+      - name: Install check dependencies
+        run: apt-get update && apt-get install -y clang-format zlib1g-dev
 
       - name: Configure git identity (required by rebase)
         run: |

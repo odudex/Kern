@@ -20,7 +20,7 @@ simulator/sim_data/
 # Tests
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
-components/bbqr/test/test_miniz
+components/deflate_codec/test/test_deflate_codec
 main/core/test/test_derivation_path
 main/core/test/test_ss_whitelist_parse
 main/core/test/test_ss_whitelist_is_whitelisted

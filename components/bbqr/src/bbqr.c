@@ -1,14 +1,18 @@
 #include "bbqr.h"
 #include "base32.h"
+#include "deflate_codec.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
-// Include miniz for raw-deflate compression and decompression.
-#include "miniz.h"
-
 // Base36 alphabet (0-9, A-Z)
 static const char BASE36_ALPHABET[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+// BBQr spec: raw deflate with a 1KB window (wbits = -10)
+#define BBQR_COMPRESS_WBITS 10
+// Decode liberally: raw inflate at 15 accepts any window, including spec's 10
+#define BBQR_DECODE_WBITS 15
+#define BBQR_MAX_DECOMPRESSED (512U * 1024U)
 
 typedef struct {
   BBQrParts *parts;
@@ -230,15 +234,17 @@ uint8_t *bbqr_decode_payload(char encoding, const char *data, size_t data_len,
       // Verify header checksum: (CMF*256 + FLG) % 31 == 0
       if ((compressed[0] * 256 + compressed[1]) % 31 == 0) {
         // Try zlib-wrapped decompression first
-        decompressed =
-            mz_uncompress_alloc(compressed, compressed_len, &decompressed_len);
+        decompressed = deflate_decompress_zlib_alloc(compressed, compressed_len,
+                                                     &decompressed_len,
+                                                     BBQR_MAX_DECOMPRESSED);
       }
     }
 
     if (!decompressed) {
       // Fall back to raw deflate (BBQr spec says raw deflate)
-      decompressed =
-          mz_inflate_raw_alloc(compressed, compressed_len, &decompressed_len);
+      decompressed = deflate_decompress_raw_alloc(
+          compressed, compressed_len, &decompressed_len, BBQR_DECODE_WBITS,
+          BBQR_MAX_DECOMPRESSED);
     }
 
     free(compressed);
@@ -269,7 +275,8 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
 
   // Use compression (raw deflate) only when it actually shrinks the data
   size_t compressed_len = 0;
-  uint8_t *compressed = mz_deflate_raw_alloc(data, data_len, &compressed_len);
+  uint8_t *compressed = deflate_compress_raw_alloc(
+      data, data_len, &compressed_len, BBQR_COMPRESS_WBITS);
 
   const uint8_t *to_encode = data;
   size_t to_encode_len = data_len;

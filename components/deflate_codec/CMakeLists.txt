@@ -1,9 +1,8 @@
 idf_component_register(
     SRCS
-        "src/bbqr.c"
-        "src/base32.c"
+        "src/deflate_codec.c"
     INCLUDE_DIRS
         "src"
     PRIV_REQUIRES
-        deflate_codec
+        espressif__zlib
 )

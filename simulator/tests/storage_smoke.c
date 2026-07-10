@@ -106,7 +106,7 @@ int main(void) {
   size_t kef_blob_len = 0;
   const uint8_t password[] = "test";
   const uint8_t secret[] = "seed entropy bytes";
-  CHECK(kef_encrypt((const uint8_t *)"SmokeName", 9, KEF_V15_CTR_H4,
+  CHECK(kef_encrypt((const uint8_t *)"SmokeName", 9, KEF_V16_CTR_Z_H4,
                     password, strlen((const char *)password), 10000, secret,
                     sizeof(secret) - 1, &kef_blob, &kef_blob_len) == KEF_OK,
         "create KEF envelope");
