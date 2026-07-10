@@ -32,12 +32,9 @@ struct sankey_diagram {
   size_t output_overflow;
 };
 
-static float bezier_eval(float p0, float p1, float p2, float p3, float t) {
-  float mt = 1.0f - t;
-  float mt2 = mt * mt;
-  float t2 = t * t;
-  return mt2 * mt * p0 + 3.0f * mt2 * t * p1 + 3.0f * mt * t2 * p2 +
-         t2 * t * p3;
+static float bezier_ease(float p0, float p3, float t) {
+  float eased_t = t * t * (3.0f - 2.0f * t);
+  return p0 + (p3 - p0) * eased_t;
 }
 
 static lv_color_t color_lerp(lv_color_t c1, lv_color_t c2, float t) {
@@ -50,19 +47,8 @@ static lv_color_t color_lerp(lv_color_t c1, lv_color_t c2, float t) {
                        (uint8_t)(c1.blue + t * (c2.blue - c1.blue)));
 }
 
-static inline void set_pixel(sankey_diagram_t *diagram, int32_t x, int32_t y,
-                             uint16_t color16) {
-  if (x < 0 || x >= diagram->width || y < 0 || y >= diagram->height)
-    return;
-  uint16_t *row = (uint16_t *)((uint8_t *)diagram->draw_buf->data +
-                               y * diagram->draw_buf->header.stride);
-  row[x] = color16;
-}
-
 static inline void set_pixel_blended(sankey_diagram_t *diagram, int32_t x,
                                      int32_t y, uint16_t fg, uint8_t alpha) {
-  if (x < 0 || x >= diagram->width || y < 0 || y >= diagram->height)
-    return;
   uint16_t *row = (uint16_t *)((uint8_t *)diagram->draw_buf->data +
                                y * diagram->draw_buf->header.stride);
   if (alpha >= 255) {
@@ -79,16 +65,30 @@ static inline void set_pixel_blended(sankey_diagram_t *diagram, int32_t x,
 
 static void draw_aa_column(sankey_diagram_t *diagram, int32_t x, float y_top_f,
                            float y_bot_f, uint16_t color16) {
+  if (x < 0 || x >= diagram->width)
+    return;
+
   int32_t y_top = (int32_t)y_top_f;
   int32_t y_bot = (int32_t)y_bot_f;
 
-  set_pixel_blended(diagram, x, y_top, color16,
-                    255 - (uint8_t)((y_top_f - y_top) * 255.0f));
-  for (int32_t y = y_top + 1; y < y_bot; y++)
-    set_pixel(diagram, x, y, color16);
-  if (y_bot > y_top)
+  if (y_top >= 0 && y_top < diagram->height) {
+    set_pixel_blended(diagram, x, y_top, color16,
+                      255 - (uint8_t)((y_top_f - y_top) * 255.0f));
+  }
+
+  int32_t fill_start = LV_MAX(y_top + 1, 0);
+  int32_t fill_end = LV_MIN(y_bot, diagram->height);
+  uint8_t *buf = diagram->draw_buf->data;
+  uint32_t stride = diagram->draw_buf->header.stride;
+  for (int32_t y = fill_start; y < fill_end; y++) {
+    uint16_t *row = (uint16_t *)(buf + y * stride);
+    row[x] = color16;
+  }
+
+  if (y_bot > y_top && y_bot >= 0 && y_bot < diagram->height) {
     set_pixel_blended(diagram, x, y_bot, color16,
                       (uint8_t)((y_bot_f - y_bot) * 255.0f));
+  }
 }
 
 static void draw_gradient_rect(sankey_diagram_t *diagram, int32_t x_start,
@@ -122,23 +122,16 @@ static void draw_bezier_ribbon(sankey_diagram_t *diagram, float x0,
                                float y0_top, float y0_bot, float x3,
                                float y3_top, float y3_bot,
                                lv_color_t start_color, lv_color_t end_color) {
-  float dx = (x3 - x0) / 3.0f;
-  float bx1 = x0 + dx, bx2 = x3 - dx;
+  float width = x3 - x0;
+  if (width <= 0.0f)
+    return;
 
   for (int32_t x = (int32_t)(x0 + 0.5f); x <= (int32_t)(x3 + 0.5f); x++) {
-    // Binary search to find t for this x (10 iterations = 0.001 precision)
-    float t_lo = 0.0f, t_hi = 1.0f;
-    for (int i = 0; i < 10; i++) {
-      float t_mid = (t_lo + t_hi) * 0.5f;
-      if (bezier_eval(x0, bx1, bx2, x3, t_mid) < (float)x)
-        t_lo = t_mid;
-      else
-        t_hi = t_mid;
-    }
-    float t = (t_lo + t_hi) * 0.5f;
+    float t = ((float)x - x0) / width;
+    t = LV_CLAMP(0.0f, t, 1.0f);
 
-    float y_top_f = bezier_eval(y0_top, y0_top, y3_top, y3_top, t);
-    float y_bot_f = bezier_eval(y0_bot, y0_bot, y3_bot, y3_bot, t);
+    float y_top_f = bezier_ease(y0_top, y3_top, t);
+    float y_bot_f = bezier_ease(y0_bot, y3_bot, t);
     if (y_top_f > y_bot_f) {
       float tmp = y_top_f;
       y_top_f = y_bot_f;
@@ -265,17 +258,19 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
   if (!diagram || !diagram->canvas || !diagram->draw_buf)
     return;
 
-  lv_draw_buf_clear(diagram->draw_buf, NULL);
-
   uint8_t *buf = (uint8_t *)diagram->draw_buf->data;
   uint32_t stride = diagram->draw_buf->header.stride;
   lv_color_t bg = bg_color();
   uint16_t bg16 = lv_color_to_u16(bg);
 
-  for (int32_t y = 0; y < diagram->height; y++) {
-    uint16_t *row = (uint16_t *)(buf + y * stride);
-    for (int32_t x = 0; x < diagram->width; x++)
-      row[x] = bg16;
+  if (bg16 == 0) {
+    lv_draw_buf_clear(diagram->draw_buf, NULL);
+  } else {
+    for (int32_t y = 0; y < diagram->height; y++) {
+      uint16_t *row = (uint16_t *)(buf + y * stride);
+      for (int32_t x = 0; x < diagram->width; x++)
+        row[x] = bg16;
+    }
   }
 
   if (diagram->input_count == 0 || diagram->output_count == 0) {
@@ -298,14 +293,8 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
   for (size_t i = 0; i < diagram->output_count; i++)
     output_stack_height += diagram->outputs[i].thickness;
 
-  float *input_center_positions = malloc(diagram->input_count * sizeof(float));
-  float *output_center_positions =
-      malloc(diagram->output_count * sizeof(float));
-  if (!input_center_positions || !output_center_positions) {
-    free(input_center_positions);
-    free(output_center_positions);
-    return;
-  }
+  float input_center_positions[MAX_FLOWS];
+  float output_center_positions[MAX_FLOWS];
 
   float y_pos = center_y - input_stack_height / 2.0f;
   for (size_t i = 0; i < diagram->input_count; i++) {
@@ -363,8 +352,6 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
   for (int32_t x = (int32_t)rect_left; x <= (int32_t)rect_right; x++)
     draw_aa_column(diagram, x, rect_top, rect_bot, white16);
 
-  free(input_center_positions);
-  free(output_center_positions);
   lv_image_cache_drop(diagram->draw_buf);
   lv_obj_invalidate(diagram->canvas);
 }
