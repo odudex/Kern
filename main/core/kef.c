@@ -12,7 +12,11 @@
 #include "crypto_utils.h"
 
 /* Raw deflate compress / decompress (wbits = 10) */
-#include "../../components/bbqr/src/miniz.h"
+#include <deflate_codec.h>
+
+/* KEF format contract: raw deflate with a 1KB window */
+#define KEF_DEFLATE_WBITS 10
+#define KEF_MAX_DECOMPRESSED (512U * 1024U)
 
 #include <mbedtls/base64.h>
 #include <stdbool.h>
@@ -403,8 +407,8 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
   size_t work_len = pt_len;
 
   if (vi->compress) {
-    compressed =
-        mz_deflate_raw_alloc_wbits(plaintext, pt_len, &compressed_len, 10);
+    compressed = deflate_compress_raw_alloc(plaintext, pt_len, &compressed_len,
+                                            KEF_DEFLATE_WBITS);
     if (!compressed) {
       err = KEF_ERR_COMPRESS;
       goto cleanup;
@@ -702,7 +706,8 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
   if (vi->compress) {
     size_t dec_len = 0;
     uint8_t *decompressed =
-        mz_inflate_raw_alloc(decrypted, plain_len, &dec_len);
+        deflate_decompress_raw_alloc(decrypted, plain_len, &dec_len,
+                                     KEF_DEFLATE_WBITS, KEF_MAX_DECOMPRESSED);
     if (!decompressed) {
       err = KEF_ERR_DECOMPRESS;
       goto cleanup;

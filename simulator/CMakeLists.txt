@@ -179,8 +179,8 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
-    # miniz (used by kef.c for raw-deflate compression)
-    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
+    # Shared zlib adapter used by KEF and BBQr
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/bbqr.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/base32.c
@@ -371,9 +371,10 @@ target_include_directories(kern_simulator PRIVATE
     ${MBEDTLS_INCLUDE_DIRS}
     # Application source tree
     ${CMAKE_CURRENT_SOURCE_DIR}/../main                 # ui/theme.h, core/, utils/, pages/
-    # Component headers (for kef.c -> bbqr/miniz, cUR, k_quirc, video)
+    # Component headers (for kef.c -> deflate_codec, cUR, k_quirc, video)
     ${CMAKE_CURRENT_SOURCE_DIR}/../components
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src
@@ -436,6 +437,7 @@ target_link_libraries(kern_simulator PRIVATE
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}
     ${MBEDX509_LIB}
+    z
     $<$<BOOL:${SIM_WEBCAM}>:v4l2_capture>
 )
 
@@ -444,7 +446,7 @@ add_executable(kern_sim_storage_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src/miniz.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_flash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_storage_hooks.c
@@ -459,7 +461,7 @@ target_include_directories(kern_sim_storage_smoke PRIVATE
     ${MBEDTLS_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_SOURCE_DIR}/../components
-    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src
 )
 
 target_compile_definitions(kern_sim_storage_smoke PRIVATE
@@ -478,6 +480,7 @@ target_link_libraries(kern_sim_storage_smoke PRIVATE
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}
     ${MBEDX509_LIB}
+    z
 )
 
 enable_testing()

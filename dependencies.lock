@@ -187,7 +187,7 @@ dependencies:
       type: service
     version: 1.2.0~2
   espressif/esp_lv_decoder:
-    component_hash: 8e74961d7471fbdf6fc17c5517c0ecc15148b8d04e792a92fefc2b7bacd98cbb
+    component_hash: 331d23c304cea5d1aed0ad3cea7774874dbaeebb2217e8db6bf3cc8485ac9f9f
     dependencies:
     - name: espressif/esp_new_jpeg
       registry_url: https://components.espressif.com
@@ -217,7 +217,9 @@ dependencies:
     - esp32c3
     - esp32c5
     - esp32c6
-    version: 0.4.2
+    - esp32c61
+    - esp32h4
+    version: 0.4.3
   espressif/esp_lv_fs:
     component_hash: 66896007884b817df34c964f9a114fff538ee2674e99fee7159162498b93f94b
     dependencies:
@@ -451,7 +453,7 @@ dependencies:
       require: private
       version: '>=4.4'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.2
   idf:
@@ -474,8 +476,9 @@ direct_dependencies:
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_adapter
 - espressif/esp_video
+- espressif/zlib
 - idf
 - lvgl/lvgl
-manifest_hash: 9ecbbbcd636262f3b288e960bb84de4d38c7c6212b55f8d6fd4e83a0e7d0edff
+manifest_hash: 167024d0947a55943ecf621fe6a8eb48ed1e699e5afff6b6720c0a8a545a1d5c
 target: esp32p4
 version: 3.0.0

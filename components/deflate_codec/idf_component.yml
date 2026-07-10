@@ -1,0 +1,2 @@
+dependencies:
+  espressif/zlib: "^1.2.13"
