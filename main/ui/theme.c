@@ -1,6 +1,7 @@
 #include "theme.h"
 #include "font_policy.h"
 #include "theme_palette.h"
+#include "theme_widgets.h"
 
 // Mutable font copies with icon fallbacks
 static lv_font_t font_small;
@@ -60,6 +61,8 @@ void theme_init(void) {
 
   font_medium = *medium.text;
   font_medium.fallback = medium.icon;
+
+  theme_widgets_init();
 }
 
 lv_color_t bg_color(void) { return COLOR_BG; }

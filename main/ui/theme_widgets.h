@@ -6,6 +6,9 @@
 // Widget factory: builders and stylers that assemble LVGL objects from the
 // theme tokens (colours, fonts, sizes) declared in theme.h.
 
+// Called by theme_init() after fonts and scaled dimensions are ready.
+void theme_widgets_init(void);
+
 void theme_apply_screen(lv_obj_t *obj);
 lv_obj_t *theme_create_page_container(lv_obj_t *parent);
 void theme_apply_frame(lv_obj_t *frame);
