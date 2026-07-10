@@ -21,11 +21,6 @@
 #define UR_HEADER_OVERHEAD 30
 #define UR_MAX_FRAGMENT_LEN ((MAX_QR_CHARS_PER_FRAME - UR_HEADER_OVERHEAD) / 2)
 
-typedef struct {
-  char *data;
-  size_t len;
-} QRViewerPart;
-
 static lv_obj_t *qr_viewer_screen = NULL;
 static lv_obj_t *qr_code_obj = NULL;
 static lv_obj_t *progress_frame = NULL;
@@ -37,7 +32,8 @@ static char *qr_content_copy = NULL;
 static lv_timer_t *message_timer = NULL;
 static lv_timer_t *animation_timer = NULL;
 
-static QRViewerPart *qr_parts = NULL;
+static char **qr_parts = NULL;
+static BBQrParts *bbqr_parts_owner = NULL;
 static int qr_parts_count = 0;
 static int current_part_index = 0;
 
@@ -117,12 +113,16 @@ static void split_content_into_parts(const char *content) {
 
   if (content_len <= max_chars) {
     qr_parts_count = 1;
-    qr_parts = malloc(sizeof(QRViewerPart));
+    qr_parts = malloc(sizeof(char *));
     if (!qr_parts)
       return;
 
-    qr_parts[0].data = strdup(content);
-    qr_parts[0].len = content_len;
+    qr_parts[0] = strdup(content);
+    if (!qr_parts[0]) {
+      free(qr_parts);
+      qr_parts = NULL;
+      qr_parts_count = 0;
+    }
     return;
   }
 
@@ -135,7 +135,7 @@ static void split_content_into_parts(const char *content) {
   size_t chars_per_part = max_chars - prefix_len;
   qr_parts_count = (content_len + chars_per_part - 1) / chars_per_part;
 
-  qr_parts = malloc(qr_parts_count * sizeof(QRViewerPart));
+  qr_parts = malloc(qr_parts_count * sizeof(char *));
   if (!qr_parts) {
     qr_parts_count = 0;
     return;
@@ -151,11 +151,11 @@ static void split_content_into_parts(const char *content) {
     snprintf(header, sizeof(header), "p%dof%d ", i + 1, qr_parts_count);
     size_t header_len = strlen(header);
 
-    qr_parts[i].len = header_len + chunk_size;
-    qr_parts[i].data = malloc(qr_parts[i].len + 1);
-    if (!qr_parts[i].data) {
+    size_t part_len = header_len + chunk_size;
+    qr_parts[i] = malloc(part_len + 1);
+    if (!qr_parts[i]) {
       for (int j = 0; j < i; j++) {
-        free(qr_parts[j].data);
+        free(qr_parts[j]);
       }
       free(qr_parts);
       qr_parts = NULL;
@@ -163,17 +163,21 @@ static void split_content_into_parts(const char *content) {
       return;
     }
 
-    memcpy(qr_parts[i].data, header, header_len);
-    memcpy(qr_parts[i].data + header_len, content + offset, chunk_size);
-    qr_parts[i].data[qr_parts[i].len] = '\0';
+    memcpy(qr_parts[i], header, header_len);
+    memcpy(qr_parts[i] + header_len, content + offset, chunk_size);
+    qr_parts[i][part_len] = '\0';
   }
 }
 
 static void cleanup_qr_parts(void) {
-  if (qr_parts) {
+  if (bbqr_parts_owner) {
+    bbqr_parts_free(bbqr_parts_owner);
+    bbqr_parts_owner = NULL;
+    qr_parts = NULL;
+  } else if (qr_parts) {
     for (int i = 0; i < qr_parts_count; i++) {
-      if (qr_parts[i].data) {
-        free(qr_parts[i].data);
+      if (qr_parts[i]) {
+        free(qr_parts[i]);
       }
     }
     free(qr_parts);
@@ -188,7 +192,7 @@ static void animation_timer_cb(lv_timer_t *timer) {
     return;
   }
   current_part_index = (current_part_index + 1) % qr_parts_count;
-  qr_update_optimal(qr_code_obj, qr_parts[current_part_index].data, NULL);
+  qr_update_optimal(qr_code_obj, qr_parts[current_part_index], NULL);
   update_progress_indicator(current_part_index);
 }
 
@@ -208,7 +212,7 @@ static bool setup_qr_viewer_ui(lv_obj_t *parent, const char *title) {
   }
   int32_t qr_size = (w < h) ? w : h;
 
-  qr_code_obj = qr_create_optimal(qr_viewer_screen, qr_size, qr_parts[0].data);
+  qr_code_obj = qr_create_optimal(qr_viewer_screen, qr_size, qr_parts[0]);
   if (!qr_code_obj) {
     return false;
   }
@@ -252,6 +256,7 @@ void qr_viewer_page_create(lv_obj_t *parent, const char *qr_content,
     return;
   }
 
+  cleanup_qr_parts();
   return_callback = return_cb;
   message_timer = NULL;
   animation_timer = NULL;
@@ -366,6 +371,8 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
     return true;
   }
 
+  cleanup_qr_parts();
+
   // Decode base64 content to binary PSBT
   size_t max_decoded_len = (strlen(content) * 3) / 4 + 1;
   uint8_t *psbt_bytes = (uint8_t *)malloc(max_decoded_len);
@@ -383,11 +390,11 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
 
   if (qr_format == FORMAT_BBQR) {
     // Encode as BBQr
-    BBQrParts *bbqr_parts = bbqr_encode(psbt_bytes, psbt_len, BBQR_TYPE_PSBT,
-                                        MAX_QR_CHARS_PER_FRAME);
+    bbqr_parts_owner = bbqr_encode(psbt_bytes, psbt_len, BBQR_TYPE_PSBT,
+                                   MAX_QR_CHARS_PER_FRAME);
     free(psbt_bytes);
 
-    if (!bbqr_parts) {
+    if (!bbqr_parts_owner) {
       return false;
     }
 
@@ -395,28 +402,8 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
     message_timer = NULL;
     animation_timer = NULL;
 
-    qr_parts_count = bbqr_parts->count;
-    qr_parts = malloc(qr_parts_count * sizeof(QRViewerPart));
-    if (!qr_parts) {
-      bbqr_parts_free(bbqr_parts);
-      return false;
-    }
-
-    for (int i = 0; i < qr_parts_count; i++) {
-      qr_parts[i].len = strlen(bbqr_parts->parts[i]);
-      qr_parts[i].data = strdup(bbqr_parts->parts[i]);
-      if (!qr_parts[i].data) {
-        for (int j = 0; j < i; j++) {
-          free(qr_parts[j].data);
-        }
-        free(qr_parts);
-        qr_parts = NULL;
-        qr_parts_count = 0;
-        bbqr_parts_free(bbqr_parts);
-        return false;
-      }
-    }
-    bbqr_parts_free(bbqr_parts);
+    qr_parts_count = bbqr_parts_owner->count;
+    qr_parts = bbqr_parts_owner->parts;
 
     if (!setup_qr_viewer_ui(parent, title)) {
       cleanup_qr_parts();
@@ -475,7 +462,7 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
   animation_timer = NULL;
 
   qr_parts_count = parts_count;
-  qr_parts = malloc(qr_parts_count * sizeof(QRViewerPart));
+  qr_parts = malloc(qr_parts_count * sizeof(char *));
   if (!qr_parts) {
     for (size_t i = 0; i < parts_count; i++) {
       free(ur_parts_strings[i]);
@@ -485,8 +472,7 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
   }
 
   for (int i = 0; i < qr_parts_count; i++) {
-    qr_parts[i].len = strlen(ur_parts_strings[i]);
-    qr_parts[i].data = ur_parts_strings[i];
+    qr_parts[i] = ur_parts_strings[i];
   }
   free(ur_parts_strings);
 
