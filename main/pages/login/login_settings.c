@@ -98,6 +98,7 @@ static void pin_setup_complete(void) {
   if (timeout > 0)
     session_start(timeout);
   rebuild_menu();
+  ui_menu_show(settings_menu);
 }
 
 static void pin_setup_cancel(void) {
@@ -114,11 +115,13 @@ static void setup_pin_cb(void) {
 static void pin_settings_return(void) {
   pin_settings_page_destroy();
   rebuild_menu();
+  ui_menu_show(settings_menu);
 }
 
 static void pin_settings_verified(void) {
   pin_page_destroy();
   pin_settings_page_create(lv_screen_active(), pin_settings_return);
+  pin_settings_page_show();
 }
 
 static void pin_settings_cancel(void) {
