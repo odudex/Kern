@@ -1,7 +1,7 @@
 /*
  * Crypto Utilities
- * AES-256, PBKDF2-HMAC-SHA256, SHA-256 primitives wrapping ESP-IDF mbedTLS
- * (hardware-accelerated transparently).
+ * AES-256, PBKDF2-HMAC-SHA256, SHA-256 primitives wrapping the PSA Crypto
+ * API (hardware-accelerated transparently).
  *
  * All functions return 0 on success, negative on error.
  */
