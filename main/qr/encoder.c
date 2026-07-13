@@ -63,6 +63,19 @@ static void qr_blit_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0,
   lv_obj_invalidate(qr_obj);
 }
 
+void qr_set_light_color(lv_obj_t *qr_obj, lv_color_t color) {
+  if (!qr_obj)
+    return;
+
+  lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
+  if (!draw_buf)
+    return;
+
+  lv_canvas_set_palette(qr_obj, 0, lv_color_to_32(color, LV_OPA_COVER));
+  lv_image_cache_drop(draw_buf);
+  lv_obj_invalidate(qr_obj);
+}
+
 static bool is_all_digits(const char *data, size_t len) {
   for (size_t i = 0; i < len; i++) {
     if (!isdigit((unsigned char)data[i])) {

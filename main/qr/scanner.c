@@ -403,12 +403,8 @@ static void settings_close_cb(lv_event_t *e) { destroy_settings_overlay(); }
 
 static void style_settings_slider(lv_obj_t *slider) {
   lv_obj_set_width(slider, LV_PCT(90));
-  lv_obj_set_height(slider, 20);
-  lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_KNOB);
-  lv_obj_set_style_bg_color(slider, panel_color(), LV_PART_MAIN);
-  lv_obj_set_style_pad_all(slider, 8, LV_PART_KNOB);
-  lv_obj_set_style_margin_bottom(slider, 20, 0);
+  theme_apply_slider(slider);
+  lv_obj_set_style_margin_ver(slider, theme_slider_knob_pad(), 0);
 }
 
 static void create_settings_overlay(void) {

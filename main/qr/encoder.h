@@ -62,6 +62,17 @@ lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text);
 void qr_resize(lv_obj_t *qr_obj, int32_t size);
 
 /**
+ * @brief Override the light-module (background) color of a QR widget.
+ *
+ * The blit step resets the palette to pure white on every encode, so this
+ * must be re-applied after each qr_update_optimal/qr_update_binary call.
+ *
+ * @param qr_obj QR widget (canvas)
+ * @param color Color for the light modules
+ */
+void qr_set_light_color(lv_obj_t *qr_obj, lv_color_t color);
+
+/**
  * @brief Encode text/binary into a module buffer without drawing.
  *
  * Mirrors the encode step of qr_update_optimal/qr_update_binary (LOW ECC, auto

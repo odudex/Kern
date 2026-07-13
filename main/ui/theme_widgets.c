@@ -201,6 +201,17 @@ void theme_apply_touch_button(lv_obj_t *btn, bool is_primary) {
   lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICK_FOCUSABLE);
 }
 
+void theme_apply_slider(lv_obj_t *slider) {
+  if (!slider)
+    return;
+
+  lv_obj_set_height(slider, theme_slider_height());
+  lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_KNOB);
+  lv_obj_set_style_bg_color(slider, panel_color(), LV_PART_MAIN);
+  lv_obj_set_style_pad_all(slider, theme_slider_knob_pad(), LV_PART_KNOB);
+}
+
 void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
   if (!btnmatrix)
     return;

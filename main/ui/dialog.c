@@ -317,22 +317,25 @@ lv_obj_t *dialog_show_progress(const char *title, const char *message,
 
 void dialog_show_message(const char *title, const char *message) {
   lv_obj_t *modal = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(modal, 400, 220);
+  lv_obj_set_size(modal, LV_PCT(90), LV_SIZE_CONTENT);
   lv_obj_center(modal);
   theme_apply_frame(modal);
+  lv_obj_set_flex_flow(modal, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(modal, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(modal, theme_default_padding(), 0);
+  lv_obj_set_style_pad_row(modal, theme_default_padding(), 0);
+  lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *title_label = theme_create_label(modal, title, false);
   lv_obj_set_style_text_font(title_label, theme_font_small(), 0);
-  lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
 
   lv_obj_t *msg_label = theme_create_label(modal, message, false);
-  lv_obj_set_width(msg_label, 340);
+  lv_obj_set_width(msg_label, LV_PCT(100));
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(msg_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(msg_label, LV_ALIGN_CENTER, 0, -10);
 
   lv_obj_t *btn = theme_create_button(modal, "OK", true);
-  lv_obj_set_size(btn, 100, theme_min_touch_size());
-  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_size(btn, theme_button_width(), theme_button_height());
   lv_obj_add_event_cb(btn, message_close_cb, LV_EVENT_CLICKED, modal);
 }

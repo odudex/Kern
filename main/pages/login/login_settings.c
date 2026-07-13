@@ -30,9 +30,7 @@ static void destroy_brightness_page(void);
 
 static void brightness_slider_cb(lv_event_t *e) {
   lv_obj_t *slider = lv_event_get_target(e);
-  int32_t val = lv_slider_get_value(slider);
-  bsp_display_brightness_set(val);
-  lv_label_set_text_fmt(brightness_label, "%d%%", (int)val);
+  bsp_display_brightness_set(lv_slider_get_value(slider));
 }
 
 static void brightness_back_cb(lv_event_t *e) {
@@ -51,28 +49,19 @@ static void show_brightness_page(void) {
   ui_create_back_button(brightness_screen, brightness_back_cb);
   theme_create_page_title(brightness_screen, "Screen Brightness");
 
-  // Percentage label
   uint8_t cur = settings_get_brightness();
   brightness_label = lv_label_create(brightness_screen);
-  lv_label_set_text_fmt(brightness_label, "%d%%", (int)cur);
+  lv_label_set_text(brightness_label, "Brightness");
   lv_obj_set_style_text_font(brightness_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(brightness_label, primary_color(), 0);
-  lv_obj_align(brightness_label, LV_ALIGN_CENTER, 0, -30);
+  lv_obj_align(brightness_label, LV_ALIGN_CENTER, 0, -theme_min_touch_size());
 
-  // Slider
   brightness_slider = lv_slider_create(brightness_screen);
-  lv_slider_set_range(brightness_slider, 1, 100);
+  lv_slider_set_range(brightness_slider, BRIGHTNESS_MIN, 100);
   lv_slider_set_value(brightness_slider, cur, LV_ANIM_OFF);
   lv_obj_set_width(brightness_slider, LV_HOR_RES * 60 / 100);
-  lv_obj_set_height(brightness_slider, 10);
-  lv_obj_align(brightness_slider, LV_ALIGN_CENTER, 0, 20);
-
-  // Style: orange knob and indicator, dark track
-  lv_obj_set_style_bg_color(brightness_slider, highlight_color(),
-                            LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(brightness_slider, highlight_color(), LV_PART_KNOB);
-  lv_obj_set_style_bg_color(brightness_slider, panel_color(), LV_PART_MAIN);
-  lv_obj_set_style_pad_all(brightness_slider, 8, LV_PART_KNOB);
+  lv_obj_align(brightness_slider, LV_ALIGN_CENTER, 0, theme_button_spacing());
+  theme_apply_slider(brightness_slider);
 
   lv_obj_add_event_cb(brightness_slider, brightness_slider_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);

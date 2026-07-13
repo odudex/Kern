@@ -21,6 +21,8 @@ static int sz_corner_button_height;
 static int sz_small_padding;
 static int sz_logo;
 static int sz_key_gap;
+static int sz_slider_height;
+static int sz_slider_knob_pad;
 
 typedef struct {
   const lv_font_t *text;
@@ -51,6 +53,9 @@ void theme_init(void) {
   sz_small_padding = scr_min_dim / 72;       //  10
   sz_logo = scr_min_dim * 5 / 18;            // 200
   sz_key_gap = scr_min_dim / 120;            //   6
+  sz_slider_height = scr_min_dim / 36;       //  20
+  // Grows the knob to min_touch: track + 2 * pad == sz_min_touch
+  sz_slider_knob_pad = (sz_min_touch - sz_slider_height) / 2; // 35
 
   ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
   theme_font_pair_t small = font_pair_for_size(policy.small_px);
@@ -114,3 +119,5 @@ int theme_corner_button_height(void) { return sz_corner_button_height; }
 int theme_small_padding(void) { return sz_small_padding; }
 int theme_logo_size(void) { return sz_logo; }
 int theme_key_gap(void) { return sz_key_gap; }
+int theme_slider_height(void) { return sz_slider_height; }
+int theme_slider_knob_pad(void) { return sz_slider_knob_pad; }
