@@ -1,14 +1,14 @@
-// Login Settings Page - Pre-login configuration (PIN, brightness)
+// Login Settings Page - Pre-login configuration (security, brightness,
+// screensaver)
 
 #include "login_settings.h"
-#include "../../core/pin.h"
 #include "../../core/settings.h"
+#include "../../ui/dropdown_page.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session.h"
-#include "../pin/pin_page.h"
-#include "../pin/pin_settings.h"
+#include "security_settings.h"
 #include <bsp/display.h>
 #include <lvgl.h>
 
@@ -22,9 +22,14 @@ static lv_obj_t *brightness_screen = NULL;
 static lv_obj_t *brightness_slider = NULL;
 static lv_obj_t *brightness_label = NULL;
 
+// -- Screensaver detail page --
+static lv_obj_t *screensaver_screen = NULL;
+
 // Forward declarations
 static void show_brightness_page(void);
 static void destroy_brightness_page(void);
+static void show_screensaver_page(void);
+static void destroy_screensaver_page(void);
 
 // ── Screen Brightness detail page ──
 
@@ -76,83 +81,85 @@ static void destroy_brightness_page(void) {
   brightness_label = NULL;
 }
 
-// ── PIN setup/settings ──
+// ── Screensaver detail page ──
 
-static void rebuild_menu(void);
+// Screensaver options: index → seconds (0=off)
+static const uint16_t screensaver_values[] = {0, 60, 120, 300, 900, 1800};
+static const char *screensaver_options =
+    "Off\n1 min\n2 min\n5 min\n15 min\n30 min";
 
-static void pin_setup_complete(void) {
-  pin_page_destroy();
-  // Start session timeout after PIN setup
-  uint16_t timeout = pin_get_session_timeout();
-  if (timeout > 0)
-    session_start(timeout);
-  rebuild_menu();
+static void screensaver_dropdown_cb(lv_event_t *e) {
+  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+  if (sel < sizeof(screensaver_values) / sizeof(screensaver_values[0])) {
+    settings_set_screensaver_timeout(screensaver_values[sel]);
+    session_set_screensaver_timeout(screensaver_values[sel]);
+  }
+}
+
+static void screensaver_back_cb(lv_event_t *e) {
+  (void)e;
+  destroy_screensaver_page();
   ui_menu_show(settings_menu);
 }
 
-static void pin_setup_cancel(void) {
-  pin_page_destroy();
-  ui_menu_show(settings_menu);
-}
-
-static void setup_pin_cb(void) {
+static void show_screensaver_page(void) {
   ui_menu_hide(settings_menu);
-  pin_page_create(lv_screen_active(), PIN_PAGE_SETUP, pin_setup_complete,
-                  pin_setup_cancel);
+  uint16_t sel = ui_index_of_u16(
+      screensaver_values,
+      sizeof(screensaver_values) / sizeof(screensaver_values[0]),
+      settings_get_screensaver_timeout(), 2 /* 2 min */);
+  screensaver_screen =
+      ui_dropdown_page_create("Screensaver", NULL, screensaver_options, sel,
+                              screensaver_dropdown_cb, screensaver_back_cb);
 }
 
-static void pin_settings_return(void) {
-  pin_settings_page_destroy();
-  rebuild_menu();
+static void destroy_screensaver_page(void) {
+  if (screensaver_screen) {
+    lv_obj_delete(screensaver_screen);
+    screensaver_screen = NULL;
+  }
+}
+
+// ── Security submenu ──
+
+static void security_return_cb(void) {
+  security_settings_page_destroy();
   ui_menu_show(settings_menu);
 }
 
-static void pin_settings_verified(void) {
-  pin_page_destroy();
-  pin_settings_page_create(lv_screen_active(), pin_settings_return);
-  pin_settings_page_show();
-}
-
-static void pin_settings_cancel(void) {
-  pin_page_destroy();
-  ui_menu_show(settings_menu);
-}
-
-static void pin_settings_cb(void) {
+static void security_cb(void) {
   ui_menu_hide(settings_menu);
-  pin_page_create(lv_screen_active(), PIN_PAGE_UNLOCK, pin_settings_verified,
-                  pin_settings_cancel);
+  security_settings_page_create(lv_screen_active(), security_return_cb);
+  security_settings_page_show();
 }
 
 // ── Category menu callbacks ──
 
 static void brightness_cb(void) { show_brightness_page(); }
 
+static void screensaver_cb(void) { show_screensaver_page(); }
+
 static void settings_back_cb(void) {
   if (return_callback)
     return_callback();
 }
 
-static void rebuild_menu(void) {
-  if (settings_menu) {
-    ui_menu_destroy(settings_menu);
-    settings_menu = NULL;
-  }
-  settings_menu = ui_menu_create(settings_screen, "Settings", settings_back_cb);
-  if (pin_is_configured()) {
-    ui_menu_add_entry(settings_menu, "PIN Settings", pin_settings_cb);
-  } else {
-    ui_menu_add_entry(settings_menu, "Set Up PIN", setup_pin_cb);
-  }
-  ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
-}
-
 // ── Public lifecycle ──
 
 void login_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  // Statics may dangle if session expiry cleaned the screen while a detail
+  // page was open; drop them so destroy doesn't delete freed objects.
+  settings_menu = NULL;
+  brightness_screen = NULL;
+  brightness_slider = NULL;
+  brightness_label = NULL;
+  screensaver_screen = NULL;
   return_callback = return_cb;
   settings_screen = theme_create_page_container(parent);
-  rebuild_menu();
+  settings_menu = ui_menu_create(settings_screen, "Settings", settings_back_cb);
+  ui_menu_add_entry(settings_menu, "Security", security_cb);
+  ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
+  ui_menu_add_entry(settings_menu, "Screensaver", screensaver_cb);
 }
 
 void login_settings_page_show(void) {
@@ -166,8 +173,9 @@ void login_settings_page_hide(void) {
 }
 
 void login_settings_page_destroy(void) {
-  pin_settings_page_destroy();
+  security_settings_page_destroy();
   destroy_brightness_page();
+  destroy_screensaver_page();
   if (settings_menu) {
     ui_menu_destroy(settings_menu);
     settings_menu = NULL;

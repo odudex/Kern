@@ -21,6 +21,8 @@
 #define QR_FPS_MIN 1
 #define QR_FPS_MAX 5
 #define QR_FPS_DEFAULT 4
+#define SCREENSAVER_TIMEOUT_DEFAULT_SEC 120
+#define SESSION_TIMEOUT_DEFAULT_SEC 300
 
 esp_err_t settings_init(void);
 wallet_network_t settings_get_network(void);
@@ -43,6 +45,10 @@ bool settings_get_partial_signing(void);
 esp_err_t settings_set_partial_signing(bool partial);
 bool settings_get_expected_owned_signing(void);
 esp_err_t settings_set_expected_owned_signing(bool enabled);
+uint16_t settings_get_screensaver_timeout(void);
+esp_err_t settings_set_screensaver_timeout(uint16_t sec);
+uint16_t settings_get_session_timeout(void);
+esp_err_t settings_set_session_timeout(uint16_t sec);
 esp_err_t settings_reset_all(void);
 
 #endif // SETTINGS_H

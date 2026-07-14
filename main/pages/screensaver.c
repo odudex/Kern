@@ -5,6 +5,7 @@
 
 static lv_obj_t *scr_container;
 static lv_obj_t *logo;
+static lv_obj_t *lock_label;
 static lv_obj_t *touch_layer;
 static screensaver_dismiss_cb_t dismiss_cb;
 static bool active;
@@ -21,9 +22,13 @@ static void start_cycle(void) {
   int32_t scr_w = theme_screen_width();
   int32_t scr_h = theme_screen_height();
   int32_t logo_sz = lv_obj_get_width(logo);
+  // The lock hint rides below the logo; keep both on screen.
+  int32_t extra = lock_label ? lv_obj_get_height(lock_label) * 2 : 0;
   int32_t x = esp_random() % LV_MAX(scr_w - logo_sz, 1);
-  int32_t y = esp_random() % LV_MAX(scr_h - logo_sz, 1);
+  int32_t y = esp_random() % LV_MAX(scr_h - logo_sz - extra, 1);
   lv_obj_set_pos(logo, x, y);
+  if (lock_label)
+    lv_obj_align_to(lock_label, logo, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
   kern_logo_fade_cycle(logo, cycle_done_cb, NULL);
 }
 
@@ -41,7 +46,8 @@ static void touch_cb(lv_event_t *e) {
   lv_async_call(deferred_dismiss, NULL);
 }
 
-void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb) {
+void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb,
+                        bool locked) {
   if (active)
     screensaver_destroy();
 
@@ -59,6 +65,14 @@ void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb) {
 
   logo = kern_logo_create(scr_container, 0, 0, logo_sz);
 
+  if (locked) {
+    lock_label = lv_label_create(scr_container);
+    lv_label_set_text(lock_label, "Locked");
+    lv_obj_set_style_text_font(lock_label, theme_font_small(), 0);
+    lv_obj_set_style_text_color(lock_label, secondary_color(), 0);
+    lv_obj_update_layout(lock_label);
+  }
+
   touch_layer = lv_obj_create(scr_container);
   lv_obj_remove_style_all(touch_layer);
   lv_obj_set_size(touch_layer, scr_w, scr_h);
@@ -67,6 +81,8 @@ void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb) {
 
   start_cycle();
 }
+
+bool screensaver_is_active(void) { return active; }
 
 void screensaver_destroy(void) {
   active = false;
@@ -78,6 +94,7 @@ void screensaver_destroy(void) {
   lv_obj_delete(scr_container);
   scr_container = NULL;
   logo = NULL;
+  lock_label = NULL;
   touch_layer = NULL;
   dismiss_cb = NULL;
 }

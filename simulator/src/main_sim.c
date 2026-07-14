@@ -13,9 +13,7 @@
 #include "ui/assets/kern_logo_lvgl.h"
 #include "core/settings.h"
 #include "core/pin.h"
-#include "utils/session.h"
-#include "pages/pin/pin_page.h"
-#include "pages/login/login.h"
+#include "pages/session_lock.h"
 #include "esp_lvgl_port.h"
 #include "utils/bip39_filter.h"
 #include <wally_core.h>
@@ -46,42 +44,6 @@
 #endif
 
 /* -------------------------------------------------------------------------- */
-/* Forward declarations                                                        */
-/* -------------------------------------------------------------------------- */
-static void splash_done_cb(lv_timer_t *t);
-static void post_unlock_cb(void);
-static void session_expired_handler(void);
-
-/* -------------------------------------------------------------------------- */
-/* Session expiry handler                                                      */
-/* -------------------------------------------------------------------------- */
-
-static void session_expired_handler(void) {
-    /* Lock device: clear screen and show PIN unlock page */
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_clean(scr);
-    pin_page_create(scr, PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
-}
-
-/* -------------------------------------------------------------------------- */
-/* Post-unlock callback                                                        */
-/* -------------------------------------------------------------------------- */
-
-static void post_unlock_cb(void) {
-    pin_page_destroy();
-
-    /* Start session timeout */
-    uint16_t timeout = pin_get_session_timeout();
-    if (timeout > 0)
-        session_start(timeout);
-
-    /* Show login page (wallet selector / main menu) */
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_clean(scr);
-    login_page_create(scr);
-}
-
-/* -------------------------------------------------------------------------- */
 /* Splash → PIN transition (fired by one-shot LVGL timer after 3 s)          */
 /* -------------------------------------------------------------------------- */
 
@@ -90,12 +52,7 @@ static void splash_done_cb(lv_timer_t *t) {
 
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
-
-    if (pin_is_configured()) {
-        pin_page_create(scr, PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
-    } else {
-        login_page_create(scr);
-    }
+    session_lock_boot_gate(scr);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -265,8 +222,8 @@ int main(int argc, char *argv[]) {
     bip39_filter_init();
     pin_init();
 
-    /* Register session expiry callback */
-    session_set_expired_callback(session_expired_handler);
+    /* Start inactivity monitoring (screensaver + session lock) */
+    session_lock_init();
 
     /* -----------------------------------------------------------------------
      * Schedule transition to PIN gate after 3-second splash

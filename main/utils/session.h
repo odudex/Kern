@@ -1,4 +1,4 @@
-// Session timeout — locks device after user inactivity
+// Inactivity monitoring — screensaver overlay and session lock
 
 #ifndef SESSION_H
 #define SESSION_H
@@ -6,14 +6,16 @@
 #include <stdint.h>
 
 typedef void (*session_expired_cb_t)(void);
+typedef void (*session_screensaver_cb_t)(void);
 
-/* Start monitoring inactivity. timeout_sec=0 disables the timer. */
-void session_start(uint16_t timeout_sec);
+/* Create the 1s inactivity timer. Call once at boot, after LVGL is up. */
+void session_init(session_screensaver_cb_t saver_cb,
+                  session_expired_cb_t expired_cb);
 
-/* Stop monitoring (e.g. when PIN is removed). */
-void session_stop(void);
+/* Inactivity before the screensaver overlay appears. 0 = off. */
+void session_set_screensaver_timeout(uint16_t sec);
 
-/* Register callback invoked when session expires. */
-void session_set_expired_callback(session_expired_cb_t cb);
+/* Inactivity before the session expires (device locks). 0 = off. */
+void session_set_timeout(uint16_t sec);
 
 #endif // SESSION_H

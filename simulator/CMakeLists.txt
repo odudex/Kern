@@ -189,6 +189,7 @@ set(APP_CORE_SOURCES
 # --- UI components ---
 set(APP_UI_SOURCES
     ${APP_UI_DIR}/dialog.c
+    ${APP_UI_DIR}/dropdown_page.c
     ${APP_UI_DIR}/input_helpers.c
     ${APP_UI_DIR}/keyboard.c
     ${APP_UI_DIR}/menu.c
@@ -262,6 +263,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/login/login.c
     ${APP_PAGES_DIR}/login/login_scan.c
     ${APP_PAGES_DIR}/login/login_settings.c
+    ${APP_PAGES_DIR}/login/security_settings.c
     ${APP_PAGES_DIR}/login/about.c
     # Load mnemonic
     ${APP_PAGES_DIR}/load_mnemonic/load_menu.c
@@ -300,6 +302,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/load_descriptor_storage.c
     ${APP_PAGES_DIR}/passphrase.c
     ${APP_PAGES_DIR}/screensaver.c
+    ${APP_PAGES_DIR}/session_lock.c
     ${APP_PAGES_DIR}/store_descriptor.c
     ${APP_PAGES_DIR}/store_mnemonic.c
     # Scan page

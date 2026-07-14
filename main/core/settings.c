@@ -19,6 +19,8 @@ static const char *KEY_QR_FPS = "qr_fps";
 static const char *KEY_PERMISSIVE_SIGNING = "perm_sign";
 static const char *KEY_PARTIAL_SIGNING = "part_sign";
 static const char *KEY_EXPECTED_OWNED_SIGNING = "exp_own_sign";
+static const char *KEY_SCREENSAVER = "scrn_svr";
+static const char *KEY_SESSION_TIMEOUT = "sess_tout";
 
 static nvs_handle_t settings_nvs;
 static bool initialized = false;
@@ -207,6 +209,24 @@ bool settings_get_expected_owned_signing(void) {
 
 esp_err_t settings_set_expected_owned_signing(bool enabled) {
   return settings_set_bool_and_commit(KEY_EXPECTED_OWNED_SIGNING, enabled);
+}
+
+uint16_t settings_get_screensaver_timeout(void) {
+  return settings_get_u16_or_default(KEY_SCREENSAVER,
+                                     SCREENSAVER_TIMEOUT_DEFAULT_SEC);
+}
+
+esp_err_t settings_set_screensaver_timeout(uint16_t sec) {
+  return settings_set_u16_and_commit(KEY_SCREENSAVER, sec);
+}
+
+uint16_t settings_get_session_timeout(void) {
+  return settings_get_u16_or_default(KEY_SESSION_TIMEOUT,
+                                     SESSION_TIMEOUT_DEFAULT_SEC);
+}
+
+esp_err_t settings_set_session_timeout(uint16_t sec) {
+  return settings_set_u16_and_commit(KEY_SESSION_TIMEOUT, sec);
 }
 
 esp_err_t settings_reset_all(void) {

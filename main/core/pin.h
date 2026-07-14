@@ -17,7 +17,6 @@
 #define PIN_MIN_LENGTH 6
 #define PIN_MAX_LENGTH 16
 #define PIN_DEFAULT_MAX_FAILURES 10
-#define PIN_DEFAULT_TIMEOUT_SEC 300
 #define PIN_PBKDF2_ITERATIONS 100000
 
 typedef enum {
@@ -69,8 +68,6 @@ uint32_t pin_get_delay_ms(void);
 uint8_t pin_get_fail_count(void);
 uint8_t pin_get_max_failures(void);
 bool pin_has_anti_phishing(void);
-uint16_t pin_get_session_timeout(void);
-esp_err_t pin_set_session_timeout(uint16_t sec);
 esp_err_t pin_set_max_failures(uint8_t max);
 
 /* Nuclear wipe: erase "pin" NVS + settings + SPIFFS.
