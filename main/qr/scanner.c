@@ -889,6 +889,8 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
       current_display_buffer = back_buffer;
       img_refresh_dsc.data = display_src;
       lv_img_set_src(camera_img, &img_refresh_dsc);
+      // Active scanning counts as activity: hold off screensaver/session lock
+      lv_display_trigger_activity(NULL);
     }
     buffer_swap_needed = false;
     bsp_display_unlock();

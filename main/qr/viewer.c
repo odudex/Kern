@@ -411,6 +411,10 @@ static void animation_timer_cb(lv_timer_t *timer) {
   if (!qr_code_obj || !qr_parts || qr_parts_count <= 1) {
     return;
   }
+  // An animated QR is being shown to another device: hold off
+  // screensaver/session lock (static QRs deliberately don't — static content
+  // is what causes image retention)
+  lv_display_trigger_activity(NULL);
   current_part_index = (current_part_index + 1) % qr_parts_count;
   qr_update_optimal(qr_code_obj, qr_parts[current_part_index], NULL);
   if (qr_shade != QR_SHADE_MAX) {
