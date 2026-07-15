@@ -751,6 +751,13 @@ bool kef_is_envelope(const uint8_t *data, size_t len) {
       KEF_OK)
     return false;
 
+  /* IDs are user-entered labels; requiring printable ASCII rejects raw
+   * binary payloads (e.g. "psbt\xff...") that would otherwise parse as a
+   * plausible header. */
+  for (size_t i = 0; i < id_len; i++)
+    if (id[i] < 0x20 || id[i] > 0x7e)
+      return false;
+
   const kef_version_info_t *vi = find_version(version);
   if (!vi)
     return false;
