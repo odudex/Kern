@@ -1177,6 +1177,10 @@ int qr_scanner_get_format(void) {
   return -1;
 }
 
+char qr_scanner_get_bbqr_file_type(void) {
+  return qr_parser_get_bbqr_file_type(qr_parser);
+}
+
 bool qr_scanner_get_ur_result(const char **ur_type_out,
                               const uint8_t **cbor_data_out,
                               size_t *cbor_len_out) {

@@ -81,6 +81,14 @@ bool qr_scanner_has_completed_result(void);
 int qr_scanner_get_format(void);
 
 /**
+ * @brief Get the BBQr file type character (for FORMAT_BBQR only)
+ *
+ * @return File type character (e.g. 'P' for PSBT, 'U' for unicode text),
+ *         or 0 if the scanned format is not BBQr
+ */
+char qr_scanner_get_bbqr_file_type(void);
+
+/**
  * @brief Get UR result data (for UR format QR codes only)
  *
  * Call this when qr_scanner_get_format() returns FORMAT_UR.

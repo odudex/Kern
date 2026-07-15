@@ -526,6 +526,13 @@ int qr_parser_get_format(QRPartParser *parser) {
   return parser->format;
 }
 
+char qr_parser_get_bbqr_file_type(QRPartParser *parser) {
+  if (parser && parser->format == FORMAT_BBQR && parser->bbqr) {
+    return parser->bbqr->file_type;
+  }
+  return 0;
+}
+
 int get_qr_size(const char *qr_code) {
   int len = strlen(qr_code);
   int size = (int)sqrt(len * 8);

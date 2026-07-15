@@ -579,6 +579,7 @@ static void process_scan_result(void) {
      * shot at it. The decoded payload from qr_parser_result is
      * NUL-terminated (parser.c:301), so it's safe to treat as a C
      * string in the layer-2 detectors. */
+    char bbqr_file_type = qr_scanner_get_bbqr_file_type();
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
       cleanup_psbt_data();
@@ -588,6 +589,14 @@ static void process_scan_result(void) {
       if (parse_success) {
         free(qr_content);
         qr_content = NULL;
+      } else if (bbqr_file_type == 'P') {
+        /* Header explicitly says PSBT — don't let the text detectors (or
+         * the KEF prompt) misclassify raw PSBT bytes. */
+        free(qr_content);
+        qr_scanner_page_hide();
+        qr_scanner_page_destroy();
+        dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
+        return;
       }
     }
   } else {

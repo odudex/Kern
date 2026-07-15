@@ -209,6 +209,15 @@ bool qr_parser_get_ur_result(QRPartParser *parser, const char **ur_type_out,
 int qr_parser_get_format(QRPartParser *parser);
 
 /**
+ * @brief Get the BBQr file type character (for FORMAT_BBQR only)
+ *
+ * @param parser Parser instance
+ * @return File type character (e.g. 'P' for PSBT, 'U' for unicode text),
+ *         or 0 if the format is not BBQr
+ */
+char qr_parser_get_bbqr_file_type(QRPartParser *parser);
+
+/**
  * @brief Calculate QR code size from encoded data
  *
  * Estimates the QR code size (side length in modules) based
