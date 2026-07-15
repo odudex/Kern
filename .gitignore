@@ -30,6 +30,7 @@ main/core/test/test_registry_match
 main/core/test/test_registry_parse
 main/core/test/test_psbt_classify
 main/core/test/test_miniscript_policy
+main/core/test/test_bip322
 main/core/test/combined.o
 main/core/test/libwally.a
 

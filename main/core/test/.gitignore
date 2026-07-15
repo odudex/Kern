@@ -11,3 +11,4 @@ test_psbt_key.o
 combined.o
 libwally.a
 test_miniscript_policy
+test_bip322

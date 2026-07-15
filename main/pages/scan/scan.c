@@ -6,6 +6,7 @@
 #include "scan.h"
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/psbt.h"
+#include "../../core/bip322.h"
 #include "../../core/kef.h"
 #include "../../core/key.h"
 #include "../../core/message_sign.h"
@@ -144,6 +145,8 @@ static ui_menu_t *export_menu = NULL;
 // Message signing data
 static parsed_sign_message_t current_message = {0};
 static bool is_message_sign = false;
+static bip322_request_t current_bip322 = {0};
+static bool is_bip322 = false;
 
 // Mnemonic data
 static char *scanned_mnemonic = NULL;
@@ -164,6 +167,7 @@ static void mismatch_dialog_cb(void *user_data);
 static void return_from_descriptor_scanner_cb(void);
 static void create_message_sign_display(void);
 static void message_sign_button_cb(lv_event_t *e);
+static void create_bip322_sign_display(void);
 static void handle_descriptor_content(const char *descriptor_str);
 static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
@@ -495,6 +499,17 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
       scanned_qr_format = detected_format;
 
       if (check_psbt_mismatch()) {
+        return;
+      }
+
+      if (bip322_detect(current_psbt)) {
+        if (!bip322_parse(current_psbt, is_testnet, &current_bip322)) {
+          dialog_show_error_timeout("Invalid BIP322 message request",
+                                    return_callback, 0);
+          return;
+        }
+        is_bip322 = true;
+        create_bip322_sign_display();
         return;
       }
 
@@ -1615,7 +1630,9 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     signed_psbt_base64 = NULL;
   }
 
-  struct wally_psbt *trimmed_psbt = psbt_trim(current_psbt);
+  // Trimming rebuilds the PSBT from its tx and drops global unknowns, which
+  // would strip the BIP322 message field — export those untrimmed (tiny).
+  struct wally_psbt *trimmed_psbt = is_bip322 ? NULL : psbt_trim(current_psbt);
   struct wally_psbt *export_psbt = trimmed_psbt ? trimmed_psbt : current_psbt;
 
   int ret = wally_psbt_to_base64(export_psbt, 0, &signed_psbt_base64);
@@ -1858,6 +1875,9 @@ static void cleanup_psbt_data(void) {
   message_sign_free_parsed(&current_message);
   is_message_sign = false;
 
+  bip322_request_free(&current_bip322);
+  is_bip322 = false;
+
   is_testnet = false;
   scanned_qr_format = FORMAT_NONE;
 }
@@ -1912,6 +1932,41 @@ static void create_message_sign_display(void) {
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
 
   create_sign_action_row(psbt_info_container, message_sign_button_cb);
+}
+
+// Review screen for a PSBT-based BIP322 signing request. Signing goes through
+// the regular PSBT sign path (sign_button_cb), so input ownership is enforced
+// by psbt_sign's classification and the signed PSBT is exported as usual.
+static void create_bip322_sign_display(void) {
+  if (!scan_screen) {
+    return;
+  }
+
+  psbt_info_container = theme_create_scroll_column(scan_screen, 10, 10);
+
+  theme_create_page_title(psbt_info_container, "Sign Message");
+
+  lv_obj_t *addr_title =
+      theme_create_label(psbt_info_container, "Address:", false);
+  theme_apply_label(addr_title, true);
+  lv_obj_set_style_text_color(addr_title, secondary_color(), 0);
+
+  create_address_label(psbt_info_container, current_bip322.address,
+                       highlight_color(), 0);
+
+  theme_create_separator(psbt_info_container, primary_color());
+
+  lv_obj_t *msg_title =
+      theme_create_label(psbt_info_container, "Message:", false);
+  theme_apply_label(msg_title, true);
+  lv_obj_set_style_text_color(msg_title, secondary_color(), 0);
+
+  lv_obj_t *msg_label =
+      theme_create_label(psbt_info_container, current_bip322.message, false);
+  lv_obj_set_width(msg_label, LV_PCT(100));
+  lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
+
+  create_sign_action_row(psbt_info_container, sign_button_cb);
 }
 
 static void message_sign_button_cb(lv_event_t *e) {
