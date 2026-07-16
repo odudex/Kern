@@ -47,7 +47,7 @@ static void touch_cb(lv_event_t *e) {
 }
 
 void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb,
-                        bool locked) {
+                        const char *hint) {
   if (active)
     screensaver_destroy();
 
@@ -65,9 +65,9 @@ void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb,
 
   logo = kern_logo_create(scr_container, 0, 0, logo_sz);
 
-  if (locked) {
+  if (hint) {
     lock_label = lv_label_create(scr_container);
-    lv_label_set_text(lock_label, "Locked");
+    lv_label_set_text(lock_label, hint);
     lv_obj_set_style_text_font(lock_label, theme_font_small(), 0);
     lv_obj_set_style_text_color(lock_label, secondary_color(), 0);
     lv_obj_update_layout(lock_label);
