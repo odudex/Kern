@@ -52,13 +52,14 @@ static void session_expired_handler(void) {
   if (app_video_is_streaming())
     app_video_stop();
   lv_obj_clean(lv_screen_active());
-  screensaver_create(lv_screen_active(), lock_dismissed_cb, true);
+  screensaver_create(lv_screen_active(), lock_dismissed_cb,
+                     pin_is_configured() ? "Locked" : "Unloaded");
 }
 
 static void screensaver_trigger_handler(void) {
   if (screensaver_is_active())
     return;
-  screensaver_create(lv_screen_active(), NULL, false);
+  screensaver_create(lv_screen_active(), NULL, NULL);
 }
 
 void session_lock_init(void) {
