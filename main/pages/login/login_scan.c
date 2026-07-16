@@ -17,6 +17,7 @@
 #include "../shared/key_confirmation.h"
 #include <lvgl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wally_bip39.h>
 #include <wally_core.h>
 
@@ -84,6 +85,21 @@ static void show_unidentified(void) {
   dialog_show_info("Unidentified content",
                    s_scan_content ? s_scan_content : "(empty)",
                    unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void show_psbt_needs_key(void) {
+  dialog_show_info("PSBT detected", "Load a key first to sign transactions",
+                   unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static bool is_psbt_content(const char *content, size_t len) {
+  if (!content)
+    return false;
+  if (len >= 6 && strncmp(content, "cHNidP", 6) == 0)
+    return true;
+  if (len >= 5 && memcmp(content, "psbt\xff", 5) == 0)
+    return true;
+  return false;
 }
 
 static void wo_validation_cb(descriptor_validation_result_t result,
@@ -155,8 +171,12 @@ static bool try_mnemonic(const char *content, size_t len) {
 static void on_scan_done(void) {
   size_t len = 0;
   char *content = qr_scanner_get_completed_content_with_len(&len);
-  // Extract a descriptor candidate (handles UR crypto-output/account + plain
-  // text) while the scanner state is still valid.
+  // UR type and descriptor candidate (UR crypto-output/account + plain text)
+  // must be read while the scanner state is still valid.
+  const char *ur_type = NULL;
+  qr_scanner_get_ur_result(&ur_type, NULL, NULL);
+  bool psbt_scanned = (ur_type && strcmp(ur_type, "crypto-psbt") == 0) ||
+                      is_psbt_content(content, len);
   char *desc_candidate = descriptor_extract_from_scanner();
 
   qr_scanner_page_hide();
@@ -164,6 +184,12 @@ static void on_scan_done(void) {
 
   s_scan_content =
       content; // owned here; freed by finish_to_login/clear_content
+
+  if (psbt_scanned) {
+    free(desc_candidate);
+    show_psbt_needs_key();
+    return;
+  }
 
   if (!content && !desc_candidate) {
     finish_to_login();
