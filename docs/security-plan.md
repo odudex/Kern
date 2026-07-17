@@ -31,6 +31,7 @@ The ESP32-P4 is not a secure element; two physical attacks remain open by constr
 
 - **NVS replay (PIN-counter rewind).** XTS encryption provides confidentiality, not integrity or freshness. The flash is an external chip: an attacker who can rewrite it can snapshot the encrypted `nvs` partition, spend N−1 PIN attempts, restore the snapshot, and repeat — resetting the failure counter and exponential backoff indefinitely, even with NVS encryption, flash encryption, and secure boot all enabled. Wipe-after-N-failures and backoff therefore only hold against attackers who cannot rewrite flash. The backstop is PIN entropy: the device-bound PBKDF2 salt (eFuse KEY5) forces every guess through this specific chip, so a long PIN stays strong even against counter rewind.
 - **Fault injection / glitching.** Voltage and EM glitching have a public history on earlier ESP32 generations; the ESP32-P4 has no proven resistance and no anti-glitch hardware guarantees. Mitigations that limit the payoff: mnemonics exist only in RAM (session-only) or KEF-encrypted at rest, and the PIN itself is never stored — only its PBKDF2 hash.
+- **Plaintext SPIFFS residue.** Flash encryption never covers the `storage` partition (SPIFFS is incompatible with encrypted partitions — see [Cross-Phase Security Dependencies](#cross-phase-security-dependencies)). Mnemonics are always stored as KEF envelopes, but descriptors saved unencrypted (`.txt`), file names/sizes, and KEF header metadata (version, iterations, user-chosen label) remain readable via physical flash extraction even after full Phase 7 lockdown. This leaks xpubs and wallet structure — a privacy exposure, not key material.
 
 ## ESP32-P4 Security Hardware Summary
 
@@ -135,6 +136,7 @@ Some features only reach their full security guarantee when combined with later 
 | Anti-phishing words (2) | Flash Encryption (4) | Without flash encryption, an attacker with physical access can read the firmware binary and app partitions and clone them to another board. Flash encryption makes those unreadable. (The PIN hash and split position live in `nvs` — that is protected by NVS encryption, Phase 3, not by flash encryption.) |
 | PIN hash in NVS (2) | NVS Encryption (3) | The PBKDF2 hash is stored in NVS. Until NVS encryption, physical flash extraction exposes it to offline brute-force (limited by 100k PBKDF2 iterations and the device-bound salt, but still a risk for weak PINs). NVS encryption removes this vector — and, being coupled to PIN setup, is the default for any PIN user. |
 | PIN hash in NVS (2) | NVS Encryption (3), **not** Flash Encryption (4) | Common misconception: flash encryption does **not** encrypt the `nvs` partition — ESP-IDF excludes it because NVS's wear-levelled writes are incompatible with the block cipher. NVS encryption (Phase 3) is what protects the PIN hash at rest, independent of flash encryption. |
+| KEF storage on SPIFFS (1) | **not** Flash Encryption (4) | Same misconception for the `storage` partition: flash encryption never covers it — ESP-IDF's SPIFFS driver is incompatible with encrypted partitions (SPIFFS progressively programs NOR bits in already-written pages, which XTS's write-once 16-byte blocks cannot express), and `storage` carries no `encrypted` flag. KEF (Phase 1) is the at-rest protection for mnemonics/descriptors there, independent of flash encryption. |
 | NVS encryption (3) | Secure Boot (5) | `HMAC_UP` computations are software-invokable: until secure boot, attacker firmware on the *same chip* can drive the HMAC peripheral to derive the NVS keys and decrypt a dumped `nvs` partition (PIN hash included). Without the chip, the keys stay out of reach either way. |
 | Wipe-after-N-failures (2) | Secure Boot (5) | Custom firmware could reset the failure counter or skip the wipe check. Secure boot prevents running unauthorized firmware. |
 | SD card OTA (6) | Secure Boot (5) | Without secure boot, the OTA path cannot verify firmware signatures — any `.bin` file would be accepted. Secure boot is a hard prerequisite. |
@@ -259,6 +261,8 @@ Migration flow for alpha testers:
 2. One serial `just flash` — writes bootloader, new partition table, initial `otadata`, and the app to `ota_0`.
 3. First boot finds empty NVS → forced fresh PIN setup → provisioning below runs. Every migrated device lands directly on encrypted NVS — there is no plaintext-NVS long tail.
 
+**PIN remains optional.** "Forced fresh PIN setup" above only means migrated users who *had* a PIN must set one up again (the wipe destroyed the hash) — it does not make PIN mandatory. A user who declines a PIN simply runs plaintext NVS holding nothing sensitive (settings only, no hash), same as a fresh no-PIN device; KEY4 is never burned without the consent dialog in 3b. The boot-time NVS branch therefore keys off **KEY4 presence, not PIN presence** — this also covers the PIN-set-then-disabled state, where NVS stays encrypted (3d) with no PIN hash in it.
+
 #### 3b. PIN-triggered provisioning
 - Setting a PIN (first setup, reset via `pin_change()`, or disable→re-enable) runs — after an explicit warning that this is a **permanent OTP write and clears current NVS settings**:
   1. Burn **KEY4** (256-bit TRNG key, purpose `HMAC_UP`, read- and write-protected) — idempotent, mirroring `pin_efuse_provision()` for KEY5.
@@ -301,6 +305,7 @@ CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4        # BLOCK_KEY4
 - **Not an on-device toggle**: flash an FE-built, signed bootloader over serial; the bootloader self-encrypts flash (bootloader + app + `encrypted` partitions) *in place* on first boot (~1 min). **Do not interrupt power** — a partial pass corrupts flash.
 - Development mode retains serial fallback for re-flashing/recovery.
 - PSRAM encryption is enabled automatically — protects runtime key material in external RAM.
+- The `storage` (SPIFFS) partition stays **plaintext**: SPIFFS does not support flash encryption, so the first-boot pass skips it (no `encrypted` flag). Mnemonics there are always KEF envelopes, so nothing key-critical depends on this — see [Cross-Phase Security Dependencies](#cross-phase-security-dependencies) and [Accepted Residual Risks](#accepted-residual-risks).
 - Verify encrypted flash contents are unreadable via physical extraction.
 
 ### Phase 5 — Secure Boot
