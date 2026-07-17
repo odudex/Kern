@@ -97,6 +97,13 @@ esp_err_t settings_init(void) {
   return ESP_OK;
 }
 
+void settings_deinit(void) {
+  if (!initialized)
+    return;
+  nvs_close(settings_nvs);
+  initialized = false;
+}
+
 wallet_network_t settings_get_network(void) {
   uint8_t val = settings_get_u8_or_default(KEY_NETWORK, WALLET_NETWORK_MAINNET);
   return (val <= WALLET_NETWORK_TESTNET) ? (wallet_network_t)val

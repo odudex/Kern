@@ -25,6 +25,9 @@
 #define SESSION_TIMEOUT_DEFAULT_SEC 300
 
 esp_err_t settings_init(void);
+
+/* Close the settings NVS handle (required before nvs_flash_deinit) */
+void settings_deinit(void);
 wallet_network_t settings_get_network(void);
 esp_err_t settings_set_network(wallet_network_t network);
 uint8_t settings_get_brightness(void);

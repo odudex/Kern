@@ -107,7 +107,7 @@ storage   data  spiffs   0xC20000   0x3E0000   (~3.9M)
 - `ota_0` inherits the old `factory` offset (0x20000) — serial flashing lands the app at the same address as before.
 - `storage` keeps its exact offset and size — KEF-encrypted mnemonics/descriptors already saved to SPIFFS survive the migration untouched.
 - App slots grow 4MB → 6MB. The app is ~1.7MB today, but the table is permanent after Phase 5, so the headroom (fonts, languages, assets) is free insurance — the space comes from the dropped factory partition.
-- NVS grows 24KB → 84KB, filling the space up to `ota_0` exactly. More pages improve wear-leveling for the failure-counter write on every PIN attempt. Old NVS content becomes unreadable in the resized partition — irrelevant, since Phase 3 erases and re-initializes NVS encrypted anyway.
+- NVS grows 24KB → 84KB, filling the space up to `ota_0` exactly. More pages improve wear-leveling for the failure-counter write on every PIN attempt. Note that old NVS content **survives** the resize: NVS pages are self-contained 4K units, so the old pages parse fine inside the larger partition, and flashing never writes the `nvs` region. A pre-existing plaintext PIN is therefore still present after the update — handled by the firmware-side migration in 3a.
 - `phy_init` is dropped — the ESP32-P4 has no radio, no `CONFIG_ESP_PHY*` option is set, and the partition was never read.
 
 ## Phase Ordering Rationale
@@ -257,19 +257,19 @@ The Phase 3 rollout replaces the partition table with the OTA-only layout (see [
 
 Migration flow for alpha testers:
 
-1. Warn up front: **settings and PIN are wiped** (NVS is resized and re-initialized). SPIFFS-stored encrypted mnemonics/descriptors survive (`storage` offset/size unchanged), but confirm QR/SD backups exist anyway.
-2. One serial `just flash` — writes bootloader, new partition table, initial `otadata`, and the app to `ota_0`.
-3. First boot finds empty NVS → forced fresh PIN setup → provisioning below runs. Every migrated device lands directly on encrypted NVS — there is no plaintext-NVS long tail.
+1. Warn up front: **settings and PIN are wiped** during the migration (NVS is erased and re-initialized encrypted). SPIFFS-stored encrypted mnemonics/descriptors survive (`storage` offset/size unchanged), but confirm QR/SD backups exist anyway.
+2. One serial `just flash` — writes bootloader, new partition table, initial `otadata`, and the app to `ota_0`. Flashing does **not** erase NVS: the old plaintext pages remain valid in the resized partition (see Partition Table above).
+3. The firmware closes the gap: if a PIN is configured while NVS is still plaintext, the first successful unlock triggers a one-time prompt that routes into fresh PIN setup, which runs the provisioning below. Declining removes the PIN (a stored PIN implies encrypted NVS). Either way, no device keeps a plaintext PIN hash — there is no plaintext-NVS long tail.
 
-**PIN remains optional.** "Forced fresh PIN setup" above only means migrated users who *had* a PIN must set one up again (the wipe destroyed the hash) — it does not make PIN mandatory. A user who declines a PIN simply runs plaintext NVS holding nothing sensitive (settings only, no hash), same as a fresh no-PIN device; KEY4 is never burned without the consent dialog in 3b. The boot-time NVS branch therefore keys off **KEY4 presence, not PIN presence** — this also covers the PIN-set-then-disabled state, where NVS stays encrypted (3d) with no PIN hash in it.
+**PIN remains optional.** The forced re-setup above only applies to migrated users who *had* a PIN — they must set one up again (or decline and lose it); it does not make PIN mandatory. A user without a PIN simply runs plaintext NVS holding nothing sensitive (settings only, no hash), same as a fresh no-PIN device; KEY4 is never burned without the consent dialog in 3b. The boot-time NVS branch therefore keys off **KEY4 presence, not PIN presence** — this also covers the PIN-set-then-disabled state, where NVS stays encrypted (3d) with no PIN hash in it.
 
 #### 3b. PIN-triggered provisioning
-- Setting a PIN (first setup, reset via `pin_change()`, or disable→re-enable) runs — after an explicit warning that this is a **permanent OTP write and clears current NVS settings**:
+- Setting a PIN (first setup, PIN change, or disable→re-enable) runs — after an explicit warning that this is a **permanent OTP write and clears current NVS settings**:
   1. Burn **KEY4** (256-bit TRNG key, purpose `HMAC_UP`, read- and write-protected) — idempotent, mirroring `pin_efuse_provision()` for KEY5.
   2. Encrypt and re-initialize the `nvs` partition (`nvs_flash_secure_init()`, HMAC scheme).
   3. Write the new PIN hash into the now-encrypted NVS.
-- The partition migration (3a) wipes NVS on every device, so all alpha testers go through this fresh setup — the `pin_change()`/re-enable trigger remains as the code path for any later device that somehow still has a plaintext NVS.
-- **Implementation note:** cleanest is to burn KEY4, then reboot; on boot the firmware sees KEY4 present, secure-inits NVS (erasing the old plaintext), and resumes PIN setup — avoiding mid-session `nvs_flash_deinit()`/erase juggling.
+- The partition migration (3a) wipes NVS on every device, so all alpha testers go through this fresh setup — the PIN-change/re-enable trigger remains as the code path for any later device that somehow still has a plaintext NVS.
+- **Implementation note:** provisioning runs **in session**, not via burn-then-reboot: after the consent dialog, the firmware burns KEY4, closes the only two NVS handle owners (`pin`, `settings`), then `nvs_flash_deinit()` → erase → encrypted re-init → reopens the handles, and PIN setup continues straight into writing the hash. A reboot-based flow was rejected because nothing survives the NVS wipe to tell the firmware to *resume* PIN setup — the user would have to redo the whole flow. Crash-safety comes from the boot path instead: if power is cut after the burn but before the migration completes, boot sees KEY4 present, fails to secure-init the plaintext partition, erases it, and lands on empty encrypted NVS.
 - **Guard the stock auto-burn path:** `nvs_sec_provider`'s HMAC key generation (`generate_keys_hmac()`) burns the eFuse key itself whenever the block is empty — a default `CONFIG_NVS_ENCRYPTION` init would burn KEY4 with no user consent. NVS init must be explicit and branch on KEY4 presence: KEY4 absent → plain `nvs_flash_init()` and never touch the keygen/secure path until the consent dialog; KEY4 present → `nvs_flash_secure_init()`.
 
 #### 3c. Mechanism (HMAC scheme — no key partition)
@@ -282,10 +282,10 @@ CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC=y   # HMAC scheme (not the flash-encryptio
 CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4        # BLOCK_KEY4
 ```
 
-- Registration: `nvs_sec_provider_register_hmac()` → `nvs_flash_read_security_cfg_v2()` → `nvs_flash_secure_init()`.
+- Registration of the HMAC scheme is automatic at startup (`nvs_sec_provider`'s `ESP_SYSTEM_INIT_FN`, harmless — burns nothing); the boot path is `nvs_flash_read_security_cfg_v2(nvs_flash_get_default_security_scheme(), &cfg)` → `nvs_flash_secure_init(&cfg)`, implemented in `core/nvs_secure.c`.
 
 #### 3d. Notes
-- **All-or-nothing:** unlike anti-phishing (which falls back to a deterministic salt if the HMAC peripheral is unavailable), NVS encryption has no plaintext fallback — once KEY4 is burned and NVS is encrypted, that is permanent.
+- **All-or-nothing:** unlike anti-phishing (which falls back to a deterministic salt if the HMAC peripheral is unavailable), NVS encryption has no plaintext fallback — once KEY4 is burned and NVS is encrypted, that is permanent. The same rule applies at setup time: if provisioning fails or KEY4 is unusable, PIN setup is aborted without writing a hash — a PIN hash is never stored in plaintext NVS.
 - **Independent of flash encryption:** flash encryption (Phase 4) deliberately leaves `nvs` unencrypted anyway (NVS's wear-levelled writes are incompatible with the block cipher), so NVS encryption is the mechanism that protects the PIN hash at rest whether or not flash encryption is used.
 - Anti-phishing words are unaffected (KEY5 is permanent and independent of KEY4).
 

@@ -1,3 +1,4 @@
+#include "core/nvs_secure.h"
 #include "core/pin.h"
 #include "core/settings.h"
 #include "pages/session_lock.h"
@@ -20,14 +21,10 @@
 static const char *TAG = "KERN_MAIN";
 
 void app_main(void) {
-  // Initialize NVS for persistent settings
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-      ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    nvs_flash_erase();
-    ret = nvs_flash_init();
-  }
-  ESP_ERROR_CHECK(ret);
+  // Initialize NVS for persistent settings — encrypted if eFuse KEY4 is
+  // provisioned, plaintext otherwise (never stock nvs_flash_init(): its
+  // keygen path would burn KEY4 without consent)
+  ESP_ERROR_CHECK(nvs_secure_init());
   settings_init();
 
   bsp_display_start();

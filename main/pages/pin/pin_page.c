@@ -5,12 +5,14 @@
 // and symbols.
 
 #include "pin_page.h"
+#include "../../core/nvs_secure.h"
 #include "../../core/pin.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/power.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
+#include "../session_lock.h"
 
 #include <bsp/pmic.h>
 #include <esp_system.h>
@@ -32,6 +34,7 @@ typedef enum {
   STATE_SETUP_SPLIT,
   STATE_SETUP_EFUSE,
   STATE_SETUP_SHOW_WORDS,
+  STATE_SETUP_NVS_ENC,
   // Delay / wipe
   STATE_DELAY,
 } pin_flow_state_t;
@@ -258,9 +261,7 @@ static void deferred_verify_cb(lv_timer_t *timer) {
   switch (result) {
   case PIN_VERIFY_OK:
     clear_buffers();
-    if (current_mode == PIN_PAGE_CHANGE)
-      transition_to(STATE_SETUP_FULL_PIN);
-    else if (on_complete)
+    if (on_complete)
       on_complete();
     break;
   case PIN_VERIFY_DELAY:
@@ -379,9 +380,9 @@ static void create_back_or_power_button(void) {
 // the current PIN (change mode) and showing anti-phishing words (deferred
 // eFuse epilogue) are uncounted bookends: STATE_SETUP_SHOW_WORDS only runs
 // when eFuse provisioning is accepted and succeeds, so it isn't a guaranteed
-// step. STATE_SETUP_EFUSE is a dialog overlay, not a screen. Adding a setup
-// screen means adding an enum member here and re-pointing SETUP_STEP_COUNT
-// at the new last step.
+// step. STATE_SETUP_EFUSE and STATE_SETUP_NVS_ENC are dialog overlays, not
+// screens. Adding a setup screen means adding an enum member here and
+// re-pointing SETUP_STEP_COUNT at the new last step.
 enum {
   SETUP_STEP_FULL_PIN = 1,
   SETUP_STEP_CONFIRM_PIN,
@@ -700,6 +701,31 @@ static void deferred_pin_save(lv_timer_t *timer) {
     on_complete();
 }
 
+static void setup_aborted_dismissed_cb(void) {
+  clear_buffers();
+  if (on_cancel)
+    on_cancel();
+}
+
+// Gate before saving the hash: any setup path that reaches "save" goes
+// through the NVS-encryption consent first. A stored PIN implies encrypted
+// NVS, so an unusable KEY4 aborts setup instead of saving plaintext. Keys
+// off KEY4 presence, not PIN presence.
+static void proceed_to_save(void) {
+  dismiss_processing();
+  if (nvs_secure_is_encrypted()) {
+    show_processing(deferred_pin_save);
+    return;
+  }
+  if (nvs_secure_key_check() == NVS_SECURE_KEY_ERROR) {
+    dialog_show_error_timeout(
+        "Storage encryption unavailable on this device. PIN setup canceled.",
+        setup_aborted_dismissed_cb, 3000);
+    return;
+  }
+  transition_to(STATE_SETUP_NVS_ENC);
+}
+
 static void split_confirm_cb(lv_event_t *e) {
   (void)e;
   pin_efuse_status_t status = pin_efuse_check();
@@ -708,7 +734,7 @@ static void split_confirm_cb(lv_event_t *e) {
   else if (status == PIN_EFUSE_PROVISIONED)
     transition_to(STATE_SETUP_SHOW_WORDS);
   else
-    show_processing(deferred_pin_save);
+    proceed_to_save();
 }
 
 static void build_split_state(void) {
@@ -798,8 +824,39 @@ static void efuse_confirm_result(bool confirmed, void *user_data) {
   if (pin_efuse_check() == PIN_EFUSE_PROVISIONED) {
     transition_to(STATE_SETUP_SHOW_WORDS);
   } else {
-    show_processing(deferred_pin_save);
+    proceed_to_save();
   }
+}
+
+// ---------------------------------------------------------------------------
+// NVS encryption provisioning dialog
+// ---------------------------------------------------------------------------
+
+static void nvs_enc_confirm_result(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!confirmed) {
+    // Declining cancels PIN setup: a stored PIN implies encrypted NVS
+    clear_buffers();
+    if (on_cancel)
+      on_cancel();
+    return;
+  }
+
+  lv_obj_t *progress = dialog_show_progress(
+      "Provisioning", "Encrypting storage...", DIALOG_STYLE_OVERLAY);
+  esp_err_t err = nvs_secure_provision();
+  if (progress)
+    lv_obj_delete(progress);
+
+  if (err != ESP_OK) {
+    // No plaintext fallback: a stored PIN implies encrypted NVS
+    dialog_show_error_timeout("Storage encryption failed. PIN setup canceled.",
+                              setup_aborted_dismissed_cb, 3000);
+    return;
+  }
+
+  session_lock_reload_settings();
+  show_processing(deferred_pin_save);
 }
 
 // ---------------------------------------------------------------------------
@@ -809,7 +866,7 @@ static void efuse_confirm_result(bool confirmed, void *user_data) {
 static void setup_words_confirm_result(bool confirmed, void *user_data) {
   (void)user_data;
   if (confirmed)
-    show_processing(deferred_pin_save);
+    proceed_to_save();
   // "No" dismisses the dialog, revealing the words and Continue button
 }
 
@@ -829,9 +886,8 @@ static void build_setup_words_deferred(lv_timer_t *timer) {
                                             &word2, identicon_data);
 
   if (err != ESP_OK || !word1 || !word2) {
-    // HMAC failed — chain to deferred_pin_save (PBKDF2 is also slow)
-    lv_timer_t *t = lv_timer_create(deferred_pin_save, 50, NULL);
-    lv_timer_set_repeat_count(t, 1);
+    // HMAC failed — skip words, continue via the NVS-encryption gate
+    proceed_to_save();
     return;
   }
 
@@ -1034,6 +1090,15 @@ static void transition_to(pin_flow_state_t state) {
   case STATE_SETUP_SHOW_WORDS:
     build_setup_words_state();
     break;
+  case STATE_SETUP_NVS_ENC:
+    dialog_show_confirm(
+        "Enable encrypted storage?\n\n"
+        "Your PIN and settings will be stored encrypted. This will "
+        "permanently burn a cryptographic key into the device hardware "
+        "(eFuse) and clear stored settings.\n\n"
+        "This is IRREVERSIBLE. Declining cancels PIN setup.",
+        nvs_enc_confirm_result, NULL, DIALOG_STYLE_FULLSCREEN);
+    break;
   case STATE_DELAY:
     build_delay_state();
     break;
@@ -1070,7 +1135,6 @@ void pin_page_create(lv_obj_t *parent, pin_page_mode_t mode,
 
   switch (mode) {
   case PIN_PAGE_UNLOCK:
-  case PIN_PAGE_CHANGE:
     if (pin_get_delay_ms() > 0)
       transition_to(STATE_DELAY);
     else

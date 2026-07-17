@@ -163,6 +163,7 @@ set(APP_UTIL_SOURCES
 # --- Core application modules ---
 set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/nvs_secure.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c

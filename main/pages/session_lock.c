@@ -1,9 +1,11 @@
 // Session lock — inactivity screensaver and lock/power-off routing
 
 #include "session_lock.h"
+#include "../core/nvs_secure.h"
 #include "../core/pin.h"
 #include "../core/settings.h"
 #include "../core/wallet.h"
+#include "../ui/dialog.h"
 #include "../utils/session.h"
 #include "login/login.h"
 #include "pin/pin_page.h"
@@ -13,10 +15,57 @@
 
 static bool device_locked = false;
 
-static void post_unlock_cb(void) {
-  pin_page_destroy();
+static void unlock_finished(void) {
   device_locked = false;
   login_page_create(lv_screen_active());
+}
+
+// ---------------------------------------------------------------------------
+// One-time migration: a PIN stored in plaintext NVS (set before storage
+// encryption existed) survives reflashing, since flashing never erases the
+// nvs partition. A stored PIN implies encrypted NVS, so after a successful
+// unlock the user must re-run PIN setup through the encryption provisioning;
+// declining removes the PIN.
+// ---------------------------------------------------------------------------
+
+static bool migration_pending(void) {
+  return pin_is_configured() && !nvs_secure_is_encrypted();
+}
+
+static void migration_setup_done(void) {
+  pin_page_destroy();
+  unlock_finished();
+}
+
+static void migration_setup_cancel(void) {
+  pin_remove();
+  pin_page_destroy();
+  unlock_finished();
+}
+
+static void migration_confirm_result(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!confirmed) {
+    pin_remove();
+    unlock_finished();
+    return;
+  }
+  pin_page_create(lv_screen_active(), PIN_PAGE_SETUP, migration_setup_done,
+                  migration_setup_cancel);
+}
+
+static void post_unlock_cb(void) {
+  pin_page_destroy();
+  if (migration_pending()) {
+    dialog_show_confirm(
+        "Storage encryption upgrade\n\n"
+        "This firmware stores the PIN in encrypted storage. Your PIN was "
+        "saved by an older version and must be set up again.\n\n"
+        "Declining removes the PIN.",
+        migration_confirm_result, NULL, DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+  unlock_finished();
 }
 
 static void lock_dismissed_cb(void) {
@@ -62,10 +111,14 @@ static void screensaver_trigger_handler(void) {
   screensaver_create(lv_screen_active(), NULL, NULL);
 }
 
-void session_lock_init(void) {
-  session_init(screensaver_trigger_handler, session_expired_handler);
+void session_lock_reload_settings(void) {
   session_set_screensaver_timeout(settings_get_screensaver_timeout());
   session_set_timeout(settings_get_session_timeout());
+}
+
+void session_lock_init(void) {
+  session_init(screensaver_trigger_handler, session_expired_handler);
+  session_lock_reload_settings();
 }
 
 void session_lock_boot_gate(lv_obj_t *screen) {

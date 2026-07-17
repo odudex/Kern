@@ -36,6 +36,10 @@ static const char *nvs_dir(void) {
     return s_nvs_dir_override ? s_nvs_dir_override : NVS_DATA_DIR;
 }
 
+const char *sim_nvs_get_data_dir(void) {
+    return nvs_dir();
+}
+
 #define NVS_MAX_HANDLES  16
 #define NVS_MAX_KEY_LEN  15
 #define NVS_TYPE_U8      0x01
@@ -169,6 +173,32 @@ esp_err_t nvs_flash_init(void) {
     return ESP_OK;
 }
 
+esp_err_t nvs_flash_init_partition(const char *part_name) {
+    (void)part_name;
+    return nvs_flash_init();
+}
+
+esp_err_t nvs_flash_deinit(void) {
+    return ESP_OK;
+}
+
+nvs_sec_scheme_t *nvs_flash_get_default_security_scheme(void) {
+    static nvs_sec_scheme_t scheme = {0};
+    return &scheme;
+}
+
+esp_err_t nvs_flash_read_security_cfg_v2(nvs_sec_scheme_t *scheme_cfg,
+                                         nvs_sec_cfg_t *cfg) {
+    if (!scheme_cfg || !cfg) return ESP_ERR_INVALID_ARG;
+    memset(cfg, 0x42, sizeof(*cfg));
+    return ESP_OK;
+}
+
+esp_err_t nvs_flash_secure_init(nvs_sec_cfg_t *cfg) {
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    return nvs_flash_init();
+}
+
 esp_err_t nvs_flash_erase(void) {
     for (int i = 0; i < NVS_MAX_HANDLES; i++) {
         if (s_handles[i].used) {
@@ -217,6 +247,16 @@ esp_err_t nvs_open(const char *namespace_name, nvs_open_mode_t open_mode,
 
     *out_handle = (nvs_handle_t)(idx + 1); /* 1-based index */
     return ESP_OK;
+}
+
+void nvs_close(nvs_handle_t handle) {
+    int idx = (int)handle - 1;
+    if (idx < 0 || idx >= NVS_MAX_HANDLES || !s_handles[idx].used)
+        return;
+    if (s_handles[idx].dirty)
+        save_to_file(&s_handles[idx]);
+    free_entries(&s_handles[idx]);
+    s_handles[idx].used = false;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -14,4 +14,8 @@ void session_lock_init(void);
  * otherwise the login page. */
 void session_lock_boot_gate(lv_obj_t *screen);
 
+/* Re-sync session/screensaver timeouts from settings. Call after NVS content
+ * is replaced wholesale (encryption provisioning wipes settings). */
+void session_lock_reload_settings(void);
+
 #endif // SESSION_LOCK_H

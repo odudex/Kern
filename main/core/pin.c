@@ -76,6 +76,13 @@ esp_err_t pin_init(void) {
   return ESP_OK;
 }
 
+void pin_deinit(void) {
+  if (!initialized)
+    return;
+  nvs_close(pin_nvs);
+  initialized = false;
+}
+
 // ---------------------------------------------------------------------------
 // eFuse
 // ---------------------------------------------------------------------------
@@ -330,11 +337,6 @@ pin_verify_result_t pin_verify(const char *pin, size_t len) {
 
   // Wrong PIN — failure count was already persisted above
   return PIN_VERIFY_DELAY;
-}
-
-esp_err_t pin_change(const char *new_pin, size_t len, uint8_t split_pos) {
-  // Caller must verify old PIN first via pin_verify()
-  return pin_setup(new_pin, len, split_pos);
 }
 
 esp_err_t pin_remove(void) {

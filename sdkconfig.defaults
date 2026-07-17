@@ -6,6 +6,12 @@ CONFIG_IDF_TARGET="esp32p4"
 CONFIG_APP_REPRODUCIBLE_BUILD=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
+# NVS encryption, HMAC scheme (keys derived from eFuse KEY4, no nvs_keys partition).
+# The app never calls nvs_flash_init(): its keygen path would burn KEY4 without
+# consent. Boot branches on KEY4 presence in core/nvs_secure.c instead.
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC=y
+CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_1=y

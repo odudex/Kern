@@ -11,6 +11,7 @@
 #include "ui/theme.h"
 #include "ui/theme_widgets.h"
 #include "ui/assets/kern_logo_lvgl.h"
+#include "core/nvs_secure.h"
 #include "core/settings.h"
 #include "core/pin.h"
 #include "pages/session_lock.h"
@@ -189,11 +190,7 @@ int main(int argc, char *argv[]) {
     /* -----------------------------------------------------------------------
      * Initialize NVS (file-backed storage for settings and PIN)
      * --------------------------------------------------------------------- */
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        nvs_flash_erase();
-        ret = nvs_flash_init();
-    }
+    esp_err_t ret = nvs_secure_init();
     if (ret != ESP_OK) {
         fprintf(stderr, "NVS init failed: 0x%x\n", ret);
         return 1;

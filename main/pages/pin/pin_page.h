@@ -7,8 +7,7 @@
 
 typedef enum {
   PIN_PAGE_UNLOCK,
-  PIN_PAGE_SETUP,
-  PIN_PAGE_CHANGE,
+  PIN_PAGE_SETUP, // also used to change the PIN (caller verifies first)
 } pin_page_mode_t;
 
 typedef void (*pin_page_complete_cb_t)(void);

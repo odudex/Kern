@@ -36,6 +36,9 @@ typedef enum {
  */
 esp_err_t pin_init(void);
 
+/* Close the "pin" NVS handle (required before nvs_flash_deinit) */
+void pin_deinit(void);
+
 /* eFuse KEY5 status check */
 pin_efuse_status_t pin_efuse_check(void);
 
@@ -53,11 +56,11 @@ esp_err_t pin_compute_anti_phishing(const char *prefix, size_t len,
                                     const char **word2_out,
                                     uint8_t identicon_out[3]);
 
-/* PIN lifecycle */
+/* PIN lifecycle. To change a PIN, verify the current one via pin_verify(),
+ * then call pin_setup() with the new PIN. */
 bool pin_is_configured(void);
 esp_err_t pin_setup(const char *pin, size_t len, uint8_t split_pos);
 pin_verify_result_t pin_verify(const char *pin, size_t len);
-esp_err_t pin_change(const char *new_pin, size_t len, uint8_t split_pos);
 
 /* Remove PIN without wiping user data (for "Disable PIN" in settings) */
 esp_err_t pin_remove(void);

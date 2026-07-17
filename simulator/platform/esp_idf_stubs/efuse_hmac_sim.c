@@ -7,7 +7,9 @@
 
 #include "esp_efuse.h"
 #include "esp_hmac.h"
+#include "sim_nvs.h"
 #include <mbedtls/md.h>
+#include <stdio.h>
 #include <string.h>
 
 /* 32-byte deterministic test key — stable across simulator restarts */
@@ -18,23 +20,65 @@ static const uint8_t SIM_HMAC_KEY[32] = {
     0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
 };
 
-/* KEY5 state — starts as provisioned so pin.c uses HMAC path by default */
-static bool               s_key5_provisioned = true;
-static esp_efuse_purpose_t s_key5_purpose     = ESP_EFUSE_KEY_PURPOSE_HMAC_UP;
+/* Per-block state. KEY5 starts provisioned so pin.c uses the HMAC path by
+ * default; KEY4 starts unprovisioned so the NVS-encryption consent flow in
+ * PIN setup is exercisable in the simulator. Burns persist to
+ * <nvs-data-dir>/efuse.sim, which nvs_flash_erase() does not remove — burned
+ * blocks survive an NVS wipe, matching real eFuse semantics. */
+#define SIM_EFUSE_BLOCKS 6
+static bool s_provisioned[SIM_EFUSE_BLOCKS] = {
+    [EFUSE_BLK_KEY5] = true,
+};
+static esp_efuse_purpose_t s_purpose[SIM_EFUSE_BLOCKS] = {
+    [EFUSE_BLK_KEY5] = ESP_EFUSE_KEY_PURPOSE_HMAC_UP,
+};
+static bool s_loaded = false;
+
+static void efuse_path(char *buf, size_t n) {
+    snprintf(buf, n, "%s/efuse.sim", sim_nvs_get_data_dir());
+}
+
+static void efuse_load(void) {
+    if (s_loaded)
+        return;
+    s_loaded = true;
+    char path[512];
+    efuse_path(path, sizeof(path));
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return;
+    if (fread(s_provisioned, sizeof(s_provisioned[0]), SIM_EFUSE_BLOCKS, f) ==
+        SIM_EFUSE_BLOCKS)
+        fread(s_purpose, sizeof(s_purpose[0]), SIM_EFUSE_BLOCKS, f);
+    fclose(f);
+}
+
+static void efuse_save(void) {
+    char path[512];
+    efuse_path(path, sizeof(path));
+    FILE *f = fopen(path, "wb");
+    if (!f)
+        return;
+    fwrite(s_provisioned, sizeof(s_provisioned[0]), SIM_EFUSE_BLOCKS, f);
+    fwrite(s_purpose, sizeof(s_purpose[0]), SIM_EFUSE_BLOCKS, f);
+    fclose(f);
+}
 
 /* -------------------------------------------------------------------------- */
 /* eFuse stubs                                                                 */
 /* -------------------------------------------------------------------------- */
 
 esp_efuse_purpose_t esp_efuse_get_key_purpose(esp_efuse_block_t block) {
-    if (block == EFUSE_BLK_KEY5)
-        return s_key5_provisioned ? s_key5_purpose : ESP_EFUSE_KEY_PURPOSE_USER;
+    efuse_load();
+    if (block >= 0 && block < SIM_EFUSE_BLOCKS && s_provisioned[block])
+        return s_purpose[block];
     return ESP_EFUSE_KEY_PURPOSE_USER;
 }
 
 bool esp_efuse_key_block_unused(esp_efuse_block_t block) {
-    if (block == EFUSE_BLK_KEY5)
-        return !s_key5_provisioned;
+    efuse_load();
+    if (block >= 0 && block < SIM_EFUSE_BLOCKS)
+        return !s_provisioned[block];
     return true;
 }
 
@@ -43,9 +87,11 @@ esp_err_t esp_efuse_write_key(esp_efuse_block_t block,
                                const void *key, size_t key_size) {
     (void)key;
     (void)key_size;
-    if (block == EFUSE_BLK_KEY5) {
-        s_key5_purpose     = purpose;
-        s_key5_provisioned = true;
+    efuse_load();
+    if (block >= 0 && block < SIM_EFUSE_BLOCKS) {
+        s_purpose[block]     = purpose;
+        s_provisioned[block] = true;
+        efuse_save();
     }
     return ESP_OK;
 }

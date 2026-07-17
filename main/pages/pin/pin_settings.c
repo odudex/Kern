@@ -39,9 +39,10 @@ static void change_pin_done(void) {
     ui_menu_show(settings_menu);
 }
 
+// PIN was already verified to enter this page, so go straight to setup
 static void change_pin_cb(void) {
   ui_menu_hide(settings_menu);
-  pin_page_create(lv_screen_active(), PIN_PAGE_CHANGE, change_pin_done,
+  pin_page_create(lv_screen_active(), PIN_PAGE_SETUP, change_pin_done,
                   change_pin_done);
 }
 
