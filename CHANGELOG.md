@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.0.13] - 2026-07-17
+
+### Added
+- NVS encryption (security roadmap Phase 3): PIN and settings are stored encrypted at rest with keys derived from a new eFuse HMAC key; provisioning is consent-gated during PIN setup, and devices with a pre-existing PIN run a one-time migration after unlock (declining removes the PIN)
+- BIP322 message signing through PSBT-based signing requests
+- Step progress bar in the PIN setup flow
+- QR viewer: orientation-aware layout with density, brightness, and frame-rate settings
+- Screensaver timeout configurable independently of the session timeout
+- Simulator uses the webcam by default; `just sim-no-cam` runs without it
+
+### Changed
+- Partition table migrated to an OTA-only layout (NVS grown to 84K, dual 6MB app slots, factory and phy_init dropped) in preparation for anti-rollback; updating wipes NVS (PIN and settings) while SPIFFS storage survives
+- Anti-phishing identicon color is drawn from a curated 12-color palette of nameable colors instead of a continuous hue
+- Change PIN no longer asks for the current PIN a second time (entering PIN settings already verifies it)
+- Scan pipeline: triple-buffered frame lease for the decoder, ROI-tracked decoding, progress UI moved off the decode task
+- Crypto utilities ported to the PSA Crypto API
+- Compression consolidated on zlib; BBQr streams unpadded base32 and the viewer retains generated parts
+- Camera preview and animated QR frames count as session activity, preventing mid-scan lockouts
+- UI rendering: shared reusable widget styles, optimized Sankey rendering, batched menu layout updates
+- Updated k_quirc, cUR (P4 SIMD fountain XOR; decoder state machine surfaces terminal checksum failures), and libwally
+
+### Fixed
+- Loading a PSBT without a key loaded warns instead of failing silently
+- Undecodable BBQr PSBT payloads are rejected instead of falling through to text detectors
+- KEF envelope detection requires a printable ASCII ID, avoiding false positives on plaintext QR codes
+- Camera: custom SC2336 IPA tuning anchors black level and softens gamma
+- PSBT review: address-index cap applies to outputs only, and non-standard inputs are rendered
+- Settings menu buttons are laid out correctly after PIN flows
+
 ## [0.0.12] - 2026-07-03
 
 ### Added
