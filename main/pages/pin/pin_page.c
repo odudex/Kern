@@ -431,6 +431,26 @@ static void build_entry_state(const char *title_text) {
 #define IDENTICON_CELLS 5
 #define IDENTICON_CELL_PX (IDENTICON_SIZE / IDENTICON_CELLS) // 24px
 
+// 12 perceptually distinct, nameable colors ("mine is teal" is a stronger
+// check than a remembered hue). Part of the recorded anti-phishing
+// fingerprint — frozen: changing entries changes existing users' identicons.
+static const uint32_t identicon_palette[] = {
+    0xEF4444, // red
+    0xF97316, // orange
+    0xEAB308, // yellow
+    0x84CC16, // lime
+    0x22C55E, // green
+    0x14B8A6, // teal
+    0x06B6D4, // cyan
+    0x3B82F6, // blue
+    0x8B5CF6, // violet
+    0xD946EF, // magenta
+    0xEC4899, // pink
+    0xFFFFFF, // white
+};
+#define IDENTICON_PALETTE_LEN                                                  \
+  (sizeof(identicon_palette) / sizeof(identicon_palette[0]))
+
 static void render_identicon_to(lv_obj_t *canvas, lv_draw_buf_t *draw_buf,
                                 uint8_t pattern[3]) {
   if (!canvas || !draw_buf)
@@ -439,9 +459,8 @@ static void render_identicon_to(lv_obj_t *canvas, lv_draw_buf_t *draw_buf,
   // Extract 15 cell bits from pattern[0..1] (3 independent cols x 5 rows)
   uint16_t bits = ((uint16_t)pattern[0] << 8) | pattern[1];
 
-  // Convert hue byte to color: hue 0-255 → 0-359
-  uint16_t hue = (uint16_t)pattern[2] * 359 / 255;
-  lv_color_t fg = lv_color_hsv_to_rgb(hue, 70, 90);
+  lv_color_t fg =
+      lv_color_hex(identicon_palette[pattern[2] % IDENTICON_PALETTE_LEN]);
   lv_color_t bg = lv_color_black();
 
   // Build 5x5 grid with vertical mirror:
