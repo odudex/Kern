@@ -39,6 +39,12 @@
 
 #define LV_DRAW_SW_DRAW_UNIT_CNT 1
 
+/* Home-screen cards all share one shadow geometry (24px blur + 12px radius =
+   36px), so a cache a little above that reuses the blurred mask across all
+   four cards after the first hover instead of re-blurring per frame. Cost is
+   size^2 bytes, so keep this near actual usage rather than maxing it out. */
+#define LV_DRAW_SW_SHADOW_CACHE_SIZE 64
+
 /*=======================
  * FEATURE CONFIGURATION
  *=======================*/

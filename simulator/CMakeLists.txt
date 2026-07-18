@@ -133,6 +133,7 @@ set(SIM_SOURCES
     ${APP_UI_DIR}/font_policy.c
     ${APP_UI_DIR}/theme.c
     ${APP_UI_DIR}/theme_widgets.c
+    ${APP_UI_DIR}/kern_card_style.c
     ${APP_UI_DIR}/assets/kern_logo_lvgl.c
     ${APP_UI_DIR}/assets/kern_logo_font.c
     ${APP_UI_DIR}/assets/icons_16.c
