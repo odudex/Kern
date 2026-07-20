@@ -231,8 +231,8 @@ unzip kern-wave_4b-v0.0.3.zip
 The zip contains:
 - `bootloader.bin` — bootloader
 - `partition-table.bin` — partition table
-- `firmware.bin` — application firmware
-- `kern-v0.0.3.bin` — merged binary (all of the above)
+- `firmware-signed.bin` — application firmware (signed; also the file for SD-card updates)
+- `kern-v0.0.3.hex` — single-file image (all of the above, Intel HEX)
 
 3. Create a Python virtual environment and install esptool:
 
@@ -242,20 +242,17 @@ source venv/bin/activate
 pip install esptool
 ```
 
-4. Flash the merged binary (clean install):
+4. Flash the single-file image:
 
 ```bash
-esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-v0.0.3.bin
+esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-v0.0.3.hex
 ```
 
-> **Note:** Flashing the merged binary from offset `0x0` erases the entire flash range it covers, including the NVS partition where PIN and settings are stored. To preserve NVS data when updating, flash the individual binaries instead:
->
-> ```bash
-> esptool --chip esp32p4 --baud 460800 write-flash \
->   0x2000 bootloader.bin \
->   0x8000 partition-table.bin \
->   0x20000 firmware.bin
-> ```
+> **Note:** The `.hex` image is sparse — it writes only the regions it contains, so the NVS partition (PIN, settings) and stored data survive reflashing. For a factory-clean install, erase everything first: `esptool --chip esp32p4 erase-flash`, then flash the image.
+
+### Updating via SD card
+
+A device already running signed firmware updates without any computer: copy `firmware-signed.bin` from the zip onto a SD card, insert it, and go to **Settings → Firmware Update**. The device verifies the signature before installing and keeps the previous firmware as an automatic fallback.
 
 ## References
 
