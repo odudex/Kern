@@ -8,6 +8,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session.h"
+#include "../settings/firmware_update.h"
 #include "security_settings.h"
 #include <bsp/display.h>
 #include <lvgl.h>
@@ -133,6 +134,19 @@ static void security_cb(void) {
   security_settings_page_show();
 }
 
+// ── Firmware update submenu ──
+
+static void firmware_update_return_cb(void) {
+  firmware_update_page_destroy();
+  ui_menu_show(settings_menu);
+}
+
+static void firmware_update_cb(void) {
+  ui_menu_hide(settings_menu);
+  firmware_update_page_create(lv_screen_active(), firmware_update_return_cb);
+  firmware_update_page_show();
+}
+
 // ── Category menu callbacks ──
 
 static void brightness_cb(void) { show_brightness_page(); }
@@ -160,6 +174,7 @@ void login_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   ui_menu_add_entry(settings_menu, "Security", security_cb);
   ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
   ui_menu_add_entry(settings_menu, "Screensaver", screensaver_cb);
+  ui_menu_add_entry(settings_menu, "Firmware Update", firmware_update_cb);
 }
 
 void login_settings_page_show(void) {

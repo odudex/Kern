@@ -100,9 +100,11 @@ static void open_file(const char *name) {
 
   // Anything loadable (PSBT, descriptor, mnemonic, message, address) is far
   // smaller — the cap keeps a mis-tapped photo or log from stalling the UI.
+  // Callers with bigger payloads (firmware images) raise it via the config.
+  size_t max_size =
+      cfg.max_file_size ? cfg.max_file_size : BROWSER_MAX_FILE_SIZE;
   size_t size = 0;
-  if (sd_card_file_size(full, &size) == ESP_OK &&
-      size > BROWSER_MAX_FILE_SIZE) {
+  if (sd_card_file_size(full, &size) == ESP_OK && size > max_size) {
     dialog_show_error_timeout("File too large", NULL, 0);
     return;
   }

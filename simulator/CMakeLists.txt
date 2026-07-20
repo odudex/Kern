@@ -152,6 +152,7 @@ set(STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_storage_hooks.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/efuse_hmac_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/freertos_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/fw_update_sim.c
 )
 
 # --- Application utilities ---
@@ -289,6 +290,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/settings/descriptor_manager.c
     ${APP_PAGES_DIR}/settings/wallet_settings.c
     ${APP_PAGES_DIR}/settings/registered_descriptors.c
+    ${APP_PAGES_DIR}/settings/firmware_update.c
     # Shared pages
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
