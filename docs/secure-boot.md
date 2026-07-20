@@ -1,4 +1,4 @@
-# Kern Secure Boot Guide (Phase 5)
+# Kern Secure Boot Guide (Phase 6)
 
 > **Warning**: Secure boot burns eFuses permanently. Practice every step on a development board before touching a production device. There is no undo.
 
@@ -71,9 +71,9 @@ The ESP32-P4 provides six eFuse key blocks (BLOCK_KEY0–KEY5). Secure Boot v2 s
 | KEY1 (BLOCK_KEY1) | Secure Boot Digest 1 — first rotation/backup key | Available for rotation #1 |
 | KEY2 (BLOCK_KEY2) | Secure Boot Digest 2 — second rotation/backup key | Available for rotation #2 |
 
-KEY3 holds the flash-encryption key (Phase 4), KEY4 the NVS-encryption HMAC (Phase 3), and KEY5 the anti-phishing HMAC (Phase 2). All six blocks are allocated. Because **all three secure-boot digest slots are populated**, there is no free digest slot for an attacker to inject a rogue signing key.
+KEY3 holds the flash-encryption key (Phase 5), KEY4 the NVS-encryption HMAC (Phase 3), and KEY5 the anti-phishing HMAC (Phase 2). All six blocks are allocated. Because **all three secure-boot digest slots are populated**, there is no free digest slot for an attacker to inject a rogue signing key.
 
-> **Flash-encryption interaction:** With three digest slots consuming KEY0–KEY2, only one key block (KEY3) is left for flash encryption. XTS-AES-256 normally needs two blocks. Kern keeps 256-bit strength by deploying the flash-encryption key through the ESP32-P4 **Key Manager** (Kconfig choice `SECURE_FLASH_ENCRYPTION_KEY_SOURCE`, option `..._KEY_MGR`), which stores the key outside the shared eFuse blocks. If the Key Manager path is not used, fall back to **XTS-AES-128** in KEY3 (single block). This is a Phase 4 decision — see [security-plan.md](security-plan.md).
+> **Flash-encryption interaction:** With three digest slots consuming KEY0–KEY2, only one key block (KEY3) is left for flash encryption. XTS-AES-256 normally needs two blocks. Kern keeps 256-bit strength by deploying the flash-encryption key through the ESP32-P4 **Key Manager** (Kconfig choice `SECURE_FLASH_ENCRYPTION_KEY_SOURCE`, option `..._KEY_MGR`), which stores the key outside the shared eFuse blocks. If the Key Manager path is not used, fall back to **XTS-AES-128** in KEY3 (single block). This is a Phase 5 decision — see [security-plan.md](security-plan.md).
 
 ### Revocation
 
@@ -93,7 +93,7 @@ Setting the `SECURE_BOOT_EN` eFuse bit permanently enables secure boot. From tha
 
 - Only firmware signed with a key whose digest matches a non-revoked eFuse slot will boot.
 - Serial flashing of unsigned firmware is blocked (UART download mode is restricted).
-- The device can only be updated via signed images (SD card OTA after Phase 6).
+- The device can only be updated via signed images (SD card OTA, in place since Phase 4).
 
 ---
 
@@ -674,6 +674,8 @@ espefuse --chip esp32p4 burn-efuse SECURE_BOOT_EN
 
 Kern burns three digests (KEY0/KEY1/KEY2), which enables **up to two key rotations** — one more than a two-slot scheme. Keep at least one non-revoked digest at all times, or the device can no longer boot.
 
+> **Before secure boot is enabled (Phase 4–5 window):** the SD update path trusts only the public keys embedded in the *running* app's signature blocks, so switching signing keys already requires the same dual-signed transition release (steps 1–2 below) — there is just no revocation step, since no eFuses are involved. Once Phase 6 burns all three digests, a release signed with any non-revoked key verifies directly against eFuse, and dual-signing is only needed again as part of an actual revocation (step 3), never for simply starting to sign with a successor key.
+
 ### Rotation Procedure
 
 ```
@@ -686,7 +688,7 @@ Step 1: Sign transitional firmware with BOTH the outgoing and incoming key
   espsecure sign-data --version 2 --keyfile kern-sb-key1.pem --append-signatures --output kern-transition.bin temp.bin
 
 Step 2: Release the dual-signed firmware
-  Users install it via SD card update (Phase 6)
+  Users install it via SD card update (Phase 4)
   Device boots — ROM verifies against KEY0 (outgoing), succeeds
 
 Step 3: After all users have updated, revoke the outgoing key
@@ -721,7 +723,7 @@ Anti-rollback prevents downgrading to older firmware versions that may contain k
 
 ### Partition Layout Requirement
 
-Anti-rollback assumes an **OTA-only** partition table — two `ota_app` slots and no `factory` (stated in ESP-IDF's `bootloader_utility.c`). A factory image is frozen at flash time with security version 0, so the first eFuse counter increment would make it unbootable. Kern's Phase 3 partition migration drops the factory partition accordingly; the fallback role moves to the *previous OTA slot*, which is why the SD update flow must self-test and call `esp_ota_mark_app_valid_cancel_rollback()` after every update (see [security-plan.md Phase 6](security-plan.md#phase-6--air-gapped-sd-card-updates)).
+Anti-rollback assumes an **OTA-only** partition table — two `ota_app` slots and no `factory` (stated in ESP-IDF's `bootloader_utility.c`). A factory image is frozen at flash time with security version 0, so the first eFuse counter increment would make it unbootable. Kern's Phase 3 partition migration drops the factory partition accordingly; the fallback role moves to the *previous OTA slot*, which is why the SD update flow must self-test and call `esp_ota_mark_app_valid_cancel_rollback()` after every update (see [security-plan.md Phase 4](security-plan.md#phase-4--air-gapped-sd-card-updates)).
 
 ### Configuration
 
@@ -794,17 +796,17 @@ CONFIG_BOOTLOADER_APP_SECURE_VERSION=0
 
 ## 9. eFuse Burn Order Summary
 
-eFuses must be burned in a specific order. The critical rule: **every read-protected key (NVS-HMAC KEY4, flash-encryption XTS key) must be burned before `SECURE_BOOT_EN`** — enabling secure boot write-protects `RD_DIS`, after which no other key block can be read-protected. This is why NVS encryption (Phase 3) and flash encryption (Phase 4) precede secure boot (Phase 5) in the plan. See [security-plan.md](security-plan.md#the-hard-constraint-read-protected-keys-before-secure-boot).
+eFuses must be burned in a specific order. The critical rule: **every read-protected key (NVS-HMAC KEY4, flash-encryption XTS key) must be burned before `SECURE_BOOT_EN`** — enabling secure boot write-protects `RD_DIS`, after which no other key block can be read-protected. This is why NVS encryption (Phase 3) and flash encryption (Phase 5) precede secure boot (Phase 6) in the plan. See [security-plan.md](security-plan.md#the-hard-constraint-read-protected-keys-before-secure-boot).
 
 | Order | Command | eFuse | Reversible? | Phase | Notes |
 |-------|---------|-------|-------------|-------|-------|
 | 1 | `burn-key BLOCK_KEY5 ... HMAC_UP` | KEY5 | **No** | Phase 2 | Anti-phishing HMAC (already done if Phase 2 complete) |
 | 2 | `burn-key BLOCK_KEY4 ... HMAC_UP` | KEY4 | **No** | Phase 3 | NVS-encryption HMAC — read-protected; must precede secure boot |
-| 3 | Flash-encryption key (Key Manager, or `burn-key BLOCK_KEY3 ... XTS_AES_128_KEY`) | KEY3 / Key Manager | **No** | Phase 4 | XTS-AES-256 via Key Manager (preferred) or XTS-AES-128 in KEY3; read-protected, must precede secure boot |
-| 4 | `burn-key BLOCK_KEY0 ... SECURE_BOOT_DIGEST0` | KEY0 | **No** | Phase 5 | Primary secure boot digest |
-| 5 | `burn-key BLOCK_KEY1 ... SECURE_BOOT_DIGEST1` | KEY1 | **No** | Phase 5 | Rotation #1 secure boot digest |
-| 6 | `burn-key BLOCK_KEY2 ... SECURE_BOOT_DIGEST2` | KEY2 | **No** | Phase 5 | Rotation #2 secure boot digest |
-| 7 | `burn-efuse SECURE_BOOT_EN` (+ hardening set) | Control | **No** | Phase 5 | **Enables secure boot permanently.** Burned together with `DIS_DIRECT_BOOT`, the JTAG-disable set, secure download mode, then the `RD_DIS` write-protect |
+| 3 | Flash-encryption key (Key Manager, or `burn-key BLOCK_KEY3 ... XTS_AES_128_KEY`) | KEY3 / Key Manager | **No** | Phase 5 | XTS-AES-256 via Key Manager (preferred) or XTS-AES-128 in KEY3; read-protected, must precede secure boot |
+| 4 | `burn-key BLOCK_KEY0 ... SECURE_BOOT_DIGEST0` | KEY0 | **No** | Phase 6 | Primary secure boot digest |
+| 5 | `burn-key BLOCK_KEY1 ... SECURE_BOOT_DIGEST1` | KEY1 | **No** | Phase 6 | Rotation #1 secure boot digest |
+| 6 | `burn-key BLOCK_KEY2 ... SECURE_BOOT_DIGEST2` | KEY2 | **No** | Phase 6 | Rotation #2 secure boot digest |
+| 7 | `burn-efuse SECURE_BOOT_EN` (+ hardening set) | Control | **No** | Phase 6 | **Enables secure boot permanently.** Burned together with `DIS_DIRECT_BOOT`, the JTAG-disable set, secure download mode, then the `RD_DIS` write-protect |
 | 8 | Flash-encryption release mode + secure/disabled serial download | Control | **No** | Phase 7 | Release lockdown — permanently disables plaintext serial flashing |
 
 > **Every eFuse burn is irreversible.** Double-check the digest files and key purposes before confirming. Use `espefuse summary` to inspect current eFuse state before and after each burn. Because all three secure-boot digest slots are used, there is no unused digest slot to revoke — but if you ever leave one empty (e.g. a custom hybrid layout), revoke it before enabling secure boot. For **Profile A** (on-device: PIN/NVS encryption + secure boot, no flash encryption) rows 3 and 8 are skipped, and the whole sequence — including the KEY4 (NVS) burn in row 2 — runs from on-device flows.
@@ -870,7 +872,7 @@ Complete these steps on a **development board** before any production device.
 - [ ] Burn `SECURE_BOOT_KEY_REVOKE0`, confirm key0-only firmware no longer boots
 - [ ] Confirm key1-signed firmware still boots (bootloader was signed with key1)
 
-### Anti-Rollback (after Phase 6 SD updates)
+### Anti-Rollback (eFuse-enforced from this phase; SD update path exists since Phase 4)
 
 - [ ] Install firmware with security version 1
 - [ ] Attempt to install firmware with security version 0 via SD card — **must be rejected**
@@ -878,7 +880,7 @@ Complete these steps on a **development board** before any production device.
 
 ### Recovery
 
-- [ ] After secure boot is enabled, verify SD card update path works (Phase 6)
+- [ ] After secure boot is enabled, re-run the Phase 4d SD update validation suite — all tests must pass
 - [ ] Simulate power loss during SD card update — device should boot from previous slot
 
 ---
@@ -914,10 +916,10 @@ Secure boot alone does not protect against all threats:
 
 | Threat | Requires |
 |--------|----------|
-| Flash content extraction | Flash Encryption (Phase 4) |
+| Flash content extraction | Flash Encryption (Phase 5) |
 | NVS data readout (PIN hash) | NVS Encryption (Phase 3) |
-| Firmware downgrade | Anti-Rollback (this phase) + SD card updates (Phase 6) |
-| JTAG/debug access | Flash Encryption (Phase 4) — locks JTAG automatically |
+| Firmware downgrade | Anti-Rollback (this phase) + SD card updates (Phase 4) |
+| JTAG/debug access | Flash Encryption (Phase 5) — locks JTAG automatically |
 
 Secure boot provides firmware integrity. For full device security, all phases through Phase 7 (release lockdown) are needed.
 
