@@ -10,6 +10,7 @@
 #define SD_FILE_BROWSER_H
 
 #include <lvgl.h>
+#include <stddef.h>
 
 typedef struct {
   /* Menu title; NULL shows the current directory path (the default). */
@@ -20,6 +21,8 @@ typedef struct {
                            const char *name);
   /* Invoked when the user backs out at the SD root. */
   void (*return_cb)(void);
+  /* Selectable file-size cap in bytes; 0 uses the 256KB default. */
+  size_t max_file_size;
 } sd_file_browser_config_t;
 
 void sd_file_browser_create(lv_obj_t *parent,

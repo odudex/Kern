@@ -12,6 +12,16 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_NVS_ENCRYPTION=y
 CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC=y
 CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4
+# Phase 4: SD-card updates verify Secure Boot v2 RSA-3072 app signatures
+# against the running app's keys (no secure boot eFuses yet). Builds stay
+# unsigned; releases are signed offline (just sign <board> <key>).
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
+# Rollback safety net: new OTA image must self-confirm on first boot
+# (fw_update_boot_confirm) or the bootloader returns to the previous slot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_1=y
