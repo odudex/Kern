@@ -170,6 +170,7 @@ Users who want to burn the developer's digest need the public key digest files. 
 ```bash
 for n in 0 1 2; do
     espsecure extract-public-key \
+        --version 2 \
         --keyfile kern-sb-key${n}.pem \
         kern-sb-key${n}-pub.pem
 done
