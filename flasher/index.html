@@ -231,7 +231,7 @@ import { ESPLoader, Transport } from './vendor/esptool-js-0.6.0.js';
 const FLASH_FILES_FALLBACK = [
   { name: 'bootloader.bin',      offset: 0x2000  },
   { name: 'partition-table.bin', offset: 0x8000  },
-  { name: 'ota_data_initial.bin',offset: 0xf000  },
+  { name: 'ota_data_initial.bin',offset: 0x1e000 },
   { name: 'kern.bin',            offset: 0x20000 },
 ];
 
