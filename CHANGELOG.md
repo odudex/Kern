@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.14] - 2026-07-20
+
+### Added
+- SD card firmware updates (security roadmap Phase 4): Settings → Firmware Update installs signed firmware from the SD card; the image is fully validated before any flash write (chip, project, version downgrade check, Secure Boot v2 RSA-3072 signature against the running app's keys), and the new image must self-confirm on first boot or the bootloader rolls back to the previous slot
+
+### Changed
+- App images carry Secure Boot v2 signature blocks; OTA updates are verified via signed-app-on-update (no secure boot eFuses involved yet), serial flashing unaffected
+- The release single-file image is now a sparse Intel HEX (`kern-v<ver>.hex`) that preserves NVS (PIN, settings) and stored data when reflashing, replacing the raw merged `.bin`
+
+### Fixed
+- Release merged image placed OTA data at the pre-migration offset (0xf000), overwriting part of the NVS partition; corrected to 0x1e000 (same fix in the web flasher's fallback offsets)
+
 ## [0.0.13] - 2026-07-17
 
 ### Added
