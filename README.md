@@ -101,6 +101,8 @@ idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.crowpanel' b
 
 > **Note:** `just` builds each board into its own `build_<board>/` directory, so switching boards needs no clean. The raw `idf.py` commands above share the default `build/` directory and `sdkconfig` — run `idf.py fullclean && rm sdkconfig` when switching boards that way.
 
+> **Note:** The first build auto-generates `dev_signing_key.pem` (gitignored) and every build is signed with it. This is required to boot: the firmware refuses to run unsigned images. This key is a per-clone development key — it carries no trust and never leaves your machine. Official releases are signed offline with the project's release key instead, so a self-built device only accepts SD-card updates built from the same clone; flash releases over USB.
+
 ### Desktop Simulator
 
 The simulator renders the full LVGL UI in an SDL2 window, matching each board's resolution:

@@ -45,7 +45,7 @@ for DEVICE in $DEVICES; do
     cp "$BUILD_DIR/bootloader/bootloader.bin" "$DEVICE_DIR/"
     cp "$BUILD_DIR/partition_table/partition-table.bin" "$DEVICE_DIR/"
     cp "$BUILD_DIR/ota_data_initial.bin" "$DEVICE_DIR/"
-    cp "$BUILD_DIR/kern.bin" "$DEVICE_DIR/firmware.bin"
+    cp "$BUILD_DIR/kern-unsigned.bin" "$DEVICE_DIR/firmware.bin"
 
     echo "${DEVICE} staged"
     echo
