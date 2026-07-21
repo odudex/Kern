@@ -239,7 +239,7 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   lv_obj_set_style_text_font(input->textarea, theme_font_small(), 0);
   lv_obj_set_style_bg_color(input->textarea, panel_color(), 0);
   lv_obj_set_style_text_color(input->textarea, primary_color(), 0);
-  lv_obj_set_style_border_color(input->textarea, secondary_color(), 0);
+  lv_obj_set_style_border_color(input->textarea, highlight_color(), 0);
   lv_obj_set_style_border_width(input->textarea, 1, 0);
   lv_obj_set_style_bg_color(input->textarea, highlight_color(), LV_PART_CURSOR);
   lv_obj_set_style_bg_opa(input->textarea, LV_OPA_COVER, LV_PART_CURSOR);
