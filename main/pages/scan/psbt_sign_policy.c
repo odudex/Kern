@@ -105,23 +105,54 @@ static void show_cannot_sign(const char *message,
                    DIALOG_STYLE_FULLSCREEN);
 }
 
+static char pending_reject_body[384];
+static dialog_callback_t pending_dismissed_cb;
+static void (*pending_load_cb)(void);
+
+static void offer_descriptor_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (confirmed && pending_load_cb) {
+    pending_load_cb();
+    return;
+  }
+  show_cannot_sign(pending_reject_body, pending_dismissed_cb);
+}
+
 static bool reject_expected_owned(const sign_policy_review_t *review,
-                                  dialog_callback_t dismissed_cb) {
+                                  dialog_callback_t dismissed_cb,
+                                  void (*load_descriptor_cb)(void)) {
   if (!review->need_expected_owned || settings_get_expected_owned_signing())
     return false;
 
-  char body[384];
-  snprintf(body, sizeof(body),
-           "%s %zu's path %s matches our fingerprint but the script "
+  snprintf(pending_reject_body, sizeof(pending_reject_body),
+           "%s %zu's path %s matches this wallet's fingerprint but the script "
            "cannot be re-derived from it -- wallet bug or attacker-crafted "
            "input.\n"
-           "If multisig or miniscript: Load the wallet descriptor.\n"
-           "To sign anyway: Enable 'Expected-owned signing' in Wallet "
-           "settings. The device will then trust the PSBT's keypath without "
+           "To sign anyway: Enable 'Expected-owned signing' in Settings > "
+           "Wallet. The device will then trust the PSBT's keypath without "
            "verification.",
            review->flagged_is_input ? "Input" : "Output", review->flagged_index,
            review->flagged_path[0] ? review->flagged_path : "(unknown)");
-  show_cannot_sign(body, dismissed_cb);
+
+  if (!load_descriptor_cb) {
+    show_cannot_sign(pending_reject_body, dismissed_cb);
+    return true;
+  }
+
+  pending_dismissed_cb = dismissed_cb;
+  pending_load_cb = load_descriptor_cb;
+
+  char prompt[384];
+  snprintf(prompt, sizeof(prompt),
+           "%s %zu's path %s matches this wallet's fingerprint, but its "
+           "script can't be rebuilt from a single key.\n"
+           "Multisig and miniscript scripts can only be verified with the "
+           "wallet descriptor.\n\n"
+           "Load a descriptor now?",
+           review->flagged_is_input ? "Input" : "Output", review->flagged_index,
+           review->flagged_path[0] ? review->flagged_path : "(unknown)");
+  dialog_show_confirm(prompt, offer_descriptor_cb, NULL,
+                      DIALOG_STYLE_FULLSCREEN);
   return true;
 }
 
@@ -174,7 +205,8 @@ static bool reject_partial(const sign_policy_review_t *review,
 }
 
 bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
-                                    dialog_callback_t dismissed_cb) {
+                                    dialog_callback_t dismissed_cb,
+                                    void (*load_descriptor_cb)(void)) {
   if (!psbt)
     return false;
 
@@ -187,7 +219,7 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
                      dismissed_cb);
     return false;
   }
-  if (reject_expected_owned(&review, dismissed_cb))
+  if (reject_expected_owned(&review, dismissed_cb, load_descriptor_cb))
     return false;
   if (reject_permissive(&review, dismissed_cb))
     return false;
