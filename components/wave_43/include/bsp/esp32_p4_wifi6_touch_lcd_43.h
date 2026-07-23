@@ -36,6 +36,13 @@
 #define BSP_LCD_TOUCH_RST (GPIO_NUM_NC)
 #define BSP_LCD_TOUCH_INT (GPIO_NUM_NC)
 
+/* Wi-Fi 6 / BT co-processor (ESP32-C6).
+   The C6 provides wireless via ESP-Hosted over SDIO; its active-high CHIP_EN
+   line is driven by P4 GPIO54 (through R34, 0R — see board schematic). Kern is
+   an air-gapped signer and never brings up the ESP-Hosted host, so we hold the
+   C6 in reset (EN low) to keep its radio powered down. */
+#define BSP_C6_WIFI_EN (GPIO_NUM_54)
+
 /* Camera I2C (shares main I2C bus on this board) */
 #define BSP_CAM_I2C_SCL BSP_I2C_SCL
 #define BSP_CAM_I2C_SDA BSP_I2C_SDA
@@ -51,6 +58,24 @@
 esp_err_t bsp_i2c_init(void);
 esp_err_t bsp_i2c_deinit(void);
 i2c_master_bus_handle_t bsp_i2c_get_handle(void);
+
+/**************************************************************************************************
+ *
+ * Wireless co-processor
+ *
+ **************************************************************************************************/
+
+/**
+ * @brief Hold the Wi-Fi/BT co-processor (ESP32-C6) in reset.
+ *
+ * Configures BSP_C6_WIFI_EN as an output and drives it low, keeping the C6
+ * powered down so its radio cannot be brought up. Intended to be called once,
+ * as early as possible during boot. Note: this is a runtime measure enforced by
+ * the P4 firmware; it does not modify the C6's own flash.
+ *
+ * @return ESP_OK on success, or a gpio driver error code.
+ */
+esp_err_t bsp_wifi_coproc_disable(void);
 
 /**************************************************************************************************
  *
