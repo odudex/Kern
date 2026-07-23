@@ -173,7 +173,17 @@ static void handle_address_content(const char *content);
 static void handle_mnemonic_content(const char *data, size_t len);
 static void scan_kef_return_cb(void);
 static void scan_kef_success_cb(const uint8_t *data, size_t len);
-static void descriptor_loaded_info_cb(void *user_data);
+static void policy_reject_dismissed_cb(void *user_data);
+static void resume_psbt_review(bool offer_descriptor);
+static void psbt_offer_descriptor_cb(void);
+static void psbt_desc_qr_cb(void);
+static void psbt_desc_flash_cb(void);
+static void psbt_desc_sd_cb(void);
+static void psbt_desc_menu_back_cb(void);
+static void psbt_descriptor_validation_cb(descriptor_validation_result_t result,
+                                          void *user_data);
+static void psbt_desc_storage_return_cb(void);
+static void psbt_desc_storage_success_cb(void);
 static void show_export_choice(void);
 static void export_show_qr_cb(void);
 static void export_save_sd_cb(void);
@@ -513,14 +523,7 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
         return;
       }
 
-      if (!psbt_sign_policy_allows_review(current_psbt, is_testnet,
-                                          descriptor_loaded_info_cb)) {
-        return;
-      }
-
-      if (!create_psbt_info_display()) {
-        dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
-      }
+      resume_psbt_review(true);
     }
   } else {
     dialog_show_error_timeout("Unrecognized format", return_callback, 0);
@@ -787,7 +790,7 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
 
 // --- Descriptor handler ---
 
-static void descriptor_loaded_info_cb(void *user_data) {
+static void policy_reject_dismissed_cb(void *user_data) {
   (void)user_data;
   if (return_callback)
     return_callback();
@@ -822,6 +825,81 @@ static void scan_descriptor_validation_cb(descriptor_validation_result_t result,
 static void handle_descriptor_content(const char *descriptor_str) {
   descriptor_loader_process_string(descriptor_str,
                                    scan_descriptor_validation_cb, NULL);
+}
+
+// --- On-the-fly descriptor load for the sign-policy gate ---
+
+// Re-runs the policy gate against the retained PSBT. With offer_descriptor the
+// expected-owned rejection becomes an offer to load a descriptor; without it
+// the gate falls back to the plain rejection dialog.
+static void resume_psbt_review(bool offer_descriptor) {
+  if (!psbt_sign_policy_allows_review(
+          current_psbt, is_testnet, policy_reject_dismissed_cb,
+          offer_descriptor ? psbt_offer_descriptor_cb : NULL))
+    return;
+  if (!create_psbt_info_display())
+    dialog_show_error_timeout("Invalid PSBT data", return_callback, 0);
+}
+
+static void psbt_offer_descriptor_cb(void) {
+  descriptor_loader_show_source_menu(scan_screen, psbt_desc_qr_cb,
+                                     psbt_desc_flash_cb, psbt_desc_sd_cb,
+                                     psbt_desc_menu_back_cb);
+}
+
+static void psbt_desc_menu_back_cb(void) {
+  descriptor_loader_destroy_source_menu();
+  resume_psbt_review(false);
+}
+
+static void psbt_descriptor_validation_cb(descriptor_validation_result_t result,
+                                          void *user_data) {
+  (void)user_data;
+  if (result != VALIDATION_SUCCESS)
+    descriptor_loader_show_error(result);
+  resume_psbt_review(true);
+}
+
+static void return_from_descriptor_scanner_cb(void) {
+  if (!qr_scanner_has_completed_result()) {
+    qr_scanner_page_hide();
+    qr_scanner_page_destroy();
+    resume_psbt_review(false);
+    return;
+  }
+  descriptor_loader_process_scanner(psbt_descriptor_validation_cb, NULL, NULL);
+}
+
+static void psbt_desc_qr_cb(void) {
+  descriptor_loader_destroy_source_menu();
+  qr_scanner_page_create(NULL, return_from_descriptor_scanner_cb);
+  qr_scanner_page_show();
+}
+
+static void psbt_desc_storage_return_cb(void) {
+  load_descriptor_storage_page_destroy();
+  resume_psbt_review(false);
+}
+
+static void psbt_desc_storage_success_cb(void) {
+  load_descriptor_storage_page_destroy();
+  resume_psbt_review(true);
+}
+
+static void psbt_desc_flash_cb(void) {
+  descriptor_loader_destroy_source_menu();
+  load_descriptor_storage_page_create(
+      lv_screen_active(), psbt_desc_storage_return_cb,
+      psbt_desc_storage_success_cb, STORAGE_FLASH);
+  load_descriptor_storage_page_show();
+}
+
+static void psbt_desc_sd_cb(void) {
+  descriptor_loader_destroy_source_menu();
+  load_descriptor_storage_page_create(lv_screen_active(),
+                                      psbt_desc_storage_return_cb,
+                                      psbt_desc_storage_success_cb, STORAGE_SD);
+  load_descriptor_storage_page_show();
 }
 
 // --- Address handler ---
