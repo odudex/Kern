@@ -88,6 +88,19 @@ static const st7701_lcd_init_cmd_t vendor_specific_init_default[] = {
     {0x29, (uint8_t[]){0x00}, 0, 0},
 };
 
+esp_err_t bsp_wifi_coproc_disable(void) {
+  /* Output latch defaults to 0, so enabling the driver already pulls CHIP_EN
+   * low against the external pull-up. */
+  const gpio_config_t en_cfg = {
+      .pin_bit_mask = 1ULL << BSP_C6_WIFI_EN,
+      .mode = GPIO_MODE_OUTPUT,
+  };
+  BSP_ERROR_CHECK_RETURN_ERR(gpio_config(&en_cfg));
+  BSP_ERROR_CHECK_RETURN_ERR(gpio_set_level(BSP_C6_WIFI_EN, 0));
+  ESP_LOGI(TAG, "ESP32-C6 held in reset");
+  return ESP_OK;
+}
+
 esp_err_t bsp_i2c_init(void) {
   if (i2c_initialized) {
     return ESP_OK;
