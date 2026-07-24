@@ -108,6 +108,7 @@ static void create_dice_input(void) {
   lv_obj_align(dice_btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_size(dice_btnmatrix, LV_PCT(100), LV_PCT(50));
   theme_apply_btnmatrix(dice_btnmatrix);
+  theme_apply_bottom_safe_area(dice_btnmatrix);
 
   truncate_label = lv_label_create(dice_rolls_screen);
   lv_label_set_text(truncate_label, "...");

@@ -173,7 +173,7 @@ static lv_obj_t *create_corner_button(lv_obj_t *parent, lv_align_t align,
   theme_apply_touch_button(btn, false);
   lv_obj_set_size(btn, theme_corner_button_width(),
                   theme_corner_button_height());
-  lv_obj_align(btn, align, x_ofs, y_ofs);
+  theme_align_corner_safe(btn, align, x_ofs, y_ofs);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, symbol);
@@ -306,6 +306,7 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
                             LV_PART_ITEMS | LV_STATE_PRESSED);
   lv_obj_set_style_bg_color(input->keyboard, highlight_color(),
                             LV_PART_ITEMS | LV_STATE_CHECKED);
+  theme_apply_bottom_safe_area(input->keyboard);
 }
 
 void ui_text_input_show(ui_text_input_t *input) {

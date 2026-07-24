@@ -227,7 +227,7 @@ static void create_result_ui(void) {
   int32_t pad = theme_default_padding();
   load_btn = theme_create_button(bip85_screen, "Load", true);
   lv_obj_set_size(load_btn, 140, theme_min_touch_size());
-  lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
+  theme_align_corner_safe(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
   lv_obj_add_event_cb(load_btn, load_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
