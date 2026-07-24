@@ -8,12 +8,19 @@
 // Trade fewer keys per row for wider touch targets.
 
 static const char *const compact_kb_map_lc[] = {
-    "q",  "w",  "e",  "r",   "t",  "y",
-    "u",  "i",  "o",  "p",   "\n", "a",
-    "s",  "d",  "f",  "g",   "h",  "j",
-    "k",  "l",  "\n", "ABC", "z",  "x",
-    "c",  "v",  "b",  "n",   "m",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
+    "q",  "w", "e",  "r",   "t",          "y",
+    "u",  "i", "o",  "p",   "\n",         "a",
+    "s",  "d", "f",  "g",   "h",          "j",
+    "k",  "l", "\n", "ABC", "z",          "x",
+    "c",  "v", "b",  "n",   "m",          LV_SYMBOL_BACKSPACE,
+    "\n",
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    " ",
+#endif
+    "1#", ",", " ",  ".",   LV_SYMBOL_OK,
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    " ",
+#endif
     ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_lc_map[] = {
@@ -45,19 +52,36 @@ static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_lc_map[] = {
     1,
     1,
     LV_BUTTONMATRIX_CTRL_CHECKED | 2,
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 4,
+    2,
+    10,
+    2,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 4,
+    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1};
+#else
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
     1,
     5,
     1,
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
+#endif
 
 static const char *const compact_kb_map_uc[] = {
-    "Q",  "W",  "E",  "R",   "T",  "Y",
-    "U",  "I",  "O",  "P",   "\n", "A",
-    "S",  "D",  "F",  "G",   "H",  "J",
-    "K",  "L",  "\n", "abc", "Z",  "X",
-    "C",  "V",  "B",  "N",   "M",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
+    "Q",  "W", "E",  "R",   "T",          "Y",
+    "U",  "I", "O",  "P",   "\n",         "A",
+    "S",  "D", "F",  "G",   "H",          "J",
+    "K",  "L", "\n", "abc", "Z",          "X",
+    "C",  "V", "B",  "N",   "M",          LV_SYMBOL_BACKSPACE,
+    "\n",
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    " ",
+#endif
+    "1#", ",", " ",  ".",   LV_SYMBOL_OK,
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    " ",
+#endif
     ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_uc_map[] = {
@@ -89,22 +113,40 @@ static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_uc_map[] = {
     1,
     1,
     LV_BUTTONMATRIX_CTRL_CHECKED | 2,
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 4,
+    2,
+    10,
+    2,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 4,
+    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1};
+#else
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
     1,
     5,
     1,
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
+#endif
 
 // Five rows covering every printable ASCII symbol (',' and '.' live on the
 // letter pages) so any externally created passphrase or KEF key can be typed.
 static const char *const compact_kb_map_spec[] = {
-    "1",  "2", "3",  "4",  "5",  "6",          "7",
-    "8",  "9", "0",  "\n", "@",  "#",          "$",
-    "%",  "&", "*",  "+",  "-",  "=",          "/",
-    "\n", "(", ")",  "[",  "]",  "{",          "}",
-    "<",  ">", "\"", "'",  "\n", "abc",        "!",
-    "?",  ";", ":",  "_",  "\\", "|",          LV_SYMBOL_BACKSPACE,
-    "\n", "~", "^",  "`",  " ",  LV_SYMBOL_OK, ""};
+    "1",  "2", "3",  "4",  "5",          "6",   "7",
+    "8",  "9", "0",  "\n", "@",          "#",   "$",
+    "%",  "&", "*",  "+",  "-",          "=",   "/",
+    "\n", "(", ")",  "[",  "]",          "{",   "}",
+    "<",  ">", "\"", "'",  "\n",         "abc", "!",
+    "?",  ";", ":",  "_",  "\\",         "|",   LV_SYMBOL_BACKSPACE,
+    "\n",
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    " ",
+#endif
+    "~",  "^", "`",  " ",  LV_SYMBOL_OK,
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    " ",
+#endif
+    ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
     1,
@@ -146,11 +188,21 @@ static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
     1,
     1,
     LV_BUTTONMATRIX_CTRL_CHECKED | 2,
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,
+    2,
+    2,
+    2,
+    10,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 4,
+    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1};
+#else
     1,
     1,
     1,
     5,
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
+#endif
 
 // Corner buttons (back/power top-left, settings top-right) all share the
 // secondary grey style so they read as one consistent control class.
@@ -306,7 +358,6 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
                             LV_PART_ITEMS | LV_STATE_PRESSED);
   lv_obj_set_style_bg_color(input->keyboard, highlight_color(),
                             LV_PART_ITEMS | LV_STATE_CHECKED);
-  theme_apply_bottom_safe_area(input->keyboard);
 }
 
 void ui_text_input_show(ui_text_input_t *input) {

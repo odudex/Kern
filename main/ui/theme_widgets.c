@@ -230,16 +230,6 @@ void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
   lv_btnmatrix_set_btn_ctrl_all(btnmatrix, LV_BTNMATRIX_CTRL_CLICK_TRIG);
 }
 
-void theme_apply_bottom_safe_area(lv_obj_t *obj) {
-  int32_t inset = theme_safe_area_inset();
-  if (!obj || inset <= 0)
-    return;
-
-  lv_obj_set_style_pad_left(obj, inset, 0);
-  lv_obj_set_style_pad_right(obj, inset, 0);
-  lv_obj_set_style_pad_bottom(obj, inset, 0);
-}
-
 void theme_align_corner_safe(lv_obj_t *obj, lv_align_t align, int32_t x_ofs,
                              int32_t y_ofs) {
   if (!obj)
