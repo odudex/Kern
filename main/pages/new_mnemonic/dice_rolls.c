@@ -48,37 +48,15 @@ static void confirm_finish_cb(bool confirmed, void *user_data);
 static void back_btn_cb(lv_event_t *e);
 static void back_confirm_cb(bool confirmed, void *user_data);
 
-static const char *dice_map[] = {"1",
-                                 "2",
-                                 "3",
-                                 "\n",
-                                 "4",
-                                 "5",
-                                 "6",
-                                 "\n",
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
-                                 " ",
-#endif
-                                 LV_SYMBOL_BACKSPACE,
-                                 "Done",
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
-                                 " ",
-#endif
-                                 ""};
-
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+// clang-format off
+static const char *dice_map[] = {
+    "1", "2", "3", "\n", "4", "5", "6", "\n",
+    THEME_SAFE_ROW_MAP(LV_SYMBOL_BACKSPACE, "Done"), ""};
 static const lv_buttonmatrix_ctrl_t dice_ctrl[] = {
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,
-    11,
-    11,
-    LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1};
-#endif
+    1, 1, 1, 1, 1, 1,
+    THEME_SAFE_ROW_CTRL(THEME_SAFE_ROW_WIDTH(1, 11),
+                        THEME_SAFE_ROW_WIDTH(1, 11))};
+// clang-format on
 
 static void cleanup_ui(void) {
   if (back_btn) {
@@ -134,9 +112,7 @@ static void create_dice_input(void) {
 
   dice_btnmatrix = lv_btnmatrix_create(dice_rolls_screen);
   lv_btnmatrix_set_map(dice_btnmatrix, dice_map);
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
   lv_btnmatrix_set_ctrl_map(dice_btnmatrix, dice_ctrl);
-#endif
   lv_obj_align(dice_btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_size(dice_btnmatrix, LV_PCT(100), LV_PCT(50));
   theme_apply_btnmatrix(dice_btnmatrix);

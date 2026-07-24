@@ -6,78 +6,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *kb_map[] = {"q",
-                               "w",
-                               "e",
-                               "r",
-                               "t",
-                               "y",
-                               "u",
-                               "i",
-                               "o",
-                               "p",
-                               "\n",
-                               "a",
-                               "s",
-                               "d",
-                               "f",
-                               "g",
-                               "h",
-                               "j",
-                               "k",
-                               "l",
-                               "\n",
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
-                               " ",
-#endif
-                               "z",
-                               "x",
-                               "c",
-                               "v",
-                               "b",
-                               "n",
-                               "m",
-                               LV_SYMBOL_BACKSPACE,
-                               LV_SYMBOL_OK,
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
-                               " ",
-#endif
-                               ""};
-
+// clang-format off
+static const char *kb_map[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    THEME_SAFE_ROW_MAP("z", "x", "c", "v", "b", "n", "m",
+                       LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK), ""};
 static const char btn_to_char[] = {
-    'q',      'w', 'e', 'r', 't', 'y', 'u', 'i',
-    'o',      'p', 'a', 's', 'd', 'f', 'g', 'h',
-    'j',      'k', 'l',
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
-    0,
-#endif
-    'z',      'x', 'c', 'v', 'b', 'n', 'm', UI_KB_BACKSPACE,
-    UI_KB_OK,
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
-    0,
-#endif
-};
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+    'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
+    THEME_SAFE_ROW_VALUES('z', 'x', 'c', 'v', 'b', 'n', 'm', UI_KB_BACKSPACE,
+                          UI_KB_OK)};
 
 #define BTN_COUNT (sizeof(btn_to_char) / sizeof((btn_to_char)[0]))
 
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
 static const lv_buttonmatrix_ctrl_t kb_ctrl[] = {
-    1, 1,
-    1, 1,
-    1, 1,
-    1, 1,
-    1, 1,
-    1, 1,
-    1, 1,
-    1, 1,
-    1, 1,
-    1, LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,
-    2, 2,
-    2, 2,
-    2, 2,
-    2, 4,
-    4, LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1};
-#endif
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    THEME_SAFE_ROW_CTRL(THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 4),
+                        THEME_SAFE_ROW_WIDTH(1, 4))};
+// clang-format on
 
 static int get_key_index_from_btn(uint32_t btn_id) {
   if (btn_id >= BTN_COUNT)
@@ -167,9 +118,7 @@ ui_keyboard_t *ui_keyboard_create(lv_obj_t *parent, const char *title,
 
   kb->btnmatrix = lv_buttonmatrix_create(parent);
   lv_buttonmatrix_set_map(kb->btnmatrix, kb_map);
-#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
   lv_buttonmatrix_set_ctrl_map(kb->btnmatrix, kb_ctrl);
-#endif
   lv_obj_set_size(kb->btnmatrix, LV_PCT(100), LV_PCT(50));
   lv_obj_align(kb->btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   theme_apply_btnmatrix(kb->btnmatrix);

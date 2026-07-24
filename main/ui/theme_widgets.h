@@ -6,6 +6,22 @@
 // Widget factory: builders and stylers that assemble LVGL objects from the
 // theme tokens (colours, fonts, sizes) declared in theme.h.
 
+// Optional edge padding for the last row of button matrices.
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+#define THEME_SAFE_ROW_MAP(...) " ", __VA_ARGS__, " "
+#define THEME_SAFE_ROW_CTRL(...)                                               \
+  LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,             \
+      __VA_ARGS__,                                                             \
+      LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1
+#define THEME_SAFE_ROW_VALUES(...) 0, __VA_ARGS__, 0
+#define THEME_SAFE_ROW_WIDTH(default_width, safe_width) (safe_width)
+#else
+#define THEME_SAFE_ROW_MAP(...) __VA_ARGS__
+#define THEME_SAFE_ROW_CTRL(...) __VA_ARGS__
+#define THEME_SAFE_ROW_VALUES(...) __VA_ARGS__
+#define THEME_SAFE_ROW_WIDTH(default_width, safe_width) (default_width)
+#endif
+
 // Called by theme_init() after fonts and scaled dimensions are ready.
 void theme_widgets_init(void);
 
