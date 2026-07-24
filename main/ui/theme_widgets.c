@@ -230,6 +230,25 @@ void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
   lv_btnmatrix_set_btn_ctrl_all(btnmatrix, LV_BTNMATRIX_CTRL_CLICK_TRIG);
 }
 
+void theme_align_corner_safe(lv_obj_t *obj, lv_align_t align, int32_t x_ofs,
+                             int32_t y_ofs) {
+  if (!obj)
+    return;
+
+  int32_t inset = theme_safe_area_inset();
+  if (align == LV_ALIGN_TOP_LEFT || align == LV_ALIGN_BOTTOM_LEFT)
+    x_ofs += inset;
+  else if (align == LV_ALIGN_TOP_RIGHT || align == LV_ALIGN_BOTTOM_RIGHT)
+    x_ofs -= inset;
+
+  if (align == LV_ALIGN_TOP_LEFT || align == LV_ALIGN_TOP_RIGHT)
+    y_ofs += inset;
+  else if (align == LV_ALIGN_BOTTOM_LEFT || align == LV_ALIGN_BOTTOM_RIGHT)
+    y_ofs -= inset;
+
+  lv_obj_align(obj, align, x_ofs, y_ofs);
+}
+
 lv_obj_t *theme_create_button(lv_obj_t *parent, const char *text,
                               bool is_primary) {
   if (!parent)
@@ -269,7 +288,8 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
   lv_obj_set_style_text_font(label, theme_font_small(), 0);
   // Constrained to the space between the corner buttons and wrapped, so long
   // titles can't overlap the back button on narrow displays.
-  int32_t reserved = 2 * theme_small_padding() + theme_corner_button_width();
+  int32_t reserved = theme_safe_area_inset() + 2 * theme_small_padding() +
+                     theme_corner_button_width();
   lv_obj_set_width(label, LV_HOR_RES - 2 * reserved);
   lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -278,7 +298,8 @@ lv_obj_t *theme_create_page_title(lv_obj_t *parent, const char *text) {
   // band is measured from the parent's border so padded containers place the
   // title at the same screen position as standard zero-padding pages.
   lv_obj_update_layout(label);
-  int32_t band_y = theme_small_padding() - lv_obj_get_style_pad_top(parent, 0);
+  int32_t band_y = theme_safe_area_inset() + theme_small_padding() -
+                   lv_obj_get_style_pad_top(parent, 0);
   int32_t y =
       band_y + (theme_corner_button_height() - lv_obj_get_height(label)) / 2;
   if (y < band_y)

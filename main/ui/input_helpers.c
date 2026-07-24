@@ -7,150 +7,50 @@
 // Compact keyboard maps shared by all boards.
 // Trade fewer keys per row for wider touch targets.
 
+// clang-format off
 static const char *const compact_kb_map_lc[] = {
-    "q",  "w",  "e",  "r",   "t",  "y",
-    "u",  "i",  "o",  "p",   "\n", "a",
-    "s",  "d",  "f",  "g",   "h",  "j",
-    "k",  "l",  "\n", "ABC", "z",  "x",
-    "c",  "v",  "b",  "n",   "m",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
-    ""};
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    "ABC", "z", "x", "c", "v", "b", "n", "m", LV_SYMBOL_BACKSPACE, "\n",
+    THEME_SAFE_ROW_MAP("1#", ",", " ", ".", LV_SYMBOL_OK), ""};
 
-static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_lc_map[] = {
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
+static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_alpha_map[] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2, 1, 1, 1, 1, 1, 1, 1,
     LV_BUTTONMATRIX_CTRL_CHECKED | 2,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
-    1,
-    5,
-    1,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
+    THEME_SAFE_ROW_CTRL(
+        LV_KEYBOARD_CTRL_BUTTON_FLAGS | THEME_SAFE_ROW_WIDTH(2, 4),
+        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(5, 10),
+        THEME_SAFE_ROW_WIDTH(1, 2),
+        LV_KEYBOARD_CTRL_BUTTON_FLAGS | THEME_SAFE_ROW_WIDTH(2, 4))};
 
 static const char *const compact_kb_map_uc[] = {
-    "Q",  "W",  "E",  "R",   "T",  "Y",
-    "U",  "I",  "O",  "P",   "\n", "A",
-    "S",  "D",  "F",  "G",   "H",  "J",
-    "K",  "L",  "\n", "abc", "Z",  "X",
-    "C",  "V",  "B",  "N",   "M",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
-    ""};
-
-static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_uc_map[] = {
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    LV_BUTTONMATRIX_CTRL_CHECKED | 2,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
-    1,
-    5,
-    1,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    "abc", "Z", "X", "C", "V", "B", "N", "M", LV_SYMBOL_BACKSPACE, "\n",
+    THEME_SAFE_ROW_MAP("1#", ",", " ", ".", LV_SYMBOL_OK), ""};
 
 // Five rows covering every printable ASCII symbol (',' and '.' live on the
 // letter pages) so any externally created passphrase or KEF key can be typed.
 static const char *const compact_kb_map_spec[] = {
-    "1",  "2", "3",  "4",  "5",  "6",          "7",
-    "8",  "9", "0",  "\n", "@",  "#",          "$",
-    "%",  "&", "*",  "+",  "-",  "=",          "/",
-    "\n", "(", ")",  "[",  "]",  "{",          "}",
-    "<",  ">", "\"", "'",  "\n", "abc",        "!",
-    "?",  ";", ":",  "_",  "\\", "|",          LV_SYMBOL_BACKSPACE,
-    "\n", "~", "^",  "`",  " ",  LV_SYMBOL_OK, ""};
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+    "@", "#", "$", "%", "&", "*", "+", "-", "=", "/", "\n",
+    "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'", "\n",
+    "abc", "!", "?", ";", ":", "_", "\\", "|", LV_SYMBOL_BACKSPACE, "\n",
+    THEME_SAFE_ROW_MAP("~", "^", "`", " ", LV_SYMBOL_OK), ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2, 1, 1, 1, 1, 1, 1, 1,
     LV_BUTTONMATRIX_CTRL_CHECKED | 2,
-    1,
-    1,
-    1,
-    5,
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2};
+    THEME_SAFE_ROW_CTRL(THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(5, 10),
+                        LV_KEYBOARD_CTRL_BUTTON_FLAGS |
+                            THEME_SAFE_ROW_WIDTH(2, 4))};
+// clang-format on
 
 // Corner buttons (back/power top-left, settings top-right) all share the
 // secondary grey style so they read as one consistent control class.
@@ -173,7 +73,7 @@ static lv_obj_t *create_corner_button(lv_obj_t *parent, lv_align_t align,
   theme_apply_touch_button(btn, false);
   lv_obj_set_size(btn, theme_corner_button_width(),
                   theme_corner_button_height());
-  lv_obj_align(btn, align, x_ofs, y_ofs);
+  theme_align_corner_safe(btn, align, x_ofs, y_ofs);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, symbol);
@@ -285,9 +185,9 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   lv_obj_add_event_cb(input->keyboard, ready_cb, LV_EVENT_READY, NULL);
 
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER,
-                      compact_kb_map_lc, compact_kb_ctrl_lc_map);
+                      compact_kb_map_lc, compact_kb_ctrl_alpha_map);
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_UPPER,
-                      compact_kb_map_uc, compact_kb_ctrl_uc_map);
+                      compact_kb_map_uc, compact_kb_ctrl_alpha_map);
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_SPECIAL,
                       compact_kb_map_spec, compact_kb_ctrl_spec_map);
 
