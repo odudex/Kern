@@ -21,6 +21,22 @@ static esp_lcd_panel_handle_t panel_handle = NULL;
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static i2c_master_bus_handle_t i2c_handle = NULL;
 
+esp_err_t bsp_wifi_coproc_disable(void) {
+  /* Output latch defaults to 0, so enabling the driver already pulls CHIP_EN
+   * low against the external pull-up. */
+  const gpio_config_t en_cfg = {
+      .pin_bit_mask = 1ULL << BSP_C6_WIFI_EN,
+      .mode = GPIO_MODE_OUTPUT,
+  };
+  BSP_ERROR_CHECK_RETURN_ERR(gpio_config(&en_cfg));
+  BSP_ERROR_CHECK_RETURN_ERR(gpio_set_level(BSP_C6_WIFI_EN, 0));
+  /* Latch the pad so CHIP_EN stays low through soft/WDT resets; only a
+   * power-on reset releases it. */
+  BSP_ERROR_CHECK_RETURN_ERR(gpio_hold_en(BSP_C6_WIFI_EN));
+  ESP_LOGI(TAG, "ESP32-C6 held in reset");
+  return ESP_OK;
+}
+
 esp_err_t bsp_i2c_init(void) {
   if (i2c_initialized) {
     return ESP_OK;

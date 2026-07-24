@@ -42,6 +42,9 @@
 #define BSP_LCD_TOUCH_RST (GPIO_NUM_29)
 #define BSP_LCD_TOUCH_INT (GPIO_NUM_50)
 
+/* ESP32-C6 Wi-Fi/BT co-processor CHIP_EN (active high, external pull-up) */
+#define BSP_C6_WIFI_EN (GPIO_NUM_54)
+
 /* Camera I2C (separate bus on this board) */
 #define BSP_CAM_I2C_SCL (GPIO_NUM_34)
 #define BSP_CAM_I2C_SDA (GPIO_NUM_31)
@@ -57,6 +60,18 @@
 esp_err_t bsp_i2c_init(void);
 esp_err_t bsp_i2c_deinit(void);
 i2c_master_bus_handle_t bsp_i2c_get_handle(void);
+
+/**************************************************************************************************
+ *
+ * Wireless co-processor
+ *
+ **************************************************************************************************/
+
+/**
+ * @brief Hold the ESP32-C6 in reset (CHIP_EN low) so its radio stays off. Call
+ * once, early at boot.
+ */
+esp_err_t bsp_wifi_coproc_disable(void);
 
 /**************************************************************************************************
  *
