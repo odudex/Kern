@@ -1,0 +1,13 @@
+dependencies:
+  idf:
+    version: '>=5.4'
+  espressif/esp_lcd_touch: '^1'
+  espressif/esp_lvgl_adapter:
+    version: '>=0.5.1'
+    public: true
+  lvgl/lvgl: '>=8,<10'
+
+description: Minimal BSP for LilyGO T-Display-P4 (AMOLED 568x1232, RM69A10, GT9895, XL9535)
+targets:
+- esp32p4
+version: 1.0.0
