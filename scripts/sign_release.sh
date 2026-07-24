@@ -66,6 +66,14 @@ else
     exit 1
 fi
 
+# Flash layout — must match CONFIG_PARTITION_TABLE_OFFSET and partitions.csv.
+# The partition table moved 0x8000 -> 0x10000 in v0.0.15 (56KB bootloader slot);
+# images produced here are not flashable on top of a <= v0.0.14 layout.
+OFF_BOOTLOADER=0x2000
+OFF_PARTITION_TABLE=0x10000
+OFF_OTADATA=0x1e000
+OFF_APP=0x20000
+
 FOUND=0
 ZIPS=()
 
@@ -87,20 +95,20 @@ for UNSIGNED in "$RELEASE_DIR"/*/firmware.bin; do
     $ESPTOOL --chip esp32p4 merge-bin \
         --format hex \
         -o "$HEX" \
-        0x2000  "$DEVICE_DIR/bootloader.bin" \
-        0x8000  "$DEVICE_DIR/partition-table.bin" \
-        0x1e000 "$DEVICE_DIR/ota_data_initial.bin" \
-        0x20000 "$SIGNED"
+        "$OFF_BOOTLOADER"      "$DEVICE_DIR/bootloader.bin" \
+        "$OFF_PARTITION_TABLE" "$DEVICE_DIR/partition-table.bin" \
+        "$OFF_OTADATA"         "$DEVICE_DIR/ota_data_initial.bin" \
+        "$OFF_APP"             "$SIGNED"
 
     # flasher_args.json lets the web flasher's custom-ZIP mode find the signed
     # app; offsets must match the merge-bin layout above
     cat > "$DEVICE_DIR/flasher_args.json" <<EOF
 {
     "flash_files": {
-        "0x2000": "bootloader.bin",
-        "0x8000": "partition-table.bin",
-        "0x1e000": "ota_data_initial.bin",
-        "0x20000": "firmware-signed.bin"
+        "${OFF_BOOTLOADER}": "bootloader.bin",
+        "${OFF_PARTITION_TABLE}": "partition-table.bin",
+        "${OFF_OTADATA}": "ota_data_initial.bin",
+        "${OFF_APP}": "firmware-signed.bin"
     }
 }
 EOF
