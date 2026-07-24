@@ -97,6 +97,9 @@ esp_err_t bsp_wifi_coproc_disable(void) {
   };
   BSP_ERROR_CHECK_RETURN_ERR(gpio_config(&en_cfg));
   BSP_ERROR_CHECK_RETURN_ERR(gpio_set_level(BSP_C6_WIFI_EN, 0));
+  /* Latch the pad so CHIP_EN stays low through soft/WDT resets; only a
+   * power-on reset releases it. */
+  BSP_ERROR_CHECK_RETURN_ERR(gpio_hold_en(BSP_C6_WIFI_EN));
   ESP_LOGI(TAG, "ESP32-C6 held in reset");
   return ESP_OK;
 }
