@@ -1,7 +1,7 @@
 ---
 # clang-tidy configuration for Kern (ESP-IDF / embedded C project)
 #
-# Focus on bug-finding and security checks relevant to a Bitcoin hardware wallet.
+# Focus on bug-finding and security checks relevant to a Bitcoin signing device.
 # Avoid style/naming checks (project has its own conventions) and C++ checks.
 
 Checks: >

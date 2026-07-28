@@ -49,7 +49,7 @@ jobs:
         retention-days: 30
 
 
-  deploy-flasher:
+  deploy-site:
     needs: [build]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
@@ -61,44 +61,44 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-    - name: Checkout flasher sources
+    - name: Checkout site sources
       uses: actions/checkout@v4
     - name: Download wave_4b firmware
       uses: actions/download-artifact@v4.1.3
       with:
         name: firmware-wave_4b
-        path: flasher/firmware/wave_4b
+        path: site/flash/firmware/wave_4b
     - name: Download wave_35 firmware
       uses: actions/download-artifact@v4.1.3
       with:
         name: firmware-wave_35
-        path: flasher/firmware/wave_35
+        path: site/flash/firmware/wave_35
     - name: Download wave_5 firmware
       uses: actions/download-artifact@v4.1.3
       with:
         name: firmware-wave_5
-        path: flasher/firmware/wave_5
+        path: site/flash/firmware/wave_5
     - name: Download wave_43 firmware
       uses: actions/download-artifact@v4.1.3
       with:
         name: firmware-wave_43
-        path: flasher/firmware/wave_43
+        path: site/flash/firmware/wave_43
     - name: Download crowpanel firmware
       uses: actions/download-artifact@v4.1.3
       with:
         name: firmware-crowpanel
-        path: flasher/firmware/crowpanel
+        path: site/flash/firmware/crowpanel
     - name: Download tdisplay_p4 firmware
       uses: actions/download-artifact@v4.1.3
       with:
         name: firmware-tdisplay_p4
-        path: flasher/firmware/tdisplay_p4
+        path: site/flash/firmware/tdisplay_p4
     - name: Stage branding assets
-      run: cp -r branding flasher/branding
+      run: cp -r branding site/branding
     - name: Upload Pages artifact
       uses: actions/upload-pages-artifact@v3
       with:
-        path: flasher/
+        path: site/
         name: github-pages-${{ github.run_attempt }}
     - name: Deploy to GitHub Pages
       id: deployment

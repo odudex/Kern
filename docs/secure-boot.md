@@ -2,7 +2,7 @@
 
 > **Warning**: Secure boot burns eFuses permanently. Practice every step on a development board before touching a production device. There is no undo.
 
-This document covers ESP32-P4 Secure Boot v2 as applied to the Kern hardware wallet — key generation, firmware signing, digest burning, and the various user scenarios for locking down a device.
+This document covers ESP32-P4 Secure Boot v2 as applied to the Kern signing device — key generation, firmware signing, digest burning, and the various user scenarios for locking down a device.
 
 For the broader security roadmap, see [security-plan.md](security-plan.md).
 
@@ -101,7 +101,7 @@ Setting the `SECURE_BOOT_EN` eFuse bit permanently enables secure boot. From tha
 
 **Required on ESP32-P4: RSA-3072 (RSA-PSS).**
 
-> **ECDSA is broken on ESP32-P4.** Per Espressif's chip errata and the ESP-IDF v6.0.2 documentation, "the ECDSA based Secure Boot V2 scheme is not functional for certain input vectors and is therefore not recommended" on ESP32-P4. Enabling it at all requires `CONFIG_SECURE_BOOT_INSECURE` + `CONFIG_SECURE_BOOT_V2_FORCE_ENABLE_ECDSA` — unacceptable for a hardware wallet. A fix is expected in a future silicon ECO revision. Until Kern can gate on a fixed chip revision, **all builds use RSA-3072.**
+> **ECDSA is broken on ESP32-P4.** Per Espressif's chip errata and the ESP-IDF v6.0.2 documentation, "the ECDSA based Secure Boot V2 scheme is not functional for certain input vectors and is therefore not recommended" on ESP32-P4. Enabling it at all requires `CONFIG_SECURE_BOOT_INSECURE` + `CONFIG_SECURE_BOOT_V2_FORCE_ENABLE_ECDSA` — unacceptable for a signing device. A fix is expected in a future silicon ECO revision. Until Kern can gate on a fixed chip revision, **all builds use RSA-3072.**
 
 | Factor | RSA-3072 (RSA-PSS) | ECDSA-P256 |
 |--------|--------------------|-----------|
@@ -445,7 +445,7 @@ espsecure verify-signature \
     kern-signed.bin
 ```
 
-**Alternative: CI signing with GitHub encrypted secrets.** The signing key is stored as a GitHub encrypted secret and used during CI builds. This is more convenient but increases the attack surface — a compromised CI pipeline or GitHub account could sign malicious firmware. Not recommended for a security-critical project like a hardware wallet.
+**Alternative: CI signing with GitHub encrypted secrets.** The signing key is stored as a GitHub encrypted secret and used during CI builds. This is more convenient but increases the attack surface — a compromised CI pipeline or GitHub account could sign malicious firmware. Not recommended for a security-critical project like a signing device.
 
 ---
 

@@ -305,38 +305,22 @@ static bool tr_internal_key_is_nums(struct wally_descriptor *descriptor) {
   return is_nums;
 }
 
-static bool descriptor_is_tr(struct wally_descriptor *descriptor) {
-  char *canon = NULL;
-  bool is_tr = false;
-  if (wally_descriptor_canonicalize(descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM,
-                                    &canon) == WALLY_OK &&
-      canon) {
-    is_tr = strncmp(canon, "tr(", 3) == 0;
-    wally_free_string(canon);
-  }
-  return is_tr;
+static bool descriptor_is_tr(const struct wally_descriptor *descriptor) {
+  uint32_t features = 0;
+  if (wally_descriptor_get_features(descriptor, &features) != WALLY_OK)
+    return false;
+  return (features & WALLY_MS_IS_TAPROOT) != 0;
 }
 
 /* True if the descriptor is tr() carrying a script tree, i.e. tr(KEY,<tree>)
- * rather than plain key-path tr(KEY) (BIP86). A key expression has no top-level
- * comma or paren, so the first ',' before the closing ')' marks a tree.
+ * rather than plain key-path tr(KEY) (BIP86).
  * Note: descriptor_is_miniscript() is unreliable here — a taptree of pure
  * descriptor leaves (pk/multi_a) keeps WALLY_MS_IS_DESCRIPTOR set. */
-static bool tr_has_script_tree(struct wally_descriptor *descriptor) {
-  char *canon = NULL;
-  bool has_tree = false;
-  if (wally_descriptor_canonicalize(descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM,
-                                    &canon) == WALLY_OK &&
-      canon) {
-    if (strncmp(canon, "tr(", 3) == 0) {
-      const char *p = canon + 3;
-      while (*p && *p != ',' && *p != ')')
-        p++;
-      has_tree = (*p == ',');
-    }
-    wally_free_string(canon);
-  }
-  return has_tree;
+static bool tr_has_script_tree(const struct wally_descriptor *descriptor) {
+  uint32_t features = 0;
+  if (wally_descriptor_get_features(descriptor, &features) != WALLY_OK)
+    return false;
+  return (features & WALLY_MS_IS_TAPSCRIPT) != 0;
 }
 
 /* True if the tr() internal key (index 0) carries key-origin info ([fp/path]).

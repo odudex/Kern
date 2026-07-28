@@ -389,9 +389,75 @@ CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4        # BLOCK_KEY4
 - CI pipeline: build unsigned, developer signs images offline as part of release
 - **Reproducible builds are a prerequisite for the first signed release**: with CI building unsigned and the developer signing offline, users can only verify that a signed release matches the source if they can reproduce the unsigned image bit-for-bit. Pin toolchain/IDF versions and document the build recipe.
 - Keep development builds unsigned (separate sdkconfig)
-- Anti-rollback counter enabled (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`) — firmware includes monotonic security version; supersedes the Phase 4 software downgrade check
+- Anti-rollback counter enabled (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`) — firmware carries a monotonic security version enforced from eFuse; it **backs** the Phase 4 software downgrade check rather than replacing it (see [6c](#6c-anti-rollback-efuse-security-version) for the full plan)
 - Note ESP-IDF 6.0 API renames: `esp_secure_boot_verify_signature_block()` removed (use `esp_secure_boot_verify_rsa_signature_block()`); `esp_flash_encryption_enabled()` deprecated (use `esp_efuse_is_flash_encryption_enabled()`)
 - Re-run the Phase 4d validation suite under secure boot before Phase 7
+
+#### 6c. Anti-rollback (eFuse security version)
+
+**Planned July 2026, to be implemented together with 6a/6b — nothing here lands on master before the secure-boot overlay exists.** Anti-rollback is what stops an attacker (or a careless user) from installing a genuinely signed *older* Kern release to reopen a fixed vulnerability. Until it is on, a downgrade is refused only by our own pre-flight check running inside the firmware being replaced — which an attacker with serial access simply flashes over.
+
+##### What already exists
+
+- `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (`sdkconfig.defaults`) — the Kconfig dependency of `BOOTLOADER_APP_ANTI_ROLLBACK` is already satisfied.
+- OTA-only partition table, no `factory` — the layout anti-rollback requires (see [Partition Table](#partition-table)); this was settled in Phase 3.
+- `core/fw_update.c` rejects an image whose `secure_version` is below the running app's, with the user-visible error "Older security version rejected", and calls `esp_ota_mark_app_valid_cancel_rollback()` after a successful update — the self-confirm that makes the previous slot a valid fallback.
+- Nothing on the eFuse side: `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK` is unset, so `CONFIG_BOOTLOADER_APP_SECURE_VERSION` is invisible to Kconfig and `esp_app_desc.c` compiles `.secure_version = 0` into every build. **The Phase 4 software check is therefore a no-op today** — it compares 0 against 0 — and only becomes meaningful once the overlay below sets a non-zero version.
+
+##### The eFuse field is a 16-shot budget
+
+On ESP32-P4 `SECURE_VERSION` is **16 bits** in BLK0 (bits 137–152) and is **unary-encoded**: `esp_efuse_read_secure_version()` returns the *popcount* of the field, and writing version N burns N bits. The maximum security version is 16 — **the device gets 16 increments for its entire lifetime, and there is no un-burn**. `CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD` must be pinned at 16 and never changed afterwards: it is the build-time interpretation of the field, so lowering it on a later release silently re-reads already-burned bits.
+
+Policy, to be recorded in the release checklist: the security version is **not** the app version. `version.txt` moves every release; the security version moves only when running an older release is unacceptable — a key-handling, PIN, signing, or update-path vulnerability. At a realistic worst case of one bump a year, 16 bits outlast the hardware; spending them on routine releases does not.
+
+##### Who burns the counter, and exactly when
+
+Three sites, all worth knowing before the first burn:
+
+1. **The app**, in `esp_ota_mark_app_valid_cancel_rollback()` → `esp_ota_set_anti_rollback()` → `esp_efuse_update_secure_version()` (IDF `esp_ota_ops.c`) — reads the *running* partition's descriptor. This is Kern's own call in `core/fw_update.c`.
+2. **The bootloader**, when the active otadata state is already `ESP_OTA_IMG_VALID` (`bootloader_utility.c`, `update_anti_rollback()`). An image still in `PENDING_VERIFY` does **not** burn — the ordering we want: the new firmware must confirm itself before the counter moves.
+3. **The bootloader again, on a fresh serial flash** — when otadata is empty or invalid it writes an otadata entry as `VALID` and burns immediately. So `just flash` of a bumped image on a wiped device moves the counter on first boot with **no self-test gate at all**. This is the path alpha testers use, and the reason a bump must be bench-validated before release.
+
+##### One-way consequences to accept before the first bump
+
+- **A confirmed bump destroys the fallback slot.** `esp_ota_check_rollback_is_possible()` only accepts the other slot if its `secure_version` still passes the eFuse check, so after the counter moves, the previous release stops being a rollback target. A security-bump release ships without a safety net — everything else in Phase 4 assumes there is one.
+- `esp_ota_set_boot_partition()` on a too-old image **erases that partition** and returns `ESP_ERR_OTA_SMALL_SEC_VER`. Kern's pre-flight check normally rejects first, so this is the second line, not the visible one.
+- The bootloader refuses any slot below the eFuse value (`check_anti_rollback()`, wrapped in an `ESP_FAULT_ASSERT` anti-FI double read).
+- Downgrade becomes physically impossible **for the developer too** — no debug path, no serial escape. Keep a never-bumped unit for reproducing old-version bug reports.
+- **Never run `espefuse write_protect_efuse SECURE_VERSION`.** `WR_DIS.SECURE_VERSION` (BLK0 bit 18) would freeze the counter and disable every future bump. Nothing in the secure-boot flow burns it — this is a manual footgun only.
+- Visibility: the bootloader logs `Secure version (from eFuse) = N` on every boot, and `espefuse.py summary` shows `SECURE_VERSION`.
+
+##### Implementation, in the secure-boot overlay
+
+All of it belongs in `sdkconfig.secure` alongside 6b, never in `sdkconfig.defaults` — a `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y` on master would start burning counters on every device that flashes a master build:
+
+```
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
+CONFIG_BOOTLOADER_APP_SECURE_VERSION=0
+CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD=16
+```
+
+The first signed release goes out at **security version 0**, which burns zero bits: the feature is armed and enforcing, but the budget is untouched until a real vulnerability calls for the first bump. Note that both value symbols `depend on BOOTLOADER_APP_ANTI_ROLLBACK`, so they cannot be pre-pinned on master — Kconfig drops invisible symbols. What *can* be done on master ahead of time is documentation-only: record the bump policy in the release checklist, and surface `secure_version` in the SD-update confirm dialog whenever it differs from the running app, so a bump is never a silent property of an update.
+
+##### Validation
+
+Two tiers, in this order.
+
+**(a) Emulated, no permanent burns.** `CONFIG_BOOTLOADER_EFUSE_SECURE_VERSION_EMULATE=y` selects `EFUSE_VIRTUAL` + `EFUSE_VIRTUAL_KEEP_IN_FLASH` and needs a partition entry `emul_efuse, data, efuse, , 0x2000`. Two warnings: it virtualizes **all** eFuse operations, so PIN provisioning (KEY4/KEY5), flash encryption, and secure boot all become fake on that build; and it requires its own partition CSV, so it is not the frozen production table. Bench-only, never signed, never handed to a user.
+
+**(b) Real burns on the flash-encryption test mule** (the wave_4b already committed in Phase 5). Each test bump permanently spends one of its 16 bits — acceptable on the mule, never on a user device.
+
+The matrix, in order:
+
+1. Fresh serial flash at version 0 → eFuse popcount stays 0.
+2. SD OTA 0 → 1, self-confirm succeeds → popcount becomes 1; bootloader log reports `Secure version (from eFuse) = 1`.
+3. SD OTA 1 → 0 → rejected by the `fw_update` pre-flight with the existing error, before anything is written; confirm no partition was erased.
+4. Same downgrade with the pre-flight check stubbed out (debug build) → `esp_ota_set_boot_partition()` returns `ESP_ERR_OTA_SMALL_SEC_VER` and erases the target slot; the device still boots version 1.
+5. **The test that proves the feature**: serial-flash version 0 onto the device with eFuse = 1 → the bootloader refuses to boot it. This is the attack anti-rollback exists to stop; confirm the device stays recoverable by reflashing version 1.
+6. Rollback still works between equal versions: OTA 1 → 1′, fail the self-confirm, verify the device returns to the previous slot.
+7. After a confirmed bump, verify the previous slot is no longer a rollback target — the expected loss of the safety net, documented here so it is a decision and not a surprise.
+
+Re-run this matrix as part of the Phase 4d suite under secure boot before Phase 7 lockdown.
 
 ### Phase 7 — Release Lockdown
 

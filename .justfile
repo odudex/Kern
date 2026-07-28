@@ -44,6 +44,32 @@ clean:
     make -C components/bbqr/test clean
     make -C main/core/test clean
 
+# Stages branding and any locally built firmware into site/ the same way the
+# deploy-site job in .github/workflows/test-all-builds.yml does, so what you see
+# on localhost is what gets deployed. Boards you have not built are simply
+# absent: the flasher still renders, but its CI-build mode cannot fetch them.
+# Serve on localhost only -- Web Serial needs a secure context, which
+# http://localhost provides but a LAN IP does not.
+# Serve the landing page + web flasher locally, as GitHub Pages does
+site port="8000":
+    #!/usr/bin/env sh
+    set -e
+    rm -rf site/branding site/flash/firmware
+    cp -r branding site/branding
+    for b in {{boards}}; do
+        [ -f "build_$b/flasher_args.json" ] || continue
+        stage="site/flash/firmware/$b"
+        mkdir -p "$stage"
+        cp "build_$b"/bootloader/bootloader.bin "$stage"/
+        cp "build_$b"/partition_table/partition-table.bin "$stage"/
+        cp "build_$b"/flasher_args.json "$stage"/
+        cp "build_$b"/*.bin "$stage"/ 2>/dev/null || true
+        cp "build_$b"/flash_args "$stage"/ 2>/dev/null || true
+        echo "staged firmware: $b"
+    done
+    echo "Serving http://localhost:{{port}}/"
+    python3 -m http.server {{port}} -d site
+
 # Simulator board resolution mapping
 # wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800,
 # crowpanel: 1024x600, tdisplay_p4: 568x1232

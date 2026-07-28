@@ -7,7 +7,7 @@
   <meta name="description" content="Flash Kern daily builds to your ESP32-P4 device directly from the browser.">
 
   <meta property="og:type"        content="website">
-  <meta property="og:url"         content="https://odudex.github.io/Kern/">
+  <meta property="og:url"         content="https://odudex.github.io/Kern/flash/">
   <meta property="og:title"       content="Kern Web Flasher">
   <meta property="og:description" content="Flash Kern firmware to your ESP32-P4 device directly from the browser.">
   <meta property="og:image"       content="https://odudex.github.io/Kern/branding/og_preview.png">
@@ -145,8 +145,8 @@
 <div class="container">
 
   <header>
-    <img src="./branding/kern_logo_with_text_dark_bg.png"
-         alt="Kern logo" onerror="this.style.display='none'">
+    <a href="../"><img src="../branding/kern_logo_with_text_white.png"
+         alt="Kern logo" onerror="this.style.display='none'"></a>
     <h1>Web Flasher</h1>
     <p>Flash Kern firmware to your ESP32-P4 device directly from the browser</p>
   </header>
@@ -157,7 +157,7 @@
   </div>
 
   <div class="banner banner-warn">
-    ⚠ <strong>Warning:</strong> CI builds are unvetted development snapshots from a project in an initial development stage.
+    ⚠ <strong>Warning:</strong> CI builds are unvetted development snapshots from a young, unaudited project.
     Secure boot is not enabled; do <strong>not</strong> use flashed firmware to manage real savings.
   </div>
 
@@ -215,7 +215,9 @@
   </div>
 
   <footer>
-    <a href="https://github.com/odudex/Kern" target="_blank">Kern on GitHub</a> ·
+    <a href="../">Home</a> ·
+    <a href="https://github.com/odudex/Kern" target="_blank">GitHub</a> ·
+    <a href="https://t.me/kern_custody" target="_blank">Telegram</a> ·
     Powered by <a href="https://github.com/espressif/esptool-js" target="_blank">esptool-js</a>
   </footer>
 
@@ -369,7 +371,7 @@ window.handleZipSelect = async function (file) {
     for (const ff of fileList) {
       const entry = zip.file(ff.name);
       if (!entry) {
-        log(`Warning: ${ff.name} not found in zip — skipping.`, 'l-err');
+        log(`Warning: ${ff.name} not found in zip, skipping.`, 'l-err');
         continue;
       }
       const data = new Uint8Array(await entry.async('arraybuffer'));
@@ -506,7 +508,7 @@ window.startFlash = async function () {
     });
 
     setProgress(100, 'Done!');
-    log('Flash complete — resetting device…', 'l-ok');
+    log('Flash complete. Resetting device…', 'l-ok');
     await esploader.after('hard_reset');
     log('Device reset. Flash successful! ✓', 'l-ok');
 

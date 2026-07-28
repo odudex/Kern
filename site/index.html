@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kern: Air-gapped Bitcoin signing on the ESP32-P4</title>
+  <meta name="description" content="Kern is an open-source, air-gapped Bitcoin signing device for ESP32-P4 boards. Sign PSBTs over QR codes, with no radio, no cables and no vendor.">
+
+  <meta property="og:type"        content="website">
+  <meta property="og:url"         content="https://odudex.github.io/Kern/">
+  <meta property="og:title"       content="Kern: Air-gapped Bitcoin signing on the ESP32-P4">
+  <meta property="og:description" content="An open-source, air-gapped Bitcoin signing device for ESP32-P4 boards. Sign PSBTs over QR codes.">
+  <meta property="og:image"       content="https://odudex.github.io/Kern/branding/og_preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt"   content="Kern logo on dark background">
+
+  <meta name="twitter:card"        content="summary_large_image">
+  <meta name="twitter:title"       content="Kern: Air-gapped Bitcoin signing on the ESP32-P4">
+  <meta name="twitter:description" content="An open-source, air-gapped Bitcoin signing device for ESP32-P4 boards. Sign PSBTs over QR codes.">
+  <meta name="twitter:image"       content="https://odudex.github.io/Kern/branding/og_preview.png">
+  <meta name="twitter:image:alt"   content="Kern logo on dark background">
+
+  <link rel="icon" href="./branding/kern_logo_64.png" type="image/png">
+  <style>
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --accent:  #f97316;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --success: #3fb950;
+      --warn:    #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .wrap { width: 100%; max-width: 960px; margin: 0 auto; padding: 0 1.25rem; }
+
+    /* ── Nav ───────────────────────────────────────────────────────────── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      background: rgba(13,17,23,0.85);
+      backdrop-filter: blur(8px);
+      position: sticky; top: 0; z-index: 10;
+    }
+    nav .wrap {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; height: 60px;
+    }
+    nav .brand img { height: 28px; display: block; }
+    nav .links { display: flex; gap: 1.25rem; font-size: 0.9rem; }
+    nav .links a { color: var(--muted); }
+    nav .links a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 560px) { nav .links a.hide-sm { display: none; } }
+
+    /* ── Hero ──────────────────────────────────────────────────────────── */
+    .hero {
+      text-align: center;
+      padding: 4.5rem 0 3.5rem;
+      background:
+        radial-gradient(ellipse 70% 340px at 50% 0%, rgba(249,115,22,0.13), transparent 70%);
+    }
+    .hero img.logo { height: 120px; max-width: 100%; margin-bottom: 1.5rem; }
+    .hero h1 {
+      font-size: clamp(1.9rem, 5vw, 2.9rem);
+      line-height: 1.15; font-weight: 700; letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+    .hero h1 .accent { color: var(--accent); }
+    .hero p.lede {
+      color: var(--muted); font-size: clamp(1rem, 2.2vw, 1.15rem);
+      max-width: 620px; margin: 0 auto 2rem;
+    }
+
+    /* maxCmalist: Bitcoin maximalist, written in C. The swapped letter is
+       highlighted so the pun is visible, and glossed before it is used. */
+    .maxc { color: var(--text); font-weight: 600; white-space: nowrap; }
+    .maxc b {
+      color: var(--accent); font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .cta { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-block; padding: 0.7rem 1.5rem;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.95rem; font-weight: 600; cursor: pointer;
+      transition: all 0.15s; color: var(--text);
+    }
+    .btn:hover { text-decoration: none; }
+    .btn-primary {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .btn-primary:hover { opacity: 0.88; }
+    .btn-ghost { background: var(--surface); }
+    .btn-ghost:hover { border-color: var(--text); }
+
+    /* ── Banner ────────────────────────────────────────────────────────── */
+    .banner {
+      border-radius: 6px; padding: 0.85rem 1.15rem;
+      font-size: 0.875rem; margin: 0 auto 3.5rem; max-width: 720px;
+      background: rgba(210,153,34,0.08);
+      border: 1px solid var(--warn); color: var(--warn);
+    }
+
+    /* ── Sections ──────────────────────────────────────────────────────── */
+    section { padding: 3rem 0; border-top: 1px solid var(--border); }
+    section h2 {
+      font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem;
+      letter-spacing: -0.01em;
+    }
+    section p.sub { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+
+    .grid {
+      display: grid; gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 1.25rem 1.4rem;
+    }
+    .card h3 {
+      font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .card p { color: var(--muted); font-size: 0.875rem; }
+    .card a.more { font-size: 0.875rem; display: inline-block; margin-top: 0.6rem; }
+
+    /* ── Table ─────────────────────────────────────────────────────────── */
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table {
+      width: 100%; border-collapse: collapse; font-size: 0.875rem;
+      min-width: 560px;
+    }
+    th, td {
+      text-align: left; padding: 0.65rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--muted); font-weight: 600; font-size: 0.75rem;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    td code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem; color: var(--accent);
+    }
+    tbody tr:last-child td { border-bottom: none; }
+
+    /* ── Steps ─────────────────────────────────────────────────────────── */
+    ol.steps { list-style: none; counter-reset: step; display: grid; gap: 1rem; }
+    ol.steps li {
+      counter-increment: step;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 1.1rem 1.4rem 1.1rem 3.5rem; position: relative;
+    }
+    ol.steps li::before {
+      content: counter(step);
+      position: absolute; left: 1.25rem; top: 1.1rem;
+      width: 1.5rem; height: 1.5rem; border-radius: 50%;
+      background: rgba(249,115,22,0.12); border: 1px solid var(--accent);
+      color: var(--accent); font-size: 0.8rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    ol.steps li strong { font-size: 0.95rem; }
+    ol.steps li p { color: var(--muted); font-size: 0.875rem; margin-top: 0.2rem; }
+
+    /* ── Footer ────────────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border); padding: 2.5rem 0;
+      color: var(--muted); font-size: 0.85rem; text-align: center;
+    }
+    footer a { color: var(--muted); }
+    footer .flinks { display: flex; gap: 1.25rem; justify-content: center; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="./branding/kern_logo_with_text_white.png" alt="Kern"
+           onerror="this.style.display='none'">
+    </a>
+    <div class="links">
+      <a href="#hardware" class="hide-sm">Hardware</a>
+      <a href="#start" class="hide-sm">Get started</a>
+      <a href="./flash/">Flasher</a>
+      <a href="https://t.me/kern_custody" target="_blank" rel="noopener">Telegram</a>
+      <a href="https://github.com/odudex/Kern" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="logo" src="./branding/kern_logo_with_text_white.png" alt="Kern">
+    <h1>Air-gapped Bitcoin signing<br>on the <span class="accent">ESP32-P4</span></h1>
+    <p class="lede">
+      Kern turns an inexpensive touchscreen dev board into a powerful signing
+      device. Bitcoin only, written in plain C: a
+      <span class="maxc">max<b>C</b>malist</span> signer.
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="./flash/">⚡ Flash your device</a>
+      <a class="btn btn-ghost" href="https://github.com/odudex/Kern" target="_blank" rel="noopener">View source</a>
+      <a class="btn btn-ghost" href="https://t.me/kern_custody" target="_blank" rel="noopener">Join Telegram</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="banner">
+    ⚠ <strong>Kern is a young project under active development.</strong>
+    It has not been audited, secure boot is not yet enabled, and webflasher builds
+    are unvetted development snapshots. Do <strong>not</strong> use Kern to manage
+    real savings yet.
+  </div>
+</div>
+
+<section id="hardware">
+  <div class="wrap">
+    <h2>Supported hardware</h2>
+    <p class="sub">Six off-the-shelf boards. Each one includes or supports a MIPI CSI camera.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Board</th><th>Target</th><th>Display</th><th>Camera</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm" target="_blank" rel="noopener">Waveshare ESP32-P4 4B</a></td>
+            <td><code>wave_4b</code></td><td>720×720 MIPI DSI</td><td>Sold separately</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-3.5.htm" target="_blank" rel="noopener">Waveshare ESP32-P4 3.5″</a></td>
+            <td><code>wave_35</code></td><td>320×480 SPI</td><td>OV5647, included</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-5.htm" target="_blank" rel="noopener">Waveshare ESP32-P4 5″</a></td>
+            <td><code>wave_5</code></td><td>720×1280 MIPI DSI</td><td>OV5647, included</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm" target="_blank" rel="noopener">Waveshare ESP32-P4 4.3″</a></td>
+            <td><code>wave_43</code></td><td>480×800 MIPI DSI</td><td>OV5647, included</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen" target="_blank" rel="noopener">CrowPanel Advanced 7″ / 10.1″</a></td>
+            <td><code>crowpanel</code></td><td>1024×600 MIPI DSI</td><td>SC2336, included</td>
+          </tr>
+          <tr>
+            <td><a href="https://lilygo.cc/en-us/products/t-display-p4" target="_blank" rel="noopener">LilyGO T-Display-P4</a></td>
+            <td><code>tdisplay_p4</code></td><td>568×1232 AMOLED</td><td>OV2710, onboard</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin:1.5rem 0 0.75rem">
+      Kern drives both the <strong>OV5647</strong> and the <strong>SC2336</strong>
+      and probes for whichever one is attached at boot, so either sensor works on
+      the Waveshare and CrowPanel boards. The 4B is the one board sold without a
+      camera: pair it with an OV5647 module carrying a DW9714 voice coil motor,
+      which is the only combination that gets autofocus. The T-Display-P4 ships
+      with an onboard <strong>OV2710</strong>.
+    </p>
+    <p class="sub" style="margin:0">
+      These boards carry an ESP32-C6 radio co-processor alongside the P4. Kern
+      does not use it and holds it in reset mode. Users can remove or
+      physically disable it if desired.
+    </p>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="sub">From an unflashed board to a working signer in a few minutes.</p>
+    <ol class="steps">
+      <li>
+        <strong>Get a supported board with a MIPI camera</strong>
+        <p>Any of the six boards above. All but the 4B come with a camera in the
+           box; for the 4B, add an OV5647 module with autofocus.</p>
+      </li>
+      <li>
+        <strong>Flash it from your browser</strong>
+        <p>The <a href="./flash/">web flasher</a> writes the latest build over USB
+           using Web Serial, with no toolchain to install. Requires Chrome or Edge 89+.</p>
+      </li>
+      <li>
+        <strong>Create or restore a key</strong>
+        <p>Generate a mnemonic from dice rolls or the camera, or restore one you
+           already have by typing it or scanning a QR code.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="wrap">
+    <h2>Documentation</h2>
+    <p class="sub">Full user documentation is not written yet. For now, these live in the repository.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>📖 README</h3>
+        <p>Hardware, prerequisites, building from source, flashing releases and
+           SD-card updates.</p>
+        <a class="more" href="https://github.com/odudex/Kern#readme" target="_blank" rel="noopener">Read →</a>
+      </div>
+      <div class="card">
+        <h3>🗺️ Roadmap</h3>
+        <p>What works today and what is still missing, feature by feature.</p>
+        <a class="more" href="https://github.com/odudex/Kern/blob/master/ROADMAP.md" target="_blank" rel="noopener">Read →</a>
+      </div>
+      <div class="card">
+        <h3>🔐 Security plan</h3>
+        <p>The staged plan for secure boot, flash encryption and anti-rollback,
+           with the current status of each phase.</p>
+        <a class="more" href="https://github.com/odudex/Kern/blob/master/docs/security-plan.md" target="_blank" rel="noopener">Read →</a>
+      </div>
+      <div class="card">
+        <h3>🤝 Contributing</h3>
+        <p>Project layout, coding conventions and how to get changes merged.</p>
+        <a class="more" href="https://github.com/odudex/Kern/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener">Read →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="community">
+  <div class="wrap">
+    <h2>Community</h2>
+    <p class="sub">Questions, testing reports and development chat.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>💬 Telegram</h3>
+        <p>The main discussion group for users and contributors.</p>
+        <a class="more" href="https://t.me/kern_custody" target="_blank" rel="noopener">t.me/kern_custody →</a>
+      </div>
+      <div class="card">
+        <h3>🐙 GitHub</h3>
+        <p>Source, issues and pull requests. Bug reports very welcome.</p>
+        <a class="more" href="https://github.com/odudex/Kern" target="_blank" rel="noopener">odudex/Kern →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="flinks">
+      <a href="./flash/">Web Flasher</a>
+      <a href="https://github.com/odudex/Kern" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://t.me/kern_custody" target="_blank" rel="noopener">Telegram</a>
+      <a href="https://github.com/odudex/Kern/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/odudex/Kern/blob/master/LICENSE" target="_blank" rel="noopener">MIT License</a>
+    </div>
+    <p>
+      <span class="maxc">max<b>C</b>malist</span>
+      <em>(adj.)</em>: Bitcoin maximalist, written in C.
+    </p>
+    <p style="margin-top:0.6rem">Kern is free and open-source software.</p>
+  </div>
+</footer>
+
+</body>
+</html>
