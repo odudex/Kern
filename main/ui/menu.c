@@ -284,7 +284,8 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   lv_obj_set_flex_align(menu->container, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(menu->container, theme_default_padding(), 0);
-  lv_obj_set_style_pad_top(menu->container, theme_small_padding(), 0);
+  lv_obj_set_style_pad_top(menu->container,
+                           theme_safe_area_inset() + theme_small_padding(), 0);
   lv_obj_set_style_pad_gap(menu->container, theme_default_padding(), 0);
   lv_obj_clear_flag(menu->container, LV_OBJ_FLAG_SCROLLABLE);
   theme_apply_screen(menu->container);

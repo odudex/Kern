@@ -23,6 +23,7 @@ static int sz_logo;
 static int sz_key_gap;
 static int sz_slider_height;
 static int sz_slider_knob_pad;
+static int sz_safe_area_inset;
 
 typedef struct {
   const lv_font_t *text;
@@ -56,6 +57,11 @@ void theme_init(void) {
   sz_slider_height = scr_min_dim / 36;       //  20
   // Grows the knob to min_touch: track + 2 * pad == sz_min_touch
   sz_slider_knob_pad = (sz_min_touch - sz_slider_height) / 2; // 35
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+  sz_safe_area_inset = sz_default_padding;
+#else
+  sz_safe_area_inset = 0;
+#endif
 
   ui_font_policy_t policy = ui_font_policy_for_display(scr_w, scr_h);
   theme_font_pair_t small = font_pair_for_size(policy.small_px);
@@ -121,3 +127,4 @@ int theme_logo_size(void) { return sz_logo; }
 int theme_key_gap(void) { return sz_key_gap; }
 int theme_slider_height(void) { return sz_slider_height; }
 int theme_slider_knob_pad(void) { return sz_slider_knob_pad; }
+int theme_safe_area_inset(void) { return sz_safe_area_inset; }

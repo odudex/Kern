@@ -155,7 +155,7 @@ dependencies:
       require: private
       version: '>=4.4.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.2.1
   espressif/esp_lcd_touch_ft5x06:
@@ -406,11 +406,11 @@ dependencies:
       type: service
     version: 1.6.58
   espressif/usb:
-    component_hash: 1d90d7c7b0682dbfcc36f47cf5acf224a5cfb850a62f39cd86d3159cfec12a81
+    component_hash: 6c2cff118141dbbca181d0d27d71801fdddfc78f7ac03ae43f6e5a8cbd89cb99
     dependencies:
     - name: idf
       require: private
-      version: '>=5.4'
+      version: '>=5.5.3'
     source:
       registry_url: https://components.espressif.com
       type: service
@@ -421,7 +421,7 @@ dependencies:
     - esp32p4
     - esp32h4
     - linux
-    version: 1.4.1
+    version: 1.5.0
   espressif/usb_host_uvc:
     component_hash: 3dde9c89980212de1e394a29d3fe782a2988a08fd2a16af34eee6f642aab6ebe
     dependencies:
@@ -472,6 +472,7 @@ direct_dependencies:
 - espressif/esp_lcd_st7701
 - espressif/esp_lcd_st7703
 - espressif/esp_lcd_st7796
+- espressif/esp_lcd_touch
 - espressif/esp_lcd_touch_ft5x06
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_adapter
@@ -479,6 +480,6 @@ direct_dependencies:
 - espressif/zlib
 - idf
 - lvgl/lvgl
-manifest_hash: 167024d0947a55943ecf621fe6a8eb48ed1e699e5afff6b6720c0a8a545a1d5c
+manifest_hash: 73090be4ef5b922972a7d15d91635835525acdcf112bd9d9b1426b556aa70086
 target: esp32p4
 version: 3.0.0

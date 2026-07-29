@@ -231,7 +231,7 @@
 <section id="hardware">
   <div class="wrap">
     <h2>Supported hardware</h2>
-    <p class="sub">Five off-the-shelf boards. Each one needs a MIPI CSI camera module.</p>
+    <p class="sub">Six off-the-shelf boards. Each one includes or supports a MIPI CSI camera.</p>
     <div class="table-scroll">
       <table>
         <thead>
@@ -258,15 +258,20 @@
             <td><a href="https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen" target="_blank" rel="noopener">CrowPanel Advanced 7″ / 10.1″</a></td>
             <td><code>crowpanel</code></td><td>1024×600 MIPI DSI</td><td>SC2336, included</td>
           </tr>
+          <tr>
+            <td><a href="https://lilygo.cc/en-us/products/t-display-p4" target="_blank" rel="noopener">LilyGO T-Display-P4</a></td>
+            <td><code>tdisplay_p4</code></td><td>568×1232 AMOLED</td><td>OV2710, onboard</td>
+          </tr>
         </tbody>
       </table>
     </div>
     <p class="sub" style="margin:1.5rem 0 0.75rem">
       Kern drives both the <strong>OV5647</strong> and the <strong>SC2336</strong>
       and probes for whichever one is attached at boot, so either sensor works on
-      any of the boards. The 4B is the one board sold without a camera: pair it
-      with an OV5647 module carrying a DW9714 voice coil motor, which is the only
-      combination that gets autofocus.
+      the Waveshare and CrowPanel boards. The 4B is the one board sold without a
+      camera: pair it with an OV5647 module carrying a DW9714 voice coil motor,
+      which is the only combination that gets autofocus. The T-Display-P4 ships
+      with an onboard <strong>OV2710</strong>.
     </p>
     <p class="sub" style="margin:0">
       These boards carry an ESP32-C6 radio co-processor alongside the P4. Kern
@@ -283,7 +288,7 @@
     <ol class="steps">
       <li>
         <strong>Get a supported board with a MIPI camera</strong>
-        <p>Any of the five boards above. All but the 4B come with a camera in the
+        <p>Any of the six boards above. All but the 4B come with a camera in the
            box; for the 4B, add an OV5647 module with autofocus.</p>
       </li>
       <li>
