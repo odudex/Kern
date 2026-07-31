@@ -199,6 +199,8 @@ void ui_path_keypad_open(ui_path_keypad_t **handle,
   lv_obj_set_size(keypad->keypad, LV_PCT(90), LV_PCT(60));
   lv_obj_align(keypad->keypad, LV_ALIGN_BOTTOM_MID, 0, -pad);
   theme_apply_btnmatrix(keypad->keypad);
+  theme_set_btnmatrix_action(keypad->keypad, KEY_IDX_BACKSPACE);
+  theme_set_btnmatrix_action(keypad->keypad, KEY_IDX_OK);
   lv_obj_add_event_cb(keypad->keypad, keypad_event_cb, LV_EVENT_VALUE_CHANGED,
                       keypad);
   update_keypad_buttons(keypad);

@@ -136,6 +136,8 @@ ui_keyboard_t *ui_keyboard_create(lv_obj_t *parent, const char *title,
   lv_obj_set_size(kb->btnmatrix, LV_PCT(100), LV_PCT(50));
   lv_obj_align(kb->btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   theme_apply_btnmatrix(kb->btnmatrix);
+  theme_set_btnmatrix_action(kb->btnmatrix, 26);
+  theme_set_btnmatrix_action(kb->btnmatrix, 27);
 
   // Center the input label in the gap between the title and the keypad so it
   // follows the screen geometry instead of a fixed pixel offset.
