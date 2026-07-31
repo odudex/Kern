@@ -211,6 +211,8 @@ void ui_numeric_keypad_open(ui_numeric_keypad_t **handle,
   lv_obj_set_size(keypad->numpad, LV_PCT(90), LV_PCT(60));
   lv_obj_align(keypad->numpad, LV_ALIGN_BOTTOM_MID, 0, -pad);
   theme_apply_btnmatrix(keypad->numpad);
+  theme_set_btnmatrix_action(keypad->numpad, 12);
+  theme_set_btnmatrix_action(keypad->numpad, 14);
   lv_obj_add_event_cb(keypad->numpad, numpad_event_cb, LV_EVENT_VALUE_CHANGED,
                       keypad);
   update_numpad_buttons(keypad);
