@@ -130,6 +130,26 @@ static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 
+// Sighash flags the review screen can honestly describe. SIGHASH_ALL (and the
+// taproot SIGHASH_DEFAULT, which is 0 and also the "unset" encoding) commit to
+// every input and output, so what was displayed is what gets mined. Under
+// NONE, SINGLE or ANYONECANPAY the signature survives edits to the parts it
+// does not cover, and the outputs and fee on screen mean nothing.
+typedef struct {
+  size_t num_inputs;
+  size_t unsupported;
+  size_t first_unsupported;
+  uint32_t first_sighash;
+} psbt_sighash_audit_t;
+
+bool psbt_sighash_is_supported(uint32_t sighash);
+
+// Short name for a sighash byte ("NONE", "SINGLE|ANYONECANPAY", ...).
+const char *psbt_sighash_name(uint32_t sighash);
+
+void psbt_audit_sighash(const struct wally_psbt *psbt,
+                        psbt_sighash_audit_t *out);
+
 // Detect network from derivation paths (returns true if testnet)
 bool psbt_detect_network(const struct wally_psbt *psbt);
 

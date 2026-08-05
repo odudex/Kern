@@ -1345,6 +1345,84 @@ static void test_amount_audit_mixed(void) {
 }
 
 /* ================================================================
+ * Sighash tests
+ * ================================================================ */
+
+static struct wally_psbt *make_unsafe_psbt(void);
+
+static void test_sighash_supported_set(void) {
+  TEST("psbt_sighash_is_supported: only unset and ALL");
+
+  if (!psbt_sighash_is_supported(0))
+    FAIL("unset/DEFAULT rejected");
+  else if (!psbt_sighash_is_supported(WALLY_SIGHASH_ALL))
+    FAIL("ALL rejected");
+  else if (psbt_sighash_is_supported(WALLY_SIGHASH_NONE) ||
+           psbt_sighash_is_supported(WALLY_SIGHASH_SINGLE) ||
+           psbt_sighash_is_supported(WALLY_SIGHASH_ALL |
+                                     WALLY_SIGHASH_ANYONECANPAY))
+    FAIL("non-ALL flag accepted");
+  else
+    PASS();
+}
+
+static void test_sighash_audit_flags_input(void) {
+  TEST("psbt_audit_sighash: SIGHASH_NONE input is reported");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+
+  psbt_sighash_audit_t audit;
+  psbt_audit_sighash(psbt, &audit);
+  if (audit.unsupported != 0) {
+    FAIL("clean PSBT flagged");
+    wally_psbt_free(psbt);
+    wally_tx_free(prev);
+    return;
+  }
+
+  wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_NONE);
+  psbt_audit_sighash(psbt, &audit);
+  if (audit.unsupported != 1)
+    FAIL("SIGHASH_NONE not flagged");
+  else if (audit.first_unsupported != 0)
+    FAIL("wrong input index");
+  else if (strcmp(psbt_sighash_name(audit.first_sighash), "NONE") != 0)
+    FAIL("wrong sighash name");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+static void test_sign_refuses_unsupported_sighash(void) {
+  TEST("psbt_sign: input asking for SIGHASH_NONE is skipped");
+
+  struct wally_psbt *psbt = make_unsafe_psbt();
+  if (!psbt) {
+    FAIL("make_unsafe_psbt");
+    return;
+  }
+  wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_NONE);
+
+  psbt_sign_policy_t policy = {.allow_unsafe = true,
+                               .allow_expected_owned = true};
+  size_t n = psbt_sign(psbt, false, policy, NULL);
+  wally_psbt_free(psbt);
+
+  if (n != 0)
+    FAIL("signed an input with an unsupported sighash");
+  else
+    PASS();
+}
+
+/* ================================================================
  * psbt_sign policy-gate tests
  *
  * Verify that psbt_sign() refuses to produce signatures for
@@ -2063,6 +2141,12 @@ int main(void) {
   test_amount_fabricated_prev_tx();
   test_amount_understated_witness_loses();
   test_amount_audit_mixed();
+
+  printf("\n=== sighash tests ===\n\n");
+
+  test_sighash_supported_set();
+  test_sighash_audit_flags_input();
+  test_sign_refuses_unsupported_sighash();
 
   printf("\n=== psbt_sign policy-gate tests ===\n\n");
 

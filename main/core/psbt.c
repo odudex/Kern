@@ -135,6 +135,59 @@ uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
   return psbt_get_input_amount(psbt, index).value;
 }
 
+bool psbt_sighash_is_supported(uint32_t sighash) {
+  /* 0 is both the "no PSBT_IN_SIGHASH_TYPE field" encoding and taproot's
+   * SIGHASH_DEFAULT; either way libwally signs with ALL semantics. */
+  return sighash == 0 || sighash == WALLY_SIGHASH_ALL;
+}
+
+const char *psbt_sighash_name(uint32_t sighash) {
+  switch (sighash) {
+  case 0:
+    return "DEFAULT";
+  case WALLY_SIGHASH_ALL:
+    return "ALL";
+  case WALLY_SIGHASH_NONE:
+    return "NONE";
+  case WALLY_SIGHASH_SINGLE:
+    return "SINGLE";
+  case WALLY_SIGHASH_ALL | WALLY_SIGHASH_ANYONECANPAY:
+    return "ALL|ANYONECANPAY";
+  case WALLY_SIGHASH_NONE | WALLY_SIGHASH_ANYONECANPAY:
+    return "NONE|ANYONECANPAY";
+  case WALLY_SIGHASH_SINGLE | WALLY_SIGHASH_ANYONECANPAY:
+    return "SINGLE|ANYONECANPAY";
+  default:
+    return "unknown";
+  }
+}
+
+void psbt_audit_sighash(const struct wally_psbt *psbt,
+                        psbt_sighash_audit_t *out) {
+  if (!out)
+    return;
+
+  memset(out, 0, sizeof(*out));
+  if (!psbt || wally_psbt_get_num_inputs(psbt, &out->num_inputs) != WALLY_OK)
+    out->num_inputs = 0;
+
+  out->first_unsupported = out->num_inputs;
+
+  for (size_t i = 0; i < out->num_inputs; i++) {
+    size_t sighash = 0;
+    if (wally_psbt_get_input_sighash(psbt, i, &sighash) != WALLY_OK)
+      sighash = 0;
+    if (psbt_sighash_is_supported((uint32_t)sighash))
+      continue;
+
+    if (!out->unsupported) {
+      out->first_unsupported = i;
+      out->first_sighash = (uint32_t)sighash;
+    }
+    out->unsupported++;
+  }
+}
+
 bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
                             unsigned char *out, size_t out_cap,
                             size_t *out_len) {
@@ -791,6 +844,18 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
 
     if (ownership.ownership == PSBT_OWNERSHIP_EXTERNAL)
       continue;
+
+    /* libwally honours whatever sighash byte the PSBT declares. Under
+     * anything but ALL/DEFAULT the signature outlives the transaction that
+     * was reviewed, so refuse here as well as in the UI gate. */
+    size_t sighash = 0;
+    if (wally_psbt_get_input_sighash(psbt, i, &sighash) != WALLY_OK)
+      sighash = 0;
+    if (!psbt_sighash_is_supported((uint32_t)sighash)) {
+      ESP_LOGW(TAG, "Skipping input %zu: unsupported sighash 0x%02x", i,
+               (unsigned)sighash);
+      continue;
+    }
     if (ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE &&
         !policy.allow_unsafe) {
       ESP_LOGW(TAG,
