@@ -5,6 +5,7 @@
 #include "script_templates.h"
 #include "wallet.h"
 #include <esp_log.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
@@ -824,6 +825,110 @@ static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
   return count;
 }
 
+/* How one input classified, whether the policy refused it, and -- for a
+ * refused input -- the signature state to hand back exactly as it arrived.
+ *
+ * wally_psbt_sign() walks every input in the PSBT and signs any whose keypath
+ * map names the public key it was handed, so classifying an input per-loop
+ * does not by itself decide what gets signed. An input we refused -- including
+ * one classified EXTERNAL because its fingerprint is wrong -- still picks up a
+ * signature if it lists a key used elsewhere in the same transaction. Signing
+ * a whole PSBT cannot enforce a per-input gate, so snapshot before and restore
+ * after. */
+typedef struct {
+  input_ownership_t owner;
+  bool denied;  /* policy refused this input */
+  bool tracked; /* a snapshot was taken (denied and it names some key) */
+  size_t sig_count;
+  struct wally_map signatures;
+  struct wally_map leaf_signatures;
+  struct wally_map fields;
+} input_plan_t;
+
+/* Safe on an untouched plan, and safe twice, so every exit can run it over
+ * the whole array without tracking how far the classify loop got. */
+static void release_input_state(input_plan_t *plan) {
+  wally_map_clear(&plan->signatures);
+  wally_map_clear(&plan->leaf_signatures);
+  wally_map_clear(&plan->fields);
+  plan->tracked = false;
+}
+
+static bool capture_input_state(const struct wally_psbt *psbt, size_t i,
+                                input_plan_t *plan) {
+  const struct wally_psbt_input *inp = &psbt->inputs[i];
+
+  /* With no derivation info there is no public key for libwally to match on,
+   * so the input cannot pick up a signature and needs no snapshot. */
+  if (!inp->keypaths.num_items && !inp->taproot_leaf_paths.num_items)
+    return true;
+
+  if (wally_map_assign(&plan->signatures, &inp->signatures) != WALLY_OK ||
+      wally_map_assign(&plan->leaf_signatures, &inp->taproot_leaf_signatures) !=
+          WALLY_OK ||
+      wally_map_assign(&plan->fields, &inp->psbt_fields) != WALLY_OK) {
+    release_input_state(plan);
+    return false;
+  }
+
+  plan->sig_count = input_signature_count(psbt, i);
+  plan->tracked = true;
+  return true;
+}
+
+static void restore_input_state(struct wally_psbt *psbt, size_t i,
+                                input_plan_t *plan,
+                                psbt_sign_result_t *result) {
+  if (!plan->tracked)
+    return;
+
+  if (input_signature_count(psbt, i) != plan->sig_count) {
+    ESP_LOGW(TAG, "Discarding signature added to policy-denied input %zu", i);
+    if (result)
+      result->blocked++;
+  }
+
+  wally_map_assign(&psbt->inputs[i].signatures, &plan->signatures);
+  wally_map_assign(&psbt->inputs[i].taproot_leaf_signatures,
+                   &plan->leaf_signatures);
+  wally_map_assign(&psbt->inputs[i].psbt_fields, &plan->fields);
+  release_input_state(plan);
+}
+
+/* True when `policy` clears this input for signing. */
+static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
+                              psbt_ownership_t ownership,
+                              psbt_sign_policy_t policy) {
+  if (ownership == PSBT_OWNERSHIP_EXTERNAL)
+    return false;
+
+  /* libwally honours whatever sighash byte the PSBT declares. Under anything
+   * but ALL/DEFAULT the signature outlives the transaction that was reviewed,
+   * so refuse here as well as in the UI gate. */
+  size_t sighash = 0;
+  if (wally_psbt_get_input_sighash(psbt, i, &sighash) != WALLY_OK)
+    sighash = 0;
+  if (!psbt_sighash_is_supported((uint32_t)sighash)) {
+    ESP_LOGW(TAG, "Skipping input %zu: unsupported sighash 0x%02x", i,
+             (unsigned)sighash);
+    return false;
+  }
+
+  if (ownership == PSBT_OWNERSHIP_OWNED_UNSAFE && !policy.allow_unsafe) {
+    ESP_LOGW(TAG, "Skipping input %zu: OWNED_UNSAFE without permissive policy",
+             i);
+    return false;
+  }
+  if (ownership == PSBT_OWNERSHIP_EXPECTED_OWNED &&
+      !policy.allow_expected_owned) {
+    ESP_LOGW(TAG,
+             "Skipping input %zu: EXPECTED_OWNED without expected-owned policy",
+             i);
+    return false;
+  }
+  return true;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -835,47 +940,46 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   }
 
   size_t num_inputs = 0;
-  if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK) {
+  if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK || !num_inputs) {
     ESP_LOGE(TAG, "Failed to get number of inputs");
+    return 0;
+  }
+
+  input_plan_t *plan = calloc(num_inputs, sizeof(*plan));
+  if (!plan) {
+    ESP_LOGE(TAG, "Out of memory classifying %zu inputs", num_inputs);
     return 0;
   }
 
   size_t signatures_added = 0;
 
+  /* Classify everything up front, then freeze the inputs we will not sign.
+   * Bailing on a snapshot failure rather than signing unprotected. */
+  bool signable_any = false;
+  for (size_t i = 0; i < num_inputs; i++) {
+    plan[i].owner = psbt_classify_input(psbt, i, is_testnet);
+    if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
+      signable_any = true;
+      continue;
+    }
+    plan[i].denied = true;
+    if (!capture_input_state(psbt, i, &plan[i])) {
+      ESP_LOGE(TAG, "Failed to snapshot denied input %zu; refusing to sign", i);
+      goto cleanup;
+    }
+  }
+
+  if (!signable_any)
+    goto cleanup;
+
   /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
   wally_psbt_signing_cache_enable(psbt, 0);
 
   for (size_t i = 0; i < num_inputs; i++) {
-    input_ownership_t ownership = psbt_classify_input(psbt, i, is_testnet);
+    input_ownership_t ownership = plan[i].owner;
 
-    if (ownership.ownership == PSBT_OWNERSHIP_EXTERNAL)
+    if (plan[i].denied)
       continue;
-
-    /* libwally honours whatever sighash byte the PSBT declares. Under
-     * anything but ALL/DEFAULT the signature outlives the transaction that
-     * was reviewed, so refuse here as well as in the UI gate. */
-    size_t sighash = 0;
-    if (wally_psbt_get_input_sighash(psbt, i, &sighash) != WALLY_OK)
-      sighash = 0;
-    if (!psbt_sighash_is_supported((uint32_t)sighash)) {
-      ESP_LOGW(TAG, "Skipping input %zu: unsupported sighash 0x%02x", i,
-               (unsigned)sighash);
-      continue;
-    }
-    if (ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE &&
-        !policy.allow_unsafe) {
-      ESP_LOGW(TAG,
-               "Skipping input %zu: OWNED_UNSAFE without permissive policy", i);
-      continue;
-    }
-    if (ownership.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED &&
-        !policy.allow_expected_owned) {
-      ESP_LOGW(
-          TAG,
-          "Skipping input %zu: EXPECTED_OWNED without expected-owned policy",
-          i);
-      continue;
-    }
 
     const uint32_t *path = NULL;
     size_t path_len = 0;
@@ -924,6 +1028,14 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   }
 
   wally_psbt_signing_cache_disable(psbt);
+
+  for (size_t i = 0; i < num_inputs; i++)
+    restore_input_state(psbt, i, &plan[i], result);
+
+cleanup:
+  for (size_t i = 0; i < num_inputs; i++)
+    release_input_state(&plan[i]);
+  free(plan);
 
   return signatures_added;
 }

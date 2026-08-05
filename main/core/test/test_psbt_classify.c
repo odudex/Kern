@@ -1907,6 +1907,72 @@ static void test_psbt_classify_multi_input_mixed(void) {
   PASS();
 }
 
+/* The signing gate is only real if it survives libwally signing the whole
+ * PSBT at once. Input 1 here is a second UTXO at an address we own, labelled
+ * with someone else's fingerprint so it classifies EXTERNAL; its keypath still
+ * names the key input 0 signs with, so wally_psbt_sign() reaches it. */
+static void test_psbt_sign_denied_input_keeps_no_signature(void) {
+  TEST("psbt_sign: denied input naming our key keeps no signature");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+
+  uint8_t kp_ours[] = {
+      0x00, 0x00, 0x00, 0x00, /* our fingerprint */
+      0x54, 0x00, 0x00, 0x80, /* 84' */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x00, /* 0   */
+      0x00, 0x00, 0x00, 0x00, /* 0   */
+  };
+  uint8_t kp_foreign[sizeof(kp_ours)];
+  memcpy(kp_foreign, kp_ours, sizeof(kp_ours));
+  kp_foreign[0] = 0xDE; /* someone else's fingerprint, same key below */
+  kp_foreign[1] = 0xAD;
+  kp_foreign[2] = 0xBE;
+  kp_foreign[3] = 0xEF;
+
+  struct wally_psbt *psbt = make_two_input_psbt(
+      REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+      sizeof(derived->pub_key), kp_ours, sizeof(kp_ours), REF_SPK_P2WPKH,
+      sizeof(REF_SPK_P2WPKH), derived->pub_key, sizeof(derived->pub_key),
+      kp_foreign, sizeof(kp_foreign));
+  bip32_key_free(derived);
+  if (!psbt) {
+    FAIL("make_two_input_psbt");
+    return;
+  }
+
+  if (psbt_classify_input(psbt, 1, false).ownership !=
+      PSBT_OWNERSHIP_EXTERNAL) {
+    wally_psbt_free(psbt);
+    FAIL("input 1 should classify as EXTERNAL");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {.allow_unsafe = true,
+                               .allow_expected_owned = true};
+  psbt_sign_result_t res;
+  psbt_sign(psbt, false, policy, &res);
+
+  size_t sigs0 = 0, sigs1 = 0;
+  wally_psbt_get_input_signatures_size(psbt, 0, &sigs0);
+  wally_psbt_get_input_signatures_size(psbt, 1, &sigs1);
+  wally_psbt_free(psbt);
+
+  if (sigs0 != 1)
+    FAIL("owned input was not signed");
+  else if (sigs1 != 0)
+    FAIL("denied input kept a signature");
+  else if (res.blocked != 1)
+    FAIL("discarded signature not reported");
+  else
+    PASS();
+}
+
 /* ------------------------------------------------------------------ */
 
 /* Register desc_str and regenerate its scripts into *out.
@@ -2171,6 +2237,7 @@ int main(void) {
   test_psbt_sign_gate_expected_blocked();
   test_psbt_sign_gate_external_always_skipped();
   test_psbt_classify_multi_input_mixed();
+  test_psbt_sign_denied_input_keeps_no_signature();
   test_psbt_classify_registry_wsh_owned();
   test_psbt_classify_registry_wsh_tampered_witness();
   test_psbt_classify_registry_miniscript_owned();

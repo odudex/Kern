@@ -1787,6 +1787,23 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   saved_return_callback =
       complete_callback ? complete_callback : return_callback;
 
+  // A PSBT built so that refused inputs pick up a signature from a key used
+  // elsewhere in the same transaction is not an accident. The signatures were
+  // stripped; say so, because the next PSBT from that source is suspect too.
+  if (sign_result.blocked) {
+    char body[320];
+    snprintf(body, sizeof(body),
+             "%zu input%s that this wallet refused to sign attempted to "
+             "collect a signature from a key used by another input.\n\n"
+             "Those signatures were discarded. A PSBT arranged this way does "
+             "not come from an honest coordinator -- treat its source as "
+             "compromised.",
+             sign_result.blocked, sign_result.blocked == 1 ? "" : "s");
+    dialog_show_info("Signatures discarded", body, partial_sign_ack_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+
   // Exporting a partly-signed PSBT without saying so is what an attacker
   // harvesting one signature per session relies on: each round looks like a
   // clean success. Name the shortfall before the export menu appears.

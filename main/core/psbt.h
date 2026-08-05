@@ -181,9 +181,15 @@ typedef struct {
 // not sign (bad utxo data, unsupported script) — the caller must surface it,
 // since silently exporting a partly-signed PSBT is exactly what an attacker
 // harvesting one signature per session wants.
+//
+// `blocked` counts inputs the policy refused that libwally signed anyway
+// because they name a key used elsewhere in the transaction, and whose
+// signature was therefore discarded. A PSBT arranged that way is not something
+// an honest coordinator produces.
 typedef struct {
   size_t attempted;
   size_t signed_ok;
+  size_t blocked;
 } psbt_sign_result_t;
 
 // Sign PSBT inputs with loaded key.
