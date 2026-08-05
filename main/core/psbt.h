@@ -151,14 +151,25 @@ typedef struct {
   bool allow_expected_owned; // EXPECTED_OWNED — fp matches but derive doesn't
 } psbt_sign_policy_t;
 
+// Outcome of a signing pass. `attempted` counts inputs the policy cleared for
+// signing; `signed_ok` counts those that actually gained a signature. A gap
+// between the two means the PSBT carried inputs we recognise as ours but could
+// not sign (bad utxo data, unsupported script) — the caller must surface it,
+// since silently exporting a partly-signed PSBT is exactly what an attacker
+// harvesting one signature per session wants.
+typedef struct {
+  size_t attempted;
+  size_t signed_ok;
+} psbt_sign_result_t;
+
 // Sign PSBT inputs with loaded key.
 // `policy` gates which non-SAFE ownership categories may be signed; see
 // `psbt_sign_policy_t`. Callers must still check `partial_signing` upstream
 // (it gates whether to proceed at all when external inputs exist), since
 // that's a UX decision rather than a per-input one.
-// Returns number of signatures added (0 if none).
+// `result` may be NULL. Returns number of signatures added (0 if none).
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
-                 psbt_sign_policy_t policy);
+                 psbt_sign_policy_t policy, psbt_sign_result_t *result);
 
 // Create a trimmed PSBT containing only signatures and minimal validation data
 // Returns new PSBT on success (caller must free), NULL on failure

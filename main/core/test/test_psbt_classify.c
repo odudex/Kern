@@ -1419,7 +1419,7 @@ static void test_psbt_sign_gate_unsafe_blocked(void) {
 
   psbt_sign_policy_t policy = {.allow_unsafe = false,
                                .allow_expected_owned = false};
-  size_t n = psbt_sign(psbt, false, policy);
+  size_t n = psbt_sign(psbt, false, policy, NULL);
   wally_psbt_free(psbt);
 
   if (n != 0) {
@@ -1440,7 +1440,7 @@ static void test_psbt_sign_gate_unsafe_allowed(void) {
 
   psbt_sign_policy_t policy = {.allow_unsafe = true,
                                .allow_expected_owned = false};
-  size_t n = psbt_sign(psbt, false, policy);
+  size_t n = psbt_sign(psbt, false, policy, NULL);
   wally_psbt_free(psbt);
 
   if (n != 1) {
@@ -1461,7 +1461,7 @@ static void test_psbt_sign_gate_expected_blocked(void) {
 
   psbt_sign_policy_t policy = {.allow_unsafe = false,
                                .allow_expected_owned = false};
-  size_t n = psbt_sign(psbt, false, policy);
+  size_t n = psbt_sign(psbt, false, policy, NULL);
   wally_psbt_free(psbt);
 
   if (n != 0) {
@@ -1498,7 +1498,7 @@ static void test_psbt_sign_gate_external_always_skipped(void) {
 
   psbt_sign_policy_t policy = {.allow_unsafe = true,
                                .allow_expected_owned = true};
-  size_t n = psbt_sign(psbt, false, policy);
+  size_t n = psbt_sign(psbt, false, policy, NULL);
   wally_psbt_free(psbt);
 
   if (n != 0) {
@@ -1805,7 +1805,7 @@ static void test_psbt_classify_multi_input_mixed(void) {
        "input");
   psbt_sign_policy_t policy = {.allow_unsafe = true,
                                .allow_expected_owned = true};
-  size_t n = psbt_sign(psbt, false, policy);
+  size_t n = psbt_sign(psbt, false, policy, NULL);
   wally_psbt_free(psbt);
   if (n != 1) {
     FAIL("expected exactly 1 signature on the mixed PSBT");

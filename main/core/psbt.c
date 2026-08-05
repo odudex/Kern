@@ -748,8 +748,28 @@ bool psbt_format_keypath(const unsigned char *raw_keypath,
                                    MAX_KEYPATH_TOTAL_DEPTH);
 }
 
+/* Every place libwally can park a signature for one input: the ECDSA map, the
+ * taproot key-path field, and the taproot script-path leaf map. Counted before
+ * and after each signing call so `signed_ok` reflects signatures that actually
+ * landed, not calls that merely returned WALLY_OK. */
+static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
+  size_t count = 0;
+  size_t n = 0;
+
+  if (wally_psbt_get_input_signatures_size(psbt, i, &n) == WALLY_OK)
+    count += n;
+  if (wally_psbt_get_input_taproot_signature_len(psbt, i, &n) == WALLY_OK && n)
+    count++;
+  count += psbt->inputs[i].taproot_leaf_signatures.num_items;
+
+  return count;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
-                 psbt_sign_policy_t policy) {
+                 psbt_sign_policy_t policy, psbt_sign_result_t *result) {
+  if (result)
+    memset(result, 0, sizeof(*result));
+
   if (!psbt) {
     ESP_LOGE(TAG, "Invalid PSBT");
     return 0;
@@ -814,6 +834,10 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       continue;
     }
 
+    if (result)
+      result->attempted++;
+
+    size_t sigs_before = input_signature_count(psbt, i);
     int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
                               EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
     bip32_key_free(derived_key);
@@ -823,6 +847,9 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     } else {
       ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
     }
+
+    if (result && input_signature_count(psbt, i) > sigs_before)
+      result->signed_ok++;
   }
 
   wally_psbt_signing_cache_disable(psbt);

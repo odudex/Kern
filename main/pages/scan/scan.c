@@ -1702,6 +1702,11 @@ static void destroy_export_menu(void) {
   }
 }
 
+static void partial_sign_ack_cb(void *user_data) {
+  (void)user_data;
+  show_export_choice();
+}
+
 static void deferred_sign_cb(lv_timer_t *timer) {
   (void)timer;
 
@@ -1715,7 +1720,9 @@ static void deferred_sign_cb(lv_timer_t *timer) {
       .allow_unsafe = settings_get_permissive_signing(),
       .allow_expected_owned = settings_get_expected_owned_signing(),
   };
-  size_t signatures_added = psbt_sign(current_psbt, is_testnet, sign_policy);
+  psbt_sign_result_t sign_result;
+  size_t signatures_added =
+      psbt_sign(current_psbt, is_testnet, sign_policy, &sign_result);
 
   if (signatures_added == 0) {
     dismiss_progress();
@@ -1748,6 +1755,25 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   saved_return_callback =
       complete_callback ? complete_callback : return_callback;
+
+  // Exporting a partly-signed PSBT without saying so is what an attacker
+  // harvesting one signature per session relies on: each round looks like a
+  // clean success. Name the shortfall before the export menu appears.
+  if (sign_result.signed_ok < sign_result.attempted) {
+    char body[320];
+    snprintf(body, sizeof(body),
+             "%zu of %zu inputs belonging to this wallet did not receive a "
+             "signature.\n\n"
+             "The exported PSBT is incomplete. If you did not expect this, do "
+             "not treat the transaction as reviewed -- re-export it from the "
+             "coordinator with full previous transactions and try again.",
+             sign_result.attempted - sign_result.signed_ok,
+             sign_result.attempted);
+    dialog_show_info("Incomplete signing", body, partial_sign_ack_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+
   show_export_choice();
 }
 
