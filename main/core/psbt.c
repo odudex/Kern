@@ -22,17 +22,117 @@ static const char *TAG = "PSBT";
 #define PSBT_PRIVATE static
 #endif
 
-uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
-  struct wally_tx_output *utxo = NULL;
-  uint64_t value = 0;
+/* Locate the output a non_witness_utxo claims to fund, after checking that the
+ * transaction really is the one this input spends. libwally applies the same
+ * txid check when it signs a legacy input (get_scriptcode), but never on the
+ * path that reports amounts, so the fee could be read off a fabricated
+ * previous transaction that signing would later reject. */
+static const struct wally_tx_output *
+verified_prevout(const struct wally_psbt *psbt, size_t index,
+                 const struct wally_tx *prev) {
+  unsigned char declared[WALLY_TXHASH_LEN];
+  unsigned char actual[WALLY_TXHASH_LEN];
+  uint32_t vout = 0;
 
-  if (wally_psbt_get_input_best_utxo_alloc(psbt, index, &utxo) == WALLY_OK &&
-      utxo) {
-    value = utxo->satoshi;
-    wally_tx_output_free(utxo);
+  if (wally_psbt_get_input_previous_txid(psbt, index, declared,
+                                         sizeof(declared)) != WALLY_OK ||
+      wally_tx_get_txid(prev, actual, sizeof(actual)) != WALLY_OK ||
+      memcmp(declared, actual, sizeof(actual)) != 0)
+    return NULL;
+
+  if (wally_psbt_get_input_output_index(psbt, index, &vout) != WALLY_OK ||
+      vout >= prev->num_outputs)
+    return NULL;
+
+  return &prev->outputs[vout];
+}
+
+static bool prevout_matches_witness(const struct wally_tx_output *prevout,
+                                    const struct wally_tx_output *witness) {
+  return prevout->satoshi == witness->satoshi &&
+         prevout->script_len == witness->script_len &&
+         (prevout->script_len == 0 ||
+          memcmp(prevout->script, witness->script, prevout->script_len) == 0);
+}
+
+psbt_input_amount_t psbt_get_input_amount(const struct wally_psbt *psbt,
+                                          size_t index) {
+  psbt_input_amount_t result = {.status = PSBT_AMOUNT_MISSING, .value = 0};
+
+  struct wally_tx_output *witness = NULL;
+  if (wally_psbt_get_input_witness_utxo_alloc(psbt, index, &witness) !=
+      WALLY_OK)
+    witness = NULL;
+
+  struct wally_tx *prev = NULL;
+  if (wally_psbt_get_input_utxo_alloc(psbt, index, &prev) != WALLY_OK)
+    prev = NULL;
+
+  if (prev) {
+    const struct wally_tx_output *prevout = verified_prevout(psbt, index, prev);
+    if (!prevout) {
+      /* A previous transaction was supplied but it is not the one being
+       * spent. Nothing here is trustworthy; fall back to the witness value
+       * only so the review screen still shows the number signing would use. */
+      result.status = PSBT_AMOUNT_INVALID;
+      result.value = witness ? witness->satoshi : 0;
+    } else if (witness && !prevout_matches_witness(prevout, witness)) {
+      result.status = PSBT_AMOUNT_INVALID;
+      result.value = prevout->satoshi; /* the proven side wins for display */
+    } else {
+      result.status = PSBT_AMOUNT_PROVEN;
+      result.value = prevout->satoshi;
+    }
+  } else if (witness) {
+    result.status = PSBT_AMOUNT_ASSERTED;
+    result.value = witness->satoshi;
   }
 
-  return value;
+  if (witness)
+    wally_tx_output_free(witness);
+  if (prev)
+    wally_tx_free(prev);
+
+  return result;
+}
+
+void psbt_audit_input_amounts(const struct wally_psbt *psbt,
+                              psbt_amount_audit_t *out) {
+  if (!out)
+    return;
+
+  memset(out, 0, sizeof(*out));
+  if (!psbt || wally_psbt_get_num_inputs(psbt, &out->num_inputs) != WALLY_OK)
+    out->num_inputs = 0;
+
+  out->first_unproven = out->num_inputs;
+  out->first_invalid = out->num_inputs;
+
+  for (size_t i = 0; i < out->num_inputs; i++) {
+    psbt_input_amount_t amount = psbt_get_input_amount(psbt, i);
+    switch (amount.status) {
+    case PSBT_AMOUNT_PROVEN:
+      out->proven++;
+      continue;
+    case PSBT_AMOUNT_ASSERTED:
+      out->asserted++;
+      break;
+    case PSBT_AMOUNT_INVALID:
+      out->invalid++;
+      if (out->first_invalid == out->num_inputs)
+        out->first_invalid = i;
+      break;
+    case PSBT_AMOUNT_MISSING:
+      out->missing++;
+      break;
+    }
+    if (out->first_unproven == out->num_inputs)
+      out->first_unproven = i;
+  }
+}
+
+uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
+  return psbt_get_input_amount(psbt, index).value;
 }
 
 bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,

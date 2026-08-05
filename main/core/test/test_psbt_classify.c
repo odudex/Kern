@@ -1098,6 +1098,253 @@ static void test_psbt_classify_adv_taproot_foreign_fp(void) {
 }
 
 /* ================================================================
+ * Input amount provenance tests
+ *
+ * The fee is inputs minus outputs. Outputs are committed to by the sighash,
+ * inputs are not (BIP143 commits only to the input's own amount, and the
+ * legacy sighash commits to nothing), so an amount is only trustworthy when
+ * the previous transaction that funds it is present and hashes to the
+ * outpoint being spent.
+ * ================================================================ */
+
+/* Build a single-input PSBT that genuinely spends `prev_value` from `spk`.
+ * The prevout txid is derived from the previous transaction, so attaching
+ * `*prev_out` as the non_witness_utxo verifies. Caller frees `*prev_out`. */
+static struct wally_psbt *make_amount_psbt(const uint8_t *spk, size_t spk_len,
+                                           uint64_t prev_value,
+                                           struct wally_tx **prev_out) {
+  *prev_out = NULL;
+
+  struct wally_tx *prev = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 1, &prev) != WALLY_OK)
+    return NULL;
+  uint8_t funding_txid[32] = {0};
+  funding_txid[0] = 0xaa;
+  wally_tx_add_raw_input(prev, funding_txid, sizeof(funding_txid), 0,
+                         0xffffffff, NULL, 0, NULL, 0);
+  wally_tx_add_raw_output(prev, prev_value, spk, spk_len, 0);
+
+  uint8_t txid[32];
+  if (wally_tx_get_txid(prev, txid, sizeof(txid)) != WALLY_OK) {
+    wally_tx_free(prev);
+    return NULL;
+  }
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK) {
+    wally_tx_free(prev);
+    return NULL;
+  }
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  uint8_t op_return[] = {0x6a};
+  wally_tx_add_raw_output(tx, 0, op_return, sizeof(op_return), 0);
+
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK) {
+    wally_tx_free(prev);
+    return NULL;
+  }
+
+  *prev_out = prev;
+  return psbt;
+}
+
+static void set_witness_value(struct wally_psbt *psbt, uint64_t satoshi) {
+  struct wally_tx_output *utxo = NULL;
+  wally_tx_output_init_alloc(satoshi, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                             &utxo);
+  wally_psbt_set_input_witness_utxo(psbt, 0, utxo);
+  wally_tx_output_free(utxo);
+}
+
+static void test_amount_missing(void) {
+  TEST("psbt_get_input_amount: no utxo data -> MISSING");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+
+  psbt_input_amount_t a = psbt_get_input_amount(psbt, 0);
+  if (a.status != PSBT_AMOUNT_MISSING || a.value != 0)
+    FAIL("expected MISSING/0");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+static void test_amount_witness_only_asserted(void) {
+  TEST("psbt_get_input_amount: witness_utxo only -> ASSERTED");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+  set_witness_value(psbt, 100000);
+
+  psbt_input_amount_t a = psbt_get_input_amount(psbt, 0);
+  if (a.status != PSBT_AMOUNT_ASSERTED || a.value != 100000)
+    FAIL("expected ASSERTED/100000");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+static void test_amount_prev_tx_proven(void) {
+  TEST("psbt_get_input_amount: matching non_witness_utxo -> PROVEN");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+
+  psbt_input_amount_t a = psbt_get_input_amount(psbt, 0);
+  if (a.status != PSBT_AMOUNT_PROVEN || a.value != 100000)
+    FAIL("expected PROVEN/100000");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+static void test_amount_fabricated_prev_tx(void) {
+  TEST("psbt_get_input_amount: non_witness_utxo for a different tx -> INVALID");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+
+  /* Same script, understated value: a plausible-looking previous transaction
+   * that hashes to a different txid than the one being spent. */
+  struct wally_tx *forged = NULL;
+  wally_tx_init_alloc(2, 0, 1, 1, &forged);
+  uint8_t funding_txid[32] = {0};
+  funding_txid[0] = 0xaa;
+  wally_tx_add_raw_input(forged, funding_txid, sizeof(funding_txid), 0,
+                         0xffffffff, NULL, 0, NULL, 0);
+  wally_tx_add_raw_output(forged, 1000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                          0);
+  wally_psbt_set_input_utxo(psbt, 0, forged);
+
+  psbt_input_amount_t a = psbt_get_input_amount(psbt, 0);
+  if (a.status != PSBT_AMOUNT_INVALID)
+    FAIL("forged previous transaction accepted");
+  else
+    PASS();
+
+  wally_tx_free(forged);
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+static void test_amount_understated_witness_loses(void) {
+  TEST("psbt_get_input_amount: understated witness_utxo -> INVALID, proven "
+       "value wins");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+  set_witness_value(psbt, 1000); /* the lie the review screen used to show */
+
+  psbt_input_amount_t a = psbt_get_input_amount(psbt, 0);
+  if (a.status != PSBT_AMOUNT_INVALID)
+    FAIL("disagreeing amounts accepted");
+  else if (a.value != 100000)
+    FAIL("reported the understated value");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+static void test_amount_audit_mixed(void) {
+  TEST("psbt_audit_input_amounts: proven input 0, asserted input 1");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+
+  psbt_amount_audit_t audit;
+  psbt_audit_input_amounts(psbt, &audit);
+  if (!psbt_amounts_are_proven(&audit)) {
+    FAIL("single proven input not reported as proven");
+    wally_psbt_free(psbt);
+    wally_tx_free(prev);
+    return;
+  }
+
+  /* Add a second input backed only by a witness_utxo. */
+  struct wally_tx *tx = NULL;
+  wally_psbt_get_global_tx_alloc(psbt, &tx);
+  uint8_t other_txid[32] = {0};
+  other_txid[0] = 0x77;
+  wally_tx_add_raw_input(tx, other_txid, sizeof(other_txid), 0, 0xffffffff,
+                         NULL, 0, NULL, 0);
+  struct wally_psbt *two = NULL;
+  wally_psbt_from_tx(tx, 0, 0, &two);
+  wally_tx_free(tx);
+  if (!two) {
+    FAIL("two-input rebuild");
+    wally_psbt_free(psbt);
+    wally_tx_free(prev);
+    return;
+  }
+  wally_psbt_set_input_utxo(two, 0, prev);
+  struct wally_tx_output *utxo = NULL;
+  wally_tx_output_init_alloc(50000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                             &utxo);
+  wally_psbt_set_input_witness_utxo(two, 1, utxo);
+  wally_tx_output_free(utxo);
+
+  psbt_audit_input_amounts(two, &audit);
+  if (audit.num_inputs != 2 || audit.proven != 1 || audit.asserted != 1)
+    FAIL("wrong audit counts");
+  else if (psbt_amounts_are_proven(&audit))
+    FAIL("mixed audit reported as proven");
+  else if (audit.first_unproven != 1)
+    FAIL("wrong first_unproven index");
+  else
+    PASS();
+
+  wally_psbt_free(two);
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
+/* ================================================================
  * psbt_sign policy-gate tests
  *
  * Verify that psbt_sign() refuses to produce signatures for
@@ -1807,6 +2054,15 @@ int main(void) {
   test_psbt_classify_adv_registry_depth_mismatch();
   test_psbt_classify_adv_taproot_foreign_fp();
   test_psbt_classify_adv_testnet_flag_mismatch();
+
+  printf("\n=== input amount provenance tests ===\n\n");
+
+  test_amount_missing();
+  test_amount_witness_only_asserted();
+  test_amount_prev_tx_proven();
+  test_amount_fabricated_prev_tx();
+  test_amount_understated_witness_loses();
+  test_amount_audit_mixed();
 
   printf("\n=== psbt_sign policy-gate tests ===\n\n");
 

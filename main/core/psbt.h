@@ -81,6 +81,52 @@ bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
 bool psbt_format_keypath(const unsigned char *raw_keypath,
                          size_t raw_keypath_len, char *buf, size_t buf_size);
 
+// How much an input's amount can be trusted. Only PROVEN ties the value to
+// the prevout txid the transaction actually spends: the full previous
+// transaction is present and hashes to it. Everything else is the PSBT's word,
+// and since the BIP143 sighash commits only to the input's own amount, a
+// coordinator can understate one input per signing session and harvest a valid
+// signature for the other — two sessions reassemble a transaction whose real
+// fee was never displayed.
+typedef enum {
+  PSBT_AMOUNT_PROVEN,   /* non_witness_utxo present and hashes to the prevout */
+  PSBT_AMOUNT_ASSERTED, /* witness_utxo only — trusted, not verified */
+  PSBT_AMOUNT_INVALID,  /* utxo data contradicts the prevout or itself */
+  PSBT_AMOUNT_MISSING,  /* no utxo data at all */
+} psbt_amount_status_t;
+
+typedef struct {
+  psbt_amount_status_t status;
+  uint64_t value;
+} psbt_input_amount_t;
+
+typedef struct {
+  size_t num_inputs;
+  size_t proven;
+  size_t asserted;
+  size_t invalid;
+  size_t missing;
+  /* Index of the first input in each non-proven category, or num_inputs when
+   * that category is empty. Used to name a concrete input in the warning. */
+  size_t first_unproven;
+  size_t first_invalid;
+} psbt_amount_audit_t;
+
+// Resolve an input's amount and how well it is backed. Prefers the value from
+// a verified non_witness_utxo over a bare witness_utxo assertion.
+psbt_input_amount_t psbt_get_input_amount(const struct wally_psbt *psbt,
+                                          size_t index);
+
+// Same, across every input.
+void psbt_audit_input_amounts(const struct wally_psbt *psbt,
+                              psbt_amount_audit_t *out);
+
+// True when every input's amount is backed by its previous transaction, i.e.
+// the displayed fee is arithmetic on verified numbers.
+static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
+  return audit->num_inputs > 0 && audit->proven == audit->num_inputs;
+}
+
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 
