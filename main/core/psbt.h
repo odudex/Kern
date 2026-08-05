@@ -150,6 +150,10 @@ const char *psbt_sighash_name(uint32_t sighash);
 void psbt_audit_sighash(const struct wally_psbt *psbt,
                         psbt_sighash_audit_t *out);
 
+// Fee as a whole-number percentage of the total input value; 0 when the total
+// is 0. What counts as too high is the review screen's call, not this layer's.
+uint32_t psbt_fee_percent(uint64_t fee, uint64_t total_input);
+
 // Detect network from derivation paths (returns true if testnet)
 bool psbt_detect_network(const struct wally_psbt *psbt);
 

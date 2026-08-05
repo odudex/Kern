@@ -1345,7 +1345,7 @@ static void test_amount_audit_mixed(void) {
 }
 
 /* ================================================================
- * Sighash tests
+ * Sighash and fee-percentage tests
  * ================================================================ */
 
 static struct wally_psbt *make_unsafe_psbt(void);
@@ -1418,6 +1418,21 @@ static void test_sign_refuses_unsupported_sighash(void) {
 
   if (n != 0)
     FAIL("signed an input with an unsupported sighash");
+  else
+    PASS();
+}
+
+static void test_fee_percent(void) {
+  TEST("psbt_fee_percent: integer percentage of inputs");
+
+  if (psbt_fee_percent(1000, 0) != 0)
+    FAIL("zero inputs should give 0");
+  else if (psbt_fee_percent(10000, 100000) != 10)
+    FAIL("10% miscomputed");
+  else if (psbt_fee_percent(9999, 100000) != 9)
+    FAIL("truncation wrong");
+  else if (psbt_fee_percent(2100000000000000ULL, 2100000000000000ULL) != 100)
+    FAIL("full-supply case overflowed");
   else
     PASS();
 }
@@ -2142,11 +2157,12 @@ int main(void) {
   test_amount_understated_witness_loses();
   test_amount_audit_mixed();
 
-  printf("\n=== sighash tests ===\n\n");
+  printf("\n=== sighash and fee tests ===\n\n");
 
   test_sighash_supported_set();
   test_sighash_audit_flags_input();
   test_sign_refuses_unsupported_sighash();
+  test_fee_percent();
 
   printf("\n=== psbt_sign policy-gate tests ===\n\n");
 

@@ -188,6 +188,12 @@ void psbt_audit_sighash(const struct wally_psbt *psbt,
   }
 }
 
+uint32_t psbt_fee_percent(uint64_t fee, uint64_t total_input) {
+  if (!total_input)
+    return 0;
+  return (uint32_t)((fee * 100u) / total_input);
+}
+
 bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
                             unsigned char *out, size_t out_cap,
                             size_t *out_len) {

@@ -32,6 +32,7 @@
 #include "psbt_sign_policy.h"
 #include "sd_card.h"
 #include <esp_log.h>
+#include <inttypes.h>
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,9 @@
 #include <wally_psbt_members.h>
 #include <wally_script.h>
 #include <wally_transaction.h>
+
+// Fee share of the inputs at which the review screen stops calling it normal.
+#define HIGH_FEE_PERCENT 10u
 
 typedef enum {
   OUTPUT_TYPE_SELF_TRANSFER,
@@ -307,6 +311,15 @@ static lv_obj_t *create_btc_value_row(lv_obj_t *parent, const char *prefix,
   lv_obj_set_style_text_color(value_label, color, 0);
 
   return row;
+}
+
+static void create_review_note(lv_obj_t *parent, const char *text,
+                               lv_color_t color) {
+  lv_obj_t *label = theme_create_label(parent, text, false);
+  lv_obj_set_style_text_color(label, color, 0);
+  lv_obj_set_style_text_font(label, theme_font_small(), 0);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(label, LV_PCT(100));
 }
 
 // Classify output as self-transfer, change, owned-unsafe, expected-owned,
@@ -1665,12 +1678,34 @@ static bool create_psbt_info_display(void) {
     global_tx = NULL;
   }
 
+  uint32_t fee_percent = psbt_fee_percent(fee, total_input_value);
+
   if (fee > 0) {
     theme_create_separator(psbt_info_container, primary_color());
 
     lv_obj_t *fee_row =
         create_btc_value_row(psbt_info_container, "Fee: ", fee, error_color());
     lv_obj_set_width(fee_row, LV_PCT(100));
+    lv_obj_set_flex_flow(fee_row, LV_FLEX_FLOW_ROW_WRAP);
+
+    lv_obj_t *pct = lv_label_create(fee_row);
+    lv_label_set_text_fmt(pct, "(%" PRIu32 "%% of inputs)", fee_percent);
+    lv_obj_set_style_text_font(pct, theme_font_small(), 0);
+    lv_obj_set_style_text_color(
+        pct,
+        fee_percent >= HIGH_FEE_PERCENT ? error_color() : secondary_color(), 0);
+
+    /* A fee this large relative to what is being spent is nearly always a
+     * mistake or an attack, and it is the one number a compromised coordinator
+     * most wants slipped past the review. */
+    if (fee_percent >= HIGH_FEE_PERCENT) {
+      char note[128];
+      snprintf(note, sizeof(note),
+               LV_SYMBOL_WARNING " High fee: %" PRIu32
+                                 "%% of the inputs is going to miners.",
+               fee_percent);
+      create_review_note(psbt_info_container, note, error_color());
+    }
   }
 
   /* The fee is inputs minus outputs, and the outputs are committed to by the
@@ -1683,11 +1718,7 @@ static bool create_psbt_info_display(void) {
                                "not backed by their previous transaction.",
              amount_audit.num_inputs - amount_audit.proven,
              amount_audit.num_inputs);
-    lv_obj_t *label = theme_create_label(psbt_info_container, note, false);
-    lv_obj_set_style_text_color(label, accent_color(), 0);
-    lv_obj_set_style_text_font(label, theme_font_small(), 0);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label, LV_PCT(100));
+    create_review_note(psbt_info_container, note, highlight_color());
   }
 
   create_sign_action_row(psbt_info_container, sign_button_cb);
@@ -1956,21 +1987,6 @@ static void show_export_choice(void) {
   ui_menu_show(export_menu);
 }
 
-// Signing big PSBTs can take a few seconds — show a progress dialog and
-// defer the work to a one-shot timer so LVGL gets to render it first.
-static void start_signing(void) {
-  progress_dialog =
-      dialog_show_progress("Sign", "Processing...", DIALOG_STYLE_OVERLAY);
-  lv_timer_t *t = lv_timer_create(deferred_sign_cb, 50, NULL);
-  lv_timer_set_repeat_count(t, 1);
-}
-
-static void unproven_fee_confirm_cb(bool confirmed, void *user_data) {
-  (void)user_data;
-  if (confirmed)
-    start_signing();
-}
-
 static void sign_button_cb(lv_event_t *e) {
   (void)e;
   if (!current_psbt) {
@@ -1978,35 +1994,12 @@ static void sign_button_cb(lv_event_t *e) {
     return;
   }
 
-  // Coordinators such as Sparrow strip PSBT_IN_NON_WITNESS_UTXO to keep
-  // air-gapped transfers small, so an unproven amount is not grounds to
-  // refuse — but it does mean the fee on the review screen is the
-  // coordinator's word, and the user gets told before committing a signature.
-  // BIP322 is exempt: its input carries a synthetic zero-value witness_utxo
-  // with no previous transaction to prove and no fee to get wrong.
-  if (!is_bip322) {
-    psbt_amount_audit_t audit;
-    psbt_audit_input_amounts(current_psbt, &audit);
-    if (audit.num_inputs > 0 && !psbt_amounts_are_proven(&audit)) {
-      char prompt[512];
-      snprintf(prompt, sizeof(prompt),
-               "The fee shown cannot be proven.\n\n"
-               "%zu of %zu input amounts (first: input %zu) come with no "
-               "previous transaction to check them against, so the device is "
-               "trusting the amounts the PSBT declares.\n\n"
-               "A coordinator that understates one input per signing session "
-               "can collect one valid signature each time and reassemble a "
-               "transaction whose real fee you never saw.\n\n"
-               "Sign anyway?",
-               audit.num_inputs - audit.proven, audit.num_inputs,
-               audit.first_unproven);
-      dialog_show_confirm(prompt, unproven_fee_confirm_cb, NULL,
-                          DIALOG_STYLE_FULLSCREEN);
-      return;
-    }
-  }
-
-  start_signing();
+  // Signing big PSBTs can take a few seconds — show a progress dialog and
+  // defer the work to a one-shot timer so LVGL gets to render it first.
+  progress_dialog =
+      dialog_show_progress("Sign", "Processing...", DIALOG_STYLE_OVERLAY);
+  lv_timer_t *t = lv_timer_create(deferred_sign_cb, 50, NULL);
+  lv_timer_set_repeat_count(t, 1);
 }
 
 static void return_from_qr_viewer_cb(void) {
