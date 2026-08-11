@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kern: Air-gapped Bitcoin signing on the ESP32-P4</title>
-  <meta name="description" content="Kern is an open-source, air-gapped Bitcoin signing device for ESP32-P4 boards. Sign PSBTs over QR codes, with no radio, no cables and no vendor.">
+  <title>Kern: a research platform for air-gapped Bitcoin signing</title>
+  <meta name="description" content="Kern is an open-source research and development project exploring new hardware for Bitcoin self-custody: an air-gapped ESP32-P4 signing device that moves PSBTs over QR codes.">
 
   <meta property="og:type"        content="website">
   <meta property="og:url"         content="https://odudex.github.io/Kern/">
-  <meta property="og:title"       content="Kern: Air-gapped Bitcoin signing on the ESP32-P4">
-  <meta property="og:description" content="An open-source, air-gapped Bitcoin signing device for ESP32-P4 boards. Sign PSBTs over QR codes.">
+  <meta property="og:title"       content="Kern: a research platform for air-gapped Bitcoin signing">
+  <meta property="og:description" content="An open-source research project exploring new hardware for Bitcoin self-custody, on air-gapped ESP32-P4 boards.">
   <meta property="og:image"       content="https://odudex.github.io/Kern/branding/og_preview.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt"   content="Kern logo on dark background">
 
   <meta name="twitter:card"        content="summary_large_image">
-  <meta name="twitter:title"       content="Kern: Air-gapped Bitcoin signing on the ESP32-P4">
-  <meta name="twitter:description" content="An open-source, air-gapped Bitcoin signing device for ESP32-P4 boards. Sign PSBTs over QR codes.">
+  <meta name="twitter:title"       content="Kern: a research platform for air-gapped Bitcoin signing">
+  <meta name="twitter:description" content="An open-source research project exploring new hardware for Bitcoin self-custody, on air-gapped ESP32-P4 boards.">
   <meta name="twitter:image"       content="https://odudex.github.io/Kern/branding/og_preview.png">
   <meta name="twitter:image:alt"   content="Kern logo on dark background">
 
@@ -73,7 +73,7 @@
     }
     .hero img.logo { height: 120px; max-width: 100%; margin-bottom: 1.5rem; }
     .hero h1 {
-      font-size: clamp(1.9rem, 5vw, 2.9rem);
+      font-size: clamp(1.7rem, 4.3vw, 2.5rem);
       line-height: 1.15; font-weight: 700; letter-spacing: -0.02em;
       margin-bottom: 1rem;
     }
@@ -193,6 +193,7 @@
            onerror="this.style.display='none'">
     </a>
     <div class="links">
+      <a href="#about" class="hide-sm">About</a>
       <a href="#hardware" class="hide-sm">Hardware</a>
       <a href="#start" class="hide-sm">Get started</a>
       <a href="./flash/">Flasher</a>
@@ -205,11 +206,12 @@
 <header class="hero">
   <div class="wrap">
     <img class="logo" src="./branding/kern_logo_with_text_white.png" alt="Kern">
-    <h1>Air-gapped Bitcoin signing<br>on the <span class="accent">ESP32-P4</span></h1>
+    <h1>A research platform for<br>air-gapped Bitcoin signing on the <span class="accent">ESP32-P4</span></h1>
     <p class="lede">
-      Kern turns an inexpensive touchscreen dev board into a powerful signing
-      device. Bitcoin only, written in plain C: a
-      <span class="maxc">max<b>C</b>malist</span> signer.
+      Kern explores what new hardware can do for Bitcoin self-custody.
+      Bitcoin only, written in plain C: a
+      <span class="maxc">max<b>C</b>malist</span> signer, built to
+      experiment, not to sell.
     </p>
     <div class="cta">
       <a class="btn btn-primary" href="./flash/">⚡ Flash your device</a>
@@ -221,12 +223,41 @@
 
 <div class="wrap">
   <div class="banner">
-    ⚠ <strong>Kern is a young project under active development.</strong>
-    It has not been audited, secure boot is not yet enabled, and webflasher builds
-    are unvetted development snapshots. Do <strong>not</strong> use Kern to manage
-    real savings yet.
+    ⚠ <strong>Kern is a research and development project.</strong>
+    It is built for experimentation and testnet use. It has not been audited,
+    secure boot is not enabled, and webflasher builds are unvetted development
+    snapshots. Any mainnet use is entirely at your own risk. The project makes
+    no security guarantees.
   </div>
 </div>
+
+<section id="about">
+  <div class="wrap">
+    <h2>What this project is</h2>
+    <p class="sub">Kern is a research platform and intends to stay one. It is not on a path to becoming a product.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>🔬 New hardware</h3>
+        <p>What a modern application processor like the ESP32-P4 can and cannot
+           do for a signer: camera, display, storage, and the security hardware
+           that comes with it.</p>
+      </div>
+      <div class="card">
+        <h3>🧪 Self-custody ideas</h3>
+        <p>Descriptors, miniscript, encrypted backups and signed firmware
+           updates over SD card, implemented on real hardware, tested, and
+           documented with their limits.</p>
+      </div>
+      <div class="card">
+        <h3>📖 Results in the open</h3>
+        <p>Findings, trade-offs and security limits are documented in detail in
+           the repository, including the threat model and the risks it leaves
+           open.</p>
+        <a class="more" href="https://github.com/odudex/Kern/blob/master/docs/security-plan.md" target="_blank" rel="noopener">Security plan →</a>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="hardware">
   <div class="wrap">
@@ -279,7 +310,7 @@
 <section id="start">
   <div class="wrap">
     <h2>Get started</h2>
-    <p class="sub">From an unflashed board to a working signer in a few minutes.</p>
+    <p class="sub">From an unflashed board to a working research device in a few minutes.</p>
     <ol class="steps">
       <li>
         <strong>Get a supported board with a MIPI camera</strong>
@@ -294,7 +325,8 @@
       <li>
         <strong>Create or restore a key</strong>
         <p>Generate a mnemonic from dice rolls or the camera, or restore one you
-           already have by typing it or scanning a QR code.</p>
+           already have by typing it or scanning a QR code. Switch the network to
+           testnet to experiment without risking funds.</p>
       </li>
     </ol>
   </div>
@@ -363,7 +395,7 @@
       <span class="maxc">max<b>C</b>malist</span>
       <em>(adj.)</em>: Bitcoin maximalist, written in C.
     </p>
-    <p style="margin-top:0.6rem">Kern is free and open-source software.</p>
+    <p style="margin-top:0.6rem">Kern is free and open-source research software.</p>
   </div>
 </footer>
 

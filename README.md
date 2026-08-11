@@ -9,11 +9,13 @@
   <a href="ROADMAP.md"><b>Roadmap</b></a>
 </p>
 
-Kern is a young open-source project building an air-gapped Bitcoin signing device on the ESP32-P4. The chip has no radio, so keys are generated and used on hardware that physically cannot reach a network. Transactions cross the air gap as QR codes or over an SD card.
+Kern is a research and development project exploring what new hardware can do for Bitcoin self-custody. It takes the form of an air-gapped signing device on the ESP32-P4: the chip has no radio, so keys are generated and used on hardware that physically cannot reach a network. Transactions cross the air gap as QR codes or over an SD card.
+
+The goal is to explore ideas: new silicon, new interfaces, new backup and signing workflows. They get implemented, tested and documented in the open. Kern is a research platform and intends to stay one; it is not on a path to becoming a product.
 
 It signs PSBTs for single-sig, multisig and miniscript policies on both native segwit and taproot, built on [libwally](https://github.com/ElementsProject/libwally-core/), the same core library used by Blockstream Jade.
 
-> **Warning:** Kern is under active development and has not been audited. Secure boot is not enabled by default and builds are unvetted development snapshots. Do **not** use Kern to manage real savings.
+> **Warning:** Kern is a research and development project, built for experimentation and testnet use. It has not been audited and secure boot is not enabled by default; builds are unvetted development snapshots. Any mainnet use is entirely at your own risk. The project makes no security guarantees.
 
 ## Hardware
 
@@ -27,7 +29,7 @@ Kern supports four Waveshare ESP32-P4 boards and one Elecrow CrowPanel board:
 | [ESP32-P4-WiFi6-Touch-LCD-4.3](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm) (`wave_43`) | 480x800 MIPI DSI | GT911 | OV5647, included |
 | [CrowPanel Advanced 10.1" ESP32-P4](https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen) and 7" siblings (`crowpanel`) | 1024x600 MIPI DSI | GT911 | SC2336, included |
 
-ESP32-P4 does not contain radio (WiFi, BLE), but these boards have a radio in a secondary chip (ESP32-C6 mini). Later the project will migrate to use radio-less, simpler and cheaper boards with ESP32-P4 only.
+ESP32-P4 does not contain radio (WiFi, BLE), but these boards have a radio in a secondary chip (ESP32-C6 mini). Exploring radio-less, simpler and cheaper ESP32-P4-only boards is part of the project's hardware research.
 
 A MIPI CSI camera module is required for all boards. Kern ships drivers for the
 OV5647 and SC2336 sensors and probes for whichever one is attached at boot, so
@@ -156,7 +158,7 @@ The flasher offers two modes:
 - **Latest CI Build**: fetches firmware built by the most recent `master` push directly from the site and flashes it to the selected board.
 - **Custom ZIP Bundle**: accepts a `firmware-<board>.zip` artifact downloaded from the [Actions tab](../../actions) to flash any PR or older build.
 
-> **Warning:** CI builds are unvetted development snapshots from a young, unaudited project. Secure boot is not enabled; do **not** use flashed firmware to manage real savings.
+> **Warning:** CI builds are unvetted development snapshots from a research project. Secure boot is not enabled. Flash them for experimentation and testnet use; any mainnet use is entirely at your own risk.
 
 > **Note:** The project site and flasher are deployed automatically on every successful push to `master`, from `site/` in this repository. To enable it for your fork, go to **Settings → Pages** and set the source to **GitHub Actions**. To preview the site locally, run `just site` and open http://localhost:8000. Web Serial works on localhost, so you can flash a real board from the local copy.
 
@@ -205,7 +207,7 @@ Every pull request and push to `master` produces a firmware artifact for each su
 
 ## Flashing Pre-releases
 
-Pre-release firmware is provided **for testing purposes only**. Do not use pre-release builds as a signer for real savings.
+Pre-release firmware is provided **for research and testing purposes only**. Any mainnet use is entirely at your own risk.
 
 ### Supported Devices
 
