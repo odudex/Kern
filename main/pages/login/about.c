@@ -1,6 +1,7 @@
 // About Page
 
 #include "about.h"
+#include "../../project.h"
 #include "../../qr/encoder.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
 #include "../../ui/theme_widgets.h"
@@ -116,7 +117,7 @@ void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   qr_total = LV_CLAMP(min_dim / 6, qr_total, min_dim * 25 / 72); // <=250 @ 720
 
   lv_obj_t *qr = qr_create_optimal(body, LV_MAX(qr_total - 2 * qr_border, 1),
-                                   "https://github.com/odudex/Kern");
+                                   PROJECT_REPO_URL);
   lv_obj_set_style_border_color(qr, lv_color_white(), 0);
   lv_obj_set_style_border_width(qr, qr_border, 0);
 

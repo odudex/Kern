@@ -303,6 +303,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/shared/wipe_flash_dialog.c
     # Top-level pages
     ${APP_PAGES_DIR}/capture_entropy.c
+    ${APP_PAGES_DIR}/disclaimer.c
     ${APP_PAGES_DIR}/load_descriptor_storage.c
     ${APP_PAGES_DIR}/passphrase.c
     ${APP_PAGES_DIR}/screensaver.c

@@ -7,6 +7,7 @@
 #include "../core/wallet.h"
 #include "../ui/dialog.h"
 #include "../utils/session.h"
+#include "disclaimer.h"
 #include "login/login.h"
 #include "pin/pin_page.h"
 #include "screensaver.h"
@@ -15,9 +16,14 @@
 
 static bool device_locked = false;
 
+static void login_now(void) { login_page_create(lv_screen_active()); }
+
+// Gating the login page rather than boot itself keeps the disclaimer
+// unskippable: an idle timeout at the dialog locks the device, and the login
+// page it eventually returns to is behind the same gate.
 static void unlock_finished(void) {
   device_locked = false;
-  login_page_create(lv_screen_active());
+  disclaimer_gate(login_now);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,8 +78,7 @@ static void lock_dismissed_cb(void) {
   if (pin_is_configured()) {
     pin_page_create(lv_screen_active(), PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
   } else {
-    device_locked = false;
-    login_page_create(lv_screen_active());
+    unlock_finished();
   }
 }
 
@@ -126,6 +131,6 @@ void session_lock_boot_gate(lv_obj_t *screen) {
     device_locked = true;
     pin_page_create(screen, PIN_PAGE_UNLOCK, post_unlock_cb, NULL);
   } else {
-    login_page_create(screen);
+    unlock_finished();
   }
 }

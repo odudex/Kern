@@ -23,6 +23,7 @@
 #define QR_FPS_DEFAULT 4
 #define SCREENSAVER_TIMEOUT_DEFAULT_SEC 120
 #define SESSION_TIMEOUT_DEFAULT_SEC 300
+#define SETTINGS_VERSION_MAX 32
 
 esp_err_t settings_init(void);
 
@@ -52,6 +53,8 @@ uint16_t settings_get_screensaver_timeout(void);
 esp_err_t settings_set_screensaver_timeout(uint16_t sec);
 uint16_t settings_get_session_timeout(void);
 esp_err_t settings_set_session_timeout(uint16_t sec);
+bool settings_disclaimer_acknowledged(const char *version);
+esp_err_t settings_acknowledge_disclaimer(const char *version);
 esp_err_t settings_reset_all(void);
 
 #endif // SETTINGS_H

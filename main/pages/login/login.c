@@ -2,6 +2,7 @@
 
 #include <lvgl.h>
 
+#include "../../project.h"
 #include "../../ui/assets/icons.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
 #include "../../ui/battery.h"
@@ -77,9 +78,9 @@ static void about_cb(lv_event_t *e) {
 void login_page_create(lv_obj_t *parent) {
   login_screen = theme_create_page_container(parent);
 
-  // Match the brand wordmark exactly: white uppercase "KERN" in the medium
-  // font, with a static Kern logo to its left.
-  login_menu = ui_menu_create(login_screen, "KERN", NULL);
+  // Match the brand wordmark exactly: the name in uppercase in the medium
+  // font, with a static logo to its left.
+  login_menu = ui_menu_create(login_screen, PROJECT_WORDMARK, NULL);
   lv_obj_t *title = ui_menu_get_title_label(login_menu);
   if (title) {
     lv_obj_set_style_text_font(title, theme_font_medium(), 0);

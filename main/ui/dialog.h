@@ -23,6 +23,13 @@ void dialog_show_info(const char *title, const char *message,
                       dialog_callback_t callback, void *user_data,
                       dialog_style_t style);
 
+/* Same layout as dialog_show_info, with the single button carrying the given
+   label — for acknowledgements where "OK" understates what is being agreed. */
+void dialog_show_acknowledge(const char *title, const char *message,
+                             const char *button_text,
+                             dialog_callback_t callback, void *user_data,
+                             dialog_style_t style);
+
 void dialog_show_error_timeout(const char *message,
                                dialog_simple_callback_t callback,
                                int timeout_ms);

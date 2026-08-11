@@ -4,6 +4,7 @@
 #include <esp_log.h>
 #include <nvs.h>
 #include <nvs_flash.h>
+#include <string.h>
 
 static const char *TAG = "SETTINGS";
 static const char *NVS_NAMESPACE = "settings";
@@ -21,6 +22,7 @@ static const char *KEY_PARTIAL_SIGNING = "part_sign";
 static const char *KEY_EXPECTED_OWNED_SIGNING = "exp_own_sign";
 static const char *KEY_SCREENSAVER = "scrn_svr";
 static const char *KEY_SESSION_TIMEOUT = "sess_tout";
+static const char *KEY_DISCLAIMER_VERSION = "disc_ver";
 
 static nvs_handle_t settings_nvs;
 static bool initialized = false;
@@ -234,6 +236,35 @@ uint16_t settings_get_session_timeout(void) {
 
 esp_err_t settings_set_session_timeout(uint16_t sec) {
   return settings_set_u16_and_commit(KEY_SESSION_TIMEOUT, sec);
+}
+
+bool settings_disclaimer_acknowledged(const char *version) {
+  if (!initialized || !version)
+    return false;
+
+  char stored[SETTINGS_VERSION_MAX] = {0};
+  size_t len = sizeof(stored);
+  if (nvs_get_blob(settings_nvs, KEY_DISCLAIMER_VERSION, stored, &len) !=
+      ESP_OK)
+    return false;
+  stored[sizeof(stored) - 1] = '\0';
+  return strcmp(stored, version) == 0;
+}
+
+esp_err_t settings_acknowledge_disclaimer(const char *version) {
+  if (!initialized)
+    return ESP_ERR_INVALID_STATE;
+  if (!version)
+    return ESP_ERR_INVALID_ARG;
+
+  char stored[SETTINGS_VERSION_MAX] = {0};
+  strncpy(stored, version, sizeof(stored) - 1);
+
+  esp_err_t err = nvs_set_blob(settings_nvs, KEY_DISCLAIMER_VERSION, stored,
+                               sizeof(stored));
+  if (err != ESP_OK)
+    return err;
+  return nvs_commit(settings_nvs);
 }
 
 esp_err_t settings_reset_all(void) {
