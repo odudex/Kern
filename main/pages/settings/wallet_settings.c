@@ -54,7 +54,7 @@ static void (*return_callback)(void) = NULL;
 static char *stored_passphrase = NULL;
 static char *mnemonic_content = NULL;
 static char base_fingerprint_hex[9] = {0};
-static wallet_network_t selected_network = WALLET_NETWORK_MAINNET;
+static wallet_network_t selected_network = WALLET_NETWORK_DEFAULT;
 
 static bool g_settings_applied = false;
 
@@ -401,5 +401,5 @@ void wallet_settings_page_destroy(void) {
   title_cont = NULL;
   secure_memzero(base_fingerprint_hex, sizeof(base_fingerprint_hex));
   return_callback = NULL;
-  selected_network = WALLET_NETWORK_MAINNET;
+  selected_network = WALLET_NETWORK_DEFAULT;
 }

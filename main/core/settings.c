@@ -105,9 +105,9 @@ void settings_deinit(void) {
 }
 
 wallet_network_t settings_get_network(void) {
-  uint8_t val = settings_get_u8_or_default(KEY_NETWORK, WALLET_NETWORK_MAINNET);
+  uint8_t val = settings_get_u8_or_default(KEY_NETWORK, WALLET_NETWORK_DEFAULT);
   return (val <= WALLET_NETWORK_TESTNET) ? (wallet_network_t)val
-                                         : WALLET_NETWORK_MAINNET;
+                                         : WALLET_NETWORK_DEFAULT;
 }
 
 esp_err_t settings_set_network(wallet_network_t network) {
