@@ -51,6 +51,9 @@ int theme_slider_height(void);
 // Knob padding that grows the knob to min_touch size; also the knob's
 // overhang past the track, so use it as vertical clearance around sliders.
 int theme_slider_knob_pad(void);
+// Distance that keeps interactive controls clear of rounded display corners.
+// Zero on rectangular panels.
+int theme_safe_area_inset(void);
 
 // Widget builders (theme_create_*/theme_apply_*) live in theme_widgets.h.
 

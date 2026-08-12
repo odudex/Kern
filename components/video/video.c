@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "driver/i2c_master.h"
+#include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_sccb_i2c.h"
@@ -44,8 +45,18 @@ typedef enum {
   SENSOR_KIND_UNKNOWN = 0,
   SENSOR_KIND_OV5647,
   SENSOR_KIND_SC2336,
+  SENSOR_KIND_OV2710,
   SENSOR_KIND_OTHER,
 } sensor_kind_t;
+
+/* OV2710 (LilyGO T-Display-P4) shares the 0x36 SCCB address with the OV5647.
+ * Since the camera sensor is selected at build time per board, disambiguate by
+ * which driver is compiled in. */
+#if defined(CONFIG_CAMERA_OV2710) && !defined(CONFIG_CAMERA_OV5647)
+#define OMNIVISION_36_KIND SENSOR_KIND_OV2710
+#else
+#define OMNIVISION_36_KIND SENSOR_KIND_OV5647
+#endif
 
 static i2c_master_bus_handle_t s_i2c_bus = NULL;
 static esp_sccb_io_handle_t s_sensor_sccb = NULL;
@@ -57,8 +68,9 @@ static sensor_kind_t detect_sensor_kind(void) {
   if (!s_i2c_bus)
     return SENSOR_KIND_UNKNOWN;
   if (i2c_master_probe(s_i2c_bus, OV5647_SCCB_ADDR, 100) == ESP_OK) {
-    s_sensor_kind = SENSOR_KIND_OV5647;
-    ESP_LOGI(TAG, "Camera sensor: OV5647");
+    s_sensor_kind = OMNIVISION_36_KIND;
+    ESP_LOGI(TAG, "Camera sensor: %s",
+             OMNIVISION_36_KIND == SENSOR_KIND_OV2710 ? "OV2710" : "OV5647");
   } else {
     s_sensor_kind = SENSOR_KIND_OTHER;
     ESP_LOGI(
@@ -122,7 +134,7 @@ static void stream_task(void *arg);
 
 static bool probe_known_sensors(i2c_master_bus_handle_t bus) {
   if (i2c_master_probe(bus, OV5647_SCCB_ADDR, 100) == ESP_OK) {
-    s_sensor_kind = SENSOR_KIND_OV5647;
+    s_sensor_kind = OMNIVISION_36_KIND;
     return true;
   }
   if (i2c_master_probe(bus, SC2336_SCCB_ADDR, 100) == ESP_OK) {
@@ -158,6 +170,10 @@ static esp_err_t pick_camera_i2c_bus(i2c_master_bus_handle_t shared_bus,
       return ESP_OK;
     }
   }
+#if CONFIG_KERN_BOARD_TDISPLAY_P4
+  ESP_RETURN_ON_ERROR(bsp_camera_power_init(s_alt_cam_bus), TAG,
+                      "Camera power init failed");
+#endif
   if (probe_known_sensors(s_alt_cam_bus)) {
     ESP_LOGI(TAG, "Camera SCCB on dedicated bus (SCL=%d SDA=%d)",
              BSP_CAM_I2C_SCL_ALT, BSP_CAM_I2C_SDA_ALT);

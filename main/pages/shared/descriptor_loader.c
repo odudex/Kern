@@ -653,9 +653,11 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   }
 
   // Button row (fixed at bottom)
+  int32_t safe_area = theme_safe_area_inset();
+  int32_t action_width = (theme_screen_width() - 2 * safe_area) / 2;
   lv_obj_t *no_btn = theme_create_button(root, "No", false);
-  lv_obj_set_size(no_btn, LV_PCT(50), theme_button_height());
-  lv_obj_align(no_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_set_size(no_btn, action_width, theme_button_height());
+  theme_align_corner_safe(no_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_obj_add_event_cb(no_btn, info_confirm_no_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *no_label = lv_obj_get_child(no_btn, 0);
   if (no_label) {
@@ -664,8 +666,8 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   }
 
   lv_obj_t *yes_btn = theme_create_button(root, "Yes", true);
-  lv_obj_set_size(yes_btn, LV_PCT(50), theme_button_height());
-  lv_obj_align(yes_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_set_size(yes_btn, action_width, theme_button_height());
+  theme_align_corner_safe(yes_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_add_event_cb(yes_btn, info_confirm_yes_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_t *yes_label = lv_obj_get_child(yes_btn, 0);
   if (yes_label) {
