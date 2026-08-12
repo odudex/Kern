@@ -171,6 +171,48 @@ static bool reject_permissive(const sign_policy_review_t *review,
   return true;
 }
 
+/* Under NONE, SINGLE or ANYONECANPAY the signature keeps its validity while
+ * the parts of the transaction it does not cover are rewritten, so the outputs
+ * and fee the user is about to approve are not what gets mined. Nothing on the
+ * review screen can be presented honestly, hence a refusal rather than a
+ * warning. */
+static bool reject_unsupported_sighash(const psbt_sighash_audit_t *audit,
+                                       dialog_callback_t dismissed_cb) {
+  if (!audit->unsupported)
+    return false;
+
+  char body[384];
+  snprintf(body, sizeof(body),
+           "Input %zu asks to be signed with SIGHASH_%s.\n\n"
+           "Only ALL is supported: any other flag leaves part of the "
+           "transaction free to change after signing, so the amounts and fee "
+           "shown here would not be what gets broadcast.",
+           audit->first_unsupported, psbt_sighash_name(audit->first_sighash));
+  show_cannot_sign(body, dismissed_cb);
+  return true;
+}
+
+/* An input whose utxo data contradicts the prevout it spends is not a missing
+ * proof, it is a broken one: the previous transaction supplied does not hash
+ * to the outpoint, or it disagrees with the witness_utxo beside it. No fee can
+ * be computed from that, and libwally would refuse the signature anyway for a
+ * legacy input, so stop before the review screen shows a fabricated number. */
+static bool reject_invalid_amount(const psbt_amount_audit_t *audit,
+                                  dialog_callback_t dismissed_cb) {
+  if (!audit->invalid)
+    return false;
+
+  char body[384];
+  snprintf(body, sizeof(body),
+           "Input %zu's amount contradicts the transaction it spends: the "
+           "previous transaction supplied does not match the outpoint, or the "
+           "two copies of the amount disagree.\n\n"
+           "The fee cannot be computed and this PSBT should not be signed.",
+           audit->first_invalid);
+  show_cannot_sign(body, dismissed_cb);
+  return true;
+}
+
 static bool reject_partial(const sign_policy_review_t *review,
                            dialog_callback_t dismissed_cb) {
   if (!review->any_input_external || settings_get_partial_signing())
@@ -214,11 +256,21 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
   scan_inputs(psbt, is_testnet, &review);
   scan_outputs(psbt, is_testnet, &review);
 
+  psbt_amount_audit_t audit;
+  psbt_audit_input_amounts(psbt, &audit);
+
+  psbt_sighash_audit_t sighash_audit;
+  psbt_audit_sighash(psbt, &sighash_audit);
+
   if (!review.any_signable) {
     show_cannot_sign("No inputs match this wallet's signing policy.",
                      dismissed_cb);
     return false;
   }
+  if (reject_unsupported_sighash(&sighash_audit, dismissed_cb))
+    return false;
+  if (reject_invalid_amount(&audit, dismissed_cb))
+    return false;
   if (reject_expected_owned(&review, dismissed_cb, load_descriptor_cb))
     return false;
   if (reject_permissive(&review, dismissed_cb))

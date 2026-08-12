@@ -1,5 +1,7 @@
 # Roadmap
 
+Kern is a research and development project. This list tracks what has been explored and what is still open: research directions, not a release schedule.
+
 - ✅ Basic UI
 - ✅ Multi-board support
 - ✅ Camera video pipeline
@@ -64,7 +66,7 @@
   - ❌ Option to disable USB-serial and JTAG
 
 - Easy Installer
-  - ❌ Flasher
+  - ✅ Flasher
   - ❌ Secure boot activation
   - ❌ Flash/RAM encryption activation
 

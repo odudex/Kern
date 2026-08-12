@@ -54,6 +54,3 @@ if(DEFINED FONT_POLICY_WIDTH AND DEFINED FONT_POLICY_HEIGHT)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE ${ICON_FONT_DEFINITIONS})
     endif()
 endif()
-
-# Uncomment to enable Developer Tools menu (snapshot capture, decode testing)
-# target_compile_definitions(${COMPONENT_LIB} PRIVATE DEV_TOOLS_ENABLED)

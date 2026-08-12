@@ -10,6 +10,10 @@ typedef enum {
   WALLET_NETWORK_TESTNET = 1,
 } wallet_network_t;
 
+/* Network a device starts on when nothing has been stored yet. Kern is a
+ * research platform, so experimentation is the out-of-box state. */
+#define WALLET_NETWORK_DEFAULT WALLET_NETWORK_TESTNET
+
 /* Maximum descriptor/miniscript nesting depth accepted when parsing. The
  * descriptor-string parser is the one unbounded-recursion path, so every parse
  * bounds it (BIP-341 allows up to 128 taptree levels; real policies nest far

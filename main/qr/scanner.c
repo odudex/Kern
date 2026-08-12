@@ -20,10 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef QR_PERF_DEBUG
-#include <esp_timer.h>
-#endif
-
 // Camera preview is a square sized to the smaller display dimension, capped at
 // 640px.  Sensor outputs 1280x960 (binning mode); we take a centered square
 // crop and downscale with the PPA in a single pass.
@@ -65,9 +61,6 @@
 // touch handling; the preview still updates enough to judge exposure.
 #define SETTINGS_PREVIEW_FRAME_DIVISOR 8
 #define MAX_QR_PARTS 100
-#ifdef QR_PERF_DEBUG
-#define FPS_LOG_INTERVAL_MS 2000
-#endif
 #define RGB565_RED_BITS 5
 #define RGB565_GREEN_BITS 6
 #define RGB565_BLUE_BITS 5
@@ -167,21 +160,6 @@ static ppa_client_handle_t cam_ppa_client = NULL;
 static volatile int active_frame_operations = 0;
 static lv_timer_t *completion_timer = NULL;
 
-#ifdef QR_PERF_DEBUG
-typedef struct {
-  volatile uint32_t camera_frames;
-  volatile uint32_t decode_frames;
-  volatile uint32_t qr_detections;
-  volatile uint64_t total_decode_time_us;
-  volatile uint64_t total_grayscale_time_us;
-  volatile uint64_t total_quirc_time_us;
-  int64_t last_log_time;
-} qr_perf_metrics_t;
-
-static qr_perf_metrics_t perf_metrics = {0};
-static lv_obj_t *fps_label = NULL;
-#endif
-
 static void touch_event_cb(lv_event_t *e);
 static void camera_video_frame_operation(uint8_t *camera_buf,
                                          uint8_t camera_buf_index,
@@ -212,66 +190,6 @@ static void create_ur_progress_bar(void);
 static void update_ur_progress_bar(float percent_complete);
 static void cleanup_ur_progress_bar(void);
 static void process_pending_progress_update(void);
-
-#ifdef QR_PERF_DEBUG
-static void log_perf_metrics(void);
-static void reset_perf_metrics(void);
-
-static void reset_perf_metrics(void) {
-  memset((void *)&perf_metrics, 0, sizeof(perf_metrics));
-  perf_metrics.last_log_time = esp_timer_get_time();
-}
-
-static void log_perf_metrics(void) {
-  int64_t now = esp_timer_get_time();
-  int64_t elapsed_us = now - perf_metrics.last_log_time;
-
-  if (elapsed_us < (FPS_LOG_INTERVAL_MS * 1000)) {
-    return;
-  }
-
-  float elapsed_sec = elapsed_us / 1000000.0f;
-  float camera_fps = perf_metrics.camera_frames / elapsed_sec;
-  float decode_fps = perf_metrics.decode_frames / elapsed_sec;
-  float successes_per_sec = perf_metrics.qr_detections / elapsed_sec;
-
-  float avg_decode_ms = 0;
-  float avg_grayscale_ms = 0;
-  float avg_quirc_ms = 0;
-
-  if (perf_metrics.decode_frames > 0) {
-    avg_decode_ms =
-        (perf_metrics.total_decode_time_us / perf_metrics.decode_frames) /
-        1000.0f;
-    avg_grayscale_ms =
-        (perf_metrics.total_grayscale_time_us / perf_metrics.decode_frames) /
-        1000.0f;
-    avg_quirc_ms =
-        (perf_metrics.total_quirc_time_us / perf_metrics.decode_frames) /
-        1000.0f;
-  }
-
-  ESP_LOGI(TAG,
-           "PERF: cam=%.1f fps, decode/s=%.1f , successes/s=%.1f | "
-           "avg: total=%.1fms (gray=%.1fms, quirc=%.1fms)",
-           camera_fps, decode_fps, successes_per_sec, avg_decode_ms,
-           avg_grayscale_ms, avg_quirc_ms);
-
-  if (fps_label && bsp_display_lock(0)) {
-    lv_label_set_text_fmt(fps_label, "CAM:%.0f DEC:%.0f", camera_fps,
-                          decode_fps);
-    bsp_display_unlock();
-  }
-
-  perf_metrics.camera_frames = 0;
-  perf_metrics.decode_frames = 0;
-  perf_metrics.qr_detections = 0;
-  perf_metrics.total_decode_time_us = 0;
-  perf_metrics.total_grayscale_time_us = 0;
-  perf_metrics.total_quirc_time_us = 0;
-  perf_metrics.last_log_time = now;
-}
-#endif
 
 static void create_progress_indicators(int total_parts) {
   if (total_parts <= 1 || total_parts > MAX_QR_PARTS || !qr_scanner_screen) {
@@ -716,10 +634,6 @@ static void qr_decode_task(void *pvParameters) {
     if (closing || destruction_in_progress)
       break;
 
-#ifdef QR_PERF_DEBUG
-    log_perf_metrics();
-#endif
-
     if (xQueueReceive(qr_frame_queue, &frame_data, pdMS_TO_TICKS(100)) !=
         pdTRUE)
       continue;
@@ -734,11 +648,6 @@ static void qr_decode_task(void *pvParameters) {
       release_decode_frame(frame_data.frame_data);
       continue;
     }
-
-#ifdef QR_PERF_DEBUG
-    int64_t frame_start = esp_timer_get_time();
-    int64_t gray_start, gray_end, quirc_start, quirc_end;
-#endif
 
     uint32_t decode_x = roi.active ? roi.x : 0;
     uint32_t decode_y = roi.active ? roi.y : 0;
@@ -776,23 +685,13 @@ static void qr_decode_task(void *pvParameters) {
 
     uint8_t *qr_buf = k_quirc_begin(qr_decoder, NULL, NULL);
     if (qr_buf) {
-#ifdef QR_PERF_DEBUG
-      gray_start = esp_timer_get_time();
-#endif
       rgb565_region_to_grayscale(frame_data.frame_data, qr_buf,
                                  frame_data.width, decode_x, decode_y,
                                  decode_width, decode_height);
       // The RGB frame is fully copied into the decoder's grayscale buffer;
       // hand it back so the camera can reuse it as a PPA target.
       release_decode_frame(frame_data.frame_data);
-#ifdef QR_PERF_DEBUG
-      gray_end = esp_timer_get_time();
-      quirc_start = esp_timer_get_time();
-#endif
       k_quirc_end(qr_decoder, false);
-#ifdef QR_PERF_DEBUG
-      quirc_end = esp_timer_get_time();
-#endif
 
       int num_codes = k_quirc_count(qr_decoder);
       bool frame_decoded = false;
@@ -807,9 +706,6 @@ static void qr_decode_task(void *pvParameters) {
                               frame_data.width, frame_data.height);
             frame_decoded = true;
           }
-#ifdef QR_PERF_DEBUG
-          __atomic_add_fetch(&perf_metrics.qr_detections, 1, __ATOMIC_RELAXED);
-#endif
 
           int part_index = qr_parser_parse_with_len(
               qr_parser, (const char *)qr_result.data.payload,
@@ -868,16 +764,6 @@ static void qr_decode_task(void *pvParameters) {
         }
       }
 
-#ifdef QR_PERF_DEBUG
-      int64_t frame_end = esp_timer_get_time();
-      __atomic_add_fetch(&perf_metrics.decode_frames, 1, __ATOMIC_RELAXED);
-      __atomic_add_fetch(&perf_metrics.total_grayscale_time_us,
-                         (gray_end - gray_start), __ATOMIC_RELAXED);
-      __atomic_add_fetch(&perf_metrics.total_quirc_time_us,
-                         (quirc_end - quirc_start), __ATOMIC_RELAXED);
-      __atomic_add_fetch(&perf_metrics.total_decode_time_us,
-                         (frame_end - frame_start), __ATOMIC_RELAXED);
-#endif
     } else {
       release_decode_frame(frame_data.frame_data);
     }
@@ -1066,10 +952,6 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
-
-#ifdef QR_PERF_DEBUG
-  __atomic_add_fetch(&perf_metrics.camera_frames, 1, __ATOMIC_RELAXED);
-#endif
 
   if (!display_buffer_a || !display_buffer_b || !display_buffer_c ||
       !current_display_buffer) {
@@ -1349,15 +1231,6 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     lv_obj_set_style_bg_color(settings_btn, bg_color(), 0);
   }
 
-#ifdef QR_PERF_DEBUG
-  fps_label = lv_label_create(qr_scanner_screen);
-  lv_label_set_text(fps_label, "CAM:-- DEC:--");
-  lv_obj_set_style_text_color(fps_label, lv_color_hex(0x00FF00), 0);
-  lv_obj_set_style_text_font(fps_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(fps_label, LV_ALIGN_TOP_LEFT, 10, 8);
-  reset_perf_metrics();
-#endif
-
   if (!camera_run()) {
     ESP_LOGE(TAG, "Failed to initialize camera");
     return;
@@ -1422,9 +1295,6 @@ void qr_scanner_page_destroy(void) {
     ESP_LOGW(TAG, "Failed to lock display for UI cleanup");
 
   camera_img = NULL;
-#ifdef QR_PERF_DEBUG
-  fps_label = NULL;
-#endif
   cleanup_progress_indicators();
   cleanup_ur_progress_bar();
   if (qr_scanner_screen) {

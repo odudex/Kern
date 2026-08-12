@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.16] - 2026-08-11
+
+### Added
+- PSBT review shows the fee as a percentage of the total inputs and flags it in red at or above 10%, so an outsized fee no longer reads like a normal one
+- Signing reports inputs that did not receive a signature: cleared inputs are counted against inputs that actually gained one (ECDSA map, taproot key signature and leaf signatures diffed rather than trusting the return code), and the scan page names the shortfall before offering export
+- Project landing page at `site/index.html`, with the web flasher moved under `site/flash/`; `just site` stages branding plus locally built firmware exactly the way CI does and serves it on localhost, so a board can be flashed from the local copy before anything is pushed
+
+### Changed
+- New devices default to testnet. Consolidating Kern as a research platform, experimentation is the out-of-box state instead of a setting to find first
+- The unproven-fee confirmation behind Sign is dropped; both fee warnings now live on the review screen itself
+- Dev tools and the QR decode debug scaffolding are removed, both gates were permanently compiled out and k_quirc's own test harness covers the capture/decode pages
+- Updated k_quirc and cUR
+
+### Fixed
+- An input Kern refused could still collect a signature: libwally signs every input whose keypath names the key it is given, so a UTXO of ours listed under someone else's fingerprint was shown as external while its signature was harvested anyway. Classification now runs up front, refused inputs are snapshotted and restored around signing, and discarded signatures are counted and reported
+- Sighash flags other than ALL are refused, in the review gate and again per-input inside signing; under NONE, SINGLE or ANYONECANPAY the outputs and fee on screen are not what gets broadcast
+- Input amounts are verified against the prevout txid instead of trusting whichever utxo the PSBT offered: amounts are classified as proven, asserted, invalid or missing, the proven value wins for display, and contradictory data is refused before the review screen. Unproven amounts still sign, coordinators trim the previous transaction for air-gapped transfers, but the fee is marked unproven
+
 ## [0.0.15] - 2026-07-24
 
 ### Added

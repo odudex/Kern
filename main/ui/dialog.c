@@ -136,9 +136,10 @@ static void dialog_fit_overlay(lv_obj_t *dialog, dialog_style_t style,
   lv_obj_set_height(dialog, needed < max_h ? needed : max_h);
 }
 
-void dialog_show_info(const char *title, const char *message,
-                      dialog_callback_t callback, void *user_data,
-                      dialog_style_t style) {
+static void show_info_internal(const char *title, const char *message,
+                               const char *button_text, int32_t button_w_pct,
+                               dialog_callback_t callback, void *user_data,
+                               dialog_style_t style) {
   if (!message)
     return;
 
@@ -174,10 +175,24 @@ void dialog_show_info(const char *title, const char *message,
 
   lv_obj_align(make_message_label(body, message, 100), LV_ALIGN_TOP_MID, 0, 0);
 
-  lv_obj_t *ok_btn = theme_create_button(dialog, "OK", true);
-  lv_obj_set_size(ok_btn, LV_PCT(50), btn_h);
+  lv_obj_t *ok_btn = theme_create_button(dialog, button_text, true);
+  lv_obj_set_size(ok_btn, LV_PCT(button_w_pct), btn_h);
   lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_add_event_cb(ok_btn, info_ok_cb, LV_EVENT_CLICKED, ctx);
+}
+
+void dialog_show_info(const char *title, const char *message,
+                      dialog_callback_t callback, void *user_data,
+                      dialog_style_t style) {
+  show_info_internal(title, message, "OK", 50, callback, user_data, style);
+}
+
+void dialog_show_acknowledge(const char *title, const char *message,
+                             const char *button_text,
+                             dialog_callback_t callback, void *user_data,
+                             dialog_style_t style) {
+  show_info_internal(title, message, button_text ? button_text : "OK", 80,
+                     callback, user_data, style);
 }
 
 void dialog_show_error_timeout(const char *message,

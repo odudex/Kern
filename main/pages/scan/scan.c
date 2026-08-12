@@ -32,6 +32,7 @@
 #include "psbt_sign_policy.h"
 #include "sd_card.h"
 #include <esp_log.h>
+#include <inttypes.h>
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,9 @@
 #include <wally_psbt_members.h>
 #include <wally_script.h>
 #include <wally_transaction.h>
+
+// Fee share of the inputs at which the review screen stops calling it normal.
+#define HIGH_FEE_PERCENT 10u
 
 typedef enum {
   OUTPUT_TYPE_SELF_TRANSFER,
@@ -307,6 +311,15 @@ static lv_obj_t *create_btc_value_row(lv_obj_t *parent, const char *prefix,
   lv_obj_set_style_text_color(value_label, color, 0);
 
   return row;
+}
+
+static void create_review_note(lv_obj_t *parent, const char *text,
+                               lv_color_t color) {
+  lv_obj_t *label = theme_create_label(parent, text, false);
+  lv_obj_set_style_text_color(label, color, 0);
+  lv_obj_set_style_text_font(label, theme_font_small(), 0);
+  lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(label, LV_PCT(100));
 }
 
 // Classify output as self-transfer, change, owned-unsafe, expected-owned,
@@ -1121,6 +1134,9 @@ static bool create_psbt_info_display(void) {
     free(input_amounts);
     return false;
   }
+  psbt_amount_audit_t amount_audit;
+  psbt_audit_input_amounts(current_psbt, &amount_audit);
+
   uint64_t total_input_value = 0;
   size_t external_input_count = 0;
   for (size_t i = 0; i < num_inputs; i++) {
@@ -1662,12 +1678,47 @@ static bool create_psbt_info_display(void) {
     global_tx = NULL;
   }
 
+  uint32_t fee_percent = psbt_fee_percent(fee, total_input_value);
+
   if (fee > 0) {
     theme_create_separator(psbt_info_container, primary_color());
 
     lv_obj_t *fee_row =
         create_btc_value_row(psbt_info_container, "Fee: ", fee, error_color());
     lv_obj_set_width(fee_row, LV_PCT(100));
+    lv_obj_set_flex_flow(fee_row, LV_FLEX_FLOW_ROW_WRAP);
+
+    lv_obj_t *pct = lv_label_create(fee_row);
+    lv_label_set_text_fmt(pct, "(%" PRIu32 "%% of inputs)", fee_percent);
+    lv_obj_set_style_text_font(pct, theme_font_small(), 0);
+    lv_obj_set_style_text_color(
+        pct,
+        fee_percent >= HIGH_FEE_PERCENT ? error_color() : secondary_color(), 0);
+
+    /* A fee this large relative to what is being spent is nearly always a
+     * mistake or an attack, and it is the one number a compromised coordinator
+     * most wants slipped past the review. */
+    if (fee_percent >= HIGH_FEE_PERCENT) {
+      char note[128];
+      snprintf(note, sizeof(note),
+               LV_SYMBOL_WARNING " High fee: %" PRIu32
+                                 "%% of the inputs is going to miners.",
+               fee_percent);
+      create_review_note(psbt_info_container, note, error_color());
+    }
+  }
+
+  /* The fee is inputs minus outputs, and the outputs are committed to by the
+   * sighash. The inputs are only as good as their proof, so say so here rather
+   * than let the number read as verified. */
+  if (!psbt_amounts_are_proven(&amount_audit)) {
+    char note[160];
+    snprintf(note, sizeof(note),
+             LV_SYMBOL_WARNING " Unproven fee: %zu of %zu input amounts are "
+                               "not backed by their previous transaction.",
+             amount_audit.num_inputs - amount_audit.proven,
+             amount_audit.num_inputs);
+    create_review_note(psbt_info_container, note, highlight_color());
   }
 
   create_sign_action_row(psbt_info_container, sign_button_cb);
@@ -1680,6 +1731,11 @@ static void destroy_export_menu(void) {
     ui_menu_destroy(export_menu);
     export_menu = NULL;
   }
+}
+
+static void partial_sign_ack_cb(void *user_data) {
+  (void)user_data;
+  show_export_choice();
 }
 
 static void deferred_sign_cb(lv_timer_t *timer) {
@@ -1695,7 +1751,9 @@ static void deferred_sign_cb(lv_timer_t *timer) {
       .allow_unsafe = settings_get_permissive_signing(),
       .allow_expected_owned = settings_get_expected_owned_signing(),
   };
-  size_t signatures_added = psbt_sign(current_psbt, is_testnet, sign_policy);
+  psbt_sign_result_t sign_result;
+  size_t signatures_added =
+      psbt_sign(current_psbt, is_testnet, sign_policy, &sign_result);
 
   if (signatures_added == 0) {
     dismiss_progress();
@@ -1728,6 +1786,42 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   saved_return_callback =
       complete_callback ? complete_callback : return_callback;
+
+  // A PSBT built so that refused inputs pick up a signature from a key used
+  // elsewhere in the same transaction is not an accident. The signatures were
+  // stripped; say so, because the next PSBT from that source is suspect too.
+  if (sign_result.blocked) {
+    char body[320];
+    snprintf(body, sizeof(body),
+             "%zu input%s that this wallet refused to sign attempted to "
+             "collect a signature from a key used by another input.\n\n"
+             "Those signatures were discarded. A PSBT arranged this way does "
+             "not come from an honest coordinator -- treat its source as "
+             "compromised.",
+             sign_result.blocked, sign_result.blocked == 1 ? "" : "s");
+    dialog_show_info("Signatures discarded", body, partial_sign_ack_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+
+  // Exporting a partly-signed PSBT without saying so is what an attacker
+  // harvesting one signature per session relies on: each round looks like a
+  // clean success. Name the shortfall before the export menu appears.
+  if (sign_result.signed_ok < sign_result.attempted) {
+    char body[320];
+    snprintf(body, sizeof(body),
+             "%zu of %zu inputs belonging to this wallet did not receive a "
+             "signature.\n\n"
+             "The exported PSBT is incomplete. If you did not expect this, do "
+             "not treat the transaction as reviewed -- re-export it from the "
+             "coordinator with full previous transactions and try again.",
+             sign_result.attempted - sign_result.signed_ok,
+             sign_result.attempted);
+    dialog_show_info("Incomplete signing", body, partial_sign_ack_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+
   show_export_choice();
 }
 

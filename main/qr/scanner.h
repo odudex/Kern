@@ -1,6 +1,7 @@
 /*
  * QR Scanner Page Header
- * Displays a 480x480 frame buffer that changes colors every second
+ * Live camera preview with background QR decoding; assembles multi-part
+ * payloads (pMofN, UR, BBQr) and exposes the completed content to the caller.
  */
 
 #ifndef QR_SCANNER_H
@@ -9,10 +10,6 @@
 #include "../components/video/video.h"
 #include <lvgl.h>
 #include <stdbool.h>
-
-#ifdef K_QUIRC_DEBUG
-#define QR_PERF_DEBUG
-#endif
 
 /**
  * @brief Create the QR scanner page
