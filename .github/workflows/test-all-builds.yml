@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [wave_4b, wave_35, wave_5, wave_43, crowpanel]
+        board: [wave_4b, wave_35, wave_5, wave_43, crowpanel, tdisplay_p4]
     name: build (${{ matrix.board }})
     steps:
     - name: Checkout repo
@@ -88,6 +88,11 @@ jobs:
       with:
         name: firmware-crowpanel
         path: site/flash/firmware/crowpanel
+    - name: Download tdisplay_p4 firmware
+      uses: actions/download-artifact@v4.1.3
+      with:
+        name: firmware-tdisplay_p4
+        path: site/flash/firmware/tdisplay_p4
     - name: Stage branding assets
       run: cp -r branding site/branding
     - name: Upload Pages artifact
