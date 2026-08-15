@@ -95,8 +95,16 @@ static const char *TAG = "bsp_bat_adc";
    climbing.  A charging pack was measured rising ~13 mV/min on wave_43,
    against an EMA noise floor well under 1 mV/min over the same window, so the
    rate below separates the two with room to spare.  Comparing a rate rather
-   than a raw delta keeps this honest when callers ask at an uneven cadence. */
+   than a raw delta keeps this honest when callers ask at an uneven cadence.
+
+   The rate is re-evaluated on every reading once the baseline is MIN_SPAN old,
+   and the baseline only slides forward every WINDOW.  Waiting for the window
+   edge to evaluate would mean answering "discharging" for a full window after
+   every boot -- and boot is exactly when this matters, since plugging the
+   cable resets these boards.  MIN_SPAN is the floor on how fast the arm can
+   engage: at 3 mV/min it is a 6 mV rise, comfortably clear of the noise. */
 #define BAT_TREND_WINDOW_US (180 * 1000 * 1000)
+#define BAT_TREND_MIN_SPAN_US (120 * 1000 * 1000)
 #define BAT_TREND_RISE_MV_PER_MIN 3
 
 /* Cache window shared by all getters: ui_battery_create() asks for percentage
@@ -112,15 +120,18 @@ static bool pmic_available = false;
 
 static int smoothed_mv = -1;
 static int64_t smoothed_at_us = 0;
-static bool charging = false;
-static uint8_t last_pct = 0xFF;
+static int last_pct = -1; /* -1 until the first reading */
 
 /* Charge heuristic state: the threshold arm latches through its hysteresis
-   band, the trend arm re-derives itself from scratch every window. */
+   band, the trend arm re-derives itself from scratch every window.  Either one
+   alone means charging, so the answer is derived rather than stored. */
 static bool threshold_charging = false;
 static bool trend_rising = false;
 static int trend_mv = 0;
 static int64_t trend_at_us = 0;
+static bool logged_charging = false;
+
+static bool bat_charging(void) { return threshold_charging || trend_rising; }
 
 /* Discharge curve for a single-cell LiPo at rest, descending by voltage. */
 static const struct {
@@ -182,18 +193,31 @@ static esp_err_t bat_refresh(void) {
   }
 
   /* Re-derived, never latched: the moment the climb stops -- charge complete,
-     or the cable pulled -- the trend arm drops on the next window and the
+     or the cable pulled -- the next reading drops the trend arm and the
      threshold arm is left to decide. */
-  int64_t trend_elapsed_us = now - trend_at_us;
-  if (trend_elapsed_us >= BAT_TREND_WINDOW_US) {
+  int64_t span_us = now - trend_at_us;
+  if (span_us >= BAT_TREND_MIN_SPAN_US) {
     int64_t rate_mv_per_min =
-        (int64_t)(smoothed_mv - trend_mv) * 60 * 1000000 / trend_elapsed_us;
+        (int64_t)(smoothed_mv - trend_mv) * 60 * 1000000 / span_us;
     trend_rising = rate_mv_per_min >= BAT_TREND_RISE_MV_PER_MIN;
-    trend_mv = smoothed_mv;
-    trend_at_us = now;
+
+    /* Slide the baseline only once it is a full window old, so the rate stays
+       a measurement of the recent past rather than an average since boot. */
+    if (span_us >= BAT_TREND_WINDOW_US) {
+      trend_mv = smoothed_mv;
+      trend_at_us = now;
+    }
   }
 
-  charging = threshold_charging || trend_rising;
+  /* Rare enough to log at info level, and the only way to tell from outside
+     which arm concluded what. */
+  bool now_charging = bat_charging();
+  if (now_charging != logged_charging) {
+    ESP_LOGI(TAG, "%s at %d mV (threshold=%d trend=%d)",
+             now_charging ? "charging" : "discharging", smoothed_mv,
+             threshold_charging, trend_rising);
+    logged_charging = now_charging;
+  }
 
   return ESP_OK;
 }
@@ -215,25 +239,40 @@ static uint8_t bat_mv_to_percent(int mv) {
   return lipo_curve[n - 1].pct;
 }
 
+/* Release whatever init managed to claim, so a failed attempt leaves the ADC
+   unit free rather than blocking every later one with ESP_ERR_NOT_FOUND. */
+static void bat_release(void) {
+  if (adc_cali_handle) {
+    (void)adc_cali_delete_scheme_curve_fitting(adc_cali_handle);
+    adc_cali_handle = NULL;
+  }
+  if (adc_handle) {
+    (void)adc_oneshot_del_unit(adc_handle);
+    adc_handle = NULL;
+  }
+}
+
 esp_err_t bsp_pmic_init(void) {
   if (pmic_available) {
     return ESP_OK;
   }
 
+  esp_err_t ret = ESP_OK;
+
   adc_oneshot_unit_init_cfg_t unit_cfg = {
       .unit_id = BAT_ADC_UNIT,
       .ulp_mode = ADC_ULP_MODE_DISABLE,
   };
-  ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&unit_cfg, &adc_handle), TAG,
-                      "create ADC1 unit");
+  ESP_GOTO_ON_ERROR(adc_oneshot_new_unit(&unit_cfg, &adc_handle), err, TAG,
+                    "create ADC1 unit");
 
   adc_oneshot_chan_cfg_t chan_cfg = {
       .atten = BAT_ADC_ATTEN,
       .bitwidth = ADC_BITWIDTH_DEFAULT,
   };
-  ESP_RETURN_ON_ERROR(
-      adc_oneshot_config_channel(adc_handle, BAT_ADC_CHANNEL, &chan_cfg), TAG,
-      "configure BAT_ADC channel");
+  ESP_GOTO_ON_ERROR(
+      adc_oneshot_config_channel(adc_handle, BAT_ADC_CHANNEL, &chan_cfg), err,
+      TAG, "configure BAT_ADC channel");
 
   /* Curve fitting is the only scheme the ESP32-P4 supports.  It needs eFuse
      calibration data, so fall back to the nominal full-scale ratio when the
@@ -253,14 +292,12 @@ esp_err_t bsp_pmic_init(void) {
   }
 
   int mv = 0;
-  esp_err_t ret = bat_sample_mv(&mv);
-  if (ret != ESP_OK) {
-    ESP_LOGW(TAG, "battery sense read failed: %s", esp_err_to_name(ret));
-    return ret;
-  }
+  ESP_GOTO_ON_ERROR(bat_sample_mv(&mv), err, TAG, "battery sense read");
+
   if (mv < BAT_SANITY_MIN_MV || mv > BAT_SANITY_MAX_MV) {
     ESP_LOGW(TAG, "no battery detected on GPIO%d (%d mV)", BAT_ADC_GPIO, mv);
-    return ESP_ERR_NOT_FOUND;
+    ret = ESP_ERR_NOT_FOUND;
+    goto err;
   }
 
   ESP_LOGI(TAG, "battery sense on GPIO%d: %d mV", BAT_ADC_GPIO, mv);
@@ -274,10 +311,14 @@ esp_err_t bsp_pmic_init(void) {
   trend_at_us = smoothed_at_us;
   trend_rising = false;
   threshold_charging = mv >= BAT_CHARGING_ENTER_MV;
-  charging = threshold_charging;
+  logged_charging = threshold_charging;
 
   pmic_available = true;
   return ESP_OK;
+
+err:
+  bat_release();
+  return ret;
 }
 
 esp_err_t bsp_pmic_power_off(void) {
@@ -292,15 +333,15 @@ esp_err_t bsp_pmic_get_battery_percent(uint8_t *pct) {
   }
   ESP_RETURN_ON_ERROR(bat_refresh(), TAG, "refresh battery");
 
-  uint8_t value = bat_mv_to_percent(smoothed_mv);
+  int value = bat_mv_to_percent(smoothed_mv);
   /* Only charging may push the reading back up; otherwise a pack recovering
      after a load spike would make the icon walk backwards. */
-  if (!charging && last_pct != 0xFF && value > last_pct) {
+  if (!bat_charging() && last_pct >= 0 && value > last_pct) {
     value = last_pct;
   }
   last_pct = value;
 
-  *pct = value;
+  *pct = (uint8_t)value;
   return ESP_OK;
 }
 
@@ -320,7 +361,7 @@ esp_err_t bsp_pmic_get_charge_status(bsp_pmic_chg_t *status) {
   ESP_RETURN_ON_ERROR(bat_refresh(), TAG, "refresh battery");
   /* No way to distinguish CHARGING from FULL without a STAT line: both show
      up here as a pack held at the CV target. */
-  *status = charging ? BSP_PMIC_CHG_CHARGING : BSP_PMIC_CHG_DISCHARGING;
+  *status = bat_charging() ? BSP_PMIC_CHG_CHARGING : BSP_PMIC_CHG_DISCHARGING;
   return ESP_OK;
 }
 
@@ -332,7 +373,7 @@ bool bsp_pmic_is_vbus_present(void) {
     return false;
   }
   /* The charging heuristic is the only USB evidence these boards offer. */
-  return charging;
+  return bat_charging();
 }
 
 bool bsp_pmic_is_available(void) { return pmic_available; }
