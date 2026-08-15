@@ -18,10 +18,12 @@
  *     smoothed and never allowed to climb while discharging.
  *
  *   - Charge state is a heuristic.  The ETA6098 STAT pin goes to test point
- *     TP1 only, and no GPIO senses VBUS either (the boost converter is gated
- *     in hardware by Q5 when USB appears), so there is no charge signal to
- *     read.  What we can observe is that the charger holds the pack at ~4.2 V
- *     whenever USB is attached, which is what the threshold below keys off.
+ *     TP1 only, and no GPIO senses VBUS either, so there is no charge signal
+ *     to read.  Two observations stand in for it, and either one is enough:
+ *     the pack sits at the charger's 4.2 V CV target once charging finishes,
+ *     and while charging is still in progress the voltage climbs steadily.
+ *     Measured on this board, a charging pack rose ~13 mV/min and settled at
+ *     exactly 4200 mV on termination.
  */
 
 #include "bsp/pmic.h"
@@ -56,11 +58,21 @@ static const char *TAG = "wave43_bat";
 #define BAT_SANITY_MIN_MV 2500
 #define BAT_SANITY_MAX_MV 4600
 
-/* Charging heuristic, with hysteresis so the icon does not flicker around the
-   threshold.  A full pack that was just unplugged reads as charging until it
-   drops below the lower bound; there is no way to tell the two apart here. */
+/* Threshold arm of the charge heuristic: the pack is parked at the charger's
+   CV target.  Hysteresis keeps the icon from flickering around the edge.  A
+   full pack that was just unplugged reads as charging until it drops below the
+   lower bound; there is no way to tell the two apart here. */
 #define BAT_CHARGING_ENTER_MV 4180
 #define BAT_CHARGING_EXIT_MV 4120
+
+/* Trend arm: the threshold alone only fires once charging has finished, which
+   would leave the icon claiming "discharging" for the hours a flat pack spends
+   climbing.  A charging pack was measured rising ~13 mV/min on this board,
+   against an EMA noise floor well under 1 mV/min over the same window, so the
+   rate below separates the two with room to spare.  Comparing a rate rather
+   than a raw delta keeps this honest when callers ask at an uneven cadence. */
+#define BAT_TREND_WINDOW_US (180 * 1000 * 1000)
+#define BAT_TREND_RISE_MV_PER_MIN 3
 
 /* Cache window shared by all getters: ui_battery_create() asks for percentage
    and charge state back to back, and both should see the same sample. */
@@ -77,6 +89,13 @@ static int smoothed_mv = -1;
 static int64_t smoothed_at_us = 0;
 static bool charging = false;
 static uint8_t last_pct = 0xFF;
+
+/* Charge heuristic state: the threshold arm latches through its hysteresis
+   band, the trend arm re-derives itself from scratch every window. */
+static bool threshold_charging = false;
+static bool trend_rising = false;
+static int trend_mv = 0;
+static int64_t trend_at_us = 0;
 
 /* Discharge curve for a single-cell LiPo at rest, descending by voltage. */
 static const struct {
@@ -131,11 +150,25 @@ static esp_err_t bat_refresh(void) {
   }
   smoothed_at_us = now;
 
-  if (charging) {
-    charging = smoothed_mv >= BAT_CHARGING_EXIT_MV;
+  if (threshold_charging) {
+    threshold_charging = smoothed_mv >= BAT_CHARGING_EXIT_MV;
   } else {
-    charging = smoothed_mv >= BAT_CHARGING_ENTER_MV;
+    threshold_charging = smoothed_mv >= BAT_CHARGING_ENTER_MV;
   }
+
+  /* Re-derived, never latched: the moment the climb stops -- charge complete,
+     or the cable pulled -- the trend arm drops on the next window and the
+     threshold arm is left to decide. */
+  int64_t trend_elapsed_us = now - trend_at_us;
+  if (trend_elapsed_us >= BAT_TREND_WINDOW_US) {
+    int64_t rate_mv_per_min =
+        (int64_t)(smoothed_mv - trend_mv) * 60 * 1000000 / trend_elapsed_us;
+    trend_rising = rate_mv_per_min >= BAT_TREND_RISE_MV_PER_MIN;
+    trend_mv = smoothed_mv;
+    trend_at_us = now;
+  }
+
+  charging = threshold_charging || trend_rising;
 
   return ESP_OK;
 }
@@ -210,7 +243,14 @@ esp_err_t bsp_pmic_init(void) {
 
   smoothed_mv = mv;
   smoothed_at_us = esp_timer_get_time();
-  charging = mv >= BAT_CHARGING_ENTER_MV;
+  /* The trend arm needs a window of uptime before it can say anything, so a
+     board that boots mid-charge reports discharging until then. Booting is
+     exactly when that happens: plugging the cable resets this board. */
+  trend_mv = mv;
+  trend_at_us = smoothed_at_us;
+  trend_rising = false;
+  threshold_charging = mv >= BAT_CHARGING_ENTER_MV;
+  charging = threshold_charging;
 
   pmic_available = true;
   return ESP_OK;
@@ -254,7 +294,8 @@ esp_err_t bsp_pmic_get_charge_status(bsp_pmic_chg_t *status) {
     return ESP_ERR_NOT_SUPPORTED;
   }
   ESP_RETURN_ON_ERROR(bat_refresh(), TAG, "refresh battery");
-  /* No way to distinguish CHARGING from FULL without a STAT line. */
+  /* No way to distinguish CHARGING from FULL without a STAT line: both show
+     up here as a pack held at the CV target. */
   *status = charging ? BSP_PMIC_CHG_CHARGING : BSP_PMIC_CHG_DISCHARGING;
   return ESP_OK;
 }
