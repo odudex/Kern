@@ -25,6 +25,17 @@ static int get_grid_interval(int modules) {
   return (modules == 21) ? GRID_INTERVAL_21 : GRID_INTERVAL_DEFAULT;
 }
 
+// Region columns, which equals the number of rows: the grid is always square.
+// False when there is no encoded QR to divide.
+static bool get_grid_divisions(int modules, int *divisions) {
+  if (modules <= 0)
+    return false;
+
+  int interval = get_grid_interval(modules);
+  *divisions = (modules + interval - 1) / interval;
+  return true;
+}
+
 typedef enum {
   QR_TYPE_PLAINTEXT = 0,
   QR_TYPE_SEEDQR = 1,
@@ -146,17 +157,16 @@ static void create_shade_overlay(void) {
 
   int modules = last_qr_result.modules;
   int32_t scale = last_qr_result.scale;
-  if (modules == 0 || scale == 0)
+  int divisions;
+  if (scale == 0 || !get_grid_divisions(modules, &divisions))
     return;
 
-  int grid_interval = get_grid_interval(modules);
-  int divisions = (modules + grid_interval - 1) / grid_interval;
   int row = shade_region_index / divisions;
   int col = shade_region_index % divisions;
 
   int32_t content_size = modules * scale;
   int32_t margin = (qr_widget_size - content_size) / 2;
-  int32_t cell_px = scale * grid_interval;
+  int32_t cell_px = scale * get_grid_interval(modules);
 
   lv_obj_update_layout(qr_code);
   lv_area_t qr_coords, container_coords, content_coords;
@@ -208,13 +218,33 @@ static void create_shade_overlay(void) {
   update_grid_label_highlight(row, col);
 }
 
+/* Move the region cursor one step per axis. Each axis wraps on itself so the
+ * other one never moves: column 5 plus one step is column 1 of the same row. */
+static void step_region(int drow, int dcol) {
+  /* Zoomed mode draws from its own encode, the other views from the widget's
+   * last one. */
+  int modules = (view_mode == VIEW_ZOOMED) ? ensure_zoom_encoded()
+                                           : last_qr_result.modules;
+  int divisions;
+  if (!get_grid_divisions(modules, &divisions))
+    return;
+
+  /* The cursor outlives a QR type change, which can shrink the grid. */
+  if (shade_region_index < 0 || shade_region_index >= divisions * divisions)
+    shade_region_index = 0;
+
+  int row = (shade_region_index / divisions + drow + divisions) % divisions;
+  int col = (shade_region_index % divisions + dcol + divisions) % divisions;
+  shade_region_index = row * divisions + col;
+}
+
 static void qr_area_tap_cb(lv_event_t *e) {
   (void)e;
 
   if (view_mode == VIEW_REGIONS) {
-    int modules = last_qr_result.modules;
-    int grid_interval = get_grid_interval(modules);
-    int divisions = (modules + grid_interval - 1) / grid_interval;
+    int divisions;
+    if (!get_grid_divisions(last_qr_result.modules, &divisions))
+      return;
     int total_regions = divisions * divisions;
 
     if (!shade_mode_active) {
@@ -233,12 +263,47 @@ static void qr_area_tap_cb(lv_event_t *e) {
   }
 }
 
+/* Swiping drags the grid under the finger: left brings in the next column, up
+ * the next row. */
+static void qr_area_swipe_cb(lv_event_t *e) {
+  int drow = 0, dcol = 0;
+  switch (ui_consume_swipe_dir(e)) {
+  case LV_DIR_LEFT:
+    dcol = 1;
+    break;
+  case LV_DIR_RIGHT:
+    dcol = -1;
+    break;
+  case LV_DIR_TOP:
+    drow = 1;
+    break;
+  case LV_DIR_BOTTOM:
+    drow = -1;
+    break;
+  default:
+    return;
+  }
+
+  if (view_mode == VIEW_REGIONS) {
+    /* First swipe opens the shade on region A1, like the first tap does. */
+    if (shade_mode_active)
+      step_region(drow, dcol);
+    else
+      shade_region_index = 0;
+    create_shade_overlay();
+  } else if (view_mode == VIEW_ZOOMED) {
+    step_region(drow, dcol);
+    render_zoom();
+  }
+}
+
 static void create_grid_overlay(void) {
   destroy_grid_overlay();
 
   int modules = last_qr_result.modules;
   int32_t scale = last_qr_result.scale;
-  if (modules == 0 || scale == 0)
+  int divisions;
+  if (scale == 0 || !get_grid_divisions(modules, &divisions))
     return;
 
   int32_t content_size = modules * scale;
@@ -261,7 +326,6 @@ static void create_grid_overlay(void) {
 
   lv_color_t color = highlight_color();
   int grid_interval = get_grid_interval(modules);
-  int divisions = (modules + grid_interval - 1) / grid_interval;
   int32_t cell_px = scale * grid_interval;
   int32_t label_pad = LV_MAX(theme_small_padding(), 2);
 
@@ -461,11 +525,11 @@ static void add_zoom_gridline(int32_t x, int32_t y, int32_t w, int32_t h) {
 
 static void render_zoom(void) {
   int modules = ensure_zoom_encoded();
-  if (modules <= 0)
+  int divisions;
+  if (!get_grid_divisions(modules, &divisions))
     return;
 
   int interval = get_grid_interval(modules);
-  int divisions = (modules + interval - 1) / interval;
   int total = divisions * divisions;
   if (shade_region_index < 0 || shade_region_index >= total)
     shade_region_index = 0;
@@ -676,8 +740,7 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   qr_code = qr_create_optimal(qr_container, qr_widget_size, NULL);
 
-  lv_obj_add_flag(qr_container, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(qr_container, qr_area_tap_cb, LV_EVENT_CLICKED, NULL);
+  ui_enable_tap_swipe(qr_container, qr_area_tap_cb, qr_area_swipe_cb);
 
   update_qr_code();
 }
