@@ -131,7 +131,9 @@ static void registry_init_scan(storage_location_t loc) {
         id_len = REGISTRY_ID_MAX_LEN - 1;
       memcpy(id, fname, id_len);
       id[id_len] = '\0';
-      registry_add_from_string(id, desc_str, loc, false);
+      if (!registry_add_from_string(id, desc_str, loc, false))
+        ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register",
+                 id);
       free(desc_str);
     }
     free(data);

@@ -53,24 +53,33 @@ static bool settings_get_bool_or_default(const char *key, bool default_value) {
   return settings_get_u8_or_default(key, default_value ? 1 : 0) != 0;
 }
 
+/* Callers of the settings_set_* family act on the new value immediately and
+ * have nothing to do about a failed write, so report it here once, naming the
+ * key, rather than leaving every call site to notice on its own. */
+static esp_err_t settings_report(const char *key, esp_err_t err) {
+  if (err != ESP_OK)
+    ESP_LOGE(TAG, "Failed to persist '%s': %s", key, esp_err_to_name(err));
+  return err;
+}
+
 static esp_err_t settings_set_u8_and_commit(const char *key, uint8_t value) {
   if (!initialized)
-    return ESP_ERR_INVALID_STATE;
+    return settings_report(key, ESP_ERR_INVALID_STATE);
 
   esp_err_t err = nvs_set_u8(settings_nvs, key, value);
   if (err != ESP_OK)
-    return err;
-  return nvs_commit(settings_nvs);
+    return settings_report(key, err);
+  return settings_report(key, nvs_commit(settings_nvs));
 }
 
 static esp_err_t settings_set_u16_and_commit(const char *key, uint16_t value) {
   if (!initialized)
-    return ESP_ERR_INVALID_STATE;
+    return settings_report(key, ESP_ERR_INVALID_STATE);
 
   esp_err_t err = nvs_set_u16(settings_nvs, key, value);
   if (err != ESP_OK)
-    return err;
-  return nvs_commit(settings_nvs);
+    return settings_report(key, err);
+  return settings_report(key, nvs_commit(settings_nvs));
 }
 
 static esp_err_t settings_set_bool_and_commit(const char *key, bool value) {
@@ -263,8 +272,8 @@ esp_err_t settings_acknowledge_disclaimer(const char *version) {
   esp_err_t err = nvs_set_blob(settings_nvs, KEY_DISCLAIMER_VERSION, stored,
                                sizeof(stored));
   if (err != ESP_OK)
-    return err;
-  return nvs_commit(settings_nvs);
+    return settings_report(KEY_DISCLAIMER_VERSION, err);
+  return settings_report(KEY_DISCLAIMER_VERSION, nvs_commit(settings_nvs));
 }
 
 esp_err_t settings_reset_all(void) {

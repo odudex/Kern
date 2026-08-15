@@ -163,8 +163,10 @@ static void remove_confirmed_cb(bool confirmed, void *user_data) {
   if (!confirmed || pending_remove_index < 0)
     return;
   const registry_entry_t *entry = registry_get((size_t)pending_remove_index);
-  if (entry)
-    registry_remove(entry->id);
+  // The list is rebuilt from the registry below, so a failed removal leaves the
+  // entry visible rather than desyncing the UI - just say why.
+  if (entry && !registry_remove(entry->id))
+    dialog_show_error_timeout("Could not remove the descriptor", NULL, 0);
   pending_remove_index = -1;
   selected_descriptor_index = -1;
   if (action_menu) {

@@ -16,6 +16,7 @@
 #ifndef KEF_H
 #define KEF_H
 
+#include "../utils/attributes.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -92,16 +93,16 @@ kef_error_t kef_parse_header(const uint8_t *envelope, size_t env_len,
 void kef_encode_iterations(uint32_t effective, uint8_t out[3]);
 
 /* Decode 3-byte stored value → effective iteration count. */
-uint32_t kef_decode_iterations(const uint8_t stored[3]);
+KERN_WARN_UNUSED_RESULT uint32_t kef_decode_iterations(const uint8_t stored[3]);
 
 /* Human-readable error string. */
-const char *kef_error_str(kef_error_t err);
+KERN_WARN_UNUSED_RESULT const char *kef_error_str(kef_error_t err);
 
 /*
  * Check if data looks like a valid KEF envelope.
  * Validates header, known version, and minimum payload size.
  */
-bool kef_is_envelope(const uint8_t *data, size_t len);
+KERN_WARN_UNUSED_RESULT bool kef_is_envelope(const uint8_t *data, size_t len);
 
 /*
  * Extract a raw KEF envelope from arbitrary file bytes, accepting either a raw
@@ -110,7 +111,7 @@ bool kef_is_envelope(const uint8_t *data, size_t len);
  * frees) and its length via out_len, or NULL if the bytes are not a KEF
  * envelope.
  */
-uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
-                                 size_t *out_len);
+KERN_WARN_UNUSED_RESULT uint8_t *
+kef_envelope_from_bytes(const uint8_t *data, size_t len, size_t *out_len);
 
 #endif /* KEF_H */

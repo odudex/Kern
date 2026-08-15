@@ -96,13 +96,15 @@ int bip39_filter_get_word_index(const char *word) {
 
 void bip39_filter_clear_last_word_cache(void) { valid_last_words_count = 0; }
 
-static void ensure_last_word_cache(const char entered_words[24][16],
-                                   int word_count) {
+/* Warms valid_last_words_cache and returns how many entries it holds. */
+static int ensure_last_word_cache(const char entered_words[24][16],
+                                  int word_count) {
   if (valid_last_words_count == 0) {
     const char *temp[MAX_VALID_LAST_WORDS];
-    bip39_filter_get_valid_last_words(entered_words, word_count, temp,
-                                      MAX_VALID_LAST_WORDS);
+    return bip39_filter_get_valid_last_words(entered_words, word_count, temp,
+                                             MAX_VALID_LAST_WORDS);
   }
+  return valid_last_words_count;
 }
 
 int bip39_filter_get_valid_last_words(const char entered_words[24][16],
@@ -186,8 +188,7 @@ bip39_filter_get_valid_letters_for_last_word(const char entered_words[24][16],
   if (!wordlist)
     return 0xFFFFFFFF;
 
-  ensure_last_word_cache(entered_words, word_count);
-  if (valid_last_words_count == 0)
+  if (ensure_last_word_cache(entered_words, word_count) == 0)
     return 0;
 
   uint32_t mask = 0;
@@ -226,8 +227,7 @@ int bip39_filter_last_word_by_prefix(const char entered_words[24][16],
   if (!wordlist || !out_words || max_words <= 0)
     return 0;
 
-  ensure_last_word_cache(entered_words, word_count);
-  if (valid_last_words_count == 0)
+  if (ensure_last_word_cache(entered_words, word_count) == 0)
     return 0;
 
   if (!prefix || prefix_len <= 0) {

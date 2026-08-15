@@ -518,7 +518,9 @@ static void session_register_current_descriptor(void) {
 
   char label[REGISTRY_LABEL_MAX_LEN];
   build_session_descriptor_label(label);
-  registry_set_label(id, label);
+  // The descriptor is loaded either way; without a label it lists under its id.
+  if (!registry_set_label(id, label))
+    ESP_LOGW(TAG, "Failed to label session descriptor '%s'", id);
 
   complete_validation(VALIDATION_SUCCESS);
 }

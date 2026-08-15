@@ -348,11 +348,10 @@ static output_type_t classify_output(size_t output_index,
 
   case PSBT_OWNERSHIP_OWNED_UNSAFE:
   case PSBT_OWNERSHIP_EXPECTED_OWNED:
-    if (path_out && path_out_size > 0) {
-      path_out[0] = '\0';
-      psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
-                          path_out, path_out_size);
-    }
+    if (path_out && path_out_size > 0 &&
+        !psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
+                             path_out, path_out_size))
+      path_out[0] = '\0'; // renders no path line
     return ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE
                ? OUTPUT_TYPE_OWNED_UNSAFE
                : OUTPUT_TYPE_EXPECTED_OWNED;
@@ -981,8 +980,9 @@ static void handle_mnemonic_content(const char *data, size_t len) {
   }
 
   // Get current fingerprint
-  char current_fp[9] = "????????";
-  key_get_fingerprint_hex(current_fp);
+  char current_fp[9];
+  if (!key_get_fingerprint_hex(current_fp))
+    strcpy(current_fp, "????????");
 
   // Compute new mnemonic's fingerprint without touching the loaded key
   wallet_network_t net = wallet_get_network();
@@ -1153,12 +1153,12 @@ static bool create_psbt_info_display(void) {
     format_input_policy(&own, classified_inputs[i].policy,
                         sizeof(classified_inputs[i].policy));
     classified_inputs[i].path[0] = '\0';
-    if (own.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE ||
-        own.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED) {
-      psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
-                          classified_inputs[i].path,
-                          sizeof(classified_inputs[i].path));
-    }
+    if ((own.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE ||
+         own.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED) &&
+        !psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
+                             classified_inputs[i].path,
+                             sizeof(classified_inputs[i].path)))
+      classified_inputs[i].path[0] = '\0'; // renders no path line
 
     /* External inputs need their address rendered in the warning section.
      * Skip address decoding for owned inputs — they're not displayed. */

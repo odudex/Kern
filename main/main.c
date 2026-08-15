@@ -29,7 +29,12 @@ void app_main(void) {
   // provisioned, plaintext otherwise (never stock nvs_flash_init(): its
   // keygen path would burn KEY4 without consent)
   ESP_ERROR_CHECK(nvs_secure_init());
-  settings_init();
+  // Not fatal: every getter falls back to its default when the namespace is
+  // unavailable, and those defaults are the safe ones.
+  esp_err_t settings_ret = settings_init();
+  if (settings_ret != ESP_OK)
+    ESP_LOGE(TAG, "Settings init failed, using defaults: %s",
+             esp_err_to_name(settings_ret));
 
   bsp_display_start();
   ESP_LOGI(TAG, "Display initialized successfully");
@@ -87,10 +92,13 @@ void app_main(void) {
   }
 
   // Initialize BIP39 wordlist (needed for anti-phishing words)
-  bip39_filter_init();
+  if (!bip39_filter_init())
+    ESP_LOGE(TAG, "BIP39 wordlist init failed");
 
-  // Initialize PIN module
-  pin_init();
+  // Initialize the PIN module. Fail closed: without it pin_is_configured()
+  // reports false, and the boot gate below would walk straight past the PIN
+  // of a device that has one set.
+  ESP_ERROR_CHECK(pin_init());
 
   // Lock display again for modifications
   bsp_display_lock(0);

@@ -9,6 +9,7 @@
 #ifndef BASE43_H
 #define BASE43_H
 
+#include "../utils/attributes.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,8 +22,8 @@
  *
  * Returns true on success, false on invalid character or allocation failure.
  */
-bool base43_decode(const char *str, size_t str_len, uint8_t **out,
-                   size_t *out_len);
+KERN_WARN_UNUSED_RESULT bool base43_decode(const char *str, size_t str_len,
+                                           uint8_t **out, size_t *out_len);
 
 /*
  * Encode bytes to a base43 string.
@@ -33,7 +34,7 @@ bool base43_decode(const char *str, size_t str_len, uint8_t **out,
  *
  * Returns true on success, false on allocation failure.
  */
-bool base43_encode(const uint8_t *data, size_t data_len, char **out,
-                   size_t *out_len);
+KERN_WARN_UNUSED_RESULT bool base43_encode(const uint8_t *data, size_t data_len,
+                                           char **out, size_t *out_len);
 
 #endif /* BASE43_H */

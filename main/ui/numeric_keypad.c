@@ -33,6 +33,9 @@ static const char *NUMPAD_MAP[] = {"1",
                                    "0",
                                    LV_SYMBOL_OK,
                                    ""};
+// Button ids, not NUMPAD_MAP indices: LVGL does not count "\n" separators.
+#define KEY_IDX_BACKSPACE 9
+#define KEY_IDX_OK 11
 
 static uint8_t effective_max_digits(const ui_numeric_keypad_t *keypad) {
   uint8_t max_digits =
@@ -59,11 +62,15 @@ static void update_numpad_buttons(ui_numeric_keypad_t *keypad) {
 
   bool empty = (keypad->input_len == 0);
   if (empty) {
-    lv_btnmatrix_set_btn_ctrl(keypad->numpad, 12, LV_BTNMATRIX_CTRL_DISABLED);
-    lv_btnmatrix_set_btn_ctrl(keypad->numpad, 14, LV_BTNMATRIX_CTRL_DISABLED);
+    lv_btnmatrix_set_btn_ctrl(keypad->numpad, KEY_IDX_BACKSPACE,
+                              LV_BTNMATRIX_CTRL_DISABLED);
+    lv_btnmatrix_set_btn_ctrl(keypad->numpad, KEY_IDX_OK,
+                              LV_BTNMATRIX_CTRL_DISABLED);
   } else {
-    lv_btnmatrix_clear_btn_ctrl(keypad->numpad, 12, LV_BTNMATRIX_CTRL_DISABLED);
-    lv_btnmatrix_clear_btn_ctrl(keypad->numpad, 14, LV_BTNMATRIX_CTRL_DISABLED);
+    lv_btnmatrix_clear_btn_ctrl(keypad->numpad, KEY_IDX_BACKSPACE,
+                                LV_BTNMATRIX_CTRL_DISABLED);
+    lv_btnmatrix_clear_btn_ctrl(keypad->numpad, KEY_IDX_OK,
+                                LV_BTNMATRIX_CTRL_DISABLED);
   }
 }
 
@@ -211,6 +218,8 @@ void ui_numeric_keypad_open(ui_numeric_keypad_t **handle,
   lv_obj_set_size(keypad->numpad, LV_PCT(90), LV_PCT(60));
   lv_obj_align(keypad->numpad, LV_ALIGN_BOTTOM_MID, 0, -pad);
   theme_apply_btnmatrix(keypad->numpad);
+  theme_set_btnmatrix_action(keypad->numpad, KEY_IDX_BACKSPACE);
+  theme_set_btnmatrix_action(keypad->numpad, KEY_IDX_OK);
   lv_obj_add_event_cb(keypad->numpad, numpad_event_cb, LV_EVENT_VALUE_CHANGED,
                       keypad);
   update_numpad_buttons(keypad);

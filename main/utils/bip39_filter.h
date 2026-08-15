@@ -3,6 +3,7 @@
 #ifndef BIP39_FILTER_H
 #define BIP39_FILTER_H
 
+#include "attributes.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -15,7 +16,7 @@
  * Safe to call multiple times (subsequent calls are no-ops).
  * @return true on success, false on failure
  */
-bool bip39_filter_init(void);
+KERN_WARN_UNUSED_RESULT bool bip39_filter_init(void);
 
 /**
  * Get a bitmask of valid next letters for a given prefix.
@@ -24,7 +25,8 @@ bool bip39_filter_init(void);
  * @param prefix_len Length of prefix
  * @return 26-bit mask (bits 0-25 for a-z), or 0xFFFFFFFF if wordlist not loaded
  */
-uint32_t bip39_filter_get_valid_letters(const char *prefix, int prefix_len);
+KERN_WARN_UNUSED_RESULT uint32_t
+bip39_filter_get_valid_letters(const char *prefix, int prefix_len);
 
 /**
  * Filter words by prefix and return matches.
@@ -34,8 +36,10 @@ uint32_t bip39_filter_get_valid_letters(const char *prefix, int prefix_len);
  * @param max_words Maximum number of words to return
  * @return Number of words written to out_words
  */
-int bip39_filter_by_prefix(const char *prefix, int prefix_len,
-                           const char **out_words, int max_words);
+KERN_WARN_UNUSED_RESULT int bip39_filter_by_prefix(const char *prefix,
+                                                   int prefix_len,
+                                                   const char **out_words,
+                                                   int max_words);
 
 /**
  * Count total number of words matching a prefix.
@@ -43,14 +47,15 @@ int bip39_filter_by_prefix(const char *prefix, int prefix_len,
  * @param prefix_len Length of prefix
  * @return Number of matching words, or BIP39_WORDLIST_SIZE if prefix is empty
  */
-int bip39_filter_count_matches(const char *prefix, int prefix_len);
+KERN_WARN_UNUSED_RESULT int bip39_filter_count_matches(const char *prefix,
+                                                       int prefix_len);
 
 /**
  * Get the index (0-2047) of a BIP39 word.
  * @param word The word to look up
  * @return Word index (0-2047), or -1 if not found
  */
-int bip39_filter_get_word_index(const char *word);
+KERN_WARN_UNUSED_RESULT int bip39_filter_get_word_index(const char *word);
 
 /**
  * Clear the cached valid last words. Call this when moving to the last word
@@ -66,9 +71,10 @@ void bip39_filter_clear_last_word_cache(void);
  * @param max_words Maximum words to return
  * @return Number of valid last words found
  */
-int bip39_filter_get_valid_last_words(const char entered_words[24][16],
-                                      int word_count, const char **out_words,
-                                      int max_words);
+KERN_WARN_UNUSED_RESULT int
+bip39_filter_get_valid_last_words(const char entered_words[24][16],
+                                  int word_count, const char **out_words,
+                                  int max_words);
 
 /**
  * Get bitmask of valid keyboard letters for last word position.
@@ -94,9 +100,8 @@ bip39_filter_get_valid_letters_for_last_word(const char entered_words[24][16],
  * @param max_words Maximum words to return
  * @return Number of matching valid last words
  */
-int bip39_filter_last_word_by_prefix(const char entered_words[24][16],
-                                     int word_count, const char *prefix,
-                                     int prefix_len, const char **out_words,
-                                     int max_words);
+KERN_WARN_UNUSED_RESULT int bip39_filter_last_word_by_prefix(
+    const char entered_words[24][16], int word_count, const char *prefix,
+    int prefix_len, const char **out_words, int max_words);
 
 #endif // BIP39_FILTER_H

@@ -676,8 +676,11 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
 
 void qr_viewer_page_create(lv_obj_t *parent, const char *qr_content,
                            const char *title, void (*return_cb)(void)) {
-  qr_viewer_page_create_with_format(parent, FORMAT_NONE, qr_content, title,
-                                    return_cb);
+  // No page was built, so without this the user is left on a blank screen with
+  // nothing to return through.
+  if (!qr_viewer_page_create_with_format(parent, FORMAT_NONE, qr_content, title,
+                                         return_cb))
+    dialog_show_error_timeout("Could not display the QR code", return_cb, 0);
 }
 
 typedef struct {

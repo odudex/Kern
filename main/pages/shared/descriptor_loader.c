@@ -569,8 +569,9 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   int32_t scroll_w = lv_obj_get_content_width(scroll);
 
   // Get current wallet fingerprint for highlighting
-  char my_fp[9] = {0};
-  key_get_fingerprint_hex(my_fp);
+  char my_fp[9];
+  if (!key_get_fingerprint_hex(my_fp))
+    my_fp[0] = '\0'; // matches no key, so nothing is highlighted
 
   // Key entries
   for (uint32_t i = 0; i < info->num_keys; i++) {

@@ -14,6 +14,7 @@
 #ifndef FW_UPDATE_H
 #define FW_UPDATE_H
 
+#include "../utils/attributes.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,14 +33,17 @@ typedef void (*fw_update_progress_cb_t)(int percent, void *user_data);
 /* Validate the image at path without writing anything. On success fills
  * *info and returns 0; on failure returns -1 and *err_out points to a
  * static human-readable reason. */
-int fw_update_validate(const char *path, fw_update_info_t *info,
-                       const char **err_out);
+KERN_WARN_UNUSED_RESULT int fw_update_validate(const char *path,
+                                               fw_update_info_t *info,
+                                               const char **err_out);
 
 /* Stream the image at path into the inactive OTA slot, verify it and set
  * it as the boot partition. Returns 0 on success (caller reboots); on
  * failure returns -1 with *err_out set and the current firmware untouched. */
-int fw_update_apply(const char *path, fw_update_progress_cb_t progress_cb,
-                    void *user_data, const char **err_out);
+KERN_WARN_UNUSED_RESULT int fw_update_apply(const char *path,
+                                            fw_update_progress_cb_t progress_cb,
+                                            void *user_data,
+                                            const char **err_out);
 
 /* Boot-time self-test confirmation: if the running image is pending
  * verification after an update, mark it valid so the bootloader does not

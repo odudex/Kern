@@ -1,6 +1,7 @@
 #ifndef QR_ENCODER_H
 #define QR_ENCODER_H
 
+#include "../utils/attributes.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -46,6 +47,10 @@ lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
  * @param parent Parent object
  * @param size Widget size in pixels
  * @param text Text to encode, or NULL to defer
+ * The widget parents itself to `parent`, so discarding the handle leaks
+ * nothing and carries no KERN_WARN_UNUSED_RESULT: callers that only want the
+ * code drawn may ignore it, and on failure the container simply stays empty.
+ *
  * @return QR widget on success, NULL on failure
  */
 lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text);
@@ -84,8 +89,10 @@ void qr_set_light_color(lv_obj_t *qr_obj, lv_color_t color);
  * @param qr_buf Output buffer (>= QR_CODE_BUF_LEN bytes)
  * @return Module count on success, 0 on failure
  */
-int qr_encode_optimal(const char *text, uint8_t *qr_buf);
-int qr_encode_binary(const uint8_t *data, size_t len, uint8_t *qr_buf);
+KERN_WARN_UNUSED_RESULT int qr_encode_optimal(const char *text,
+                                              uint8_t *qr_buf);
+KERN_WARN_UNUSED_RESULT int qr_encode_binary(const uint8_t *data, size_t len,
+                                             uint8_t *qr_buf);
 
 /**
  * @brief Draw a sub-rectangle of an encoded QR onto a widget's canvas.
@@ -116,7 +123,7 @@ void qr_draw_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0, int y0,
  * @return Allocated uppercased copy (caller must free), or NULL if the
  *         string is not a lowercase bech32 string
  */
-char *qr_bech32_to_upper(const char *text);
+KERN_WARN_UNUSED_RESULT char *qr_bech32_to_upper(const char *text);
 
 /**
  * @brief Mnemonic QR code format types
@@ -164,8 +171,9 @@ mnemonic_qr_format_t mnemonic_qr_detect_format(const char *data, size_t len);
  * @return Allocated mnemonic string on success (caller must free),
  *         or NULL on failure
  */
-char *mnemonic_qr_to_mnemonic(const char *data, size_t len,
-                              mnemonic_qr_format_t *format_out);
+KERN_WARN_UNUSED_RESULT char *
+mnemonic_qr_to_mnemonic(const char *data, size_t len,
+                        mnemonic_qr_format_t *format_out);
 
 /**
  * @brief Convert Compact SeedQR binary data to mnemonic
@@ -175,7 +183,8 @@ char *mnemonic_qr_to_mnemonic(const char *data, size_t len,
  * @return Allocated mnemonic string on success (caller must free),
  *         or NULL on failure
  */
-char *mnemonic_qr_compact_to_mnemonic(const unsigned char *data, size_t len);
+KERN_WARN_UNUSED_RESULT char *
+mnemonic_qr_compact_to_mnemonic(const unsigned char *data, size_t len);
 
 /**
  * @brief Convert SeedQR numeric string to mnemonic
@@ -188,7 +197,8 @@ char *mnemonic_qr_compact_to_mnemonic(const unsigned char *data, size_t len);
  * @return Allocated mnemonic string on success (caller must free),
  *         or NULL on failure
  */
-char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len);
+KERN_WARN_UNUSED_RESULT char *mnemonic_qr_seedqr_to_mnemonic(const char *data,
+                                                             size_t len);
 
 /**
  * @brief Get a human-readable name for a format
@@ -196,7 +206,8 @@ char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len);
  * @param format The format type
  * @return Static string with format name
  */
-const char *mnemonic_qr_format_name(mnemonic_qr_format_t format);
+KERN_WARN_UNUSED_RESULT const char *
+mnemonic_qr_format_name(mnemonic_qr_format_t format);
 
 /**
  * @brief Convert a BIP39 mnemonic phrase to SeedQR format
@@ -208,7 +219,7 @@ const char *mnemonic_qr_format_name(mnemonic_qr_format_t format);
  * @return Allocated SeedQR string on success (caller must free),
  *         or NULL on failure
  */
-char *mnemonic_to_seedqr(const char *mnemonic);
+KERN_WARN_UNUSED_RESULT char *mnemonic_to_seedqr(const char *mnemonic);
 
 /**
  * @brief Convert a BIP39 mnemonic phrase to Compact SeedQR format

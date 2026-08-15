@@ -412,6 +412,9 @@ target_compile_options(kern_simulator PRIVATE
     -Wno-sign-compare
     -Wno-missing-field-initializers
     -Wno-type-limits
+    # Matches the firmware build: the k_quirc and cUR entry points report
+    # failure only through their return value.
+    -Werror=unused-result
     -include mbedtls_compat.h
     # Hardening — the simulator parses untrusted input (image files, NVS
     # files, V4L2 frames). These flags are cheap and standard for any host

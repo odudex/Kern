@@ -17,6 +17,7 @@
 #ifndef STORAGE_H
 #define STORAGE_H
 
+#include "../utils/attributes.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -42,7 +43,7 @@ typedef enum {
 /**
  * Initialize flash storage (mount SPIFFS). Safe to call multiple times.
  */
-esp_err_t storage_init(void);
+KERN_WARN_UNUSED_RESULT esp_err_t storage_init(void);
 
 /**
  * Save a KEF envelope. Flash: raw binary. SD: base64-encoded.
@@ -52,8 +53,9 @@ esp_err_t storage_init(void);
  * @param kef_envelope  Binary KEF envelope
  * @param len           Length of KEF envelope
  */
-esp_err_t storage_save_mnemonic(storage_location_t loc, const char *id,
-                                const uint8_t *kef_envelope, size_t len);
+KERN_WARN_UNUSED_RESULT esp_err_t
+storage_save_mnemonic(storage_location_t loc, const char *id,
+                      const uint8_t *kef_envelope, size_t len);
 
 /**
  * Load a mnemonic file. Flash: raw binary. SD: base64-decoded.
@@ -63,8 +65,9 @@ esp_err_t storage_save_mnemonic(storage_location_t loc, const char *id,
  * @param kef_envelope_out Receives heap-allocated binary KEF envelope
  * @param len_out          Receives length
  */
-esp_err_t storage_load_mnemonic(storage_location_t loc, const char *filename,
-                                uint8_t **kef_envelope_out, size_t *len_out);
+KERN_WARN_UNUSED_RESULT esp_err_t
+storage_load_mnemonic(storage_location_t loc, const char *filename,
+                      uint8_t **kef_envelope_out, size_t *len_out);
 
 /**
  * List stored mnemonic files.
@@ -74,25 +77,28 @@ esp_err_t storage_load_mnemonic(storage_location_t loc, const char *filename,
  *                       with storage_free_file_list)
  * @param count_out      Receives count
  */
-esp_err_t storage_list_mnemonics(storage_location_t loc, char ***filenames_out,
-                                 int *count_out);
+KERN_WARN_UNUSED_RESULT esp_err_t storage_list_mnemonics(storage_location_t loc,
+                                                         char ***filenames_out,
+                                                         int *count_out);
 
 /**
  * Delete a stored mnemonic file.
  */
-esp_err_t storage_delete_mnemonic(storage_location_t loc, const char *filename);
+KERN_WARN_UNUSED_RESULT esp_err_t
+storage_delete_mnemonic(storage_location_t loc, const char *filename);
 
 /**
  * Securely wipe flash storage.
  * Unmounts SPIFFS, erases the entire partition (all bytes -> 0xFF),
  * then remounts with a fresh filesystem.
  */
-esp_err_t storage_wipe_flash(void);
+KERN_WARN_UNUSED_RESULT esp_err_t storage_wipe_flash(void);
 
 /**
  * Check if a mnemonic with the given ID already exists.
  */
-bool storage_mnemonic_exists(storage_location_t loc, const char *id);
+KERN_WARN_UNUSED_RESULT bool storage_mnemonic_exists(storage_location_t loc,
+                                                     const char *id);
 
 /**
  * Sanitize a raw ID for use as a filename component.
@@ -119,7 +125,8 @@ void storage_free_file_list(char **files, int count);
  * @param len   Length of data
  * @return Heap-allocated ID string, or NULL on failure. Caller frees.
  */
-char *storage_get_kef_display_name(const uint8_t *data, size_t len);
+KERN_WARN_UNUSED_RESULT char *storage_get_kef_display_name(const uint8_t *data,
+                                                           size_t len);
 
 /* ---------- Descriptor storage ---------- */
 
@@ -133,9 +140,9 @@ char *storage_get_kef_display_name(const uint8_t *data, size_t len);
  * @param len       Length of data
  * @param encrypted true for .kef, false for .txt
  */
-esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
-                                  const uint8_t *data, size_t len,
-                                  bool encrypted);
+KERN_WARN_UNUSED_RESULT esp_err_t
+storage_save_descriptor(storage_location_t loc, const char *id,
+                        const uint8_t *data, size_t len, bool encrypted);
 
 /**
  * Load a descriptor file. Detects format by extension.
@@ -147,27 +154,28 @@ esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
  * @param len_out       Receives length
  * @param encrypted_out Receives true if file is .kef, false if .txt
  */
-esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
-                                  uint8_t **data_out, size_t *len_out,
-                                  bool *encrypted_out);
+KERN_WARN_UNUSED_RESULT esp_err_t storage_load_descriptor(
+    storage_location_t loc, const char *filename, uint8_t **data_out,
+    size_t *len_out, bool *encrypted_out);
 
 /**
  * List stored descriptor files (.kef and .txt).
  */
-esp_err_t storage_list_descriptors(storage_location_t loc,
-                                   char ***filenames_out, int *count_out);
+KERN_WARN_UNUSED_RESULT esp_err_t storage_list_descriptors(
+    storage_location_t loc, char ***filenames_out, int *count_out);
 
 /**
  * Delete a stored descriptor file.
  */
-esp_err_t storage_delete_descriptor(storage_location_t loc,
-                                    const char *filename);
+KERN_WARN_UNUSED_RESULT esp_err_t
+storage_delete_descriptor(storage_location_t loc, const char *filename);
 
 /**
  * Check if a descriptor with the given ID already exists.
  */
-bool storage_descriptor_exists(storage_location_t loc, const char *id,
-                               bool encrypted);
+KERN_WARN_UNUSED_RESULT bool storage_descriptor_exists(storage_location_t loc,
+                                                       const char *id,
+                                                       bool encrypted);
 
 /**
  * Build the full filesystem path a descriptor with the given ID would be saved

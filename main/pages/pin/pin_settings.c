@@ -57,7 +57,10 @@ static const char *threshold_options = "5\n10\n15\n20\n30\n50";
 static void threshold_dropdown_cb(lv_event_t *e) {
   uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
   if (sel < sizeof(threshold_values) / sizeof(threshold_values[0])) {
-    pin_set_max_failures((uint8_t)threshold_values[sel]);
+    // The dropdown would keep showing the new threshold while the device still
+    // wipes at the old one.
+    if (pin_set_max_failures((uint8_t)threshold_values[sel]) != ESP_OK)
+      dialog_show_error_timeout("Could not save the wipe threshold", NULL, 0);
   }
 }
 
@@ -92,7 +95,13 @@ static void disable_confirm_result(bool confirmed, void *user_data) {
   (void)user_data;
   if (!confirmed)
     return;
-  pin_remove();
+  // Returning to the menu on a failed removal would show the PIN as disabled
+  // while it is still required at the next boot.
+  if (pin_remove() != ESP_OK) {
+    dialog_show_error_timeout("Could not remove the PIN - it is still set",
+                              NULL, 0);
+    return;
+  }
   if (return_callback)
     return_callback();
 }

@@ -13,6 +13,9 @@
 #include "screensaver.h"
 #include "video.h"
 #include <bsp/pmic.h>
+#include <esp_log.h>
+
+static const char *TAG = "SESSION_LOCK";
 
 static bool device_locked = false;
 
@@ -38,13 +41,25 @@ static bool migration_pending(void) {
   return pin_is_configured() && !nvs_secure_is_encrypted();
 }
 
+// Declining the migration is meant to leave the device with no PIN. If the
+// removal fails the PIN is still set, so say so rather than letting the user
+// believe it is gone.
+static void remove_pin_or_warn(void) {
+  esp_err_t err = pin_remove();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "PIN removal failed: %s", esp_err_to_name(err));
+    dialog_show_error_timeout("Could not remove the PIN - it is still set",
+                              NULL, 0);
+  }
+}
+
 static void migration_setup_done(void) {
   pin_page_destroy();
   unlock_finished();
 }
 
 static void migration_setup_cancel(void) {
-  pin_remove();
+  remove_pin_or_warn();
   pin_page_destroy();
   unlock_finished();
 }
@@ -52,7 +67,7 @@ static void migration_setup_cancel(void) {
 static void migration_confirm_result(bool confirmed, void *user_data) {
   (void)user_data;
   if (!confirmed) {
-    pin_remove();
+    remove_pin_or_warn();
     unlock_finished();
     return;
   }

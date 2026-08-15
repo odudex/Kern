@@ -411,7 +411,7 @@ esp_err_t pin_set_max_failures(uint8_t max) {
 // Wipe
 // ---------------------------------------------------------------------------
 
-esp_err_t pin_wipe_all(void) {
+void pin_wipe_all(void) {
   ESP_LOGW(TAG, "Wiping all data");
 
   // Erase PIN NVS namespace
@@ -421,12 +421,26 @@ esp_err_t pin_wipe_all(void) {
   }
 
   // Reset settings
-  settings_reset_all();
+  esp_err_t err = settings_reset_all();
+  if (err != ESP_OK)
+    ESP_LOGE(TAG, "Settings reset failed: %s", esp_err_to_name(err));
 
-  // Wipe flash storage
-  storage_init(); // Ensure SPIFFS is mounted
-  storage_wipe_flash();
+  // Wipe flash storage. storage_wipe_flash() erases the partition directly, so
+  // a failed mount does not stop it - log and go on rather than skipping it.
+  err = storage_init();
+  if (err != ESP_OK)
+    ESP_LOGE(TAG, "Storage mount before wipe failed: %s", esp_err_to_name(err));
+
+  err = storage_wipe_flash();
+  if (err != ESP_OK) {
+    // Restarting on a failed wipe would report a wipe that never happened and
+    // leave stored wallets on flash, so try once more before giving up.
+    ESP_LOGE(TAG, "Flash wipe failed: %s, retrying", esp_err_to_name(err));
+    err = storage_wipe_flash();
+    if (err != ESP_OK)
+      ESP_LOGE(TAG, "Flash wipe failed again: %s - data may remain on flash",
+               esp_err_to_name(err));
+  }
 
   esp_restart();
-  return ESP_OK; // unreachable
 }

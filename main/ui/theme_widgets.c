@@ -14,7 +14,9 @@ typedef struct {
   lv_style_t touch_disabled;
   lv_style_t btnmatrix_main;
   lv_style_t btnmatrix_items;
-  lv_style_t btnmatrix_active;
+  lv_style_t btnmatrix_pressed;
+  lv_style_t btnmatrix_action;
+  lv_style_t btnmatrix_action_pressed;
   lv_style_t btnmatrix_disabled;
 } theme_widget_styles_t;
 
@@ -105,21 +107,40 @@ static void init_btnmatrix_styles(void) {
   lv_style_set_pad_row(style, theme_key_gap());
   lv_style_set_pad_column(style, theme_key_gap());
 
+  // Tier 1: orange outline, no fill.
   style = &styles.btnmatrix_items;
   lv_style_init(style);
-  lv_style_set_bg_color(style, COLOR_SURFACE);
+  lv_style_set_bg_opa(style, LV_OPA_TRANSP);
   lv_style_set_text_color(style, COLOR_WHITE);
   lv_style_set_text_font(style, theme_font_small());
-  lv_style_set_radius(style, theme_key_gap());
-  lv_style_set_border_width(style, 0);
+  lv_style_set_radius(style, theme_key_gap() * 2);
+  lv_style_set_border_color(style, COLOR_ORANGE);
+  lv_style_set_border_width(style, 2);
   lv_style_set_shadow_width(style, 0);
   lv_style_set_outline_width(style, 0);
 
-  lv_style_init(&styles.btnmatrix_active);
-  lv_style_set_bg_color(&styles.btnmatrix_active, COLOR_ORANGE);
+  style = &styles.btnmatrix_pressed;
+  lv_style_init(style);
+  lv_style_set_bg_color(style, lv_color_mix(COLOR_ORANGE, COLOR_BG, LV_OPA_20));
+  lv_style_set_bg_opa(style, LV_OPA_COVER);
 
+  // Action: orange fill, for keys marked via theme_set_btnmatrix_action().
+  lv_style_init(&styles.btnmatrix_action);
+  lv_style_set_bg_color(&styles.btnmatrix_action, COLOR_ORANGE);
+  lv_style_set_bg_opa(&styles.btnmatrix_action, LV_OPA_COVER);
+  lv_style_set_border_color(&styles.btnmatrix_action, COLOR_ORANGE);
+  lv_style_set_text_color(&styles.btnmatrix_action, COLOR_WHITE);
+
+  // Action keys are permanently checked, so they need their own pressed fill
+  // to stay responsive to touch.
+  lv_style_init(&styles.btnmatrix_action_pressed);
+  lv_style_set_bg_color(&styles.btnmatrix_action_pressed,
+                        lv_color_mix(COLOR_ORANGE, COLOR_BG, LV_OPA_60));
+
+  // Disabled: invisible, no fill or border, just dimmed text.
   lv_style_init(&styles.btnmatrix_disabled);
   lv_style_set_bg_opa(&styles.btnmatrix_disabled, LV_OPA_TRANSP);
+  lv_style_set_border_width(&styles.btnmatrix_disabled, 0);
   lv_style_set_text_color(&styles.btnmatrix_disabled, COLOR_SURFACE);
 }
 
@@ -213,21 +234,37 @@ void theme_apply_slider(lv_obj_t *slider) {
   lv_obj_set_style_pad_all(slider, theme_slider_knob_pad(), LV_PART_KNOB);
 }
 
-void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
+void theme_apply_btnmatrix_styles(lv_obj_t *btnmatrix) {
   if (!btnmatrix)
     return;
 
   lv_obj_add_style(btnmatrix, &styles.btnmatrix_main, 0);
   lv_obj_add_style(btnmatrix, &styles.btnmatrix_items, LV_PART_ITEMS);
-  lv_obj_add_style(btnmatrix, &styles.btnmatrix_active,
+  lv_obj_add_style(btnmatrix, &styles.btnmatrix_pressed,
                    LV_PART_ITEMS | LV_STATE_PRESSED);
-  lv_obj_add_style(btnmatrix, &styles.btnmatrix_active,
+  lv_obj_add_style(btnmatrix, &styles.btnmatrix_action,
                    LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_add_style(btnmatrix, &styles.btnmatrix_action_pressed,
+                   LV_PART_ITEMS | LV_STATE_CHECKED | LV_STATE_PRESSED);
   lv_obj_add_style(btnmatrix, &styles.btnmatrix_disabled,
                    LV_PART_ITEMS | LV_STATE_DISABLED);
+}
+
+void theme_apply_btnmatrix(lv_obj_t *btnmatrix) {
+  if (!btnmatrix)
+    return;
+
+  theme_apply_btnmatrix_styles(btnmatrix);
 
   // Enable click trigger for all buttons
   lv_btnmatrix_set_btn_ctrl_all(btnmatrix, LV_BTNMATRIX_CTRL_CLICK_TRIG);
+}
+
+void theme_set_btnmatrix_action(lv_obj_t *btnmatrix, uint32_t btn_id) {
+  if (!btnmatrix)
+    return;
+
+  lv_btnmatrix_set_btn_ctrl(btnmatrix, btn_id, LV_BTNMATRIX_CTRL_CHECKED);
 }
 
 void theme_align_corner_safe(lv_obj_t *obj, lv_align_t align, int32_t x_ofs,

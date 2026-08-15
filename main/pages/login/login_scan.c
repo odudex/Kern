@@ -174,9 +174,10 @@ static void on_scan_done(void) {
   // UR type and descriptor candidate (UR crypto-output/account + plain text)
   // must be read while the scanner state is still valid.
   const char *ur_type = NULL;
-  qr_scanner_get_ur_result(&ur_type, NULL, NULL);
-  bool psbt_scanned = (ur_type && strcmp(ur_type, "crypto-psbt") == 0) ||
-                      is_psbt_content(content, len);
+  bool has_ur = qr_scanner_get_ur_result(&ur_type, NULL, NULL);
+  bool psbt_scanned =
+      (has_ur && ur_type && strcmp(ur_type, "crypto-psbt") == 0) ||
+      is_psbt_content(content, len);
   char *desc_candidate = descriptor_extract_from_scanner();
 
   qr_scanner_page_hide();

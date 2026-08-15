@@ -196,8 +196,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Initialize persistent settings */
-    settings_init();
+    /* Initialize persistent settings. Not fatal: every getter falls back to
+     * its default when the namespace is unavailable. */
+    esp_err_t settings_ret = settings_init();
+    if (settings_ret != ESP_OK) {
+        fprintf(stderr, "Settings init failed, using defaults: %s\n",
+                esp_err_to_name(settings_ret));
+    }
 
     /* Initialize PMIC (simulated battery on wave_35; no-op on wave_4b) */
     bsp_pmic_init();
@@ -216,8 +221,17 @@ int main(int argc, char *argv[]) {
     /* -----------------------------------------------------------------------
      * Initialize application modules (while splash plays)
      * --------------------------------------------------------------------- */
-    bip39_filter_init();
-    pin_init();
+    if (!bip39_filter_init()) {
+        fprintf(stderr, "BIP39 wordlist init failed\n");
+    }
+
+    /* Fail closed: without it pin_is_configured() reports false, and the boot
+     * gate would walk straight past the PIN of a device that has one set. */
+    esp_err_t pin_ret = pin_init();
+    if (pin_ret != ESP_OK) {
+        fprintf(stderr, "PIN init failed: %s\n", esp_err_to_name(pin_ret));
+        return 1;
+    }
 
     /* Start inactivity monitoring (screensaver + session lock) */
     session_lock_init();

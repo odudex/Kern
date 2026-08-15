@@ -7,6 +7,7 @@
 #include "../ui/input_helpers.h"
 #include "../ui/theme_widgets.h"
 #include "../utils/memory_utils.h"
+#include "../utils/secure_mem.h"
 #include "parser.h"
 #include <bsp/esp-bsp.h>
 #include <driver/ppa.h>
@@ -143,6 +144,7 @@ static uint8_t *rgb565_gray_lut = NULL;
 static volatile bool closing = false;
 static volatile bool scan_completed = false;
 static volatile bool scan_failed = false;
+static const char *volatile scan_failure_msg = NULL;
 static volatile bool is_fully_initialized = false;
 static volatile bool destruction_in_progress = false;
 
@@ -334,7 +336,8 @@ static void completion_timer_cb(lv_timer_t *timer) {
 
     vTaskDelay(pdMS_TO_TICKS(50));
     if (scan_failed)
-      dialog_show_error_timeout("Invalid QR sequence: checksum mismatch",
+      dialog_show_error_timeout(scan_failure_msg ? scan_failure_msg
+                                                 : "Invalid QR sequence",
                                 return_callback, 0);
     else
       return_callback();
@@ -618,6 +621,22 @@ static void update_decode_roi(qr_decode_roi_t *roi,
   roi->height = target_side;
 }
 
+static const char *ur_failure_message(QRPartParser *parser) {
+  if (!parser || parser->format != FORMAT_UR || !parser->ur_decoder)
+    return "Invalid QR sequence";
+
+  switch (ur_decoder_get_state((ur_decoder_t *)parser->ur_decoder)) {
+  case UR_DECODER_ERROR_INVALID_CHECKSUM:
+    return "Invalid QR sequence: checksum mismatch";
+  case UR_DECODER_ERROR_UNSUPPORTED_SIZE:
+    return "QR sequence too large to decode";
+  case UR_DECODER_NO_RESULT:
+    return "Invalid QR sequence: no result";
+  default:
+    return "Invalid QR sequence";
+  }
+}
+
 static void release_decode_frame(uint8_t *frame_buffer) {
   if (qr_buffer_return_queue)
     xQueueSend(qr_buffer_return_queue, &frame_buffer, 0);
@@ -743,11 +762,17 @@ static void qr_decode_task(void *pvParameters) {
           }
 
           if (qr_parser_is_failed(qr_parser)) {
+            scan_failure_msg = ur_failure_message(qr_parser);
             scan_failed = true;
             break;
           }
         }
       }
+
+      // k_quirc clears its own copies on return; the decoded payload - a
+      // mnemonic or PSBT fragment - now lives only here, on a task stack that
+      // outlives the scan.
+      secure_memzero(&qr_result, sizeof(qr_result));
 
       if (!frame_decoded && roi.active) {
         if (num_codes > 0) {
@@ -1177,6 +1202,7 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   closing = false;
   scan_completed = false;
   scan_failed = false;
+  scan_failure_msg = NULL;
   is_fully_initialized = false;
   active_frame_operations = 0;
 
@@ -1267,6 +1293,7 @@ void qr_scanner_page_destroy(void) {
   }
   scan_completed = false;
   scan_failed = false;
+  scan_failure_msg = NULL;
 
   if (camera_event_group) {
     xEventGroupClearBits(camera_event_group, CAMERA_EVENT_TASK_RUN);

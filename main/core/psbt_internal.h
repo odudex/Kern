@@ -1,6 +1,7 @@
 #ifndef PSBT_INTERNAL_H
 #define PSBT_INTERNAL_H
 
+#include "../utils/attributes.h"
 #include "psbt.h"
 #include <wally_script.h>
 
@@ -22,8 +23,9 @@ typedef struct {
 } expected_scripts_t;
 
 #ifdef PSBT_TESTING
-bool claim_regenerate(const claim_t *claim, bool is_testnet,
-                      expected_scripts_t *out);
+KERN_WARN_UNUSED_RESULT bool claim_regenerate(const claim_t *claim,
+                                              bool is_testnet,
+                                              expected_scripts_t *out);
 #endif
 
 #endif // PSBT_INTERNAL_H

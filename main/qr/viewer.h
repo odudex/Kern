@@ -1,6 +1,7 @@
 #ifndef QR_VIEWER_H
 #define QR_VIEWER_H
 
+#include "../utils/attributes.h"
 #include <lvgl.h>
 
 /**
@@ -22,9 +23,10 @@ void qr_viewer_page_create(lv_obj_t *parent, const char *qr_content,
  * @param return_cb Callback function to call when returning
  * @return true on success, false on failure
  */
-bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
-                                       const char *content, const char *title,
-                                       void (*return_cb)(void));
+KERN_WARN_UNUSED_RESULT bool
+qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
+                                  const char *content, const char *title,
+                                  void (*return_cb)(void));
 
 /**
  * Make a widget open the QR viewer fullscreen when tapped (tap again to

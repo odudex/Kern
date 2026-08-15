@@ -220,7 +220,8 @@ void store_descriptor_page_create_for_descriptor(
     dialog_show_error_timeout("No descriptor loaded", return_cb, 0);
     return;
   }
-  descriptor_checksum_from_descriptor(descriptor, descriptor_default_id);
+  if (!descriptor_checksum_from_descriptor(descriptor, descriptor_default_id))
+    descriptor_default_id[0] = '\0'; // the id field opens blank to fill in
 
   const char *title =
       (location == STORAGE_FLASH) ? "Save to Flash" : "Save to SD Card";

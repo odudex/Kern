@@ -35,8 +35,9 @@ static void remember_flagged_path(sign_policy_review_t *review,
 
   review->flagged_index = index;
   review->flagged_is_input = is_input;
-  psbt_format_keypath(raw_keypath, raw_keypath_len, review->flagged_path,
-                      sizeof(review->flagged_path));
+  if (!psbt_format_keypath(raw_keypath, raw_keypath_len, review->flagged_path,
+                           sizeof(review->flagged_path)))
+    review->flagged_path[0] = '\0'; // the review renders without a path
 }
 
 static void scan_inputs(struct wally_psbt *psbt, bool is_testnet,

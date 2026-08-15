@@ -184,9 +184,15 @@ void storage_sanitize_id(const char *raw_id, char *out, size_t out_size) {
   /* Fallback: first 8 hex chars of SHA-256(raw_id) */
   if (j == 0) {
     uint8_t hash[CRYPTO_SHA256_SIZE];
-    crypto_sha256((const uint8_t *)raw_id, strlen(raw_id), hash);
-    for (size_t i = 0; i < 4 && (i * 2 + 1) < max_len; i++)
-      snprintf(out + i * 2, 3, "%02X", hash[i]);
+    if (crypto_sha256((const uint8_t *)raw_id, strlen(raw_id), hash) ==
+        CRYPTO_OK) {
+      for (size_t i = 0; i < 4 && (i * 2 + 1) < max_len; i++)
+        snprintf(out + i * 2, 3, "%02X", hash[i]);
+    } else {
+      /* Formatting the uninitialised hash would leak stack bytes into a name
+       * shown in the UI and used to build a filename. */
+      snprintf(out, out_size, "unnamed");
+    }
   }
 }
 

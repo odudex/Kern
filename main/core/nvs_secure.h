@@ -9,6 +9,7 @@
 #ifndef NVS_SECURE_H
 #define NVS_SECURE_H
 
+#include "../utils/attributes.h"
 #include <esp_err.h>
 #include <stdbool.h>
 
@@ -24,15 +25,15 @@ nvs_secure_key_status_t nvs_secure_key_check(void);
 /* Boot-time NVS init. KEY4 provisioned → encrypted init (a plaintext or
  * corrupt partition is erased and re-initialized encrypted); KEY4 absent →
  * plain init that never touches the eFuse keygen path. */
-esp_err_t nvs_secure_init(void);
+KERN_WARN_UNUSED_RESULT esp_err_t nvs_secure_init(void);
 
 /* Consent-gated provisioning, called from PIN setup after the user confirms.
  * Burns KEY4 (idempotent), read/write-protects it, then migrates NVS in
  * session: closes pin/settings handles, erases the partition, re-initializes
  * it encrypted, and reopens the handles. Erases all NVS content. */
-esp_err_t nvs_secure_provision(void);
+KERN_WARN_UNUSED_RESULT esp_err_t nvs_secure_provision(void);
 
 /* True once the running session initialized NVS encrypted */
-bool nvs_secure_is_encrypted(void);
+KERN_WARN_UNUSED_RESULT bool nvs_secure_is_encrypted(void);
 
 #endif // NVS_SECURE_H

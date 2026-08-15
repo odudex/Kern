@@ -1,6 +1,7 @@
 #ifndef PSBT_H
 #define PSBT_H
 
+#include "../utils/attributes.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -71,15 +72,16 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet);
 
-bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
-                            unsigned char *out, size_t out_cap,
-                            size_t *out_len);
+KERN_WARN_UNUSED_RESULT bool
+psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
+                       unsigned char *out, size_t out_cap, size_t *out_len);
 
 // Format a raw keypath (4 fp bytes + N little-endian u32 components) into
 // the "m/44'/0'/100'/0/0" form. Returns false if the buffer is too small or
 // the input is malformed.
-bool psbt_format_keypath(const unsigned char *raw_keypath,
-                         size_t raw_keypath_len, char *buf, size_t buf_size);
+KERN_WARN_UNUSED_RESULT bool
+psbt_format_keypath(const unsigned char *raw_keypath, size_t raw_keypath_len,
+                    char *buf, size_t buf_size);
 
 // How much an input's amount can be trusted. Only PROVEN ties the value to
 // the prevout txid the transaction actually spends: the full previous
@@ -142,29 +144,32 @@ typedef struct {
   uint32_t first_sighash;
 } psbt_sighash_audit_t;
 
-bool psbt_sighash_is_supported(uint32_t sighash);
+KERN_WARN_UNUSED_RESULT bool psbt_sighash_is_supported(uint32_t sighash);
 
 // Short name for a sighash byte ("NONE", "SINGLE|ANYONECANPAY", ...).
-const char *psbt_sighash_name(uint32_t sighash);
+KERN_WARN_UNUSED_RESULT const char *psbt_sighash_name(uint32_t sighash);
 
 void psbt_audit_sighash(const struct wally_psbt *psbt,
                         psbt_sighash_audit_t *out);
 
 // Fee as a whole-number percentage of the total input value; 0 when the total
 // is 0. What counts as too high is the review screen's call, not this layer's.
-uint32_t psbt_fee_percent(uint64_t fee, uint64_t total_input);
+KERN_WARN_UNUSED_RESULT uint32_t psbt_fee_percent(uint64_t fee,
+                                                  uint64_t total_input);
 
 // Detect network from derivation paths (returns true if testnet)
-bool psbt_detect_network(const struct wally_psbt *psbt);
+KERN_WARN_UNUSED_RESULT bool psbt_detect_network(const struct wally_psbt *psbt);
 
 // Detect account from derivation paths
 // Returns the account number from PSBT derivation paths
 // Returns -1 if no derivation info found or inconsistent accounts
-int32_t psbt_detect_account(const struct wally_psbt *psbt);
+KERN_WARN_UNUSED_RESULT int32_t
+psbt_detect_account(const struct wally_psbt *psbt);
 
 // Convert scriptPubKey to address string (caller must free)
-char *psbt_scriptpubkey_to_address(const unsigned char *script,
-                                   size_t script_len, bool is_testnet);
+KERN_WARN_UNUSED_RESULT char *
+psbt_scriptpubkey_to_address(const unsigned char *script, size_t script_len,
+                             bool is_testnet);
 
 // Per-call signing policy. Mirrors the user-facing settings toggles
 // (Settings > Wallet) and is enforced inside `psbt_sign()` per-input,
@@ -198,11 +203,14 @@ typedef struct {
 // (it gates whether to proceed at all when external inputs exist), since
 // that's a UX decision rather than a per-input one.
 // `result` may be NULL. Returns number of signatures added (0 if none).
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
-                 psbt_sign_policy_t policy, psbt_sign_result_t *result);
+KERN_WARN_UNUSED_RESULT size_t psbt_sign(struct wally_psbt *psbt,
+                                         bool is_testnet,
+                                         psbt_sign_policy_t policy,
+                                         psbt_sign_result_t *result);
 
 // Create a trimmed PSBT containing only signatures and minimal validation data
 // Returns new PSBT on success (caller must free), NULL on failure
-struct wally_psbt *psbt_trim(const struct wally_psbt *psbt);
+KERN_WARN_UNUSED_RESULT struct wally_psbt *
+psbt_trim(const struct wally_psbt *psbt);
 
 #endif // PSBT_H
