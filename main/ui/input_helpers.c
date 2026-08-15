@@ -144,6 +144,12 @@ lv_obj_t *ui_create_info_button(lv_obj_t *parent, lv_event_cb_t event_cb) {
 // Swipe travel in pixels. The LVGL default of 50 fired on drags meant as taps.
 #define SWIPE_MIN_DISTANCE 75
 
+// Travel in pixels past which the touch is not a tap.
+#define TAP_SLOP 15
+
+static lv_point_t touch_origin;
+static bool not_tap;
+
 // The touch panel is the only pointer device. Look it up instead of taking the
 // list head, so a keypad or encoder added later cannot shadow it.
 static lv_indev_t *touch_indev(void) {
@@ -153,6 +159,31 @@ static lv_indev_t *touch_indev(void) {
       return indev;
   }
   return NULL;
+}
+
+static void swipe_travel_cb(lv_event_t *e) {
+  lv_point_t p;
+  lv_indev_get_point(lv_event_get_indev(e), &p);
+
+  // Track origin
+  if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+    touch_origin = p;
+    not_tap = false;
+    return;
+  }
+
+  // Mark it as not a tap
+  if (LV_ABS(p.x - touch_origin.x) > TAP_SLOP ||
+      LV_ABS(p.y - touch_origin.y) > TAP_SLOP)
+    not_tap = true;
+}
+
+// A touch that moved but never became a swipe still ends in a click. Drop it
+// here so no caller has to remember to.
+static void tap_filter_cb(lv_event_t *e) {
+  if (not_tap)
+    return;
+  ((lv_event_cb_t)lv_event_get_user_data(e))(e);
 }
 
 void ui_enable_tap_swipe(lv_obj_t *obj, lv_event_cb_t tap_cb,
@@ -170,10 +201,12 @@ void ui_enable_tap_swipe(lv_obj_t *obj, lv_event_cb_t tap_cb,
   // gesture up to the screen and past any handler installed here.
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
+  lv_obj_add_event_cb(obj, swipe_travel_cb, LV_EVENT_PRESSED, NULL);
+  lv_obj_add_event_cb(obj, swipe_travel_cb, LV_EVENT_PRESSING, NULL);
   if (swipe_cb)
     lv_obj_add_event_cb(obj, swipe_cb, LV_EVENT_GESTURE, NULL);
   if (tap_cb)
-    lv_obj_add_event_cb(obj, tap_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(obj, tap_filter_cb, LV_EVENT_CLICKED, tap_cb);
 }
 
 lv_dir_t ui_consume_swipe_dir(lv_event_t *e) {

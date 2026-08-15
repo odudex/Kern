@@ -37,8 +37,9 @@ lv_obj_t *ui_create_settings_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 lv_obj_t *ui_create_info_button(lv_obj_t *parent, lv_event_cb_t event_cb);
 
 // Makes obj touchable and splits its touches in two: swipe_cb gets a
-// LV_EVENT_GESTURE per swipe, tap_cb a LV_EVENT_CLICKED per tap. Either
-// callback may be NULL.
+// LV_EVENT_GESTURE per swipe, tap_cb a LV_EVENT_CLICKED per tap. A touch that
+// moved without becoming a swipe reaches neither. Either callback may be
+// NULL.
 void ui_enable_tap_swipe(lv_obj_t *obj, lv_event_cb_t tap_cb,
                          lv_event_cb_t swipe_cb);
 
