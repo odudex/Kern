@@ -141,6 +141,49 @@ lv_obj_t *ui_create_info_button(lv_obj_t *parent, lv_event_cb_t event_cb) {
   return create_corner_button(parent, LV_ALIGN_TOP_RIGHT, ICON_INFO, event_cb);
 }
 
+// Swipe travel in pixels. The LVGL default of 50 fired on drags meant as taps.
+#define SWIPE_MIN_DISTANCE 75
+
+// The touch panel is the only pointer device. Look it up instead of taking the
+// list head, so a keypad or encoder added later cannot shadow it.
+static lv_indev_t *touch_indev(void) {
+  for (lv_indev_t *indev = lv_indev_get_next(NULL); indev;
+       indev = lv_indev_get_next(indev)) {
+    if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER)
+      return indev;
+  }
+  return NULL;
+}
+
+void ui_enable_tap_swipe(lv_obj_t *obj, lv_event_cb_t tap_cb,
+                         lv_event_cb_t swipe_cb) {
+  if (!obj)
+    return;
+
+  // The distance is per input device, and lv_indev_active() is NULL outside
+  // event processing, so reach the touch panel through the device list.
+  lv_indev_set_gesture_min_distance(touch_indev(), SWIPE_MIN_DISTANCE);
+
+  // Both a tap and a swipe need the object to be the one under the finger.
+  lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+  // Objects carry LV_OBJ_FLAG_GESTURE_BUBBLE by default, which walks the
+  // gesture up to the screen and past any handler installed here.
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  if (swipe_cb)
+    lv_obj_add_event_cb(obj, swipe_cb, LV_EVENT_GESTURE, NULL);
+  if (tap_cb)
+    lv_obj_add_event_cb(obj, tap_cb, LV_EVENT_CLICKED, NULL);
+}
+
+lv_dir_t ui_consume_swipe_dir(lv_event_t *e) {
+  lv_indev_t *indev = lv_event_get_indev(e);
+  lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+  if (dir != LV_DIR_NONE)
+    lv_indev_wait_release(indev);
+  return dir;
+}
+
 /* ---------- Shared text input component ---------- */
 
 static void ui_text_input_eye_cb(lv_event_t *e) {
