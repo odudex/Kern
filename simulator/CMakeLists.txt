@@ -18,7 +18,7 @@ if(NOT DEFINED SIM_BOARD)
 endif()
 
 # Board feature flags
-if(SIM_BOARD STREQUAL "wave_35")
+if(SIM_BOARD STREQUAL "wave_35" OR SIM_BOARD STREQUAL "wave_43")
   set(BSP_HAS_PMIC TRUE)
 endif()
 
