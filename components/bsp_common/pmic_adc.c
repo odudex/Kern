@@ -1,51 +1,76 @@
-/* Battery monitoring for the Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3.
+/* Shared battery monitoring for boards that sense the pack through a resistor
+ * divider on an ADC pin, selected by CONFIG_BSP_BATTERY_ADC.
  *
  * Hardware overview
  * -----------------
- * Unlike wave_35 (AXP2101) and crowpanel (STC8H companion MCU), this board has
- * no PMIC and no fuel gauge.  An ETA6098 linear charger sits between USB and
- * the MX1.25 pack, and the only telemetry reaching the SoC is the raw pack
- * voltage through the resistor divider documented next to BSP_BAT_ADC_GPIO in
- * the board header.  So this driver is the one place in the tree that talks to
- * the ESP-IDF ADC directly, and everything the PMIC API exposes has to be
+ * Unlike wave_35 (AXP2101) and crowpanel (STC8H companion MCU), these boards
+ * have no PMIC and no fuel gauge.  A linear charger sits between USB and the
+ * pack, and the only telemetry reaching the SoC is the raw pack voltage across
+ * a divider.  So this driver is the one place in the tree that talks to the
+ * ESP-IDF ADC directly, and everything the bsp_pmic API exposes has to be
  * derived from that single number.
  *
- * Two consequences worth knowing before reading the code:
+ * Three consequences worth knowing before reading the code:
  *
  *   - State of charge is estimated from a LiPo discharge curve.  Without a
  *     coulomb counter that is the best available, and it is only accurate at
  *     rest: the pack sags under display and radio load, so readings are
  *     smoothed and never allowed to climb while discharging.
  *
- *   - Charge state is a heuristic.  The ETA6098 STAT pin goes to test point
- *     TP1 only, and no GPIO senses VBUS either, so there is no charge signal
+ *   - Charge state is a heuristic.  The charger's STAT pin reaches a test
+ *     point only, and no GPIO senses VBUS either, so there is no charge signal
  *     to read.  Two observations stand in for it, and either one is enough:
  *     the pack sits at the charger's 4.2 V CV target once charging finishes,
  *     and while charging is still in progress the voltage climbs steadily.
- *     Measured on this board, a charging pack rose ~13 mV/min and settled at
+ *     Measured on wave_43, a charging pack rose ~13 mV/min and settled at
  *     exactly 4200 mV on termination.
+ *
+ *   - A missing pack cannot be detected while USB is attached.  With no
+ *     battery the charger regulates the same node to the same 4.2 V, into no
+ *     system load, so there is nothing for the firmware to lean on.  Measured
+ *     A/B on wave_43: 4203 mV with no pack against 4200 mV with a full one,
+ *     both sitting at the ADC noise floor.  The one sound inference runs the
+ *     other way -- any reading below the CV target proves a pack is present,
+ *     since without one the node would be pinned and without USB the board
+ *     would be off.
  */
 
 #include "bsp/pmic.h"
-#include "bsp/esp32_p4_wifi6_touch_lcd_43.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "sdkconfig.h"
 
-static const char *TAG = "wave43_bat";
+static const char *TAG = "bsp_bat_adc";
 
-/* BAT_ADC is GPIO20, which is ADC1 channel 4 on the ESP32-P4.  A full 4.2 V
-   pack reaches the pin as 1.4 V, comfortably inside the 12 dB range. */
-#define BAT_ADC_UNIT ADC_UNIT_1
+/* Per-board divider description.  This cannot live in the board header: the
+   board components depend on bsp_common, so reaching back the other way would
+   close a dependency cycle.  A board joining this driver adds its case here
+   and one default line in Kconfig. */
+#if defined(CONFIG_KERN_BOARD_WAVE_43) || defined(CONFIG_KERN_BOARD_WAVE_5)
+/* wave_43 and wave_5 carry the same block, same designators and same values:
+   ETA6098 charger, BAT --[R12 200k 1%]-- BAT_ADC --[R15 100k 1%]-- GND with
+   100nF to ground, landing on GPIO20 == ADC1 channel 4.  The divider is always
+   powered and burns ~14 uA.  Only wave_43 has been verified on hardware. */
+#define BAT_ADC_GPIO 20
 #define BAT_ADC_CHANNEL ADC_CHANNEL_4
+#define BAT_DIVIDER_MUL 3 /* (R12 + R15) / R15 */
+#else
+#error "CONFIG_BSP_BATTERY_ADC is set but this board has no divider description"
+#endif
+
+/* A full 4.2 V pack reaches the pin as 1.4 V through a /3 divider,
+   comfortably inside the 12 dB range. */
+#define BAT_ADC_UNIT ADC_UNIT_1
 #define BAT_ADC_ATTEN ADC_ATTEN_DB_12
 
-/* The divider presents R12||R15 = 66.7 kOhm to the ADC, which is high enough
-   that a single conversion is noisy even with C173 holding the node up.
-   Averaging a burst costs nothing at our refresh rate. */
+/* The divider presents a high source impedance to the ADC (66.7 kOhm on the
+   boards above), enough that a single conversion is noisy even with the filter
+   cap holding the node up.  Averaging a burst costs nothing at our refresh
+   rate. */
 #define BAT_ADC_SAMPLES 16
 
 /* Used only when the calibration eFuse is not burnt: nominal full-scale of the
@@ -67,7 +92,7 @@ static const char *TAG = "wave43_bat";
 
 /* Trend arm: the threshold alone only fires once charging has finished, which
    would leave the icon claiming "discharging" for the hours a flat pack spends
-   climbing.  A charging pack was measured rising ~13 mV/min on this board,
+   climbing.  A charging pack was measured rising ~13 mV/min on wave_43,
    against an EMA noise floor well under 1 mV/min over the same window, so the
    rate below separates the two with room to spare.  Comparing a rate rather
    than a raw delta keeps this honest when callers ask at an uneven cadence. */
@@ -127,7 +152,7 @@ static esp_err_t bat_sample_mv(int *out_mv) {
     node_mv = raw_avg * BAT_ADC_FALLBACK_FS_MV / BAT_ADC_FALLBACK_FS_RAW;
   }
 
-  *out_mv = node_mv * BSP_BAT_DIVIDER_MUL;
+  *out_mv = node_mv * BAT_DIVIDER_MUL;
   return ESP_OK;
 }
 
@@ -234,18 +259,17 @@ esp_err_t bsp_pmic_init(void) {
     return ret;
   }
   if (mv < BAT_SANITY_MIN_MV || mv > BAT_SANITY_MAX_MV) {
-    ESP_LOGW(TAG, "no battery detected on GPIO%d (%d mV)", BSP_BAT_ADC_GPIO,
-             mv);
+    ESP_LOGW(TAG, "no battery detected on GPIO%d (%d mV)", BAT_ADC_GPIO, mv);
     return ESP_ERR_NOT_FOUND;
   }
 
-  ESP_LOGI(TAG, "battery sense on GPIO%d: %d mV", BSP_BAT_ADC_GPIO, mv);
+  ESP_LOGI(TAG, "battery sense on GPIO%d: %d mV", BAT_ADC_GPIO, mv);
 
   smoothed_mv = mv;
   smoothed_at_us = esp_timer_get_time();
   /* The trend arm needs a window of uptime before it can say anything, so a
      board that boots mid-charge reports discharging until then. Booting is
-     exactly when that happens: plugging the cable resets this board. */
+     exactly when that happens: plugging the cable resets these boards. */
   trend_mv = mv;
   trend_at_us = smoothed_at_us;
   trend_rising = false;
@@ -257,8 +281,8 @@ esp_err_t bsp_pmic_init(void) {
 }
 
 esp_err_t bsp_pmic_power_off(void) {
-  /* The ECJ23001 latch that gates the 5 V rail is wired to the physical Key3
-     button only; no GPIO reaches its KEY or OUT pin. */
+  /* Both boards gate the 5 V rail behind an ECJ23001 latch wired to a
+     physical button; no GPIO reaches its KEY or OUT pin. */
   return ESP_ERR_NOT_SUPPORTED;
 }
 
@@ -307,12 +331,12 @@ bool bsp_pmic_is_vbus_present(void) {
   if (bat_refresh() != ESP_OK) {
     return false;
   }
-  /* The charging heuristic is the only USB evidence this board offers. */
+  /* The charging heuristic is the only USB evidence these boards offer. */
   return charging;
 }
 
 bool bsp_pmic_is_available(void) { return pmic_available; }
 
-/* Power is cut by the Key3 button through the ECJ23001 latch, not in software.
- */
+/* Power is cut by the physical button through the ECJ23001 latch, never in
+   software. */
 bool bsp_pmic_can_power_off(void) { return false; }

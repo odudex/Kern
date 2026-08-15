@@ -1,5 +1,28 @@
 menu "Board Support Package"
 
+    # How a board answers the bsp_pmic API. Not prompted: each board knows its
+    # own hardware, so these follow the board choice rather than the user.
+    # Adding a board means adding one default line here.
+
+    config BSP_BATTERY_PMIC
+        bool
+        default y if KERN_BOARD_WAVE_35 || KERN_BOARD_CROWPANEL
+        help
+            Board has a dedicated power-management or fuel-gauge chip and
+            ships its own bsp_pmic implementation in its BSP component
+            (AXP2101 on wave_35, STC8H companion MCU on crowpanel).
+
+    config BSP_BATTERY_ADC
+        bool
+        default y if KERN_BOARD_WAVE_43 || KERN_BOARD_WAVE_5
+        help
+            Board has no PMIC and exposes the raw pack voltage on an ADC pin
+            through a resistor divider. Selects the shared driver in
+            components/bsp_common/pmic_adc.c, which also carries the per-board
+            divider description.
+
+    # Boards that select neither get the no-op stub and report no battery.
+
     config BSP_ERROR_CHECK
         bool "Enable error check in BSP"
         default y

@@ -45,16 +45,12 @@
 #define BSP_CAM_I2C_SDA BSP_I2C_SDA
 #define BSP_CAM_HAS_MOTOR 0
 
-/* Battery sense. This board has no PMIC and no fuel gauge: the raw pack voltage
-   is brought to the SoC through a plain divider
-
-     BAT --[R12 200k 1%]-- BAT_ADC --[R15 100k 1%]-- GND   (C173 100nF to GND)
-
-   so BAT_ADC sits at one third of the battery voltage (1.4 V at a full 4.2 V
-   pack). The divider is always powered and burns ~14 uA. BAT_ADC lands on
-   GPIO20, which is ADC1 channel 4 on the ESP32-P4; see pmic.c. */
-#define BSP_BAT_ADC_GPIO (GPIO_NUM_20)
-#define BSP_BAT_DIVIDER_MUL 3 /* (R12 + R15) / R15 */
+/* Battery sense on GPIO20 (ADC1 channel 4): no PMIC here, just the raw pack
+   voltage across BAT --[R12 200k]-- BAT_ADC --[R15 100k]-- GND. Deliberately
+   no #define -- the driver in components/bsp_common/pmic_adc.c cannot include
+   this header without closing a dependency cycle, and a second copy of the
+   numbers here would be free to drift out of agreement with the one the code
+   actually uses. That file is the source of truth. */
 
 /**************************************************************************************************
  *
