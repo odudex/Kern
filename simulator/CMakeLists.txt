@@ -252,6 +252,7 @@ if(SIM_WEBCAM)
             ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture.c
         )
     endif()
+    set_target_properties(v4l2_capture PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_include_directories(v4l2_capture PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/include
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim
