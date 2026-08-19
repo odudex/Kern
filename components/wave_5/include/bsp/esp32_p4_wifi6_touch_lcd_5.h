@@ -44,6 +44,12 @@
 #define BSP_CAM_I2C_SDA BSP_I2C_SDA
 #define BSP_CAM_HAS_MOTOR 0
 
+/* Battery sense on GPIO20 (ADC1 channel 4): no PMIC here, just the raw pack
+   voltage across BAT --[R12 200k]-- BAT_ADC --[R15 100k]-- GND. Identical
+   block to wave_43, down to the designators, so both share the driver in
+   components/bsp_common/pmic_adc.c, which is the source of truth for the
+   numbers. Verified from the schematic only -- not yet on hardware. */
+
 /**************************************************************************************************
  *
  * I2C interface

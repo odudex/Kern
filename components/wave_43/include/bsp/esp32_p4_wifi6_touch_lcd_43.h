@@ -45,6 +45,13 @@
 #define BSP_CAM_I2C_SDA BSP_I2C_SDA
 #define BSP_CAM_HAS_MOTOR 0
 
+/* Battery sense on GPIO20 (ADC1 channel 4): no PMIC here, just the raw pack
+   voltage across BAT --[R12 200k]-- BAT_ADC --[R15 100k]-- GND. Deliberately
+   no #define -- the driver in components/bsp_common/pmic_adc.c cannot include
+   this header without closing a dependency cycle, and a second copy of the
+   numbers here would be free to drift out of agreement with the one the code
+   actually uses. That file is the source of truth. */
+
 /**************************************************************************************************
  *
  * I2C interface

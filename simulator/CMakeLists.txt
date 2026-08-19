@@ -17,8 +17,11 @@ if(NOT DEFINED SIM_BOARD)
   set(SIM_BOARD "wave_4b")
 endif()
 
-# Board feature flags
-if(SIM_BOARD STREQUAL "wave_35")
+# Board feature flags. Mirrors the BSP_BATTERY_* symbols in
+# components/bsp_common/Kconfig, which the simulator build cannot read.
+if(SIM_BOARD STREQUAL "wave_35"
+   OR SIM_BOARD STREQUAL "wave_43"
+   OR SIM_BOARD STREQUAL "wave_5")
   set(BSP_HAS_PMIC TRUE)
 endif()
 

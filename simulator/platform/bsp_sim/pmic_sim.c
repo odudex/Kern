@@ -6,8 +6,11 @@
 #include <stdlib.h>
 
 /*
- * Simulated PMIC for boards with battery (wave_35).
+ * Simulated PMIC for boards that report a battery (wave_35, wave_43, wave_5).
  * Pretends a battery is present at 75%, discharging.
+ *
+ * Note that bsp_pmic_can_power_off() is true here for every such board, while
+ * on real wave_43 and wave_5 hardware power is cut by a physical button only.
  */
 
 static bool pmic_initialized = false;
