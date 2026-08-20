@@ -21,6 +21,11 @@ key_get_fingerprint(unsigned char *fingerprint_out);
 KERN_WARN_UNUSED_RESULT bool key_get_fingerprint_hex(char *hex_out);
 KERN_WARN_UNUSED_RESULT bool key_mnemonic_fingerprint_hex(const char *mnemonic,
                                                           char *hex_out);
+/* Same as key_mnemonic_fingerprint_hex(), but with an explicit passphrase
+ * (NULL/empty for none) instead of always deriving without one. */
+KERN_WARN_UNUSED_RESULT bool
+key_mnemonic_passphrase_fingerprint_hex(const char *mnemonic,
+                                        const char *passphrase, char *hex_out);
 
 /* On success, *xpub_out is heap-allocated and must be freed by the caller
  * with wally_free_string(). Public-only -- safe to log. */

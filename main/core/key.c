@@ -113,7 +113,9 @@ bool key_get_fingerprint_hex(char *hex_out) {
   return true;
 }
 
-bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out) {
+bool key_mnemonic_passphrase_fingerprint_hex(const char *mnemonic,
+                                             const char *passphrase,
+                                             char *hex_out) {
   if (!mnemonic || !hex_out)
     return false;
 
@@ -125,7 +127,7 @@ bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out) {
   struct ext_key *mnemonic_key = NULL;
   bool ok = false;
 
-  if (bip39_mnemonic_to_seed512(mnemonic, NULL, seed, sizeof(seed)) !=
+  if (bip39_mnemonic_to_seed512(mnemonic, passphrase, seed, sizeof(seed)) !=
           WALLY_OK ||
       bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
                                 &mnemonic_key) != WALLY_OK)
@@ -143,6 +145,10 @@ cleanup:
     bip32_key_free(mnemonic_key);
   secure_memzero(seed, sizeof(seed));
   return ok;
+}
+
+bool key_mnemonic_fingerprint_hex(const char *mnemonic, char *hex_out) {
+  return key_mnemonic_passphrase_fingerprint_hex(mnemonic, NULL, hex_out);
 }
 
 bool key_get_xpub(const char *path, char **xpub_out) {
