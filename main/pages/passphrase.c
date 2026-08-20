@@ -3,7 +3,6 @@
 #include "../ui/input_helpers.h"
 #include "../ui/theme_widgets.h"
 #include <lvgl.h>
-#include <stdio.h>
 
 static lv_obj_t *passphrase_screen = NULL;
 static ui_text_input_t text_input = {0};
@@ -30,10 +29,10 @@ static void confirm_passphrase_cb(bool result, void *user_data) {
 
 static void keyboard_ready_cb(lv_event_t *e) {
   (void)e;
-  char prompt[128];
-  snprintf(prompt, sizeof(prompt), "Confirm passphrase:\n\"%s\"",
-           lv_textarea_get_text(text_input.textarea));
-  dialog_show_confirm(prompt, confirm_passphrase_cb, NULL,
+  // Masked like every other secret entry in the app (PIN, KEF key): the eye
+  // toggle lets the user check for typos on demand instead of the passphrase
+  // being shown unconditionally, including here in the confirmation prompt.
+  dialog_show_confirm("Confirm passphrase?", confirm_passphrase_cb, NULL,
                       DIALOG_STYLE_OVERLAY);
 }
 
@@ -52,8 +51,10 @@ void passphrase_page_create(lv_obj_t *parent, void (*return_cb)(void),
   // Back button
   ui_create_back_button(passphrase_screen, back_btn_cb);
 
-  // Text input (textarea + keyboard)
-  ui_text_input_create(&text_input, passphrase_screen, "passphrase", false,
+  // Text input (textarea + keyboard). Masked like every other secret entry
+  // in the app (PIN, KEF key), with an eye toggle to reveal on demand rather
+  // than showing the passphrase unconditionally.
+  ui_text_input_create(&text_input, passphrase_screen, "passphrase", true,
                        keyboard_ready_cb);
 }
 
