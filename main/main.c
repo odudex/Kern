@@ -1,3 +1,4 @@
+#include "core/debug_log.h"
 #include "core/entropy_pool.h"
 #include "core/fw_update.h"
 #include "core/nvs_secure.h"
@@ -35,6 +36,7 @@ void app_main(void) {
   // provisioned, plaintext otherwise (never stock nvs_flash_init(): its
   // keygen path would burn KEY4 without consent)
   ESP_ERROR_CHECK(nvs_secure_init());
+  debug_log_event("boot");
   // Not fatal: every getter falls back to its default when the namespace is
   // unavailable, and those defaults are the safe ones.
   esp_err_t settings_ret = settings_init();

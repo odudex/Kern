@@ -19,6 +19,7 @@
 #define BBQR_TYPE_TRANSACTION 'T' // Raw Bitcoin transaction
 #define BBQR_TYPE_JSON 'J'        // JSON data
 #define BBQR_TYPE_UNICODE 'U'     // Unicode text
+#define BBQR_TYPE_BINARY 'B'      // Generic binary data
 
 /**
  * @brief Header length for BBQr format
@@ -111,6 +112,22 @@ uint8_t *bbqr_decode_payload(char encoding, const char *data, size_t data_len,
  */
 BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
                        int max_chars_per_qr);
+
+/**
+ * @brief Encode binary data as hex BBQr parts.
+ *
+ * Encodes the input data using BBQr hexadecimal encoding, without compression.
+ * This is the transport used by bwk-qr-protocol response messages (B$HB).
+ *
+ * @param data Binary data to encode
+ * @param data_len Length of data
+ * @param file_type File type character ('P', 'T', 'J', 'U', 'B')
+ * @param max_chars_per_qr Maximum characters per QR code (including header)
+ * @return Pointer to BBQrParts structure, or NULL on failure.
+ *         Caller must free using bbqr_parts_free().
+ */
+BBQrParts *bbqr_encode_hex(const uint8_t *data, size_t data_len, char file_type,
+                           int max_chars_per_qr);
 
 /**
  * @brief Free BBQrParts structure

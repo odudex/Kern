@@ -16,6 +16,9 @@ make -C "$REPO_ROOT/components/bbqr/test" run
 echo "Running QR parser tests..."
 make -C "$REPO_ROOT/main/qr/test" run
 
+echo "Running BIP flow tests..."
+make -C "$REPO_ROOT/main/pages/bip_flow/test" run
+
 echo "Running core tests..."
 make -C "$REPO_ROOT/main/core/test" run
 

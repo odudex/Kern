@@ -10,6 +10,7 @@
 #include "../../core/message_sign.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
+#include "scan.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -28,6 +29,10 @@ typedef struct {
    * caller send back-outs to the browser but completed flows back to home. */
   void (*complete_cb)(void);
   void (*saved_return_cb)(void);
+  /* Set by scan_review_psbt(): receives the signed PSBT in place of the
+   * export menu. */
+  scan_psbt_signed_cb_t signed_cb;
+  void *signed_user_data;
   lv_obj_t *progress_dialog;
 
   struct wally_psbt *psbt;

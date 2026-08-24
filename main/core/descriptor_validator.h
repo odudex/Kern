@@ -113,6 +113,12 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_id_loc_cb id_loc_cb,
                                   void *user_data);
 
+void descriptor_validate_and_load_persistent(
+    const char *descriptor_str, validation_complete_cb callback,
+    validation_confirm_cb confirm_cb,
+    validation_info_confirm_cb info_confirm_cb, validation_id_loc_cb id_loc_cb,
+    void *user_data);
+
 /* Infer a descriptor's network by trying to parse it as mainnet, then testnet.
  * Writes the network to *network_out and returns true on success; returns false
  * if the descriptor parses on neither (xpub keys parse only on mainnet, tpub

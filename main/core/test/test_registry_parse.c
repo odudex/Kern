@@ -509,8 +509,8 @@ int main(void) {
     }
   }
 
-  /* --- Group 11: registry_init is RAM-only --- */
-  printf("\n--- Group 11: registry_init does not scan storage ---\n");
+  /* --- Group 11: registry_init autoload scans storage --- */
+  printf("\n--- Group 11: registry_init scans storage ---\n");
   {
     registry_clear();
     registry_add_from_string("session", DESC_WPKH, STORAGE_FLASH, false);
@@ -525,12 +525,12 @@ int main(void) {
       FAIL("session entries were not cleared");
     }
 
-    TEST("registry_init: does not list descriptor storage");
-    if (registry_stub_storage_list_calls() == 0 &&
+    TEST("registry_init: lists descriptor storage without stored files");
+    if (registry_stub_storage_list_calls() == 2 &&
         registry_stub_storage_load_calls() == 0) {
       PASS();
     } else {
-      FAIL("storage was scanned");
+      FAIL("unexpected storage scan counts");
     }
   }
 
@@ -605,8 +605,8 @@ int main(void) {
     }
   }
 
-  /* --- Group 14: explicit persist path still writes storage --- */
-  printf("\n--- Group 14: explicit persist still saves descriptor ---\n");
+  /* --- Group 14: explicit persist path writes encrypted storage --- */
+  printf("\n--- Group 14: explicit persist saves encrypted descriptor ---\n");
   {
     registry_clear();
     registry_stub_reset_storage_counters();
@@ -618,7 +618,7 @@ int main(void) {
       FAIL("persist add failed");
     }
 
-    TEST("persist add: writes descriptor storage");
+    TEST("persist add: writes encrypted descriptor storage");
     if (registry_stub_storage_save_calls() == 1) {
       PASS();
     } else {

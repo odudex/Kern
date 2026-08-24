@@ -1,4 +1,5 @@
 #include "home.h"
+#include "../../core/debug_log.h"
 #include "../../core/key.h"
 #include "../../core/wallet.h"
 #include "../../ui/assets/icons.h"
@@ -126,21 +127,23 @@ static void return_from_addresses_cb(void) {
 }
 
 static void return_from_scan_cb(void) {
+  debug_log_event("home return_from_scan_cb enter");
   scan_page_destroy();
-  if (key_snapshot_changed() || wallet_settings_were_applied()) {
-    home_page_destroy();
-    home_page_create(lv_screen_active());
-  }
+  debug_log_event("home return_from_scan_cb recreate_home");
+  home_page_destroy();
+  home_page_create(lv_screen_active());
   home_page_show();
+  debug_log_event("home return_from_scan_cb show_home");
 }
 
 static void return_from_load_cb(void) {
+  debug_log_event("home return_from_load_cb enter");
   load_page_destroy();
-  if (key_snapshot_changed() || wallet_settings_were_applied()) {
-    home_page_destroy();
-    home_page_create(lv_screen_active());
-  }
+  debug_log_event("home return_from_load_cb recreate_home");
+  home_page_destroy();
+  home_page_create(lv_screen_active());
   home_page_show();
+  debug_log_event("home return_from_load_cb show_home");
 }
 
 static void return_from_advanced_tools_cb(void) {

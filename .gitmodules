@@ -7,3 +7,10 @@
 [submodule "components/k_quirc"]
 	path = components/k_quirc
 	url = https://github.com/odudex/k_quirc.git
+[submodule "components/bwk"]
+	path = components/bwk
+	url = https://github.com/ws-plaude/bwk.git
+[submodule "components/bip138"]
+	path = components/bip138
+	url = https://github.com/ws-plaude/bip138.git
+	branch = c-bindings-ll-split

@@ -19,6 +19,7 @@
 #include <wally_psbt.h>
 
 static void show_export_choice(void);
+static void finish_signed_psbt(void);
 
 void scan_export_destroy_menu(void) {
   if (scan_ctx.export_menu) {
@@ -29,6 +30,19 @@ void scan_export_destroy_menu(void) {
 
 static void partial_sign_ack_cb(void *user_data) {
   (void)user_data;
+  finish_signed_psbt();
+}
+
+static void finish_signed_psbt(void) {
+  if (scan_ctx.signed_cb) {
+    scan_psbt_signed_cb_t cb = scan_ctx.signed_cb;
+    void *user_data = scan_ctx.signed_user_data;
+    scan_ctx.signed_cb = NULL;
+    scan_ctx.signed_user_data = NULL;
+    scan_page_hide();
+    cb(scan_ctx.psbt, user_data);
+    return;
+  }
   show_export_choice();
 }
 
@@ -79,8 +93,9 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  scan_ctx.saved_return_cb =
-      scan_ctx.complete_cb ? scan_ctx.complete_cb : scan_ctx.return_cb;
+  if (!scan_ctx.signed_cb)
+    scan_ctx.saved_return_cb =
+        scan_ctx.complete_cb ? scan_ctx.complete_cb : scan_ctx.return_cb;
 
   // A PSBT built so that refused inputs pick up a signature from a key used
   // elsewhere in the same transaction is not an accident. The signatures were
@@ -117,7 +132,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  show_export_choice();
+  finish_signed_psbt();
 }
 
 // Tears down the chooser, then returns to the caller that opened the

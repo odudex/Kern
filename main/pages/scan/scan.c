@@ -21,6 +21,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
+#include "../bip_flow/bip_flow.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
@@ -122,6 +123,14 @@ void scan_dismiss_progress(void) {
 static void finish_dispatch(char *qr_content, size_t qr_content_len,
                             bool parse_success, int detected_format) {
   scan_ctx.is_message_sign = false;
+
+  if (!parse_success && qr_content &&
+      bip_flow_can_handle((const uint8_t *)qr_content, qr_content_len)) {
+    bip_flow_start(lv_screen_active(), (const uint8_t *)qr_content,
+                   qr_content_len, scan_ctx.return_cb);
+    free(qr_content);
+    return;
+  }
 
   // Layer 2: plaintext/binary heuristics — try each parser in priority order
   if (!parse_success && qr_content) {
@@ -294,6 +303,15 @@ static void process_scan_result(void) {
     char bbqr_file_type = qr_scanner_get_bbqr_file_type();
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
+      if (bbqr_file_type == 'B' &&
+          bip_flow_can_handle((const uint8_t *)qr_content, qr_content_len)) {
+        qr_scanner_page_hide();
+        qr_scanner_page_destroy();
+        bip_flow_start(lv_screen_active(), (const uint8_t *)qr_content,
+                       qr_content_len, scan_ctx.return_cb);
+        free(qr_content);
+        return;
+      }
       scan_psbt_cleanup();
       parse_success = psbt_parse_payload((const uint8_t *)qr_content,
                                          qr_content_len, &scan_ctx.psbt);
@@ -454,6 +472,8 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
   reset_export_context(save_dir, source_name);
   scan_ctx.return_cb = return_cb;
   scan_ctx.complete_cb = complete_cb;
+  scan_ctx.signed_cb = NULL;
+  scan_ctx.signed_user_data = NULL;
   scan_ctx.screen = theme_create_page_container(parent);
 
   // A file may hold a serialized binary PSBT — try that first (mirroring the
@@ -475,6 +495,24 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                   FORMAT_NONE);
 }
 
+void scan_review_psbt(lv_obj_t *parent, const uint8_t *data, size_t len,
+                      void (*return_cb)(void), void (*complete_cb)(void),
+                      scan_psbt_signed_cb_t signed_cb, void *signed_user_data) {
+  if (!parent || !data || len == 0)
+    return;
+
+  reset_export_context(NULL, NULL);
+  scan_ctx.return_cb = return_cb;
+  scan_ctx.complete_cb = complete_cb;
+  scan_ctx.signed_cb = signed_cb;
+  scan_ctx.signed_user_data = signed_user_data;
+  scan_ctx.screen = theme_create_page_container(parent);
+
+  scan_psbt_cleanup();
+  bool parse_success = psbt_parse_payload(data, len, &scan_ctx.psbt);
+  finish_dispatch(NULL, len, parse_success, FORMAT_NONE);
+}
+
 void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   if (!parent || !key_is_loaded()) {
     return;
@@ -482,6 +520,8 @@ void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   scan_ctx.return_cb = return_cb;
   scan_ctx.complete_cb = NULL;
+  scan_ctx.signed_cb = NULL;
+  scan_ctx.signed_user_data = NULL;
   reset_export_context(NULL, NULL);
 
   scan_ctx.screen = theme_create_page_container(parent);
@@ -527,4 +567,6 @@ void scan_page_destroy(void) {
 
   scan_ctx.return_cb = NULL;
   scan_ctx.complete_cb = NULL;
+  scan_ctx.signed_cb = NULL;
+  scan_ctx.signed_user_data = NULL;
 }

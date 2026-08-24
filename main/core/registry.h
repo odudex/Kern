@@ -38,6 +38,9 @@ KERN_WARN_UNUSED_RESULT bool registry_remove(const char *id);
 KERN_WARN_UNUSED_RESULT bool
 registry_add_from_string(const char *id, const char *descriptor_str,
                          storage_location_t loc, bool persist);
+KERN_WARN_UNUSED_RESULT bool
+registry_persist_or_add_from_string(const char *id, const char *descriptor_str,
+                                    storage_location_t loc);
 
 /* Watch-only (keyless) session add: registers a descriptor for address viewing
  * without requiring the loaded key's fingerprint to be present. `my_key_index`

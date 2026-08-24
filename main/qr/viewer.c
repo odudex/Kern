@@ -674,6 +674,36 @@ bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
   return true;
 }
 
+bool qr_viewer_page_create_with_bbqr_parts(lv_obj_t *parent, BBQrParts *parts,
+                                           const char *title,
+                                           void (*return_cb)(void)) {
+  if (!parent || !parts || parts->count <= 0 || !parts->parts) {
+    return false;
+  }
+
+  cleanup_qr_parts();
+  load_viewer_settings();
+  return_callback = return_cb;
+  message_timer = NULL;
+  animation_timer = NULL;
+  qr_source_format = FORMAT_BBQR;
+  free(qr_content_copy);
+  qr_content_copy = NULL;
+
+  bbqr_parts_owner = parts;
+  qr_parts = parts->parts;
+  qr_parts_count = parts->count;
+  current_part_index = 0;
+
+  if (!setup_qr_viewer_ui(parent, title)) {
+    bbqr_parts_owner = NULL;
+    qr_parts = NULL;
+    qr_parts_count = 0;
+    return false;
+  }
+  return true;
+}
+
 void qr_viewer_page_create(lv_obj_t *parent, const char *qr_content,
                            const char *title, void (*return_cb)(void)) {
   // No page was built, so without this the user is left on a blank screen with
