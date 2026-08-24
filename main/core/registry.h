@@ -42,6 +42,9 @@ KERN_WARN_UNUSED_RESULT bool registry_deregister_at(size_t index);
 KERN_WARN_UNUSED_RESULT bool
 registry_add_from_string(const char *id, const char *descriptor_str,
                          storage_location_t loc, bool persist);
+KERN_WARN_UNUSED_RESULT bool
+registry_persist_or_add_from_string(const char *id, const char *descriptor_str,
+                                    storage_location_t loc);
 
 /* Register a session entry: writes its BIP138 backup to flash under `name`,
  * then renames and labels the entry. Registered descriptors load automatically

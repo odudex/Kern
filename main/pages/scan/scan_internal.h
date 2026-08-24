@@ -10,6 +10,7 @@
 #include "../../core/message_sign.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
+#include "scan.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -50,6 +51,11 @@ typedef struct {
   bool is_bip322;
 
   char *scanned_mnemonic;
+
+  /* Set by scan_review_psbt(): the signed PSBT goes back to the caller
+   * instead of the export menu. */
+  scan_psbt_signed_cb_t psbt_signed_cb;
+  void *psbt_signed_user_data;
 } scan_ctx_t;
 
 extern scan_ctx_t scan_ctx;

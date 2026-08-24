@@ -49,11 +49,22 @@ scan-prof board="wave_4b": (_check_board board)
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_scanprof_{{board}} -D SDKCONFIG=build_scanprof_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.scanprof" flash monitor
 
+debug-log port="/dev/ttyACM0" board="wave_35": (_check_board board)
+    #!/usr/bin/env sh
+    set -e
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    out="build_{{board}}/debug_storage.bin"
+    python -m esptool --chip esp32p4 -p {{port}} read-flash 0xc20000 0x8000 "$out"
+    strings "$out" | sed -n '/boot\|bip_flow\|descriptor_loader\|debug log trimmed/p'
+
 format:
     ./scripts/format.sh
 
 test:
     ./scripts/test.sh
+
+rust-setup:
+    rustup target add riscv32imafc-unknown-none-elf
 
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b
@@ -68,6 +79,7 @@ clean:
     make -C components/secure_memory/test clean
     make -C components/bip138 clean
     make -C main/qr/test clean
+    make -C main/pages/bip_flow/test clean
     rm -rf components/k_quirc/test/build
     make -C main/core/test clean
 

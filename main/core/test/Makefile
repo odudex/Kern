@@ -77,6 +77,8 @@ SCRIPT_TEMPLATE_SRC = ../script_templates.c ../script_templates.h
 REGISTRY_STUB_SRC = stubs/registry_stub.c
 REGISTRY_PERSIST_STUB_SRC = stubs/registry_persist_stub.c
 VALIDATOR_KEYED_STUB_SRC = stubs/validator_keyed_stub.c
+# debug_logf writes to device storage, never host-linkable
+DEBUG_LOG_STUB_SRC = stubs/debug_log_stub.c
 
 SRCS_REG_PARSE = test_registry_parse.c
 TARGET_REG_PARSE = test_registry_parse
@@ -221,11 +223,11 @@ $(TARGET_FW_UPDATE): $(SRCS_FW_UPDATE) $(FW_UPDATE_SRC) $(wildcard stubs/*.h)
 
 # The host compiler flags the %zu session-id suffix as truncatable; the
 # firmware build carries -Wno-format for the same reason.
-$(TARGET_DESC_VALIDATOR): $(SRCS_DESC_VALIDATOR) $(DESC_VALIDATOR_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(SS_SRC) $(LIBWALLY)
+$(TARGET_DESC_VALIDATOR): $(SRCS_DESC_VALIDATOR) $(DESC_VALIDATOR_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(SS_SRC) $(DEBUG_LOG_STUB_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(SRCS_DESC_VALIDATOR) \
 		../descriptor_validator.c ../wallet.c ../key.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) \
 		../descriptor_checksum.c ../bip32_path.c ../script_templates.c \
-		../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY)
+		../ss_whitelist.c ../miniscript_policy.c $(DEBUG_LOG_STUB_SRC) $(LIBWALLY)
 
 # storage.c is built unchanged with its POSIX file calls redirected (see
 # stubs/storage_host_hooks.h) so /spiffs and /sdcard resolve under a temp dir.
