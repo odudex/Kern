@@ -929,6 +929,34 @@ static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
   return true;
 }
 
+static bool taproot_script_signing_keypath(const struct wally_psbt *psbt,
+                                          size_t i, const unsigned char *our_fp,
+                                          uint32_t *path, size_t *path_len) {
+  const struct wally_psbt_input *inp = &psbt->inputs[i];
+
+  if (!inp->taproot_leaf_scripts.num_items)
+    return false;
+
+  for (size_t j = 0; j < inp->taproot_leaf_paths.num_items; j++) {
+    const struct wally_map_item *path_item = &inp->taproot_leaf_paths.items[j];
+    if (!keypath_matches_fingerprint(path_item->value, path_item->value_len,
+                                     our_fp))
+      continue;
+
+    for (size_t k = 0; k < inp->taproot_leaf_hashes.num_items; k++) {
+      const struct wally_map_item *hash_item = &inp->taproot_leaf_hashes.items[k];
+      if (hash_item->value_len == 0 || hash_item->key_len != path_item->key_len ||
+          memcmp(hash_item->key, path_item->key, hash_item->key_len) != 0)
+        continue;
+
+      return bip32_path_from_keypath(path_item->value, path_item->value_len,
+                                     path, path_len, MAX_KEYPATH_TOTAL_DEPTH);
+    }
+  }
+
+  return false;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -972,6 +1000,10 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   if (!signable_any)
     goto cleanup;
 
+  unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
+  if (!key_get_fingerprint(our_fp))
+    goto cleanup;
+
   /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
   wally_psbt_signing_cache_enable(psbt, 0);
 
@@ -985,7 +1017,10 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     size_t path_len = 0;
     uint32_t raw_comps[MAX_KEYPATH_TOTAL_DEPTH];
 
-    if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
+    if (taproot_script_signing_keypath(psbt, i, our_fp, raw_comps,
+                                       &path_len)) {
+      path = raw_comps;
+    } else if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
       path = ownership.claim.derived_path;
       path_len = ownership.claim.derived_path_len;
     } else {

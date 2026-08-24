@@ -11,6 +11,7 @@ sdkconfig
 sdkconfig.old
 managed_components/
 compile_commands.json
+**/target/
 
 # Release
 release/

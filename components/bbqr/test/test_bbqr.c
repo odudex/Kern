@@ -181,6 +181,82 @@ void test_bbqr_parse_header(void) {
   PASS();
 }
 
+void test_bbqr_binary_file_type(void) {
+  TEST("bbqr accepts binary file type");
+
+  const char *qr = "B$HB0100BEEF";
+  BBQrPart part;
+  if (!bbqr_parse_part(qr, strlen(qr), &part)) {
+    FAIL("Parse failed");
+    return;
+  }
+
+  if (part.encoding != BBQR_ENCODING_HEX || part.file_type != BBQR_TYPE_BINARY ||
+      part.total != 1 || part.index != 0 || part.payload_len != 4 ||
+      strncmp(part.payload, "BEEF", 4) != 0) {
+    FAIL("Wrong parsed fields");
+    return;
+  }
+
+  PASS();
+}
+
+void test_bbqr_hex_binary_encode(void) {
+  TEST("bbqr hex binary encode");
+
+  const uint8_t original[] = {0x42, 0x49, 0x50, 0x58, 0x58, 0x58,
+                              0x01, 0x04, 0xde, 0xad, 0xbe, 0xef};
+  BBQrParts *parts =
+      bbqr_encode_hex(original, sizeof(original), BBQR_TYPE_BINARY, 18);
+  if (!parts) {
+    FAIL("Encode failed");
+    return;
+  }
+
+  bool valid = parts->count > 1 && parts->encoding == BBQR_ENCODING_HEX &&
+               parts->file_type == BBQR_TYPE_BINARY && parts->storage != NULL;
+  size_t payload_len = 0;
+  for (int i = 0; valid && i < parts->count; i++) {
+    BBQrPart part;
+    valid = bbqr_parse_part(parts->parts[i], strlen(parts->parts[i]), &part) &&
+            part.encoding == BBQR_ENCODING_HEX &&
+            part.file_type == BBQR_TYPE_BINARY && part.total == parts->count &&
+            part.index == i && strlen(parts->parts[i]) <= 18;
+    payload_len += valid ? part.payload_len : 0;
+  }
+
+  char *payload = valid ? (char *)malloc(payload_len) : NULL;
+  if (!payload) {
+    bbqr_parts_free(parts);
+    FAIL("Invalid parts or allocation failed");
+    return;
+  }
+
+  size_t offset = 0;
+  for (int i = 0; i < parts->count; i++) {
+    BBQrPart part;
+    bbqr_parse_part(parts->parts[i], strlen(parts->parts[i]), &part);
+    memcpy(payload + offset, part.payload, part.payload_len);
+    offset += part.payload_len;
+  }
+
+  size_t decoded_len = 0;
+  uint8_t *decoded =
+      bbqr_decode_payload(BBQR_ENCODING_HEX, payload, payload_len, &decoded_len);
+  free(payload);
+  if (!decoded || decoded_len != sizeof(original) ||
+      memcmp(decoded, original, sizeof(original)) != 0) {
+    free(decoded);
+    bbqr_parts_free(parts);
+    FAIL("Decoded data mismatch");
+    return;
+  }
+
+  free(decoded);
+  bbqr_parts_free(parts);
+  PASS();
+}
+
 /* Test BBQr encode/decode round-trip */
 void test_bbqr_roundtrip(void) {
   TEST("bbqr encode/decode round-trip");
@@ -648,6 +724,8 @@ int main(void) {
   test_base32_roundtrip();
   test_base36();
   test_bbqr_parse_header();
+  test_bbqr_binary_file_type();
+  test_bbqr_hex_binary_encode();
   test_bbqr_roundtrip();
   test_bbqr_unpadded_base32();
   test_bbqr_compression_quality();

@@ -2,6 +2,7 @@
 #define QR_VIEWER_H
 
 #include "../utils/attributes.h"
+#include "../components/bbqr/src/bbqr.h"
 #include <lvgl.h>
 
 /**
@@ -25,8 +26,18 @@ void qr_viewer_page_create(lv_obj_t *parent, const char *qr_content,
  */
 KERN_WARN_UNUSED_RESULT bool
 qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
-                                  const char *content, const char *title,
-                                  void (*return_cb)(void));
+                                   const char *content, const char *title,
+                                   void (*return_cb)(void));
+
+/**
+ * Create the QR viewer page from pre-generated BBQr parts.
+ *
+ * Takes ownership of parts on success. The caller keeps ownership on failure.
+ */
+KERN_WARN_UNUSED_RESULT bool
+qr_viewer_page_create_with_bbqr_parts(lv_obj_t *parent, BBQrParts *parts,
+                                      const char *title,
+                                      void (*return_cb)(void));
 
 /**
  * Make a widget open the QR viewer fullscreen when tapped (tap again to

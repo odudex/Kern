@@ -1,5 +1,7 @@
 file(GLOB_RECURSE SOURCES "*.c")
-list(FILTER SOURCES EXCLUDE REGEX ".*/core/test/.*")
+list(APPEND SOURCES "${CMAKE_CURRENT_LIST_DIR}/core/debug_log.c")
+list(REMOVE_DUPLICATES SOURCES)
+list(FILTER SOURCES EXCLUDE REGEX ".*/test/.*")
 
 # Select touch driver based on board
 if(CONFIG_KERN_BOARD_WAVE_4B)
@@ -33,7 +35,7 @@ idf_component_register(
     INCLUDE_DIRS .
     PRIV_REQUIRES lvgl ${TOUCH_DRIVER} k_quirc esp_timer wave_4b wave_35 wave_5 wave_43
                   crowpanel wave_7b libwally-core cUR sd_card bbqr deflate_codec video spiffs
-                  nvs_flash efuse esp_hw_support esp_app_format mbedtls
+                  nvs_flash efuse esp_hw_support esp_app_format mbedtls bwk_codecs
                   esp_driver_ppa app_update bootloader_support
 )
 

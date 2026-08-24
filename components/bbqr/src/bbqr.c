@@ -7,6 +7,7 @@
 
 // Base36 alphabet (0-9, A-Z)
 static const char BASE36_ALPHABET[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+static const char HEX_ALPHABET[] = "0123456789ABCDEF";
 
 // BBQr spec: raw deflate with a 1KB window (wbits = -10)
 #define BBQR_COMPRESS_WBITS 10
@@ -66,7 +67,67 @@ bool bbqr_is_valid_encoding(char c) {
 
 bool bbqr_is_valid_file_type(char c) {
   return c == BBQR_TYPE_PSBT || c == BBQR_TYPE_TRANSACTION ||
-         c == BBQR_TYPE_JSON || c == BBQR_TYPE_UNICODE;
+         c == BBQR_TYPE_JSON || c == BBQR_TYPE_UNICODE ||
+         c == BBQR_TYPE_BINARY;
+}
+
+static BBQrParts *allocate_parts(size_t encoded_len, size_t payload_per_part,
+                                 int num_parts, char encoding,
+                                 char file_type) {
+  BBQrParts *parts = (BBQrParts *)calloc(1, sizeof(BBQrParts));
+  if (!parts) {
+    return NULL;
+  }
+
+  parts->parts = (char **)calloc(num_parts, sizeof(char *));
+  if (!parts->parts) {
+    free(parts);
+    return NULL;
+  }
+
+  parts->count = num_parts;
+  parts->encoding = encoding;
+  parts->file_type = file_type;
+
+  if (encoded_len > SIZE_MAX - (size_t)num_parts * (BBQR_HEADER_LEN + 1)) {
+    free(parts->parts);
+    free(parts);
+    return NULL;
+  }
+  size_t storage_len = encoded_len + (size_t)num_parts * (BBQR_HEADER_LEN + 1);
+  parts->storage = (char *)malloc(storage_len);
+  if (!parts->storage) {
+    free(parts->parts);
+    free(parts);
+    return NULL;
+  }
+
+  size_t storage_offset = 0;
+  char total_c1, total_c2;
+  bbqr_base36_encode(num_parts, &total_c1, &total_c2);
+  for (int i = 0; i < num_parts; i++) {
+    size_t this_payload_len =
+        part_payload_len(encoded_len, payload_per_part, i);
+
+    char index_c1, index_c2;
+    bbqr_base36_encode(i, &index_c1, &index_c2);
+
+    char *part = parts->storage + storage_offset;
+    parts->parts[i] = part;
+    part[0] = 'B';
+    part[1] = '$';
+    part[2] = encoding;
+    part[3] = file_type;
+    part[4] = total_c1;
+    part[5] = total_c2;
+    part[6] = index_c1;
+    part[7] = index_c2;
+    part[BBQR_HEADER_LEN + this_payload_len] = '\0';
+
+    storage_offset += BBQR_HEADER_LEN + this_payload_len + 1;
+  }
+
+  return parts;
 }
 
 int bbqr_base36_decode(char c1, char c2) {
@@ -109,8 +170,9 @@ bool bbqr_parse_part(const char *data, size_t data_len, BBQrPart *part) {
     return false;
   }
 
-  // Check magic "B$"
-  if (data[0] != 'B' || data[1] != '$') {
+  // Check magic "B$" case-insensitively; other alphanumeric header fields are
+  // normalized below as well.
+  if (toupper((unsigned char)data[0]) != 'B' || data[1] != '$') {
     return false;
   }
 
@@ -313,64 +375,11 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
   payload_per_part =
       ((payload_per_part + 7) / 8) * 8; // Round up to multiple of 8
 
-  // Allocate parts structure
-  BBQrParts *parts = (BBQrParts *)calloc(1, sizeof(BBQrParts));
+  BBQrParts *parts = allocate_parts(encoded_len, (size_t)payload_per_part,
+                                    num_parts, encoding, file_type);
   if (!parts) {
     free(compressed);
     return NULL;
-  }
-
-  parts->parts = (char **)calloc(num_parts, sizeof(char *));
-  if (!parts->parts) {
-    free(parts);
-    free(compressed);
-    return NULL;
-  }
-
-  parts->count = num_parts;
-  parts->encoding = encoding;
-  parts->file_type = file_type;
-
-  if (encoded_len > SIZE_MAX - (size_t)num_parts * (BBQR_HEADER_LEN + 1)) {
-    free(parts->parts);
-    free(parts);
-    free(compressed);
-    return NULL;
-  }
-  size_t storage_len = encoded_len + (size_t)num_parts * (BBQR_HEADER_LEN + 1);
-  parts->storage = (char *)malloc(storage_len);
-  if (!parts->storage) {
-    free(parts->parts);
-    free(parts);
-    free(compressed);
-    return NULL;
-  }
-
-  // Generate headers and lay out all part strings in one allocation.
-  size_t storage_offset = 0;
-  char total_c1, total_c2;
-  bbqr_base36_encode(num_parts, &total_c1, &total_c2);
-  for (int i = 0; i < num_parts; i++) {
-    size_t this_payload_len =
-        part_payload_len(encoded_len, (size_t)payload_per_part, i);
-
-    // Build header: B$ + encoding + file_type + total(2) + index(2)
-    char index_c1, index_c2;
-    bbqr_base36_encode(i, &index_c1, &index_c2);
-
-    char *part = parts->storage + storage_offset;
-    parts->parts[i] = part;
-    part[0] = 'B';
-    part[1] = '$';
-    part[2] = encoding;
-    part[3] = file_type;
-    part[4] = total_c1;
-    part[5] = total_c2;
-    part[6] = index_c1;
-    part[7] = index_c2;
-    part[BBQR_HEADER_LEN + this_payload_len] = '\0';
-
-    storage_offset += BBQR_HEADER_LEN + this_payload_len + 1;
   }
 
   bbqr_parts_writer_t writer = {
@@ -385,6 +394,63 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
       base32_encode_write(to_encode, to_encode_len, write_to_parts, &writer);
   free(compressed);
   if (!encoded || writer.total_written != encoded_len) {
+    bbqr_parts_free(parts);
+    return NULL;
+  }
+
+  return parts;
+}
+
+BBQrParts *bbqr_encode_hex(const uint8_t *data, size_t data_len, char file_type,
+                           int max_chars_per_qr) {
+  if (!data || data_len == 0 || !bbqr_is_valid_file_type(file_type)) {
+    return NULL;
+  }
+
+  if (max_chars_per_qr < BBQR_HEADER_LEN + 2) {
+    return NULL;
+  }
+
+  if (data_len > SIZE_MAX / 2) {
+    return NULL;
+  }
+  size_t encoded_len = data_len * 2;
+
+  int max_payload_per_part = max_chars_per_qr - BBQR_HEADER_LEN;
+  size_t payload_per_part = (size_t)(max_payload_per_part & ~1);
+  if (payload_per_part == 0) {
+    return NULL;
+  }
+
+  size_t parts_needed = encoded_len / payload_per_part +
+                        (encoded_len % payload_per_part != 0);
+  if (parts_needed == 0 || parts_needed > 1295) {
+    return NULL;
+  }
+  int num_parts = (int)parts_needed;
+
+  payload_per_part = (encoded_len + (size_t)num_parts - 1) / (size_t)num_parts;
+  payload_per_part = (payload_per_part + 1) & ~(size_t)1;
+
+  BBQrParts *parts = allocate_parts(encoded_len, payload_per_part, num_parts,
+                                    BBQR_ENCODING_HEX, file_type);
+  if (!parts) {
+    return NULL;
+  }
+
+  size_t byte_offset = 0;
+  for (int i = 0; i < parts->count; i++) {
+    char *payload = parts->parts[i] + BBQR_HEADER_LEN;
+    size_t payload_len = part_payload_len(encoded_len, payload_per_part, i);
+    size_t bytes_this_part = payload_len / 2;
+    for (size_t j = 0; j < bytes_this_part; j++) {
+      uint8_t byte = data[byte_offset++];
+      payload[j * 2] = HEX_ALPHABET[byte >> 4];
+      payload[j * 2 + 1] = HEX_ALPHABET[byte & 0x0f];
+    }
+  }
+
+  if (byte_offset != data_len) {
     bbqr_parts_free(parts);
     return NULL;
   }

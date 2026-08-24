@@ -1,0 +1,17 @@
+[package]
+name = "kern-bwk-codecs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+bip138-ll = { path = "../bip138/bip138-ll", features = ["ffi"] }
+bwk-qr-protocol = { path = "../bwk/qr-protocol", features = ["ffi"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

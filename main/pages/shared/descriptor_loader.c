@@ -1,6 +1,7 @@
 #include "descriptor_loader.h"
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/output.h"
+#include "../../core/debug_log.h"
 #include "../../core/key.h"
 #include "../../core/miniscript_policy.h"
 #include "../../core/registry.h"
@@ -19,6 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wally_core.h>
+
+static void debug_log_descriptor_shape(const char *label,
+                                       const char *descriptor);
 
 // Convert extended pubkey with non-standard version bytes to xpub/tpub.
 // Handles Zpub, Ypub (mainnet) and Vpub, Upub (testnet).
@@ -260,6 +264,26 @@ typedef struct {
 
 static id_prompt_ctx_t *g_id_prompt_ctx = NULL;
 
+typedef struct {
+  char id[REGISTRY_ID_MAX_LEN];
+  storage_location_t loc;
+  validation_complete_cb validation_cb;
+  void *user_data;
+} fixed_id_loc_context_t;
+
+static void fixed_id_validation_cb(descriptor_validation_result_t result,
+                                   void *user_data) {
+  debug_logf("descriptor_loader fixed_id_validation result=%d", result);
+  fixed_id_loc_context_t *ctx = (fixed_id_loc_context_t *)user_data;
+  if (!ctx)
+    return;
+  validation_complete_cb cb = ctx->validation_cb;
+  void *cb_user_data = ctx->user_data;
+  free(ctx);
+  if (cb)
+    cb(result, cb_user_data);
+}
+
 static void id_prompt_ready_cb(lv_event_t *e) {
   (void)e;
   if (!g_id_prompt_ctx)
@@ -315,6 +339,18 @@ static void descriptor_confirm_wrapper(const char *message,
                                        void (*proceed)(bool confirmed,
                                                        void *user_data)) {
   dialog_show_danger_confirm(message, proceed, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void fixed_id_loc_wrapper(void (*proceed)(const char *id,
+                                                 storage_location_t loc,
+                                                 void *user_data),
+                                 void *user_data) {
+  fixed_id_loc_context_t *ctx = (fixed_id_loc_context_t *)user_data;
+  debug_logf("descriptor_loader fixed_id_loc ctx=%d proceed=%d", ctx != NULL,
+             proceed != NULL);
+  if (!ctx || !proceed)
+    return;
+  proceed(ctx->id, ctx->loc, NULL);
 }
 
 // Context for descriptor info confirmation dialog
@@ -703,8 +739,8 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
 }
 
 void descriptor_loader_process_string(const char *descriptor_str,
-                                      validation_complete_cb validation_cb,
-                                      void *user_data) {
+                                       validation_complete_cb validation_cb,
+                                       void *user_data) {
   if (!descriptor_str) {
     if (validation_cb)
       validation_cb(VALIDATION_PARSE_ERROR, user_data);
@@ -718,6 +754,43 @@ void descriptor_loader_process_string(const char *descriptor_str,
                                validation_cb, descriptor_confirm_wrapper,
                                descriptor_info_confirm_wrapper,
                                descriptor_id_loc_wrapper, user_data);
+  free(unambiguous);
+  free(converted);
+}
+
+void descriptor_loader_process_string_with_id(
+    const char *descriptor_str, const char *id, storage_location_t loc,
+    validation_complete_cb validation_cb, void *user_data) {
+  if (!descriptor_str || !id || id[0] == '\0') {
+    if (validation_cb)
+      validation_cb(VALIDATION_PARSE_ERROR, user_data);
+    return;
+  }
+
+  fixed_id_loc_context_t *fixed = malloc(sizeof(*fixed));
+  if (!fixed) {
+    if (validation_cb)
+      validation_cb(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+  memset(fixed, 0, sizeof(*fixed));
+  snprintf(fixed->id, sizeof(fixed->id), "%s", id);
+  fixed->loc = loc;
+  fixed->validation_cb = validation_cb;
+  fixed->user_data = user_data;
+
+  char *converted = bluewallet_to_descriptor(descriptor_str);
+  const char *to_process = converted ? converted : descriptor_str;
+  char *unambiguous = descriptor_to_unambiguous(to_process);
+  debug_logf("descriptor_loader fixed_id converted=%d unambiguous=%d",
+             converted != NULL, unambiguous != NULL);
+  debug_log_descriptor_shape("descriptor_loader raw", descriptor_str);
+  debug_log_descriptor_shape("descriptor_loader final",
+                             unambiguous ? unambiguous : to_process);
+  descriptor_validate_and_load_persistent(
+      unambiguous ? unambiguous : to_process, fixed_id_validation_cb,
+      descriptor_confirm_wrapper, descriptor_info_confirm_wrapper,
+      fixed_id_loc_wrapper, fixed);
   free(unambiguous);
   free(converted);
 }
@@ -820,6 +893,43 @@ static bool is_base58_char(char c) {
   return (c >= '1' && c <= '9') || (c >= 'A' && c <= 'H') ||
          (c >= 'J' && c <= 'N') || (c >= 'P' && c <= 'Z') ||
          (c >= 'a' && c <= 'k') || (c >= 'm' && c <= 'z');
+}
+
+static void debug_log_descriptor_shape(const char *label,
+                                       const char *descriptor) {
+  if (!label || !descriptor) {
+    debug_logf("%s len=0", label ? label : "descriptor");
+    return;
+  }
+
+  char redacted[512];
+  size_t out = 0;
+  bool truncated = false;
+  size_t len = strlen(descriptor);
+  for (size_t i = 0; descriptor[i] != '\0' && out + 1 < sizeof(redacted);) {
+    if ((descriptor[i] == 'x' || descriptor[i] == 't') &&
+        strncmp(descriptor + i + 1, "pub", 3) == 0) {
+      const char *token = descriptor[i] == 'x' ? "<xpub>" : "<tpub>";
+      size_t token_len = strlen(token);
+      if (out + token_len >= sizeof(redacted)) {
+        truncated = true;
+        break;
+      }
+      memcpy(redacted + out, token, token_len);
+      out += token_len;
+      i += 4;
+      while (is_base58_char(descriptor[i]))
+        i++;
+      continue;
+    }
+
+    redacted[out++] = descriptor[i++];
+  }
+  if (out + 1 >= sizeof(redacted))
+    truncated = true;
+  redacted[out] = '\0';
+  debug_logf("%s len=%u shape=%s%s", label, (unsigned)len, redacted,
+             truncated ? "..." : "");
 }
 
 char *descriptor_to_unambiguous(const char *descriptor) {

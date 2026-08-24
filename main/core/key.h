@@ -29,6 +29,9 @@ key_mnemonic_passphrase_fingerprint_hex(const char *mnemonic,
 /* On success, *xpub_out is heap-allocated and must be freed by the caller
  * with wally_free_string(). Public-only -- safe to log. */
 KERN_WARN_UNUSED_RESULT bool key_get_xpub(const char *path, char **xpub_out);
+KERN_WARN_UNUSED_RESULT bool
+key_get_xpub_components(const uint32_t *path, size_t path_depth,
+                        char **xpub_out);
 KERN_WARN_UNUSED_RESULT bool key_get_master_xpub(char **xpub_out);
 
 /* On success, *mnemonic_out is a heap-allocated copy of the active mnemonic.

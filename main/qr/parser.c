@@ -30,6 +30,17 @@ static bool add_part(QRPartParser *parser, int index, const char *data,
                      size_t data_len);
 static int compare_parts(const void *a, const void *b);
 
+static void trim_ascii_whitespace(const char **data, size_t *data_len) {
+  while (*data_len > 0 && isspace((unsigned char)(*data)[0])) {
+    (*data)++;
+    (*data_len)--;
+  }
+  while (*data_len > 0 &&
+         isspace((unsigned char)(*data)[*data_len - 1])) {
+    (*data_len)--;
+  }
+}
+
 QRPartParser *qr_parser_create(void) {
   QRPartParser *parser = (QRPartParser *)calloc(1, sizeof(QRPartParser));
   if (!parser)
@@ -152,8 +163,12 @@ int qr_parser_parse(QRPartParser *parser, const char *data) {
 
 int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
                              size_t data_len) {
+  const char *frame = data;
+  size_t frame_len = data_len;
+  trim_ascii_whitespace(&frame, &frame_len);
+
   if (parser->format == -1) {
-    parser->format = detect_format(data, &parser->bbqr);
+    parser->format = detect_format(frame, &parser->bbqr);
   }
 
   if (parser->format == FORMAT_NONE) {
@@ -162,7 +177,7 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
   } else if (parser->format == FORMAT_PMOFN) {
     char *part = NULL;
     int index, total;
-    if (parse_pmofn_qr_part(data, &part, &index, &total)) {
+    if (parse_pmofn_qr_part(frame, &part, &index, &total)) {
       add_part(parser, index, part, strlen(part));
       parser->total = total;
       free(part);
@@ -178,7 +193,7 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     }
 
     ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    ur_decoder_state_t state = ur_decoder_receive_part(decoder, data);
+    ur_decoder_state_t state = ur_decoder_receive_part(decoder, frame);
     if (state == UR_DECODER_OK) {
       return 0; // Single-part UR, complete immediately
     }
@@ -188,7 +203,7 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     }
   } else if (parser->format == FORMAT_BBQR) {
     BBQrPart part;
-    if (bbqr_parse_part(data, data_len, &part)) {
+    if (bbqr_parse_part(frame, frame_len, &part)) {
       // Store payload (payload_len may differ from strlen if binary)
       add_part(parser, part.index, part.payload, part.payload_len);
       parser->total = part.total;
@@ -380,7 +395,8 @@ static int detect_format(const char *data, BBQrCode **bbqr) {
     }
   } else if (starts_with_case_insensitive(data, "ur:")) {
     return FORMAT_UR;
-  } else if (strncmp(data, "B$", 2) == 0 && strlen(data) >= BBQR_HEADER_LEN) {
+  } else if (data[0] != '\0' && toupper((unsigned char)data[0]) == 'B' &&
+             data[1] == '$' && strlen(data) >= BBQR_HEADER_LEN) {
     // Validate BBQr header (convert to uppercase for validation)
     char encoding = toupper((unsigned char)data[2]);
     char file_type = toupper((unsigned char)data[3]);

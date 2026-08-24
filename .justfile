@@ -28,11 +28,22 @@ monitor board="wave_4b": (_check_board board)
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig monitor
 
+debug-log port="/dev/ttyACM0" board="wave_35": (_check_board board)
+    #!/usr/bin/env sh
+    set -e
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    out="build_{{board}}/debug_storage.bin"
+    python -m esptool --chip esp32p4 -p {{port}} read-flash 0xc20000 0x8000 "$out"
+    strings "$out" | sed -n '/boot\|bip_flow\|descriptor_loader\|debug log trimmed/p'
+
 format:
     ./scripts/format.sh
 
 test:
     ./scripts/test.sh
+
+rust-setup:
+    rustup target add riscv32imafc-unknown-none-elf
 
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b

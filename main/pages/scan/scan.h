@@ -2,6 +2,13 @@
 #define SCAN_H
 
 #include <lvgl.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct wally_psbt;
+
+typedef void (*scan_psbt_signed_cb_t)(struct wally_psbt *signed_psbt,
+                                      void *user_data);
 
 /**
  * Create the scan page — universal QR content detection
@@ -35,6 +42,15 @@ void scan_page_create(lv_obj_t *parent, void (*return_cb)(void));
 void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                        const char *save_dir, const char *source_name,
                        void (*return_cb)(void), void (*complete_cb)(void));
+
+/**
+ * Review and sign a binary PSBT using the normal scan/sign review flow. On
+ * successful signing, signed_cb is called with the still-owned signed PSBT;
+ * the callback must copy anything it needs before returning.
+ */
+void scan_review_psbt(lv_obj_t *parent, const uint8_t *data, size_t len,
+                      void (*return_cb)(void), void (*complete_cb)(void),
+                      scan_psbt_signed_cb_t signed_cb, void *signed_user_data);
 
 /**
  * Show the scan page

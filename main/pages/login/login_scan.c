@@ -12,9 +12,11 @@
 #include "../../utils/secure_mem.h"
 #include "../home/addresses.h"
 #include "../home/home.h"
+#include "../bip_flow/bip_flow.h"
 #include "../shared/descriptor_loader.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"
+#include <bwk_qr_protocol.h>
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +91,27 @@ static void show_unidentified(void) {
 
 static void show_psbt_needs_key(void) {
   dialog_show_info("PSBT detected", "Load a key first to sign transactions",
+                   unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static const char *bip_request_title(const uint8_t *content, size_t len) {
+  const bwk_qr_request *request = NULL;
+  const char *err = NULL;
+  const char *title = "Wallet request detected";
+  if (bwk_qr_request_decode(content, len, &request, &err) == BWK_QR_OK &&
+      request) {
+    if (request->message_type == BWK_QR_MESSAGE_GET_XPUBS)
+      title = "Xpub request detected";
+  }
+  if (request)
+    bwk_qr_request_free(request);
+  return title;
+}
+
+static void show_bip_request_needs_key(const uint8_t *content, size_t len) {
+  dialog_show_info(bip_request_title(content, len),
+                   "Load a seed first to export xpubs or respond to wallet "
+                   "requests.",
                    unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
@@ -178,6 +201,7 @@ static void on_scan_done(void) {
   bool psbt_scanned =
       (has_ur && ur_type && strcmp(ur_type, "crypto-psbt") == 0) ||
       is_psbt_content(content, len);
+  bool bip_request_scanned = bip_flow_can_handle((const uint8_t *)content, len);
   char *desc_candidate = descriptor_extract_from_scanner();
 
   qr_scanner_page_hide();
@@ -189,6 +213,12 @@ static void on_scan_done(void) {
   if (psbt_scanned) {
     free(desc_candidate);
     show_psbt_needs_key();
+    return;
+  }
+
+  if (bip_request_scanned) {
+    free(desc_candidate);
+    show_bip_request_needs_key((const uint8_t *)content, len);
     return;
   }
 

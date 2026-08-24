@@ -29,8 +29,16 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
  * @param user_data       Passed to validation_cb
  */
 void descriptor_loader_process_string(const char *descriptor_str,
-                                      validation_complete_cb validation_cb,
-                                      void *user_data);
+                                       validation_complete_cb validation_cb,
+                                       void *user_data);
+
+/**
+ * Process a descriptor with the normal warning and descriptor-info review UI,
+ * but register it under a caller-supplied id/location instead of prompting.
+ */
+void descriptor_loader_process_string_with_id(
+    const char *descriptor_str, const char *id, storage_location_t loc,
+    validation_complete_cb validation_cb, void *user_data);
 
 /**
  * Watch-only (keyless) variant of process_string: normalize, infer the network

@@ -26,6 +26,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../load_descriptor_storage.h"
+#include "../bip_flow/bip_flow.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
 #include "../shared/kef_decrypt_page.h"
@@ -145,6 +146,8 @@ static bool psbt_source_base64 = false;
 // "signed-<name>.psbt". Empty for QR sources, which fall back to "signed-N".
 static char psbt_source_name[128] = "";
 static ui_menu_t *export_menu = NULL;
+static scan_psbt_signed_cb_t psbt_signed_callback = NULL;
+static void *psbt_signed_user_data = NULL;
 
 // Message signing data
 static parsed_sign_message_t current_message = {0};
@@ -189,6 +192,7 @@ static void psbt_descriptor_validation_cb(descriptor_validation_result_t result,
 static void psbt_desc_storage_return_cb(void);
 static void psbt_desc_storage_success_cb(void);
 static void show_export_choice(void);
+static void finish_signed_psbt(void);
 static void export_show_qr_cb(void);
 static void export_save_sd_cb(void);
 static void export_choice_back_cb(void);
@@ -440,6 +444,14 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
                             bool parse_success, int detected_format) {
   is_message_sign = false;
 
+  if (!parse_success && qr_content &&
+      bip_flow_can_handle((const uint8_t *)qr_content, qr_content_len)) {
+    bip_flow_start(lv_screen_active(), (const uint8_t *)qr_content,
+                   qr_content_len, return_callback);
+    free(qr_content);
+    return;
+  }
+
   // Layer 2: plaintext/binary heuristics — try each parser in priority order
   if (!parse_success && qr_content) {
     // 1. Message
@@ -612,6 +624,15 @@ static void process_scan_result(void) {
     char bbqr_file_type = qr_scanner_get_bbqr_file_type();
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
+      if (bbqr_file_type == 'B' &&
+          bip_flow_can_handle((const uint8_t *)qr_content, qr_content_len)) {
+        qr_scanner_page_hide();
+        qr_scanner_page_destroy();
+        bip_flow_start(lv_screen_active(), (const uint8_t *)qr_content,
+                       qr_content_len, return_callback);
+        free(qr_content);
+        return;
+      }
       cleanup_psbt_data();
       parse_success =
           (wally_psbt_from_bytes((const uint8_t *)qr_content, qr_content_len, 0,
@@ -778,6 +799,8 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
   reset_export_context(save_dir, source_name);
   return_callback = return_cb;
   complete_callback = complete_cb;
+  psbt_signed_callback = NULL;
+  psbt_signed_user_data = NULL;
   scan_screen = theme_create_page_container(parent);
 
   // A file may hold a serialized binary PSBT — try that first (mirroring the
@@ -798,6 +821,25 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
 
   finish_dispatch(content, content ? strlen(content) : len, parse_success,
                   FORMAT_NONE);
+}
+
+void scan_review_psbt(lv_obj_t *parent, const uint8_t *data, size_t len,
+                      void (*return_cb)(void), void (*complete_cb)(void),
+                      scan_psbt_signed_cb_t signed_cb, void *signed_user_data) {
+  if (!parent || !data || len == 0)
+    return;
+
+  reset_export_context(NULL, NULL);
+  return_callback = return_cb;
+  complete_callback = complete_cb;
+  psbt_signed_callback = signed_cb;
+  psbt_signed_user_data = signed_user_data;
+  scan_screen = theme_create_page_container(parent);
+
+  cleanup_psbt_data();
+  bool parse_success =
+      (wally_psbt_from_bytes(data, len, 0, &current_psbt) == WALLY_OK);
+  finish_dispatch(NULL, len, parse_success, FORMAT_NONE);
 }
 
 // --- Descriptor handler ---
@@ -1735,6 +1777,19 @@ static void destroy_export_menu(void) {
 
 static void partial_sign_ack_cb(void *user_data) {
   (void)user_data;
+  finish_signed_psbt();
+}
+
+static void finish_signed_psbt(void) {
+  if (psbt_signed_callback) {
+    scan_psbt_signed_cb_t cb = psbt_signed_callback;
+    void *user_data = psbt_signed_user_data;
+    psbt_signed_callback = NULL;
+    psbt_signed_user_data = NULL;
+    scan_page_hide();
+    cb(current_psbt, user_data);
+    return;
+  }
   show_export_choice();
 }
 
@@ -1784,8 +1839,9 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  saved_return_callback =
-      complete_callback ? complete_callback : return_callback;
+  if (!psbt_signed_callback)
+    saved_return_callback =
+        complete_callback ? complete_callback : return_callback;
 
   // A PSBT built so that refused inputs pick up a signature from a key used
   // elsewhere in the same transaction is not an accident. The signatures were
@@ -1822,7 +1878,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  show_export_choice();
+  finish_signed_psbt();
 }
 
 // Tears down the chooser, then returns to the caller that opened the
@@ -2169,6 +2225,8 @@ void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
   complete_callback = NULL;
+  psbt_signed_callback = NULL;
+  psbt_signed_user_data = NULL;
   reset_export_context(NULL, NULL);
 
   scan_screen = theme_create_page_container(parent);
@@ -2214,4 +2272,6 @@ void scan_page_destroy(void) {
 
   return_callback = NULL;
   complete_callback = NULL;
+  psbt_signed_callback = NULL;
+  psbt_signed_user_data = NULL;
 }

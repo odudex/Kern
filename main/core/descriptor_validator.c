@@ -1,4 +1,5 @@
 #include "descriptor_validator.h"
+#include "debug_log.h"
 #include "key.h"
 #include "wallet.h"
 #include <esp_log.h>
@@ -37,6 +38,7 @@ typedef struct {
   descriptor_info_t info;
   char descriptor_checksum[9];
   bool watch_only;                /* keyless: skip key/xpub stages */
+  bool force_persistent;
   wallet_network_t watch_network; /* network for the watch-only registry add */
   bool psb_warn; /* purpose/script-binding warning pending after the gates */
   char psb_msg[160]; /* stashed PSB warning text (descriptor freed early) */
@@ -446,6 +448,8 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
 static void id_loc_proceed(const char *id, storage_location_t loc,
                            void *user_data) {
   (void)user_data;
+  debug_logf("descriptor_validator id_loc_proceed id=%s loc=%d", id ? id : "",
+             loc);
   if (!ctx_callback_is_live())
     return;
   pending_generation = 0;
@@ -453,7 +457,8 @@ static void id_loc_proceed(const char *id, storage_location_t loc,
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
-  if (!registry_add_from_string(id, current_ctx->descriptor_str, loc, true)) {
+  if (!registry_persist_or_add_from_string(id, current_ctx->descriptor_str,
+                                           loc)) {
     ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
     complete_validation(VALIDATION_INTERNAL_ERROR);
     return;
@@ -528,6 +533,7 @@ static void session_register_current_descriptor(void) {
 // Callback after user confirms/declines descriptor info
 static void info_confirm_proceed(bool confirmed, void *user_data) {
   (void)user_data;
+  debug_logf("descriptor_validator info_confirm confirmed=%d", confirmed);
   if (!ctx_callback_is_live())
     return;
   pending_generation = 0;
@@ -540,9 +546,11 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
   /* Descriptor registration is disabled: load into the in-memory session
    * registry only. Keep id_loc_cb wired for the future registration flow, but
    * skip it until encrypted descriptor backups are ready. */
-  if (DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED && current_ctx->id_loc_cb) {
+  if ((DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED ||
+       current_ctx->force_persistent) &&
+      current_ctx->id_loc_cb) {
     pending_generation = current_ctx->generation;
-    current_ctx->id_loc_cb(id_loc_proceed, NULL);
+    current_ctx->id_loc_cb(id_loc_proceed, current_ctx->user_data);
   } else {
     session_register_current_descriptor();
   }
@@ -783,8 +791,9 @@ static bool checksum_and_dedup(struct wally_descriptor *descriptor) {
   }
 
   char existing_id[REGISTRY_ID_MAX_LEN];
-  if (registry_session_has_duplicate_checksum(
-          current_ctx->descriptor_checksum, existing_id, sizeof(existing_id))) {
+  if (registry_session_has_duplicate_checksum(current_ctx->descriptor_checksum,
+                                              existing_id,
+                                              sizeof(existing_id))) {
     wally_descriptor_free(descriptor);
     strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
     last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
@@ -814,6 +823,41 @@ void descriptor_validate_and_load(const char *descriptor_str,
 
   current_ctx->confirm_cb = confirm_cb;
   current_ctx->id_loc_cb = id_loc_cb;
+
+  int key_index = find_matching_key_index(descriptor);
+  if (key_index < 0) {
+    ESP_LOGE(TAG, "Wallet fingerprint not found in descriptor");
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_FINGERPRINT_NOT_FOUND);
+    return;
+  }
+
+  if (!checksum_and_dedup(descriptor))
+    return;
+
+  verify_xpub_and_show_info(descriptor, key_index);
+}
+
+void descriptor_validate_and_load_persistent(
+    const char *descriptor_str, validation_complete_cb callback,
+    validation_confirm_cb confirm_cb,
+    validation_info_confirm_cb info_confirm_cb, validation_id_loc_cb id_loc_cb,
+    void *user_data) {
+  if (descriptor_str && callback &&
+      (!key_is_loaded() || !wallet_is_initialized())) {
+    cleanup_context();
+    callback(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+
+  struct wally_descriptor *descriptor = NULL;
+  if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
+                       &descriptor) != VALIDATION_SUCCESS)
+    return;
+
+  current_ctx->confirm_cb = confirm_cb;
+  current_ctx->id_loc_cb = id_loc_cb;
+  current_ctx->force_persistent = true;
 
   int key_index = find_matching_key_index(descriptor);
   if (key_index < 0) {

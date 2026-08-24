@@ -11,6 +11,8 @@
 #include <wally_psbt_members.h>
 #include <wally_script.h>
 
+#include <bip138.h>
+
 /* Project headers for stub type declarations */
 #include "core/key.h"
 #include "core/psbt.h"
@@ -62,6 +64,72 @@ void storage_free_file_list(char **files, int count) {
   (void)files;
   (void)count;
 }
+void storage_sanitize_id(const char *raw_id, char *out, size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+  if (!raw_id) {
+    out[0] = '\0';
+    return;
+  }
+  strncpy(out, raw_id, out_size - 1);
+  out[out_size - 1] = '\0';
+}
+
+const bip138_crypto_vtable *kern_bip138_crypto_vtable(void) { return NULL; }
+int32_t bip138_encrypt(const bip138_crypto_vtable *vtable, const uint8_t *keys,
+                       size_t n_keys, const bip138_u32_list *paths,
+                       size_t n_paths, uint32_t content_type, uint16_t bip,
+                       const uint8_t *tag, size_t tag_len,
+                       const uint8_t *payload, size_t payload_len,
+                       uint32_t padding, bip138_buf *out, const char **err) {
+  (void)vtable;
+  (void)keys;
+  (void)n_keys;
+  (void)paths;
+  (void)n_paths;
+  (void)content_type;
+  (void)bip;
+  (void)tag;
+  (void)tag_len;
+  (void)payload;
+  (void)payload_len;
+  (void)padding;
+  if (out) {
+    out->ptr = NULL;
+    out->len = 0;
+  }
+  if (err)
+    *err = "stub";
+  return 1;
+}
+int32_t bip138_decrypt(const bip138_crypto_vtable *vtable, const uint8_t *key,
+                       const uint8_t *encrypted, size_t encrypted_len,
+                       bip138_decrypt_result **out, const char **err) {
+  (void)vtable;
+  (void)key;
+  (void)encrypted;
+  (void)encrypted_len;
+  if (out)
+    *out = NULL;
+  if (err)
+    *err = "stub";
+  return 1;
+}
+size_t bip138_decrypt_len(const bip138_decrypt_result *result) {
+  (void)result;
+  return 0;
+}
+int32_t bip138_decrypt_item(const bip138_decrypt_result *result, size_t index,
+                            bip138_item *out, const char **err) {
+  (void)result;
+  (void)index;
+  (void)out;
+  if (err)
+    *err = "stub";
+  return 1;
+}
+void bip138_buf_free(bip138_buf buf) { (void)buf; }
+void bip138_decrypt_free(bip138_decrypt_result *result) { (void)result; }
 
 /* --- Wallet stubs --- */
 wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }

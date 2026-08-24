@@ -113,6 +113,38 @@ bool key_get_fingerprint_hex(char *hex_out) {
   return true;
 }
 
+static uint32_t xpub_version_for_path(const uint32_t *path, size_t path_depth) {
+  if (path && path_depth >= 2) {
+    uint32_t coin = bip32_path_unharden(path[1]);
+    if (coin == 0)
+      return BIP32_VER_MAIN_PUBLIC;
+    if (coin == 1)
+      return BIP32_VER_TEST_PUBLIC;
+  }
+
+  return master_key && master_key->version == BIP32_VER_TEST_PRIVATE
+             ? BIP32_VER_TEST_PUBLIC
+             : BIP32_VER_MAIN_PUBLIC;
+}
+
+static bool key_to_path_versioned_base58(struct ext_key *key,
+                                         const uint32_t *path,
+                                         size_t path_depth, char **xpub_out) {
+  uint8_t serialized[BIP32_SERIALIZED_LEN];
+  if (bip32_key_serialize(key, BIP32_FLAG_KEY_PUBLIC, serialized,
+                          sizeof(serialized)) != WALLY_OK)
+    return false;
+
+  uint32_t version = xpub_version_for_path(path, path_depth);
+  serialized[0] = (uint8_t)(version >> 24);
+  serialized[1] = (uint8_t)(version >> 16);
+  serialized[2] = (uint8_t)(version >> 8);
+  serialized[3] = (uint8_t)version;
+
+  return wally_base58_from_bytes(serialized, sizeof(serialized),
+                                 BASE58_FLAG_CHECKSUM, xpub_out) == WALLY_OK;
+}
+
 bool key_mnemonic_passphrase_fingerprint_hex(const char *mnemonic,
                                              const char *passphrase,
                                              char *hex_out) {
@@ -172,10 +204,33 @@ bool key_get_xpub(const char *path, char **xpub_out) {
     return false;
   }
 
-  ret = bip32_key_to_base58(derived_key, BIP32_FLAG_KEY_PUBLIC, xpub_out);
+  bool ok = key_to_path_versioned_base58(derived_key, path_indices, path_depth,
+                                         xpub_out);
   bip32_key_free(derived_key);
 
-  return (ret == WALLY_OK);
+  return ok;
+}
+
+bool key_get_xpub_components(const uint32_t *path, size_t path_depth,
+                             char **xpub_out) {
+  if (!key_loaded || !path || path_depth > KEY_MAX_DERIVATION_DEPTH ||
+      !xpub_out) {
+    return false;
+  }
+
+  struct ext_key *derived_key = NULL;
+  int ret = bip32_key_from_parent_path_alloc(master_key, path, path_depth,
+                                             BIP32_FLAG_KEY_PRIVATE,
+                                             &derived_key);
+  if (ret != WALLY_OK) {
+    return false;
+  }
+
+  bool ok = key_to_path_versioned_base58(derived_key, path, path_depth,
+                                         xpub_out);
+  bip32_key_free(derived_key);
+
+  return ok;
 }
 
 bool key_get_master_xpub(char **xpub_out) {

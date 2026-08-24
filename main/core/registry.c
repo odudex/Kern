@@ -1,13 +1,17 @@
 #include "registry.h"
+#include "bip138_crypto.h"
 #include "bip32_path.h"
 #include "descriptor_checksum.h"
 #include "key.h"
 #include "wallet.h"
+#include <bip138.h>
 #include <esp_log.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wally_address.h>
 #include <wally_bip32.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 
 static const char *TAG = "registry";
@@ -15,11 +19,7 @@ static const char *TAG = "registry";
 static registry_entry_t registry_entries[REGISTRY_MAX_ENTRIES];
 static size_t registry_len = 0;
 
-/* Descriptor registration is intentionally disabled for now. Descriptor
- * storage stays available as explicit backup/import, but boot must not treat
- * stored descriptor files as the durable registry until backups are encrypted
- * to the descriptor's own public keys (bitcoin/bips#1951). */
-#define REGISTRY_AUTOLOAD_DESCRIPTORS 0
+#define REGISTRY_AUTOLOAD_DESCRIPTORS 1
 
 size_t registry_count(void) { return registry_len; }
 
@@ -73,8 +73,16 @@ bool registry_remove(const char *id) {
 
   esp_err_t err = ESP_OK;
   if (registry_entries[idx].persisted) {
-    err = storage_delete_descriptor(registry_entries[idx].loc,
-                                    registry_entries[idx].id);
+    char sanitized[STORAGE_MAX_SANITIZED_ID_LEN + 1];
+    storage_sanitize_id(registry_entries[idx].id, sanitized, sizeof(sanitized));
+    char filename[STORAGE_MAX_SANITIZED_ID_LEN + 8];
+    if (registry_entries[idx].loc == STORAGE_FLASH)
+      snprintf(filename, sizeof(filename), "%s%s%s", STORAGE_DESCRIPTOR_PREFIX,
+               sanitized, STORAGE_DESCRIPTOR_EXT_KEF);
+    else
+      snprintf(filename, sizeof(filename), "%s%s", sanitized,
+               STORAGE_DESCRIPTOR_EXT_KEF);
+    err = storage_delete_descriptor(registry_entries[idx].loc, filename);
     if (err != ESP_OK) {
       ESP_LOGE(TAG, "registry_remove: storage_delete_descriptor failed (%d)",
                err);
@@ -102,6 +110,112 @@ void registry_clear(void) {
   registry_len = 0;
 }
 
+static bool registry_bip138_key(uint8_t out[EC_XONLY_PUBLIC_KEY_LEN]) {
+  char *xpub = NULL;
+  struct ext_key *key = NULL;
+  bool ok = false;
+  if (key_get_master_xpub(&xpub) && xpub &&
+      bip32_key_from_base58_alloc(xpub, &key) == WALLY_OK && key) {
+    memcpy(out, key->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN);
+    ok = wally_ec_xonly_public_key_verify(out, EC_XONLY_PUBLIC_KEY_LEN) ==
+         WALLY_OK;
+  }
+  if (key)
+    bip32_key_free(key);
+  if (xpub)
+    wally_free_string(xpub);
+  return ok;
+}
+
+static bool registry_save_bip138(const char *id, const char *descriptor_str,
+                                 storage_location_t loc) {
+  uint8_t key[EC_XONLY_PUBLIC_KEY_LEN];
+  if (!registry_bip138_key(key))
+    return false;
+
+  bip138_buf encrypted = {0};
+  const char *err = NULL;
+  int32_t ret = bip138_encrypt(kern_bip138_crypto_vtable(), key, 1, NULL, 0,
+                               BIP138_CONTENT_BIP380, 0, NULL, 0,
+                               (const uint8_t *)descriptor_str,
+                               strlen(descriptor_str), BIP138_PADDING_NONE,
+                               &encrypted, &err);
+  if (ret != BIP138_OK) {
+    ESP_LOGE(TAG, "bip138_encrypt failed: %s", err ? err : "unknown");
+    return false;
+  }
+  esp_err_t save_err =
+      storage_save_descriptor(loc, id, encrypted.ptr, encrypted.len, true);
+  bip138_buf_free(encrypted);
+  if (save_err != ESP_OK) {
+    ESP_LOGE(TAG, "storage_save_descriptor(.kef) failed (%d)", save_err);
+    return false;
+  }
+  return true;
+}
+
+static bool registry_decrypt_bip138(const uint8_t *encrypted, size_t encrypted_len,
+                                    char **descriptor_out) {
+  *descriptor_out = NULL;
+  uint8_t key[EC_XONLY_PUBLIC_KEY_LEN];
+  if (!registry_bip138_key(key))
+    return false;
+
+  bip138_decrypt_result *result = NULL;
+  const char *err = NULL;
+  int32_t ret = bip138_decrypt(kern_bip138_crypto_vtable(), key, encrypted,
+                               encrypted_len, &result, &err);
+  if (ret != BIP138_OK) {
+    ESP_LOGW(TAG, "bip138_decrypt failed: %s", err ? err : "unknown");
+    return false;
+  }
+
+  bool ok = false;
+  size_t items = bip138_decrypt_len(result);
+  for (size_t i = 0; i < items; i++) {
+    bip138_item item = {0};
+    if (bip138_decrypt_item(result, i, &item, &err) != BIP138_OK)
+      continue;
+    if (item.content_type != BIP138_CONTENT_BIP380 || item.plaintext.len == 0)
+      continue;
+    char *descriptor = malloc(item.plaintext.len + 1);
+    if (!descriptor)
+      break;
+    memcpy(descriptor, item.plaintext.ptr, item.plaintext.len);
+    descriptor[item.plaintext.len] = '\0';
+    *descriptor_out = descriptor;
+    ok = true;
+    break;
+  }
+  bip138_decrypt_free(result);
+  return ok;
+}
+
+static bool descriptor_id_from_filename(storage_location_t loc, const char *fname,
+                                        const char *ext, char *out,
+                                        size_t out_size) {
+  if (!fname || !ext || !out || out_size == 0)
+    return false;
+  size_t flen = strlen(fname);
+  size_t elen = strlen(ext);
+  if (flen <= elen || strcmp(fname + flen - elen, ext) != 0)
+    return false;
+  const char *start = fname;
+  if (loc == STORAGE_FLASH) {
+    size_t prefix_len = strlen(STORAGE_DESCRIPTOR_PREFIX);
+    if (flen <= prefix_len + elen ||
+        strncmp(fname, STORAGE_DESCRIPTOR_PREFIX, prefix_len) != 0)
+      return false;
+    start += prefix_len;
+  }
+  size_t id_len = flen - (size_t)(start - fname) - elen;
+  if (id_len >= out_size)
+    id_len = out_size - 1;
+  memcpy(out, start, id_len);
+  out[id_len] = '\0';
+  return true;
+}
+
 static void registry_init_scan(storage_location_t loc) {
   char **files = NULL;
   int count = 0;
@@ -111,7 +225,13 @@ static void registry_init_scan(storage_location_t loc) {
   for (int i = 0; i < count; i++) {
     const char *fname = files[i];
     size_t flen = strlen(fname);
-    if (flen < 4 || strcmp(fname + flen - 4, ".txt") != 0) {
+    bool is_kef = flen > strlen(STORAGE_DESCRIPTOR_EXT_KEF) &&
+                  strcmp(fname + flen - strlen(STORAGE_DESCRIPTOR_EXT_KEF),
+                         STORAGE_DESCRIPTOR_EXT_KEF) == 0;
+    bool is_txt = flen > strlen(STORAGE_DESCRIPTOR_EXT_TXT) &&
+                  strcmp(fname + flen - strlen(STORAGE_DESCRIPTOR_EXT_TXT),
+                         STORAGE_DESCRIPTOR_EXT_TXT) == 0;
+    if (!is_kef && !is_txt) {
       continue;
     }
     uint8_t *data = NULL;
@@ -121,16 +241,26 @@ static void registry_init_scan(storage_location_t loc) {
         ESP_OK) {
       continue;
     }
-    char *desc_str = malloc(data_len + 1);
+    char *desc_str = NULL;
+    if (encrypted) {
+      registry_decrypt_bip138(data, data_len, &desc_str);
+    } else {
+      desc_str = malloc(data_len + 1);
+      if (desc_str) {
+        memcpy(desc_str, data, data_len);
+        desc_str[data_len] = '\0';
+      }
+    }
     if (desc_str) {
-      memcpy(desc_str, data, data_len);
-      desc_str[data_len] = '\0';
       char id[REGISTRY_ID_MAX_LEN];
-      size_t id_len = flen - 4;
-      if (id_len >= REGISTRY_ID_MAX_LEN)
-        id_len = REGISTRY_ID_MAX_LEN - 1;
-      memcpy(id, fname, id_len);
-      id[id_len] = '\0';
+      if (!descriptor_id_from_filename(
+              loc, fname,
+              encrypted ? STORAGE_DESCRIPTOR_EXT_KEF : STORAGE_DESCRIPTOR_EXT_TXT,
+              id, sizeof(id))) {
+        free(desc_str);
+        free(data);
+        continue;
+      }
       if (!registry_add_from_string(id, desc_str, loc, false))
         ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register",
                  id);
@@ -353,11 +483,8 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   registry_len++;
 
   if (persist) {
-    esp_err_t err =
-        storage_save_descriptor(loc, id, (const uint8_t *)descriptor_str,
-                                strlen(descriptor_str), false);
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "storage_save_descriptor failed (%d), rolling back", err);
+    if (!registry_save_bip138(id, descriptor_str, loc)) {
+      ESP_LOGE(TAG, "registry_save_bip138 failed, rolling back");
       wally_descriptor_free(desc);
       memset(&registry_entries[registry_len - 1], 0, sizeof(registry_entry_t));
       registry_len--;
@@ -368,6 +495,42 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
 
   ESP_LOGI(TAG, "added '%s' (%zu entries total)", id, registry_len);
   return true;
+}
+
+bool registry_persist_or_add_from_string(const char *id,
+                                         const char *descriptor_str,
+                                         storage_location_t loc) {
+  if (!id || !descriptor_str)
+    return false;
+
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) != 0)
+      continue;
+    struct wally_descriptor *desc = NULL;
+    uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                                 ? WALLY_NETWORK_BITCOIN_MAINNET
+                                 : WALLY_NETWORK_BITCOIN_TESTNET;
+    if (wallet_descriptor_parse(descriptor_str, NULL, wally_network, &desc) !=
+        WALLY_OK)
+      return false;
+    char existing_checksum[9];
+    char new_checksum[9];
+    bool same = registry_entries[i].desc &&
+                descriptor_checksum_from_descriptor(registry_entries[i].desc,
+                                                    existing_checksum) &&
+                descriptor_checksum_from_descriptor(desc, new_checksum) &&
+                strcmp(existing_checksum, new_checksum) == 0;
+    wally_descriptor_free(desc);
+    if (!same)
+      return false;
+    if (!registry_save_bip138(id, descriptor_str, loc))
+      return false;
+    registry_entries[i].loc = loc;
+    registry_entries[i].persisted = true;
+    return true;
+  }
+
+  return registry_add_from_string(id, descriptor_str, loc, true);
 }
 
 bool registry_add_watch_only(const char *id, const char *descriptor_str,
