@@ -132,6 +132,16 @@ static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 
+// The transaction under review, for either PSBT version. v0 carries it as a
+// global field; v2 spreads the same information across per-input and
+// per-output fields and it has to be rebuilt, which also resolves BIP-370's
+// per-input required locktimes into the transaction's own. Extracted
+// non-final, so it is what signing commits to rather than a finalized
+// transaction. NULL when the PSBT cannot describe a valid transaction at all.
+// Caller frees with wally_tx_free().
+KERN_WARN_UNUSED_RESULT struct wally_tx *
+psbt_tx_alloc(const struct wally_psbt *psbt);
+
 // Sighash flags the review screen can honestly describe. SIGHASH_ALL (and the
 // taproot SIGHASH_DEFAULT, which is 0 and also the "unset" encoding) commit to
 // every input and output, so what was displayed is what gets mined. Under

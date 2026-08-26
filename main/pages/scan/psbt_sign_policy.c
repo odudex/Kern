@@ -7,6 +7,7 @@
 #include <wally_core.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
+#include <wally_transaction.h>
 
 #define EXTERNAL_INPUT_LIST_CAP 4
 
@@ -214,6 +215,27 @@ static bool reject_invalid_amount(const psbt_amount_audit_t *audit,
   return true;
 }
 
+/* Everything the review screen shows about outputs comes from the transaction
+ * the PSBT describes. v0 stores it directly; v2 has it rebuilt from per-input
+ * and per-output fields, which fails when those fields cannot form a valid
+ * transaction -- an amount past the supply, say. Refuse here rather than let
+ * the review screen come up empty and report it as unparseable data. */
+static bool reject_unbuildable_tx(struct wally_psbt *psbt,
+                                  dialog_callback_t dismissed_cb) {
+  struct wally_tx *tx = psbt_tx_alloc(psbt);
+  if (tx) {
+    wally_tx_free(tx);
+    return false;
+  }
+
+  show_cannot_sign("The transaction this PSBT describes cannot be "
+                   "reconstructed.\n\n"
+                   "An amount or output in it is out of range, so there is "
+                   "nothing here that can be reviewed.",
+                   dismissed_cb);
+  return true;
+}
+
 static bool reject_partial(const sign_policy_review_t *review,
                            dialog_callback_t dismissed_cb) {
   if (!review->any_input_external || settings_get_partial_signing())
@@ -268,6 +290,8 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
                      dismissed_cb);
     return false;
   }
+  if (reject_unbuildable_tx(psbt, dismissed_cb))
+    return false;
   if (reject_unsupported_sighash(&sighash_audit, dismissed_cb))
     return false;
   if (reject_invalid_amount(&audit, dismissed_cb))

@@ -136,6 +136,22 @@ uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
   return psbt_get_input_amount(psbt, index).value;
 }
 
+struct wally_tx *psbt_tx_alloc(const struct wally_psbt *psbt) {
+  struct wally_tx *tx = NULL;
+  if (!psbt ||
+      wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &tx) != WALLY_OK)
+    return NULL;
+  return tx;
+}
+
+/* True when this PSBT keeps BIP-370's tx-modifiable flags. v0 has no such
+ * field: it is implicitly modifiable until finalized. */
+static bool psbt_is_v2(const struct wally_psbt *psbt) {
+  size_t version = 0;
+  return psbt && wally_psbt_get_version(psbt, &version) == WALLY_OK &&
+         version == WALLY_PSBT_VERSION_2;
+}
+
 bool psbt_sighash_is_supported(uint32_t sighash) {
   /* 0 is both the "no PSBT_IN_SIGHASH_TYPE field" encoding and taproot's
    * SIGHASH_DEFAULT; either way libwally signs with ALL semantics. */
@@ -567,9 +583,8 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
 
-  struct wally_tx *global_tx = NULL;
-  if (wally_psbt_get_global_tx_alloc(psbt, &global_tx) != WALLY_OK ||
-      !global_tx)
+  struct wally_tx *global_tx = psbt_tx_alloc(psbt);
+  if (!global_tx)
     return result;
 
   if (i >= global_tx->num_outputs) {
@@ -929,6 +944,31 @@ static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
   return true;
 }
 
+/* BIP-370 signer rules: a signature that is not ANYONECANPAY pins the input
+ * set, and one that is not SIGHASH_NONE pins the output set, so both flags
+ * must be cleared once we have signed. `input_is_signable` refuses everything
+ * but ALL/DEFAULT, so reaching here means both apply unconditionally.
+ *
+ * libwally has this logic in wally_psbt_add_input_signature(), but its own
+ * signing path adds signatures at the input level and never runs it, so the
+ * flags survive a signing pass untouched. Leaving them set tells the next
+ * tool in the chain it may still add inputs or outputs, which would silently
+ * invalidate the signature we just produced. */
+static void apply_signer_modifiable_rules(struct wally_psbt *psbt) {
+  if (!psbt_is_v2(psbt))
+    return;
+
+  size_t flags = 0;
+  if (wally_psbt_get_tx_modifiable_flags(psbt, &flags) != WALLY_OK)
+    return;
+
+  uint32_t pinned = (uint32_t)flags & ~(uint32_t)(WALLY_PSBT_TXMOD_INPUTS |
+                                                  WALLY_PSBT_TXMOD_OUTPUTS);
+  if (pinned != (uint32_t)flags &&
+      wally_psbt_set_tx_modifiable_flags(psbt, pinned) != WALLY_OK)
+    ESP_LOGW(TAG, "Failed to clear tx-modifiable flags after signing");
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1032,6 +1072,9 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   for (size_t i = 0; i < num_inputs; i++)
     restore_input_state(psbt, i, &plan[i], result);
 
+  if (signatures_added)
+    apply_signer_modifiable_rules(psbt);
+
 cleanup:
   for (size_t i = 0; i < num_inputs; i++)
     release_input_state(&plan[i]);
@@ -1045,9 +1088,18 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
     return NULL;
   }
 
-  struct wally_tx *global_tx = NULL;
-  if (wally_psbt_get_global_tx_alloc(psbt, &global_tx) != WALLY_OK ||
-      !global_tx) {
+  /* The trimmed PSBT is rebuilt from a transaction, and that constructor only
+   * produces v0. Rebuilding a v2 one would mean either exporting it downgraded
+   * or upgrading it back -- and the upgrade path rewrites the tx-modifiable
+   * flags to fully-modifiable, undoing the signer rules applied above. Trim is
+   * only a payload-size optimisation, so decline it and let the caller export
+   * the PSBT as it arrived. */
+  if (psbt_is_v2(psbt)) {
+    return NULL;
+  }
+
+  struct wally_tx *global_tx = psbt_tx_alloc(psbt);
+  if (!global_tx) {
     return NULL;
   }
 

@@ -1437,6 +1437,215 @@ static void test_fee_percent(void) {
     PASS();
 }
 
+/* An OWNED_SAFE single-sig fixture: p2wpkh input on the whitelisted BIP84
+ * path, so the signing policy clears it with no opt-in. */
+static struct wally_psbt *make_safe_psbt(void) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived))
+    return NULL;
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 (stub) */
+      0x54, 0x00, 0x00, 0x80, /* 84' */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x00, /* 0 (chain) */
+      0x00, 0x00, 0x00, 0x00, /* 0 (index) */
+  };
+
+  struct wally_psbt *psbt =
+      make_test_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+                     sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return psbt;
+}
+
+/* Same wallet, but the owned key is on an output so psbt_classify_output has
+ * something to recognise. */
+static struct wally_psbt *make_owned_output_psbt(void) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived))
+    return NULL;
+
+  uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 (stub) */
+      0x54, 0x00, 0x00, 0x80, /* 84' */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x00, /* 0 (chain) */
+      0x00, 0x00, 0x00, 0x00, /* 0 (index) */
+  };
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK) {
+    bip32_key_free(derived);
+    return NULL;
+  }
+  uint8_t txid[32] = {0};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_output(tx, 50000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 0);
+
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK) {
+    bip32_key_free(derived);
+    return NULL;
+  }
+
+  wally_map_add(&psbt->outputs[0].keypaths, derived->pub_key, EC_PUBLIC_KEY_LEN,
+                kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return psbt;
+}
+
+/* A v2 PSBT holds no global transaction: outputs live in per-output fields.
+ * Classification has to see through that, or every output of a v2 PSBT reads
+ * as somebody else's. */
+static void test_classify_output_psbt_v2(void) {
+  TEST("psbt_classify_output: works on a v2 PSBT");
+
+  struct wally_psbt *psbt = make_owned_output_psbt();
+  if (!psbt) {
+    FAIL("make_owned_output_psbt");
+    return;
+  }
+
+  output_ownership_t v0 = psbt_classify_output(psbt, 0, false);
+  if (v0.ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    FAIL("fixture should classify OWNED_SAFE at v0");
+    wally_psbt_free(psbt);
+    return;
+  }
+
+  if (wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK)
+    FAIL("could not convert the fixture to v2");
+  else {
+    output_ownership_t v2 = psbt_classify_output(psbt, 0, false);
+    if (v2.ownership != PSBT_OWNERSHIP_OWNED_SAFE)
+      FAIL("v2 output should classify the same as v0");
+    else if (v2.source.kind != v0.source.kind ||
+             v2.source.whitelist.index != v0.source.whitelist.index)
+      FAIL("v2 claim differs from the v0 one");
+    else
+      PASS();
+  }
+
+  wally_psbt_free(psbt);
+}
+
+/* BIP-370: once a non-ANYONECANPAY / non-NONE signature is present the input
+ * and output sets are pinned. libwally does not do this on its signing path,
+ * so psbt_sign() has to. */
+static void test_sign_clears_tx_modifiable(void) {
+  TEST("psbt_sign: clears BIP-370 tx-modifiable flags on a v2 PSBT");
+
+  struct wally_psbt *psbt = make_safe_psbt();
+  if (!psbt) {
+    FAIL("make_safe_psbt");
+    return;
+  }
+  if (wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK) {
+    FAIL("could not convert the fixture to v2");
+    wally_psbt_free(psbt);
+    return;
+  }
+
+  size_t before = 0;
+  if (wally_psbt_get_tx_modifiable_flags(psbt, &before) != WALLY_OK ||
+      !(before & (WALLY_PSBT_TXMOD_INPUTS | WALLY_PSBT_TXMOD_OUTPUTS))) {
+    FAIL("upgrade should have left the PSBT marked modifiable");
+    wally_psbt_free(psbt);
+    return;
+  }
+
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t result;
+  size_t added = psbt_sign(psbt, false, policy, &result);
+
+  size_t after = 0;
+  if (!added || !result.signed_ok)
+    FAIL("v2 PSBT should still sign");
+  else if (wally_psbt_get_tx_modifiable_flags(psbt, &after) != WALLY_OK)
+    FAIL("flags unreadable after signing");
+  else if (after & WALLY_PSBT_TXMOD_INPUTS)
+    FAIL("Inputs Modifiable must be cleared after a non-ACP signature");
+  else if (after & WALLY_PSBT_TXMOD_OUTPUTS)
+    FAIL("Outputs Modifiable must be cleared after a non-NONE signature");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+}
+
+/* A v2 PSBT can hold per-output amounts that no valid transaction could
+ * carry. psbt_tx_alloc must fail rather than hand the review screen a
+ * transaction built from them. */
+static void test_tx_alloc_rejects_bad_amount(void) {
+  TEST("psbt_tx_alloc: refuses a v2 PSBT with an out-of-range amount");
+
+  struct wally_psbt *psbt = make_owned_output_psbt();
+  if (!psbt) {
+    FAIL("make_owned_output_psbt");
+    return;
+  }
+  if (wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK) {
+    FAIL("could not convert the fixture to v2");
+    wally_psbt_free(psbt);
+    return;
+  }
+
+  struct wally_tx *ok = psbt_tx_alloc(psbt);
+  if (!ok) {
+    FAIL("the untampered v2 fixture should build");
+    wally_psbt_free(psbt);
+    return;
+  }
+  wally_tx_free(ok);
+
+  psbt->outputs[0].amount = UINT64_MAX;
+  struct wally_tx *bad = psbt_tx_alloc(psbt);
+  if (bad) {
+    FAIL("an out-of-range amount must not build a transaction");
+    wally_tx_free(bad);
+  } else
+    PASS();
+
+  wally_psbt_free(psbt);
+}
+
+/* Trim rebuilds from a transaction, which can only produce v0. Declining is
+ * what keeps a v2 export from being silently downgraded or having its
+ * signer-set flags rewritten by an upgrade. */
+static void test_trim_declines_psbt_v2(void) {
+  TEST("psbt_trim: declines a v2 PSBT so it exports untrimmed");
+
+  struct wally_psbt *psbt = make_safe_psbt();
+  if (!psbt) {
+    FAIL("make_safe_psbt");
+    return;
+  }
+
+  struct wally_psbt *trimmed = psbt_trim(psbt);
+  if (!trimmed) {
+    FAIL("v0 PSBT should trim");
+    wally_psbt_free(psbt);
+    return;
+  }
+  wally_psbt_free(trimmed);
+
+  if (wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK)
+    FAIL("could not convert the fixture to v2");
+  else if ((trimmed = psbt_trim(psbt)) != NULL) {
+    FAIL("v2 PSBT must not be trimmed");
+    wally_psbt_free(trimmed);
+  } else
+    PASS();
+
+  wally_psbt_free(psbt);
+}
+
 /* ================================================================
  * psbt_sign policy-gate tests
  *
@@ -2242,6 +2451,13 @@ int main(void) {
   test_psbt_classify_registry_wsh_tampered_witness();
   test_psbt_classify_registry_miniscript_owned();
   test_psbt_classify_registry_miniscript_tampered();
+
+  printf("\n=== PSBTv2 tests ===\n\n");
+
+  test_classify_output_psbt_v2();
+  test_sign_clears_tx_modifiable();
+  test_tx_alloc_rejects_bad_amount();
+  test_trim_declines_psbt_v2();
 
   key_unload();
 

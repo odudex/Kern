@@ -1173,9 +1173,8 @@ static bool create_psbt_info_display(void) {
     }
   }
 
-  struct wally_tx *global_tx = NULL;
-  int tx_ret = wally_psbt_get_global_tx_alloc(current_psbt, &global_tx);
-  if (tx_ret != WALLY_OK || !global_tx) {
+  struct wally_tx *global_tx = psbt_tx_alloc(current_psbt);
+  if (!global_tx) {
     for (size_t i = 0; i < num_inputs; i++)
       free(classified_inputs[i].address);
     free(classified_inputs);
