@@ -28,6 +28,15 @@ esp_err_t sd_card_remount(void);
 bool sd_card_is_mounted(void);
 
 esp_err_t sd_card_write_file(const char *path, const uint8_t *data, size_t len);
+
+/* Largest file sd_card_read_file() will pull into memory. Everything read
+ * this way is a descriptor, a PSBT or a mnemonic backup; the biggest of those
+ * is a PSBT carrying a full previous transaction per input, which stays far
+ * below this. Anything larger is refused with ESP_ERR_INVALID_SIZE rather
+ * than allocated, so a hostile card cannot make the device chase a multi-
+ * gigabyte read before anything looks at the content. */
+#define SD_CARD_MAX_READ_LEN (1024u * 1024u)
+
 esp_err_t sd_card_read_file(const char *path, uint8_t **data_out,
                             size_t *len_out);
 esp_err_t sd_card_file_size(const char *path, size_t *size_out);

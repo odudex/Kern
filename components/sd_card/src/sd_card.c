@@ -226,6 +226,8 @@ esp_err_t sd_card_read_file(const char *path, uint8_t **data_out,
     return ESP_ERR_NOT_FOUND;
   if (st.st_size == 0)
     return ESP_OK;
+  if (st.st_size < 0 || (uintmax_t)st.st_size > SD_CARD_MAX_READ_LEN)
+    return ESP_ERR_INVALID_SIZE;
 
   uint8_t *buffer = malloc(st.st_size);
   if (!buffer)
