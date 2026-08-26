@@ -1437,6 +1437,73 @@ static void test_fee_percent(void) {
     PASS();
 }
 
+static void test_dust_threshold(void) {
+  TEST("psbt_output_dust_threshold: Core's per-script-type values");
+
+  const uint8_t p2wpkh[22] = {0x00, 0x14};
+  const uint8_t p2wsh[34] = {0x00, 0x20};
+  const uint8_t p2tr[34] = {0x51, 0x20};
+  const uint8_t p2pkh[25] = {0x76, 0xa9, 0x14};
+  const uint8_t p2sh[23] = {0xa9, 0x14};
+  const uint8_t op_return[] = {0x6a, 0x02, 0xde, 0xad};
+
+  if (psbt_output_dust_threshold(p2wpkh, sizeof(p2wpkh)) != 294)
+    FAIL("p2wpkh should be 294");
+  else if (psbt_output_dust_threshold(p2wsh, sizeof(p2wsh)) != 330)
+    FAIL("p2wsh should be 330");
+  else if (psbt_output_dust_threshold(p2tr, sizeof(p2tr)) != 330)
+    FAIL("p2tr should be 330");
+  else if (psbt_output_dust_threshold(p2pkh, sizeof(p2pkh)) != 546)
+    FAIL("p2pkh should be 546");
+  else if (psbt_output_dust_threshold(p2sh, sizeof(p2sh)) != 540)
+    FAIL("p2sh should be 540");
+  else if (psbt_output_dust_threshold(op_return, sizeof(op_return)) != 0)
+    FAIL("OP_RETURN is unspendable, never dust");
+  else if (psbt_output_dust_threshold(NULL, 0) != 0)
+    FAIL("no script should be 0");
+  else
+    PASS();
+}
+
+static void test_total_output_value(void) {
+  TEST("psbt_total_output_value: sums outputs at either PSBT version");
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 2, &tx) != WALLY_OK) {
+    FAIL("tx_init_alloc");
+    return;
+  }
+  uint8_t txid[32] = {0xaa};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_output(tx, 90000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 0);
+  wally_tx_add_raw_output(tx, 5000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 0);
+
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK) {
+    FAIL("psbt_from_tx");
+    return;
+  }
+
+  uint64_t total = 0;
+  if (!psbt_total_output_value(psbt, &total))
+    FAIL("should read a v0 transaction");
+  else if (total != 95000)
+    FAIL("wrong v0 total");
+  else if (wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK)
+    FAIL("could not convert the fixture to v2");
+  else if (!psbt_total_output_value(psbt, &total))
+    FAIL("should read a v2 PSBT too");
+  else if (total != 95000)
+    FAIL("v2 total should match v0");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+}
+
 /* An OWNED_SAFE single-sig fixture: p2wpkh input on the whitelisted BIP84
  * path, so the signing policy clears it with no opt-in. */
 static struct wally_psbt *make_safe_psbt(void) {
@@ -2438,6 +2505,8 @@ int main(void) {
   test_sighash_audit_flags_input();
   test_sign_refuses_unsupported_sighash();
   test_fee_percent();
+  test_dust_threshold();
+  test_total_output_value();
 
   printf("\n=== psbt_sign policy-gate tests ===\n\n");
 

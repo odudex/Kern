@@ -66,6 +66,7 @@ typedef struct {
   uint64_t value;
   char *address;
   uint32_t address_index;
+  bool is_dust;  /* below the relay dust threshold for its script type */
   char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
 } classified_output_t;
 
@@ -1199,6 +1200,16 @@ static bool create_psbt_info_display(void) {
   for (size_t i = 0; i < num_outputs; i++) {
     total_output_value += global_tx->outputs[i].satoshi;
   }
+
+  /* Both are read off the global tx, which is freed before the notes are
+   * rendered. BIP-125 opts a transaction into replaceability when any input's
+   * sequence is below 0xfffffffe. */
+  uint32_t locktime = global_tx->locktime;
+  bool signals_rbf = false;
+  for (size_t i = 0; i < global_tx->num_inputs; i++) {
+    if (global_tx->inputs[i].sequence < 0xfffffffeu)
+      signals_rbf = true;
+  }
   uint64_t fee = (total_input_value > total_output_value)
                      ? (total_input_value - total_output_value)
                      : 0;
@@ -1229,6 +1240,10 @@ static bool create_psbt_info_display(void) {
     classified_outputs[i].type = classify_output(
         i, &classified_outputs[i].address_index, classified_outputs[i].path,
         sizeof(classified_outputs[i].path));
+    classified_outputs[i].is_dust =
+        classified_outputs[i].value <
+        psbt_output_dust_threshold(global_tx->outputs[i].script,
+                                   global_tx->outputs[i].script_len);
   }
 
   size_t diagram_idx = 0;
@@ -1651,6 +1666,19 @@ static bool create_psbt_info_display(void) {
     }
   }
 
+  size_t dust_count = 0;
+  size_t first_dust = 0;
+  uint64_t first_dust_value = 0;
+  for (size_t i = 0; i < num_outputs; i++) {
+    if (!classified_outputs[i].is_dust)
+      continue;
+    if (!dust_count) {
+      first_dust = classified_outputs[i].index;
+      first_dust_value = classified_outputs[i].value;
+    }
+    dust_count++;
+  }
+
   for (size_t i = 0; i < num_outputs; i++) {
     if (classified_outputs[i].address) {
       if (strcmp(classified_outputs[i].address, "OP_RETURN") == 0) {
@@ -1718,6 +1746,62 @@ static bool create_psbt_info_display(void) {
              amount_audit.num_inputs - amount_audit.proven,
              amount_audit.num_inputs);
     create_review_note(psbt_info_container, note, highlight_color());
+  }
+
+  /* The gate refuses a PSBT whose outputs exceed the inputs, so reaching here
+   * that way means an input never supplied an amount and was counted as zero.
+   * The unproven-fee note above already says the numbers are not backed; name
+   * the missing fee too, because no fee row at all otherwise reads as "no
+   * fee". */
+  if (total_output_value > total_input_value) {
+    create_review_note(psbt_info_container,
+                       LV_SYMBOL_WARNING
+                       " Fee unknown: the outputs exceed the input amounts "
+                       "this PSBT supplied.",
+                       error_color());
+  }
+
+  /* Below the relay dust threshold an output costs more to spend than it
+   * holds, so the transaction is unlikely to propagate at all. */
+  if (dust_count) {
+    char note[192];
+    if (dust_count == 1)
+      snprintf(note, sizeof(note),
+               LV_SYMBOL_WARNING " Dust: output %zu holds only %llu sats, "
+                                 "below the amount needed to relay.",
+               first_dust, (unsigned long long)first_dust_value);
+    else
+      snprintf(note, sizeof(note),
+               LV_SYMBOL_WARNING " Dust: %zu outputs are below the amount "
+                                 "needed to relay.",
+               dust_count);
+    create_review_note(psbt_info_container, note, highlight_color());
+  }
+
+  /* Neither is visible anywhere else on this screen, and both change what
+   * signing actually commits to: a future locktime is not broadcastable yet,
+   * and an RBF-signalling transaction can be replaced before it confirms. */
+  if (locktime) {
+    char note[160];
+    if (locktime < 500000000u)
+      snprintf(note, sizeof(note),
+               LV_SYMBOL_WARNING " Locked until block %" PRIu32
+                                 ": not broadcastable before then.",
+               locktime);
+    else
+      snprintf(note, sizeof(note),
+               LV_SYMBOL_WARNING " Locked until unix time %" PRIu32
+                                 ": not broadcastable before then.",
+               locktime);
+    create_review_note(psbt_info_container, note, highlight_color());
+  }
+
+  if (signals_rbf) {
+    create_review_note(psbt_info_container,
+                       LV_SYMBOL_WARNING
+                       " Replaceable (RBF): this transaction can be replaced "
+                       "by a different one before it confirms.",
+                       secondary_color());
   }
 
   create_sign_action_row(psbt_info_container, sign_button_cb);

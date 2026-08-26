@@ -236,6 +236,31 @@ static bool reject_unbuildable_tx(struct wally_psbt *psbt,
   return true;
 }
 
+/* sum(outputs) > sum(inputs) cannot happen on chain: the difference is the
+ * fee and it is never negative. Either an input amount is understated or an
+ * output amount is inflated, and both make every number on the review screen
+ * a lie. Only decidable when each input actually supplied an amount -- a
+ * MISSING one contributes 0, which produces the same shape honestly. */
+static bool reject_impossible_fee(struct wally_psbt *psbt,
+                                  const psbt_amount_audit_t *audit,
+                                  dialog_callback_t dismissed_cb) {
+  uint64_t total_output = 0;
+  if (audit->missing || !psbt_total_output_value(psbt, &total_output) ||
+      total_output <= audit->total)
+    return false;
+
+  char body[384];
+  snprintf(body, sizeof(body),
+           "The outputs add up to more than the inputs, which cannot happen: "
+           "the difference between them is the fee and it is never "
+           "negative.\n\n"
+           "Inputs total %llu sats, outputs total %llu sats. An amount in this "
+           "PSBT is wrong, so nothing it claims can be reviewed honestly.",
+           (unsigned long long)audit->total, (unsigned long long)total_output);
+  show_cannot_sign(body, dismissed_cb);
+  return true;
+}
+
 static bool reject_partial(const sign_policy_review_t *review,
                            dialog_callback_t dismissed_cb) {
   if (!review->any_input_external || settings_get_partial_signing())
@@ -295,6 +320,8 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
   if (reject_unsupported_sighash(&sighash_audit, dismissed_cb))
     return false;
   if (reject_invalid_amount(&audit, dismissed_cb))
+    return false;
+  if (reject_impossible_fee(psbt, &audit, dismissed_cb))
     return false;
   if (reject_expected_owned(&review, dismissed_cb, load_descriptor_cb))
     return false;

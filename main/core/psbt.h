@@ -108,6 +108,9 @@ typedef struct {
   size_t asserted;
   size_t invalid;
   size_t missing;
+  /* Sum of every input's resolved value. A MISSING input contributes 0, so
+   * this is only the real total when `missing` is 0. */
+  uint64_t total;
   /* Index of the first input in each non-proven category, or num_inputs when
    * that category is empty. Used to name a concrete input in the warning. */
   size_t first_unproven;
@@ -132,6 +135,11 @@ static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 
+// Sum of every output's value. False when the transaction cannot be read or
+// an amount is out of range, in which case nothing about the fee is knowable.
+KERN_WARN_UNUSED_RESULT bool
+psbt_total_output_value(const struct wally_psbt *psbt, uint64_t *out);
+
 // The transaction under review, for either PSBT version. v0 carries it as a
 // global field; v2 spreads the same information across per-input and
 // per-output fields and it has to be rebuilt, which also resolves BIP-370's
@@ -141,6 +149,12 @@ uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 // Caller frees with wally_tx_free().
 KERN_WARN_UNUSED_RESULT struct wally_tx *
 psbt_tx_alloc(const struct wally_psbt *psbt);
+
+// Bitcoin Core's dust threshold for an output paying `spk`: below this the
+// output costs more to spend than it holds and the transaction will not relay.
+// 0 for provably unspendable outputs, which Core never counts as dust.
+KERN_WARN_UNUSED_RESULT uint64_t
+psbt_output_dust_threshold(const unsigned char *spk, size_t spk_len);
 
 // Sighash flags the review screen can honestly describe. SIGHASH_ALL (and the
 // taproot SIGHASH_DEFAULT, which is 0 and also the "unset" encoding) commit to

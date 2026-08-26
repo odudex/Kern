@@ -111,6 +111,7 @@ void psbt_audit_input_amounts(const struct wally_psbt *psbt,
 
   for (size_t i = 0; i < out->num_inputs; i++) {
     psbt_input_amount_t amount = psbt_get_input_amount(psbt, i);
+    out->total += amount.value;
     switch (amount.status) {
     case PSBT_AMOUNT_PROVEN:
       out->proven++;
@@ -136,6 +137,36 @@ uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
   return psbt_get_input_amount(psbt, index).value;
 }
 
+/* 21 million BTC. libwally already rejects a transaction whose outputs exceed
+ * the supply, so this only backstops a total assembled some other way -- but
+ * it is what keeps the sum below from silently wrapping. */
+#define PSBT_MAX_SATOSHI (21000000ull * WALLY_SATOSHI_PER_BTC)
+
+bool psbt_total_output_value(const struct wally_psbt *psbt, uint64_t *out) {
+  if (!psbt || !out)
+    return false;
+  *out = 0;
+
+  struct wally_tx *tx = psbt_tx_alloc(psbt);
+  if (!tx)
+    return false;
+
+  uint64_t total = 0;
+  bool ok = true;
+  for (size_t i = 0; i < tx->num_outputs && ok; i++) {
+    uint64_t value = tx->outputs[i].satoshi;
+    if (value > PSBT_MAX_SATOSHI || total > PSBT_MAX_SATOSHI - value)
+      ok = false;
+    else
+      total += value;
+  }
+  wally_tx_free(tx);
+
+  if (ok)
+    *out = total;
+  return ok;
+}
+
 struct wally_tx *psbt_tx_alloc(const struct wally_psbt *psbt) {
   struct wally_tx *tx = NULL;
   if (!psbt ||
@@ -150,6 +181,29 @@ static bool psbt_is_v2(const struct wally_psbt *psbt) {
   size_t version = 0;
   return psbt && wally_psbt_get_version(psbt, &version) == WALLY_OK &&
          version == WALLY_PSBT_VERSION_2;
+}
+
+/* Bitcoin Core's IsWitnessProgram: OP_0 or OP_1..OP_16, then a single push of
+ * 2..40 bytes making up the whole script. */
+static bool spk_is_witness_program(const unsigned char *spk, size_t spk_len) {
+  if (spk_len < 4 || spk_len > 42)
+    return false;
+  if (spk[0] != OP_0 && (spk[0] < OP_1 || spk[0] > OP_16))
+    return false;
+  return (size_t)spk[1] + 2 == spk_len;
+}
+
+uint64_t psbt_output_dust_threshold(const unsigned char *spk, size_t spk_len) {
+  if (!spk || !spk_len || spk[0] == OP_RETURN)
+    return 0; /* provably unspendable: never dust */
+
+  /* Core's GetDustThreshold: the serialized output plus the cheapest input
+   * that could spend it, priced at the 3000 sat/kvB dust relay fee. The input
+   * side is 67 bytes for a witness program (the witness is discounted) and
+   * 148 for everything else. Yields the familiar 294 / 330 / 546 thresholds. */
+  size_t size = 8 + 1 + spk_len; /* value + script length + script */
+  size += spk_is_witness_program(spk, spk_len) ? 67 : 148;
+  return (uint64_t)size * 3000u / 1000u;
 }
 
 bool psbt_sighash_is_supported(uint32_t sighash) {
