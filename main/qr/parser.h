@@ -27,6 +27,12 @@
 #define UR_MIN_FRAGMENT_LENGTH 10
 
 /**
+ * @brief Resource limits for stored non-UR multipart QR data
+ */
+#define QR_PARSER_MAX_MULTIPART_PARTS 1024
+#define QR_PARSER_MAX_STORED_BYTES (1024U * 1024U)
+
+/**
  * @brief Maximum QR code versions supported (limited to version 20)
  */
 #define QR_CAPACITY_SIZE 20
@@ -56,13 +62,15 @@ typedef struct {
  * supporting various formats including P M-of-N, UR, and BBQR.
  */
 typedef struct {
-  QRPart **parts;     /**< Array of parsed QR parts */
-  int parts_capacity; /**< Allocated capacity for parts array */
-  int parts_count;    /**< Current number of parts */
-  int total;          /**< Total expected number of parts */
-  int format;         /**< Detected QR format (FORMAT_* constants) */
-  BBQrCode *bbqr;     /**< BBQr specific data (if format is BBQR) */
-  void *ur_decoder;   /**< UR decoder instance (if format is UR) */
+  QRPart **parts;      /**< Array of parsed QR parts */
+  int parts_capacity;  /**< Allocated capacity for parts array */
+  int parts_count;     /**< Current number of parts */
+  int total;           /**< Total expected number of parts */
+  int format;          /**< Detected QR format (FORMAT_* constants) */
+  BBQrCode *bbqr;      /**< BBQr specific data (if format is BBQR) */
+  void *ur_decoder;    /**< UR decoder instance (if format is UR) */
+  size_t stored_bytes; /**< Aggregate bytes held by parts */
+  bool failed;         /**< A terminal parser failure occurred */
 } QRPartParser;
 
 /**
@@ -160,8 +168,9 @@ KERN_WARN_UNUSED_RESULT bool qr_parser_is_complete(QRPartParser *parser);
 /**
  * @brief Check if parsing has failed permanently
  *
- * True when the decoder reached a terminal failure state (e.g. UR
- * checksum mismatch) and feeding more parts can never complete the scan.
+ * True when parsing reached a terminal failure state (for example, a UR
+ * checksum mismatch or multipart metadata/resource-limit violation) and
+ * feeding more parts can never complete the scan.
  *
  * @param parser Parser instance
  * @return true if parsing can never complete, false otherwise
