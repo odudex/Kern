@@ -427,7 +427,8 @@ static int detect_format(const char *data, size_t data_len, BBQrCode **bbqr) {
       offset++;
     }
     if (offset > digits_start && offset + 1 < data_len && data[offset] == 'o' &&
-        data[offset + 1] == 'f') {
+        data[offset + 1] == 'f' &&
+        memchr(data + offset + 2, ' ', data_len - offset - 2) != NULL) {
       return FORMAT_PMOFN;
     }
   } else if (data_len >= 3 && starts_with_case_insensitive(data, "ur:")) {

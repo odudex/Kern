@@ -51,6 +51,22 @@ static void test_format_none_still_completes(void) {
   qr_parser_destroy(parser);
 }
 
+static void test_incomplete_pmofn_like_text_remains_plain(void) {
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  CHECK(qr_parser_parse(parser, "p1of2") == -1);
+  CHECK(qr_parser_get_format(parser) == FORMAT_NONE);
+  CHECK(qr_parser_is_complete(parser));
+  CHECK(!qr_parser_is_failed(parser));
+  size_t result_len = 0;
+  char *result = qr_parser_result(parser, &result_len);
+  CHECK(result != NULL);
+  CHECK(result_len == 5);
+  CHECK(memcmp(result, "p1of2", result_len) == 0);
+  free(result);
+  qr_parser_destroy(parser);
+}
+
 static void test_valid_pmofn_still_assembles(void) {
   QRPartParser *parser = qr_parser_create();
   CHECK(parser != NULL);
@@ -196,6 +212,7 @@ static void test_valid_ur_still_processes(void) {
 
 int main(void) {
   test_format_none_still_completes();
+  test_incomplete_pmofn_like_text_remains_plain();
   test_valid_pmofn_still_assembles();
   test_pmofn_rejects_nonpositive_and_overflow_metadata();
   test_pmofn_rejects_part_count_over_limit();
