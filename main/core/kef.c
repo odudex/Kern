@@ -350,12 +350,16 @@ kef_error_t kef_parse_header(const uint8_t *envelope, size_t env_len,
   if (env_len < header_size)
     return KEF_ERR_ENVELOPE_TOO_SHORT;
 
+  uint32_t iterations = kef_decode_iterations(envelope + 1 + id_len + 1);
+  if (iterations < KEF_MIN_ITERATIONS || iterations > KEF_MAX_ITERATIONS)
+    return KEF_ERR_INVALID_ITERATIONS;
+
   *id_out = envelope + 1;
   *id_len_out = id_len;
   if (version_out)
     *version_out = envelope[1 + id_len];
   if (iterations_out)
-    *iterations_out = kef_decode_iterations(envelope + 1 + id_len + 1);
+    *iterations_out = iterations;
   return KEF_OK;
 }
 
@@ -382,9 +386,13 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
 
   /* --- Validate -------------------------------------------------- */
   if (!id || id_len == 0 || id_len > KEF_MAX_ID_LEN || !password ||
-      pw_len == 0 || !plaintext || pt_len == 0 || !out || !out_len ||
-      iterations == 0)
+      pw_len == 0 || !plaintext || pt_len == 0 || !out || !out_len)
     return KEF_ERR_INVALID_ARG;
+
+  /* Same window the reader enforces, so nothing writes an envelope it could
+   * not read back. */
+  if (iterations < KEF_MIN_ITERATIONS || iterations > KEF_MAX_ITERATIONS)
+    return KEF_ERR_INVALID_ITERATIONS;
 
   const kef_version_info_t *vi = find_version(version);
   if (!vi)
@@ -708,6 +716,13 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
     secure_memzero(hash, sizeof(hash));
   }
 
+  /* kef_encrypt refuses an empty plaintext, so a zero-length payload here is
+   * a crafted envelope, not an allocation problem. */
+  if (plain_len == 0) {
+    err = KEF_ERR_AUTH;
+    goto cleanup;
+  }
+
   /* --- Decompress ------------------------------------------------ */
   if (vi->compress) {
     size_t dec_len = 0;
@@ -858,6 +873,8 @@ const char *kef_error_str(kef_error_t err) {
     return "decompression failed";
   case KEF_ERR_ENVELOPE_TOO_SHORT:
     return "envelope too short";
+  case KEF_ERR_INVALID_ITERATIONS:
+    return "invalid PBKDF2 iteration count";
   case KEF_ERR_DUPLICATE_BLOCKS:
     return "duplicate ECB blocks detected";
   }
