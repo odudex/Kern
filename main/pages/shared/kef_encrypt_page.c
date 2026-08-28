@@ -15,11 +15,8 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
+#include "../../utils/worker_task.h"
 
-#include <esp_task_wdt.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/idf_additions.h>
-#include <freertos/task.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,7 +41,6 @@ static size_t data_copy_len = 0;
 static char kef_id[64] = {0};
 
 /* Background encryption task */
-static TaskHandle_t encrypt_task_handle = NULL;
 static lv_timer_t *encrypt_poll_timer = NULL;
 static volatile bool encrypt_done = false;
 static kef_error_t encrypt_result = KEF_OK;
@@ -157,10 +153,6 @@ static void key_changed_cb(lv_event_t *e) {
 /* ---------- Overlay management ---------- */
 
 static void destroy_overlay(void) {
-  if (encrypt_task_handle) {
-    vTaskDelete(encrypt_task_handle);
-    encrypt_task_handle = NULL;
-  }
   if (encrypt_poll_timer) {
     lv_timer_del(encrypt_poll_timer);
     encrypt_poll_timer = NULL;
@@ -227,14 +219,9 @@ static void create_overlay(const char *title, const char *placeholder,
   }
 }
 
-/* ---------- Encryption task (runs on CPU 1) ---------- */
+/* ---------- Encryption work (runs on the worker task) ---------- */
 
-static void encrypt_task(void *arg) {
-  (void)arg;
-
-  TaskHandle_t idle1 = xTaskGetIdleTaskHandleForCore(1);
-  esp_task_wdt_delete(idle1);
-
+static void encrypt_work(void) {
   if (encrypt_envelope) {
     SECURE_FREE_BUFFER(encrypt_envelope, encrypt_envelope_len);
     encrypt_envelope_len = 0;
@@ -247,10 +234,6 @@ static void encrypt_task(void *arg) {
 
   SECURE_FREE_BUFFER(encrypt_key_copy, encrypt_key_copy_len);
   encrypt_key_copy_len = 0;
-
-  esp_task_wdt_add(idle1);
-  encrypt_done = true;
-  vTaskDelete(NULL);
 }
 
 /* ---------- Poll timer ---------- */
@@ -262,7 +245,6 @@ static void encrypt_poll_timer_cb(lv_timer_t *timer) {
 
   lv_timer_del(encrypt_poll_timer);
   encrypt_poll_timer = NULL;
-  encrypt_task_handle = NULL;
 
   if (encrypt_result == KEF_OK) {
     destroy_overlay();
@@ -340,8 +322,8 @@ static void password_ready_cb(lv_event_t *e) {
 
   /* Launch encryption on CPU 1 */
   encrypt_done = false;
-  if (xTaskCreatePinnedToCore(encrypt_task, "kef_enc", ENCRYPT_TASK_STACK_SIZE,
-                              NULL, 5, &encrypt_task_handle, 1) != pdPASS) {
+  if (!worker_task_start("kef_enc", ENCRYPT_TASK_STACK_SIZE, encrypt_work,
+                         &encrypt_done)) {
     SECURE_FREE_BUFFER(encrypt_key_copy, encrypt_key_copy_len);
     encrypt_key_copy_len = 0;
     if (progress_dialog) {

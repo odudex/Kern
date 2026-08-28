@@ -162,6 +162,7 @@ set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/dice_quality.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/estimated_entropy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/worker_task.c
 )
 
 # --- Core application modules ---
