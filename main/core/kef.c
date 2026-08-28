@@ -9,6 +9,7 @@
 
 #include "kef.h"
 #include "../utils/secure_mem.h"
+#include "base43.h"
 #include "crypto_utils.h"
 
 /* Raw deflate compress / decompress (wbits = 10) */
@@ -794,9 +795,10 @@ uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
     return copy;
   }
 
-  /* Base64-armored envelope. Trim trailing whitespace an editor may have
-   * appended, then require both a clean decode and a valid KEF header before
-   * accepting it (a plaintext descriptor contains '(' and fails to decode). */
+  /* Armored envelope. Trim trailing whitespace an editor may have appended,
+   * then require both a clean decode and a valid KEF header before accepting
+   * it (a plaintext descriptor contains '(' and fails to decode). Base64 is
+   * how Kern armors KEF on SD; base43 is how it armors KEF into a QR. */
   size_t eff = len;
   while (eff > 0 && (data[eff - 1] == '\n' || data[eff - 1] == '\r' ||
                      data[eff - 1] == '\t' || data[eff - 1] == ' '))
@@ -804,24 +806,30 @@ uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
   if (eff == 0)
     return NULL;
 
+  uint8_t *decoded = NULL;
   size_t decoded_len = 0;
-  if (mbedtls_base64_decode(NULL, 0, &decoded_len, data, eff) !=
-      MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
-    return NULL;
-
-  uint8_t *decoded = malloc(decoded_len);
-  if (!decoded)
-    return NULL;
-  if (mbedtls_base64_decode(decoded, decoded_len, &decoded_len, data, eff) !=
-      0) {
-    free(decoded);
-    return NULL;
+  if (mbedtls_base64_decode(NULL, 0, &decoded_len, data, eff) ==
+      MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+    decoded = malloc(decoded_len);
+    if (!decoded)
+      return NULL;
+    if (mbedtls_base64_decode(decoded, decoded_len, &decoded_len, data, eff) !=
+            0 ||
+        !kef_is_envelope(decoded, decoded_len)) {
+      free(decoded);
+      decoded = NULL;
+    }
   }
 
-  if (!kef_is_envelope(decoded, decoded_len)) {
-    free(decoded);
-    return NULL;
+  if (!decoded) {
+    if (!base43_decode((const char *)data, eff, &decoded, &decoded_len))
+      return NULL;
+    if (!kef_is_envelope(decoded, decoded_len)) {
+      free(decoded);
+      return NULL;
+    }
   }
+
   *out_len = decoded_len;
   return decoded;
 }

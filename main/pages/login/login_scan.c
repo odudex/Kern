@@ -2,7 +2,6 @@
 // descriptor, else show the raw content as unidentified.
 
 #include "login_scan.h"
-#include "../../core/base43.h"
 #include "../../core/kef.h"
 #include "../../core/registry.h"
 #include "../../core/wallet.h"
@@ -127,31 +126,17 @@ static void wo_validation_cb(descriptor_validation_result_t result,
 
 // Returns true if the content was handled as a mnemonic (KEF or plaintext).
 static bool try_mnemonic(const char *content, size_t len) {
-  const uint8_t *envelope = (const uint8_t *)content;
-  size_t envelope_len = len;
-  uint8_t *decoded = NULL;
-  bool is_kef = kef_is_envelope(envelope, envelope_len);
-  if (!is_kef) {
-    size_t decoded_len = 0;
-    if (base43_decode(content, len, &decoded, &decoded_len) &&
-        kef_is_envelope(decoded, decoded_len)) {
-      envelope = decoded;
-      envelope_len = decoded_len;
-      is_kef = true;
-    } else {
-      free(decoded);
-      decoded = NULL;
-    }
-  }
-  if (is_kef) {
+  size_t envelope_len = 0;
+  uint8_t *envelope =
+      kef_envelope_from_bytes((const uint8_t *)content, len, &envelope_len);
+  if (envelope) {
     kef_decrypt_page_create(lv_screen_active(), return_from_kef_decrypt_cb,
                             success_from_kef_decrypt_cb, envelope,
                             envelope_len);
     kef_decrypt_page_show();
-    free(decoded);
+    free(envelope);
     return true;
   }
-  free(decoded);
 
   // Plaintext / SeedQR: only treat as a mnemonic if it actually validates, so
   // descriptors fall through to the watch-only path.
