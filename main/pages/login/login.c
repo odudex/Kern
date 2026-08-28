@@ -86,19 +86,22 @@ void login_page_create(lv_obj_t *parent) {
     lv_obj_set_style_text_font(title, theme_font_medium(), 0);
     lv_obj_set_style_text_color(title, primary_color(), 0);
   }
-  ui_menu_add_entry_with_icon(login_menu, ICON_QR_CODE, "Scan", scan_cb);
+  if (ui_menu_add_entry_with_icon(login_menu, ICON_QR_CODE, "Scan", scan_cb)) {
+    ui_menu_set_entry_secondary(login_menu,
+                                ui_menu_get_entry_count(login_menu) - 1, true);
+  }
   ui_menu_add_entry_with_icon(login_menu, ICON_KEY, "Load Mnemonic",
                               load_mnemonic_cb);
   ui_menu_add_entry_with_icon(login_menu, ICON_DICE, "New Mnemonic",
                               new_mnemonic_cb);
-  ui_menu_add_entry_with_icon(login_menu, LV_SYMBOL_SETTINGS, "Settings",
-                              settings_cb);
+  if (ui_menu_add_entry_with_icon(login_menu, LV_SYMBOL_SETTINGS, "Settings",
+                                  settings_cb)) {
+    ui_menu_set_entry_secondary(login_menu,
+                                ui_menu_get_entry_count(login_menu) - 1, true);
+  }
 
-  // Visual hierarchy: Load / New Mnemonic are the primary actions (orange
-  // outline); everything below is utility, rendered with the secondary style so
-  // it recedes against the background.
-  for (int i = 2; i < ui_menu_get_entry_count(login_menu); i++)
-    ui_menu_set_entry_secondary(login_menu, i, true);
+  // Visual hierarchy: Load / New Mnemonic keep the default primary orange
+  // outline; Scan / Settings use the secondary style so they recede.
   ui_menu_show(login_menu);
 
   // Power button at top-left (only useful with PMIC; without it there's
