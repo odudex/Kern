@@ -25,4 +25,33 @@ menu "Kern Configuration"
             bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-7B (1024x600 MIPI DSI)"
     endchoice
 
+    config KERN_PBKDF2_HW_SHA
+        bool "Drive PBKDF2-HMAC-SHA256 on the P4 SHA accelerator"
+        default n
+        help
+            Holds the SHA peripheral across batches of PBKDF2 iterations and
+            precomputes the HMAC ipad/opad midstates, so an iteration costs two
+            hardware block compressions instead of four compressions wrapped in
+            four crypto-lock acquire/reset/release cycles.
+
+            Output is byte-identical to the PSA path, which stays compiled in.
+            Every call first runs a known-answer vector through the accelerated
+            code and falls back to PSA if it disagrees.
+
+            Turn this off to A/B against the PSA implementation on device.
+
+    config KERN_PBKDF2_HW_SHA_CHUNK
+        int "SHA hold length, in PBKDF2 iterations"
+        depends on KERN_PBKDF2_HW_SHA
+        default 1024
+        range 16 65536
+        help
+            The peripheral is released and reacquired every this many
+            iterations so AES and SHA stay available to the rest of the device.
+            At the default one hold is about 6.6 ms -- under a 60 Hz frame --
+            and reacquisition costs about 0.3% of the derivation.
+
+            Lower it to shorten the outage, raise it to shave the reacquire
+            cost.
+
 endmenu

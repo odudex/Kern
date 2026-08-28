@@ -1,5 +1,6 @@
 #include "crypto_utils.h"
 #include "entropy_pool.h"
+#include "pbkdf2.h"
 #include <bootloader_random.h>
 #include <esp_random.h>
 #include <psa/crypto.h>
@@ -78,31 +79,12 @@ int crypto_pbkdf2_sha256(const uint8_t *password, size_t password_len,
                                           password_len, salt, salt_len,
                                           iterations, key_len, key_out);
   return (ret == 0) ? CRYPTO_OK : CRYPTO_ERR_INTERNAL;
+#elif defined(CONFIG_KERN_PBKDF2_HW_SHA)
+  return pbkdf2_hw_sha256(password, password_len, salt, salt_len, iterations,
+                          key_out, key_len);
 #else
-  if (!ensure_psa_init()) {
-    return CRYPTO_ERR_INTERNAL;
-  }
-
-  psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
-  psa_status_t st =
-      psa_key_derivation_setup(&op, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256));
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_input_integer(&op, PSA_KEY_DERIVATION_INPUT_COST,
-                                          iterations);
-  }
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SALT,
-                                        salt, salt_len);
-  }
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_PASSWORD,
-                                        password, password_len);
-  }
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_output_bytes(&op, key_out, key_len);
-  }
-  psa_key_derivation_abort(&op);
-  return (st == PSA_SUCCESS) ? CRYPTO_OK : CRYPTO_ERR_INTERNAL;
+  return pbkdf2_psa_sha256(password, password_len, salt, salt_len, iterations,
+                           key_out, key_len);
 #endif
 }
 
