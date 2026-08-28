@@ -1,6 +1,7 @@
 #include "core/entropy_pool.h"
 #include "core/fw_update.h"
 #include "core/nvs_secure.h"
+#include "core/pbkdf2.h"
 #include "core/pin.h"
 #include "core/settings.h"
 #include "pages/session_lock.h"
@@ -40,6 +41,12 @@ void app_main(void) {
   if (settings_ret != ESP_OK)
     ESP_LOGE(TAG, "Settings init failed, using defaults: %s",
              esp_err_to_name(settings_ret));
+
+#ifdef CONFIG_KERN_PBKDF2_SELFTEST
+  // Before the display comes up, so the console is quiet and nothing else is
+  // contending for the SHA and AES peripherals.
+  pbkdf2_selftest();
+#endif
 
   bsp_display_start();
   ESP_LOGI(TAG, "Display initialized successfully");

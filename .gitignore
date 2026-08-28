@@ -1,6 +1,7 @@
 # Build
 build/
 build_wave_35/
+build_pbkdf2_*/
 build_wave_4b/
 build_wave_43/
 build_wave_5/

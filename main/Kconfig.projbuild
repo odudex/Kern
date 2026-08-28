@@ -54,4 +54,16 @@ menu "Kern Configuration"
             Lower it to shorten the outage, raise it to shave the reacquire
             cost.
 
+    config KERN_PBKDF2_SELFTEST
+        bool "Check and time both PBKDF2 paths at boot"
+        default n
+        help
+            Runs known-answer vectors, then diffs the accelerated path against
+            PSA across password, salt, iteration and output lengths, then times
+            both. Results print prefixed PBKDF2.
+
+            The host test suite cannot reach this code, so this is the only
+            place the accelerated path is proven. Development only; it adds
+            several seconds to boot.
+
 endmenu
