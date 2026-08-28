@@ -14,3 +14,4 @@ test_miniscript_policy
 test_bip322
 test_estimated_entropy
 test_pin_attempt
+test_kef

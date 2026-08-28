@@ -43,6 +43,7 @@ main/core/test/test_miniscript_policy
 main/core/test/test_bip322
 main/core/test/test_estimated_entropy
 main/core/test/test_pin_attempt
+main/core/test/test_kef
 main/core/test/combined.o
 main/core/test/libwally.a
 

@@ -37,6 +37,20 @@ ESP_STUBS_INC = stubs
 # Test includes: wally public headers + esp stubs + main source tree
 TEST_INCS = -I$(WALLY_INC) -I$(ESP_STUBS_INC) -I$(ROOT)/main
 
+# KEF pulls in crypto_utils/entropy_pool/deflate_codec, which need a handful of
+# ESP-IDF headers.  Reuse the simulator's stub headers instead of a second copy;
+# the implementations they declare live in stubs/esp_hw_stub.c.
+SIM_STUBS_INC = $(ROOT)/simulator/platform/esp_idf_stubs/include
+DEFLATE_DIR = $(ROOT)/components/deflate_codec/src
+# Some distributions ship mbedTLS's pkcs5.h under mbedtls/private/; the shim in
+# components/mbedtls_compat re-exports it, exactly as the simulator build does.
+MBEDTLS_COMPAT_INC = $(shell test -e /usr/include/mbedtls/pkcs5.h || \
+	echo -I$(ROOT)/components/mbedtls_compat)
+# SIMULATOR routes PBKDF2 through mbedtls_pkcs5_pbkdf2_hmac_ext, since the host
+# mbedTLS predates the PSA key-derivation API the firmware uses.
+KEF_INCS = $(TEST_INCS) -I$(SIM_STUBS_INC) -I$(DEFLATE_DIR) \
+	$(MBEDTLS_COMPAT_INC) -DSIMULATOR -include mbedtls_compat.h
+
 LIBWALLY = libwally.a
 
 SRCS_DERIV = test_derivation_path.c
@@ -86,11 +100,18 @@ DICE_QUALITY_SRC = ../../utils/dice_quality.c ../../utils/dice_quality.h
 SRCS_PIN_ATTEMPT = test_pin_attempt.c
 TARGET_PIN_ATTEMPT = test_pin_attempt
 
+SRCS_KEF = test_kef.c
+TARGET_KEF = test_kef
+KEF_SRC = ../kef.c ../kef.h ../base43.c ../base43.h ../crypto_utils.c \
+	../entropy_pool.c $(DEFLATE_DIR)/deflate_codec.c \
+	stubs/esp_hw_stub.c
+KEF_LIBS = -lmbedcrypto -lz
+
 SS_SRC = ../ss_whitelist.c ../ss_whitelist.h $(SCRIPT_TEMPLATE_SRC)
 KEY_SRC = ../key.c ../key.h $(BIP32_PATH_SRC) ../../utils/secure_mem.h
 KEY_STUB_SRC = stubs/key_stub.c
 
-all: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_PIN_ATTEMPT)
+all: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF)
 
 $(LIBWALLY): $(WALLY_SRC) $(wildcard $(WALLY_DIR)/upstream/src/*.c)
 	$(CC) $(CFLAGS) $(WALLY_CFLAGS) -c -o combined.o $<
@@ -135,7 +156,13 @@ $(TARGET_ESTIMATED_ENTROPY): $(SRCS_ESTIMATED_ENTROPY) $(ESTIMATED_ENTROPY_SRC) 
 $(TARGET_PIN_ATTEMPT): $(SRCS_PIN_ATTEMPT) ../pin_attempt.h ../pin.h
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PIN_ATTEMPT)
 
-run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_PIN_ATTEMPT)
+$(TARGET_KEF): $(SRCS_KEF) $(KEF_SRC)
+	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_KEF) ../kef.c ../base43.c \
+		../crypto_utils.c ../entropy_pool.c \
+		$(DEFLATE_DIR)/deflate_codec.c \
+		stubs/esp_hw_stub.c $(KEF_LIBS)
+
+run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF)
 	./$(TARGET_DERIV)
 	./$(TARGET_SS_PARSE)
 	./$(TARGET_SS_WHITELISTED)
@@ -148,8 +175,9 @@ run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REG
 	./$(TARGET_BIP322)
 	./$(TARGET_ESTIMATED_ENTROPY)
 	./$(TARGET_PIN_ATTEMPT)
+	./$(TARGET_KEF)
 
 clean:
-	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_PIN_ATTEMPT) $(LIBWALLY) combined.o $(PSBT_KEY_OBJ)
+	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(LIBWALLY) combined.o $(PSBT_KEY_OBJ)
 
 .PHONY: all run clean
