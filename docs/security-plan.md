@@ -43,7 +43,7 @@ The ESP32-P4 is not a secure element; two physical attacks remain open by constr
 - **NVS Encryption**: HMAC-based key derivation from eFuse (no separate key partition needed); independent of flash encryption
 - **RSA/MPI + Digital Signature peripherals**: hardware-accelerated RSA; used by Secure Boot v2 RSA-3072 verification at boot
 - **HMAC peripheral**: computes HMAC-SHA256 using eFuse keys without exposing them to software; used for anti-phishing word derivation (`esp_hmac_calculate()` with `HMAC_KEY5` purpose) and NVS key derivation (KEY4)
-- **AES/SHA hardware accelerators**: transparent via mbedTLS, useful for KEF and general crypto
+- **AES/SHA hardware accelerators**: transparent via mbedTLS for AES and one-shot hashing. Not for iterated hashing: mbedTLS takes the shared SHA/AES crypto mutex, enables the bus clock and pulses the peripheral reset around every hash update crossing a block, roughly 6800 cycles of setup around 1150 cycles of work. PBKDF2 therefore drives the accelerator directly (`main/core/pbkdf2.c`), holding it across batches of iterations and reloading precomputed HMAC ipad/opad midstates: measured 12.2x on wave_4b, taking a 100k-iteration KEF or PIN derivation from 8.07 s to 0.66 s
 - **TRNG**: hardware entropy source for random numbers generation (mix with additional sources)
 - **Anti-rollback**: security version counter in eFuse
 - **JTAG/UART lockdown**: automatic only when the *stock bootloader* enables the security features; Kern's on-device lockdown flow must burn the same eFuse set itself (JTAG-disable set, download-mode restriction; see [secure-boot.md §5a](secure-boot.md#5-user-scenarios))

@@ -27,7 +27,7 @@ menu "Kern Configuration"
 
     config KERN_PBKDF2_HW_SHA
         bool "Drive PBKDF2-HMAC-SHA256 on the P4 SHA accelerator"
-        default n
+        default y
         help
             Holds the SHA peripheral across batches of PBKDF2 iterations and
             precomputes the HMAC ipad/opad midstates, so an iteration costs two

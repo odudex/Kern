@@ -10,6 +10,7 @@
 - Icons on the mnemonic and descriptor source menus
 
 ### Changed
+- PBKDF2 drives the SHA accelerator directly instead of going through PSA, which rebuilt a fresh HMAC per iteration and took the shared SHA/AES crypto mutex, enabled the bus clock and pulsed the peripheral reset around every hash update crossing a block — roughly 6800 cycles of setup around 1150 cycles of work. Holding the peripheral across batches of iterations and reloading precomputed HMAC ipad/opad midstates measures 12.2x on wave_4b: a KEF decrypt or a PIN check at 100,000 iterations drops from 8.07 s to 0.66 s. Output is byte-identical to the PSA path, which stays compiled in as the fallback; every call first runs a known-answer vector through the accelerated code and reverts to PSA if it disagrees
 - The BIP39 passphrase was the only secret entered in plaintext, with the confirm dialog echoing it back verbatim. It is now masked like PIN and KEF-key entry, with the same eye toggle, and confirmed by the fingerprint transition it produces (current > with-passphrase): a typo still looks like plausible dots either way, but it derives a different wallet, which a mismatched fingerprint makes visible. Wallet Settings now shows only the currently-active fingerprint
 - Every keypad marks its backspace/OK key with a solid orange fill, so the primary action is distinct at rest instead of only flashing on press; regular keys move to an orange outline
 - Addresses viewer uses the screen space more efficiently
