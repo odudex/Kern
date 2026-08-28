@@ -16,4 +16,7 @@ make -C "$REPO_ROOT/components/bbqr/test" run
 echo "Running core tests..."
 make -C "$REPO_ROOT/main/core/test" run
 
+echo "Running UI regression tests..."
+make -C "$REPO_ROOT/tests" run
+
 echo "All tests passed!"

@@ -5,6 +5,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "storage_browser_messages.h"
 #include "wipe_flash_dialog.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -64,6 +65,31 @@ static void back_cb(void) {
     cfg.return_cb();
 }
 
+static bool handle_list_status(esp_err_t ret, char **raw_filenames,
+                               int raw_count) {
+  storage_browser_list_outcome_t outcome;
+  if (ret == ESP_OK) {
+    outcome =
+        raw_count > 0 ? STORAGE_BROWSER_LIST_READY : STORAGE_BROWSER_LIST_EMPTY;
+  } else if (ret == ESP_ERR_NO_MEM || ret == ESP_ERR_INVALID_ARG) {
+    outcome = STORAGE_BROWSER_LIST_INTERNAL_ERROR;
+  } else if (cfg.location == STORAGE_SD) {
+    outcome = STORAGE_BROWSER_LIST_SD_UNAVAILABLE;
+  } else {
+    outcome = STORAGE_BROWSER_LIST_INTERNAL_ERROR;
+  }
+
+  char message[64];
+  const char *status = storage_browser_list_message(outcome, cfg.item_type_name,
+                                                    message, sizeof(message));
+  if (!status)
+    return false;
+
+  storage_free_file_list(raw_filenames, raw_count);
+  dialog_show_error_timeout(status, back_cb, 0);
+  return true;
+}
+
 /* ---------- Inline delete ---------- */
 
 static int pending_delete_index = -1;
@@ -93,16 +119,8 @@ static void inline_delete_refresh_cb(void *user_data) {
   int raw_count = 0;
   esp_err_t ret = cfg.list_files(cfg.location, &raw_filenames, &raw_count);
 
-  if (ret != ESP_OK || raw_count == 0) {
-    storage_free_file_list(raw_filenames, raw_count);
-    const char *loc_name =
-        (cfg.location == STORAGE_FLASH) ? "flash" : "SD card";
-    char msg[64];
-    snprintf(msg, sizeof(msg), "No %ss found on %s", cfg.item_type_name,
-             loc_name);
-    dialog_show_error_timeout(msg, back_cb, 0);
+  if (handle_list_status(ret, raw_filenames, raw_count))
     return;
-  }
 
   populate_list(raw_filenames, raw_count);
 }
@@ -195,16 +213,8 @@ static void deferred_list_cb(lv_timer_t *timer) {
     loading_label = NULL;
   }
 
-  if (ret != ESP_OK || raw_count == 0) {
-    storage_free_file_list(raw_filenames, raw_count);
-    const char *loc_name =
-        (cfg.location == STORAGE_FLASH) ? "flash" : "SD card";
-    char msg[64];
-    snprintf(msg, sizeof(msg), "No %ss found on %s", cfg.item_type_name,
-             loc_name);
-    dialog_show_error_timeout(msg, back_cb, 0);
+  if (handle_list_status(ret, raw_filenames, raw_count))
     return;
-  }
 
   populate_list(raw_filenames, raw_count);
 }
