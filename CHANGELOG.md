@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.18] - 2026-08-28
+
+### Added
+- PSBT version 2. A v2 PSBT carries no global transaction, so every output classified as somebody else's and the review screen could not be built at all; the transaction is now extracted for either version, which also resolves BIP-370's per-input required locktimes into the transaction's own. Signing additionally clears BIP-370's tx-modifiable flags, which libwally's own signing path never reaches — leaving them set invites the next tool in the chain to add inputs or outputs that would silently invalidate the signature just produced. Trim declines v2, since it rebuilds through a constructor that only produces v0
+
+### Changed
+- PBKDF2 drives the SHA accelerator directly instead of going through PSA, which rebuilt a fresh HMAC per iteration and took the shared SHA/AES crypto mutex, enabled the bus clock and pulsed the peripheral reset around every hash update crossing a block — roughly 6800 cycles of setup around 1150 cycles of work. Holding the peripheral across batches of iterations and reloading precomputed HMAC ipad/opad midstates measures 12.2x on wave_4b: a KEF decrypt or a PIN check at 100,000 iterations drops from 8.07 s to 0.66 s. Output is byte-identical to the PSA path, which stays compiled in as the fallback; every call first runs a known-answer vector through the accelerated code and reverts to PSA if it disagrees
+- The PSBT review screen surfaces nLockTime and nSequence, which appeared nowhere before, so a transaction that cannot be broadcast for years and one that is replaceable no longer both read as ordinary. Outputs below the relay dust threshold are marked rather than shown as ordinary spends; the threshold follows Bitcoin Core's GetDustThreshold, giving the familiar 294 / 330 / 546 values
+- KEF is covered by cross-implementation vectors for all twelve format versions. Six are the envelopes Krux's own suite pins down; the other six had none published, so they come from an independent reference that reproduces those six byte-for-byte first — every version now decrypts against externally-derived bytes rather than Kern's own output
+- Updated libwally-core
+
+### Fixed
+- Encrypted QR codes the device had just exported were rejected when scanned back in: Kern armors KEF as base64 on SD but base43 in a QR, and the shared detector only knew base64. The login and load-mnemonic scanners no longer need their own base43 probes either
+- A KEF envelope could declare its own PBKDF2 work factor without limit. The 3-byte field encodes up to 100,000,000 — 1000x the app's own setting — so a scanned envelope could park the device in key derivation for minutes with the idle watchdog deliberately off, or declare 0 and skip key stretching entirely. The count is now bounded at the single read choke point and again on write, and a zero-length payload reports an auth failure instead of an allocation error
+- Both KEF pages kept the crypto worker's task handle and deleted it on teardown. The worker self-deletes once done, so that handle goes stale for a poll interval; killing it mid-derivation also skipped the re-subscribe that restores the core-1 idle watchdog, silently disabling it for the rest of the boot
+- Outputs adding up to more than the inputs cannot happen on chain, but the review screen clamped the fee to zero and then rendered no fee row at all, so a PSBT with an understated input or an inflated output showed no fee and no warning. It is now refused, guarded on every input having supplied an amount since a missing one counts as zero and produces the same shape honestly; where that guard applies the absent fee is named rather than left blank
+- A correct PIN entered on the final allowed attempt was wiped instead of accepted, because the wipe threshold was applied before the comparison. A corrupted threshold is now clamped rather than treated as a wipe — which had destroyed the seed even when the entered PIN was right — and one rule applies at all four sites that read it, where previously only the post-comparison decision honoured the range
+- A hostile PMOFN or BBQr sequence could grow retained allocations before any final assembly check ran, and the metadata parsers used `strstr`/`atoi` over a buffer they were handed with an explicit length. Insertion is capped at 1024 parts and 1 MiB, PMOFN metadata is validated with overflow-safe decimal parsing, totals and encoding are bound to the first accepted frame, and a violation enters a terminal failure state so the scan fails closed instead of hanging
+- `sd_card_read_file()` allocated whatever `st_size` reported, so a hostile card could make the device chase a multi-gigabyte read before anything looked at the content. Reads are capped at 1 MB, far above any descriptor, PSBT or mnemonic backup
+
 ## [0.0.17] - 2026-08-24
 
 ### Added
@@ -10,7 +30,6 @@
 - Icons on the mnemonic and descriptor source menus
 
 ### Changed
-- PBKDF2 drives the SHA accelerator directly instead of going through PSA, which rebuilt a fresh HMAC per iteration and took the shared SHA/AES crypto mutex, enabled the bus clock and pulsed the peripheral reset around every hash update crossing a block — roughly 6800 cycles of setup around 1150 cycles of work. Holding the peripheral across batches of iterations and reloading precomputed HMAC ipad/opad midstates measures 12.2x on wave_4b: a KEF decrypt or a PIN check at 100,000 iterations drops from 8.07 s to 0.66 s. Output is byte-identical to the PSA path, which stays compiled in as the fallback; every call first runs a known-answer vector through the accelerated code and reverts to PSA if it disagrees
 - The BIP39 passphrase was the only secret entered in plaintext, with the confirm dialog echoing it back verbatim. It is now masked like PIN and KEF-key entry, with the same eye toggle, and confirmed by the fingerprint transition it produces (current > with-passphrase): a typo still looks like plausible dots either way, but it derives a different wallet, which a mismatched fingerprint makes visible. Wallet Settings now shows only the currently-active fingerprint
 - Every keypad marks its backspace/OK key with a solid orange fill, so the primary action is distinct at rest instead of only flashing on press; regular keys move to an orange outline
 - Addresses viewer uses the screen space more efficiently
