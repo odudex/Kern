@@ -108,6 +108,24 @@ static int compute_hidden_auth(const uint8_t *data, size_t data_len,
   return rc;
 }
 
+/*
+ * Verify auth bytes hidden at the tail of a decrypted buffer: the truncated
+ * SHA256 over dec[0..data_len) must equal the auth_size bytes that follow it.
+ * Returns KEF_OK, KEF_ERR_AUTH on mismatch, or KEF_ERR_CRYPTO.
+ */
+static kef_error_t verify_hidden_auth(const uint8_t *dec, size_t data_len,
+                                      size_t auth_size) {
+  uint8_t hash[CRYPTO_SHA256_SIZE];
+  kef_error_t err;
+  if (crypto_sha256(dec, data_len, hash) != CRYPTO_OK)
+    err = KEF_ERR_CRYPTO;
+  else
+    err = (secure_memcmp(hash, dec + data_len, auth_size) == 0) ? KEF_OK
+                                                                : KEF_ERR_AUTH;
+  secure_memzero(hash, sizeof(hash));
+  return err;
+}
+
 /* SHA256(version || iv || data || key) truncated to auth_size bytes. */
 static kef_error_t compute_exposed_auth(uint8_t version, const uint8_t *iv,
                                         size_t iv_size, const uint8_t *data,
@@ -278,17 +296,13 @@ static kef_error_t nul_unpad_verify_hidden(const uint8_t *dec, size_t dec_len,
       break;
 
     size_t dlen = candidate - auth_size;
-    uint8_t hash[CRYPTO_SHA256_SIZE];
-    if (crypto_sha256(dec, dlen, hash) != CRYPTO_OK) {
-      secure_memzero(hash, sizeof(hash));
-      return KEF_ERR_CRYPTO;
-    }
-    if (secure_memcmp(hash, dec + dlen, auth_size) == 0) {
-      secure_memzero(hash, sizeof(hash));
+    kef_error_t err = verify_hidden_auth(dec, dlen, auth_size);
+    if (err == KEF_OK) {
       *data_len_out = dlen;
       return KEF_OK;
     }
-    secure_memzero(hash, sizeof(hash));
+    if (err != KEF_ERR_AUTH)
+      return err;
   }
   return KEF_ERR_AUTH;
 }
@@ -432,6 +446,11 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
   }
 
   /* --- Build pre-pad buffer (work + hidden auth if applicable) --- */
+  /* Exposed / GCM append no hidden auth, so they pad `work` directly rather
+   * than paying an extra copy of the secret. */
+  const uint8_t *to_pad = work;
+  size_t to_pad_len = work_len;
+
   if (vi->auth_type == AUTH_HIDDEN) {
     rc = compute_hidden_auth(work, work_len, auth_buf, vi->auth_size);
     if (rc != CRYPTO_OK) {
@@ -446,19 +465,12 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
     }
     memcpy(pre_pad, work, work_len);
     memcpy(pre_pad + work_len, auth_buf, vi->auth_size);
-  } else {
-    /* Exposed / GCM — no hidden auth appended */
-    pre_pad_len = work_len;
-    pre_pad = malloc(pre_pad_len);
-    if (!pre_pad) {
-      err = KEF_ERR_ALLOC;
-      goto cleanup;
-    }
-    memcpy(pre_pad, work, work_len);
+    to_pad = pre_pad;
+    to_pad_len = pre_pad_len;
   }
 
   /* --- Pad ------------------------------------------------------- */
-  err = apply_padding(vi->padding, pre_pad, pre_pad_len, &padded, &padded_len);
+  err = apply_padding(vi->padding, to_pad, to_pad_len, &padded, &padded_len);
   if (err != KEF_OK)
     goto cleanup;
 
@@ -678,20 +690,9 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
     }
     plain_len = unpadded - vi->auth_size;
 
-    /* Verify hidden auth */
-    uint8_t hash[CRYPTO_SHA256_SIZE];
-    rc = crypto_sha256(decrypted, plain_len, hash);
-    if (rc != CRYPTO_OK) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_CRYPTO;
+    err = verify_hidden_auth(decrypted, plain_len, vi->auth_size);
+    if (err != KEF_OK)
       goto cleanup;
-    }
-    if (secure_memcmp(hash, decrypted + plain_len, vi->auth_size) != 0) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_AUTH;
-      goto cleanup;
-    }
-    secure_memzero(hash, sizeof(hash));
 
   } else {
     /* PAD_NONE with hidden auth (CTR modes) */
@@ -701,19 +702,9 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
     }
     plain_len = cipher_len - vi->auth_size;
 
-    uint8_t hash[CRYPTO_SHA256_SIZE];
-    rc = crypto_sha256(decrypted, plain_len, hash);
-    if (rc != CRYPTO_OK) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_CRYPTO;
+    err = verify_hidden_auth(decrypted, plain_len, vi->auth_size);
+    if (err != KEF_OK)
       goto cleanup;
-    }
-    if (secure_memcmp(hash, decrypted + plain_len, vi->auth_size) != 0) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_AUTH;
-      goto cleanup;
-    }
-    secure_memzero(hash, sizeof(hash));
   }
 
   /* kef_encrypt refuses an empty plaintext, so a zero-length payload here is
