@@ -52,6 +52,15 @@ CONFIG_CAMERA_SC2336_MIPI_RAW8_1280X720_30FPS=n
 CONFIG_CAMERA_SC2336_MIPI_RAW10_1280X720_30FPS=y
 CONFIG_CAMERA_SC2336_MIPI_DEFAULT_FMT_RAW10_1280X720_30FPS=y
 CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=n
+# Link only the sensor/motor/IPA detection the app actually references. The default
+# dynamic-link method retains every detect function, which with the ISP pipeline
+# controller off pulled all eight IPA algorithms into the image unused.
+# Boards that run the ISP pipeline controller gain nothing here (every IPA algorithm is
+# referenced, so none can be dropped) and stay on dynamic link, as crowpanel does: the
+# static-store path routes the prebuilt esp_ipa blob's lookups through a linker --wrap,
+# which is untested with the controller live.
+CONFIG_CAMERA_SENSOR_MOTOR_DETECT_METHOD_STATIC_STORE=y
+CONFIG_ESP_IPA_DETECT_METHOD_STATIC_STORE=y
 # Kern opens only the MIPI-CSI device; drop the unused DVP driver (defaults on for P4 LCDCAM).
 CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n
 CONFIG_LV_USE_CLIB_MALLOC=y
