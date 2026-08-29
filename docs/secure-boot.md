@@ -101,7 +101,7 @@ Setting the `SECURE_BOOT_EN` eFuse bit permanently enables secure boot. From tha
 
 **Required on ESP32-P4: RSA-3072 (RSA-PSS).**
 
-> **ECDSA is broken on ESP32-P4.** Per Espressif's chip errata and the ESP-IDF v6.0.2 documentation, "the ECDSA based Secure Boot V2 scheme is not functional for certain input vectors and is therefore not recommended" on ESP32-P4. Enabling it at all requires `CONFIG_SECURE_BOOT_INSECURE` + `CONFIG_SECURE_BOOT_V2_FORCE_ENABLE_ECDSA` — unacceptable for a signing device. A fix is expected in a future silicon ECO revision. Until Kern can gate on a fixed chip revision, **all builds use RSA-3072.**
+> **ECDSA is broken on ESP32-P4.** Per Espressif's chip errata and the ESP-IDF v6.1 documentation, "the ECDSA based Secure Boot V2 scheme is not functional for certain input vectors and is therefore not recommended" on ESP32-P4. Enabling it at all requires `CONFIG_SECURE_BOOT_INSECURE` + `CONFIG_SECURE_BOOT_V2_FORCE_ENABLE_ECDSA` — unacceptable for a signing device. A fix is expected in a future silicon ECO revision. Until Kern can gate on a fixed chip revision, **all builds use RSA-3072.**
 
 | Factor | RSA-3072 (RSA-PSS) | ECDSA-P256 |
 |--------|--------------------|-----------|
@@ -932,9 +932,9 @@ With secure boot enabled, the anti-phishing words (Phase 2) become a strong tamp
 
 ## 12. References
 
-- [ESP-IDF Secure Boot v2 Documentation (ESP32-P4)](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/security/secure-boot-v2.html) — includes the ECDSA "not functional on ESP32-P4" advisory
-- [ESP-IDF Flash Encryption (ESP32-P4)](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/security/flash-encryption.html) — Key Manager vs eFuse key source, XTS-AES-128/256
-- [ESP-IDF Anti-Rollback](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/api-reference/system/ota.html#anti-rollback)
+- [ESP-IDF Secure Boot v2 Documentation (ESP32-P4)](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/security/secure-boot-v2.html) — includes the ECDSA "not functional on ESP32-P4" advisory
+- [ESP-IDF Flash Encryption (ESP32-P4)](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/security/flash-encryption.html) — Key Manager vs eFuse key source, XTS-AES-128/256
+- [ESP-IDF Anti-Rollback](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/api-reference/system/ota.html#anti-rollback)
 - [ESP-IDF 6.0 Security Migration Guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32/migration-guides/release-6.x/6.0/security.html) — removed/renamed APIs, NISTP192 deprecation
 - [espefuse Reference](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/espefuse/)
 - [espsecure Reference](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/espsecure/)

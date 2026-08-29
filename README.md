@@ -40,10 +40,10 @@ only combination that gets autofocus.
 
 ## Prerequisites
 
-Kern targets [ESP-IDF v6.0.2](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32p4/get-started/index.html). Install it for the `esp32p4` target:
+Kern targets [ESP-IDF v6.1](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/get-started/index.html). Install it for the `esp32p4` target:
 
 ```bash
-git clone --depth 1 --recurse-submodules --shallow-submodules -b v6.0.2 https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+git clone --depth 1 --recurse-submodules --shallow-submodules -b v6.1 https://github.com/espressif/esp-idf.git ~/esp/esp-idf
 ~/esp/esp-idf/install.sh esp32p4
 . ~/esp/esp-idf/export.sh
 ```

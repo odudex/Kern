@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: espressif/idf:v6.0.2
+    container: espressif/idf:v6.1
     strategy:
       fail-fast: false
       matrix:

@@ -4,4 +4,8 @@ dependencies:
     version: "9.5.*"
     public: true
   esp_video:
-    version: "^2"
+    # Held at 2.3.x: esp_video 2.4+ requires esp_ipa 2.3, whose prebuilt v6.0+ ESP32-P4 blob
+    # is compiled with the RISC-V B extension (zba/zbb/zbs) that this core does not implement.
+    # Any board running the ISP pipeline controller then dies on an illegal sh2add instruction
+    # inside esp_ipa_pipeline_create (seen on crowpanel/SC2336).
+    version: "~2.3.0"

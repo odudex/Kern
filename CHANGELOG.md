@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Updated to ESP-IDF 6.1 and newer managed components (esp_video 2.3.0, esp_lvgl_adapter 0.6.4, esp_cam_sensor 2.3.0). esp_video is held at 2.3.x deliberately: 2.4+ requires esp_ipa 2.3, whose prebuilt ESP32-P4 blob is built with the RISC-V B extension this core lacks, which crashes any board running the ISP pipeline controller. No source changes were needed: of 6.1's breaking changes, the deprecated MIPI DSI `on_refresh_done` callback is handled inside the LVGL adapter, the UART wakeup API is unused here, and the ESP32-P4 default-revision move to v3.0 was already covered by the existing `CONFIG_ESP32P4_SELECTS_REV_LESS_V3` setting that keeps v1.x boards supported
+
 ## [0.0.18] - 2026-08-28
 
 ### Added
