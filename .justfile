@@ -14,6 +14,10 @@ _check_board board:
 
 build board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
+    # Without this a failed build still exits 0: the recipe would carry on to the
+    # cp below, which succeeds because cmake writes compile_commands.json at
+    # configure time, and just reports the recipe's last exit status.
+    set -e
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}}' build
     cp ./build_{{board}}/compile_commands.json ./compile_commands.json
