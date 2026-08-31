@@ -768,9 +768,10 @@ void descriptor_loader_show_source_menu(lv_obj_t *parent, void (*qr_cb)(void),
   if (!source_menu)
     return;
 
-  ui_menu_add_entry(source_menu, "From QR Code", qr_cb);
-  ui_menu_add_entry(source_menu, "From Flash", flash_cb);
-  ui_menu_add_entry(source_menu, "From SD Card", sd_cb);
+  ui_menu_add_entry_with_icon(source_menu, ICON_QR_CODE, "From QR Code", qr_cb);
+  ui_menu_add_entry_with_icon(source_menu, LV_SYMBOL_DRIVE, "From Flash",
+                              flash_cb);
+  ui_menu_add_entry_with_icon(source_menu, ICON_SD_CARD, "From SD Card", sd_cb);
   ui_menu_show(source_menu);
 }
 

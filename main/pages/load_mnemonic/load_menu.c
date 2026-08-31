@@ -1,10 +1,10 @@
 // Load Menu Page
 
 #include "load_menu.h"
-#include "../../core/base43.h"
 #include "../../core/kef.h"
 #include "../../core/storage.h"
 #include "../../qr/scanner.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../home/home.h"
@@ -57,26 +57,11 @@ static void return_from_qr_scanner_cb(void) {
   qr_scanner_page_destroy();
 
   if (scanned_content) {
-    const uint8_t *envelope = (const uint8_t *)scanned_content;
-    size_t envelope_len = content_len;
-    uint8_t *decoded = NULL;
-    bool is_kef = kef_is_envelope(envelope, envelope_len);
+    size_t envelope_len = 0;
+    uint8_t *envelope = kef_envelope_from_bytes(
+        (const uint8_t *)scanned_content, content_len, &envelope_len);
 
-    if (!is_kef) {
-      /* Try base43 decode (Krux encodes KEF envelopes as base43 for QR) */
-      size_t decoded_len = 0;
-      if (base43_decode(scanned_content, content_len, &decoded, &decoded_len) &&
-          kef_is_envelope(decoded, decoded_len)) {
-        envelope = decoded;
-        envelope_len = decoded_len;
-        is_kef = true;
-      } else {
-        free(decoded);
-        decoded = NULL;
-      }
-    }
-
-    if (is_kef) {
+    if (envelope) {
       kef_decrypt_page_create(lv_screen_active(), return_from_kef_decrypt_cb,
                               success_from_kef_decrypt_cb, envelope,
                               envelope_len);
@@ -87,7 +72,7 @@ static void return_from_qr_scanner_cb(void) {
           success_from_key_confirmation_cb, scanned_content, content_len);
       key_confirmation_page_show();
     }
-    free(decoded);
+    free(envelope);
     free(scanned_content);
   } else {
     load_menu_page_show();
@@ -239,10 +224,14 @@ void load_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   if (!load_menu)
     return;
 
-  ui_menu_add_entry(load_menu, "From QR Code", from_qr_code_cb);
-  ui_menu_add_entry(load_menu, "From Manual Input", from_manual_input_cb);
-  ui_menu_add_entry(load_menu, "From Flash", from_flash_cb);
-  ui_menu_add_entry(load_menu, "From SD Card", from_sd_cb);
+  ui_menu_add_entry_with_icon(load_menu, ICON_QR_CODE, "From QR Code",
+                              from_qr_code_cb);
+  ui_menu_add_entry_with_icon(load_menu, LV_SYMBOL_KEYBOARD,
+                              "From Manual Input", from_manual_input_cb);
+  ui_menu_add_entry_with_icon(load_menu, LV_SYMBOL_DRIVE, "From Flash",
+                              from_flash_cb);
+  ui_menu_add_entry_with_icon(load_menu, ICON_SD_CARD, "From SD Card",
+                              from_sd_cb);
   ui_menu_show(load_menu);
 }
 

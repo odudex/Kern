@@ -13,10 +13,15 @@ _Static_assert(QR_CODE_BUF_LEN == qrcodegen_BUFFER_LEN_MAX,
                "QR_CODE_BUF_LEN must match qrcodegen_BUFFER_LEN_MAX");
 
 // Draw modules [x0,x0+w) x [y0,y0+h) of qr_buf onto qr_obj's I1 canvas at the
-// given scale, centering a (cell*scale) px block. cell == modules draws the
-// full QR; cell == interval magnifies one region at a constant module size.
+// given scale, centering a (cell*scale) px block and sliding it by (ofs_x,
+// ofs_y) px. cell == modules draws the full QR; cell == interval magnifies one
+// region at a constant module size. The block, not the canvas, is the clip:
+// scale is a truncated division, so the canvas is usually a little wider, and
+// a caller may hand over the modules around the block to slide in without them
+// ever showing in that surround.
 static void qr_blit_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0,
-                           int y0, int w, int h, int scale, int cell) {
+                           int y0, int w, int h, int scale, int cell,
+                           int32_t ofs_x, int32_t ofs_y) {
   lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
   if (!draw_buf || scale <= 0)
     return;
@@ -25,6 +30,9 @@ static void qr_blit_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0,
   int32_t margin = (canvas_size - cell * scale) / 2;
   if (margin < 0)
     margin = 0;
+  int32_t block_end = LV_MIN(margin + cell * scale, canvas_size);
+  int32_t margin_x = margin + ofs_x;
+  int32_t margin_y = margin + ofs_y;
 
   lv_draw_buf_clear(draw_buf, NULL);
   lv_canvas_set_palette(qr_obj, 0,
@@ -36,27 +44,34 @@ static void qr_blit_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0,
   uint32_t stride = draw_buf->header.stride;
 
   for (int ry = 0; ry < h; ry++) {
-    int32_t py = margin + ry * scale;
-    if (py < 0 || py >= canvas_size)
+    int32_t py = margin_y + ry * scale;
+    int32_t py_end = py + scale;
+    if (py_end <= margin)
       continue;
+    if (py >= block_end)
+      break;
+    // Every row of a module block is the same, so a block cut by the top edge
+    // is drawn from its first visible row down.
+    int32_t first = LV_MAX(py, margin);
     for (int rx = 0; rx < w; rx++) {
-      if (qrcodegen_getModule(qr_buf, x0 + rx, y0 + ry)) {
-        int32_t px = margin + rx * scale;
-        for (int32_t dx = 0; dx < scale; dx++) {
-          int32_t x = px + dx;
-          if (x < 0 || x >= canvas_size)
-            continue;
-          buf[py * stride + (x >> 3)] |= (0x80 >> (x & 7));
-        }
-      }
-    }
-    uint8_t *src_row = buf + py * stride;
-    for (int32_t dy = 1; dy < scale; dy++) {
-      int32_t yy = py + dy;
-      if (yy >= canvas_size)
+      int32_t px = margin_x + rx * scale;
+      int32_t px_end = px + scale;
+      if (px_end <= margin)
+        continue;
+      if (px >= block_end)
         break;
-      memcpy(buf + yy * stride, src_row, stride);
+      if (!qrcodegen_getModule(qr_buf, x0 + rx, y0 + ry))
+        continue;
+
+      uint8_t *dst = buf + first * stride;
+      int32_t first_x = LV_MAX(px, margin);
+      int32_t last_x = LV_MIN(px_end, block_end);
+      for (int32_t x = first_x; x < last_x; x++)
+        dst[x >> 3] |= (0x80 >> (x & 7));
     }
+    uint8_t *src_row = buf + first * stride;
+    for (int32_t yy = first + 1; yy < py_end && yy < block_end; yy++)
+      memcpy(buf + yy * stride, src_row, stride);
   }
 
   lv_image_cache_drop(draw_buf);
@@ -437,7 +452,7 @@ lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
     result->scale = scale;
   }
 
-  qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules);
+  qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules, 0, 0);
   free(qr_buf);
   return LV_RESULT_OK;
 }
@@ -536,23 +551,30 @@ lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
     result->scale = scale;
   }
 
-  qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules);
+  qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules, 0, 0);
   free(qr_buf);
   return LV_RESULT_OK;
 }
 
-void qr_draw_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0, int y0,
-                    int w, int h, int cell) {
-  if (!qr_obj || !qr_buf || w <= 0 || h <= 0 || cell < 1)
-    return;
+int32_t qr_module_scale(lv_obj_t *qr_obj, int cell) {
+  if (!qr_obj || cell < 1)
+    return 0;
 
   lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(qr_obj);
   if (!draw_buf)
+    return 0;
+
+  return LV_MAX(draw_buf->header.w / cell, 1);
+}
+
+void qr_draw_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0, int y0,
+                    int w, int h, int cell, int32_t ofs_x, int32_t ofs_y) {
+  if (!qr_buf || w <= 0 || h <= 0)
     return;
 
-  int scale = draw_buf->header.w / cell;
-  if (scale < 1)
-    scale = 1;
+  int32_t scale = qr_module_scale(qr_obj, cell);
+  if (scale == 0)
+    return;
 
-  qr_blit_region(qr_obj, qr_buf, x0, y0, w, h, scale, cell);
+  qr_blit_region(qr_obj, qr_buf, x0, y0, w, h, scale, cell, ofs_x, ofs_y);
 }

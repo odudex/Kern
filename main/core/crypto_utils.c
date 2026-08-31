@@ -1,4 +1,7 @@
 #include "crypto_utils.h"
+#include "entropy_pool.h"
+#include "pbkdf2.h"
+#include <bootloader_random.h>
 #include <esp_random.h>
 #include <psa/crypto.h>
 #include <stdbool.h>
@@ -76,31 +79,12 @@ int crypto_pbkdf2_sha256(const uint8_t *password, size_t password_len,
                                           password_len, salt, salt_len,
                                           iterations, key_len, key_out);
   return (ret == 0) ? CRYPTO_OK : CRYPTO_ERR_INTERNAL;
+#elif defined(CONFIG_KERN_PBKDF2_HW_SHA)
+  return pbkdf2_hw_sha256(password, password_len, salt, salt_len, iterations,
+                          key_out, key_len);
 #else
-  if (!ensure_psa_init()) {
-    return CRYPTO_ERR_INTERNAL;
-  }
-
-  psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
-  psa_status_t st =
-      psa_key_derivation_setup(&op, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256));
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_input_integer(&op, PSA_KEY_DERIVATION_INPUT_COST,
-                                          iterations);
-  }
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SALT,
-                                        salt, salt_len);
-  }
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_PASSWORD,
-                                        password, password_len);
-  }
-  if (st == PSA_SUCCESS) {
-    st = psa_key_derivation_output_bytes(&op, key_out, key_len);
-  }
-  psa_key_derivation_abort(&op);
-  return (st == PSA_SUCCESS) ? CRYPTO_OK : CRYPTO_ERR_INTERNAL;
+  return pbkdf2_psa_sha256(password, password_len, salt, salt_len, iterations,
+                           key_out, key_len);
 #endif
 }
 
@@ -283,10 +267,34 @@ int crypto_aes_gcm_decrypt(const uint8_t key[CRYPTO_AES_KEY_SIZE],
 
 /* --- Random --- */
 
-void crypto_random_bytes(uint8_t *buf, size_t len) {
-  if (buf && len > 0) {
-    esp_fill_random(buf, len);
+int crypto_random_bytes(uint8_t *buf, size_t len) {
+  if (!buf || len == 0)
+    return CRYPTO_ERR_INVALID_ARG;
+
+  // The P4 bootloader disables the SAR ADC noise source before handing off to
+  // the application, so esp_random() has no physical entropy mixed into it
+  // unless the source is switched back on. IDF's random.rst claims otherwise
+  // for chips without RF, but the registers say otherwise on silicon: at app
+  // start the ADC trigger is off, matching the post-disable state exactly.
+  // Not reentrant - every caller here is sequential, init- or UI-driven.
+  bootloader_random_enable();
+  esp_fill_random(buf, len);
+  bootloader_random_disable();
+
+  // Health check. An all-zero block means the RNG is dead, not that we drew
+  // 2^-64 odds; callers burn these bytes into eFuse, so failing loudly beats
+  // provisioning a key of zeros. Skipped below 8 bytes, where all-zero is a
+  // plausible draw.
+  if (len >= 8) {
+    uint8_t acc = 0;
+    for (size_t i = 0; i < len; i++)
+      acc |= buf[i];
+    if (acc == 0)
+      return CRYPTO_ERR_INTERNAL;
   }
+
+  entropy_pool_mix(buf, len);
+  return CRYPTO_OK;
 }
 
 /* --- Padding --- */

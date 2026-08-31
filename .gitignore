@@ -1,10 +1,13 @@
 # Build
 build/
 build_wave_35/
+build_pbkdf2_*/
 build_wave_4b/
 build_wave_43/
 build_wave_5/
+build_wave_7b/
 build_crowpanel/
+build_wave_7b/
 build_tdisplay_p4/
 sdkconfig
 sdkconfig.old
@@ -29,6 +32,7 @@ simulator/sim_data/
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/deflate_codec/test/test_deflate_codec
+main/qr/test/test_parser
 main/core/test/test_derivation_path
 main/core/test/test_ss_whitelist_parse
 main/core/test/test_ss_whitelist_is_whitelisted
@@ -39,6 +43,9 @@ main/core/test/test_registry_parse
 main/core/test/test_psbt_classify
 main/core/test/test_miniscript_policy
 main/core/test/test_bip322
+main/core/test/test_estimated_entropy
+main/core/test/test_pin_attempt
+main/core/test/test_kef
 main/core/test/combined.o
 main/core/test/libwally.a
 

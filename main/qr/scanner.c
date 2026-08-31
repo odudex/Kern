@@ -2,6 +2,7 @@
 
 #include "scanner.h"
 #include "../components/cUR/src/ur_decoder.h"
+#include "../core/entropy_pool.h"
 #include "../core/settings.h"
 #include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
@@ -621,7 +622,12 @@ static void update_decode_roi(qr_decode_roi_t *roi,
   roi->height = target_side;
 }
 
-static const char *ur_failure_message(QRPartParser *parser) {
+static const char *scan_failure_message(QRPartParser *parser) {
+  if (parser && parser->alloc_failed) {
+    ESP_LOGE(TAG, "QR scan aborted: allocation failure while storing parts");
+    return "QR scan failed: out of memory";
+  }
+
   if (!parser || parser->format != FORMAT_UR || !parser->ur_decoder)
     return "Invalid QR sequence";
 
@@ -762,7 +768,7 @@ static void qr_decode_task(void *pvParameters) {
           }
 
           if (qr_parser_is_failed(qr_parser)) {
-            scan_failure_msg = ur_failure_message(qr_parser);
+            scan_failure_msg = scan_failure_message(qr_parser);
             scan_failed = true;
             break;
           }
@@ -987,6 +993,21 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   if (camera_buf_hes == 0 || camera_buf_ves == 0) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
+  }
+
+  // Sensor shot noise is real physical entropy and the frame is already here.
+  // memcpy rather than a uint32_t cast: the callback contract hands over a
+  // uint8_t *, so alignment is an assumption about today's allocator, not a
+  // guarantee. Three separate stirs rather than one XOR of the three, which
+  // would let equal samples cancel on a uniform frame.
+  if (camera_buf && camera_buf_len >= sizeof(uint32_t)) {
+    size_t last = (camera_buf_len - sizeof(uint32_t)) & ~(size_t)3;
+    size_t offsets[3] = {0, (last / 2) & ~(size_t)3, last};
+    for (size_t i = 0; i < 3; i++) {
+      uint32_t word;
+      memcpy(&word, camera_buf + offsets[i], sizeof(word));
+      entropy_pool_stir(word);
+    }
   }
 
   if (settings_active) {

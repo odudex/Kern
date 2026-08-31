@@ -41,6 +41,17 @@
 /* Iteration encoding threshold */
 #define KEF_ITER_THRESHOLD 10000
 
+/*
+ * Accepted PBKDF2 work factor for an envelope being read.  The floor stops a
+ * crafted envelope from declaring a trivial work factor and bypassing key
+ * stretching; the ceiling stops one from parking the device in PBKDF2 for
+ * minutes (the 3-byte field can encode up to 100,000,000).  Krux's own UI
+ * caps the setting at 500,000, so the ceiling is 20x above anything a real
+ * envelope carries.
+ */
+#define KEF_MIN_ITERATIONS 10000
+#define KEF_MAX_ITERATIONS 10000000
+
 typedef enum {
   KEF_OK = 0,
   KEF_ERR_INVALID_ARG = -1,
@@ -52,6 +63,7 @@ typedef enum {
   KEF_ERR_DECOMPRESS = -7,
   KEF_ERR_ENVELOPE_TOO_SHORT = -8,
   KEF_ERR_DUPLICATE_BLOCKS = -9,
+  KEF_ERR_INVALID_ITERATIONS = -10,
 } kef_error_t;
 
 /*
@@ -84,6 +96,7 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
  * Parse header fields without decrypting.
  * id_out points into the envelope buffer (not a copy).
  * version_out and iterations_out may be NULL if not needed.
+ * Rejects an iteration count outside [KEF_MIN_ITERATIONS, KEF_MAX_ITERATIONS].
  */
 kef_error_t kef_parse_header(const uint8_t *envelope, size_t env_len,
                              const uint8_t **id_out, size_t *id_len_out,

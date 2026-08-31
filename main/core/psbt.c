@@ -111,6 +111,7 @@ void psbt_audit_input_amounts(const struct wally_psbt *psbt,
 
   for (size_t i = 0; i < out->num_inputs; i++) {
     psbt_input_amount_t amount = psbt_get_input_amount(psbt, i);
+    out->total += amount.value;
     switch (amount.status) {
     case PSBT_AMOUNT_PROVEN:
       out->proven++;
@@ -134,6 +135,75 @@ void psbt_audit_input_amounts(const struct wally_psbt *psbt,
 
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {
   return psbt_get_input_amount(psbt, index).value;
+}
+
+/* 21 million BTC. libwally already rejects a transaction whose outputs exceed
+ * the supply, so this only backstops a total assembled some other way -- but
+ * it is what keeps the sum below from silently wrapping. */
+#define PSBT_MAX_SATOSHI (21000000ull * WALLY_SATOSHI_PER_BTC)
+
+bool psbt_total_output_value(const struct wally_psbt *psbt, uint64_t *out) {
+  if (!psbt || !out)
+    return false;
+  *out = 0;
+
+  struct wally_tx *tx = psbt_tx_alloc(psbt);
+  if (!tx)
+    return false;
+
+  uint64_t total = 0;
+  bool ok = true;
+  for (size_t i = 0; i < tx->num_outputs && ok; i++) {
+    uint64_t value = tx->outputs[i].satoshi;
+    if (value > PSBT_MAX_SATOSHI || total > PSBT_MAX_SATOSHI - value)
+      ok = false;
+    else
+      total += value;
+  }
+  wally_tx_free(tx);
+
+  if (ok)
+    *out = total;
+  return ok;
+}
+
+struct wally_tx *psbt_tx_alloc(const struct wally_psbt *psbt) {
+  struct wally_tx *tx = NULL;
+  if (!psbt ||
+      wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &tx) != WALLY_OK)
+    return NULL;
+  return tx;
+}
+
+/* True when this PSBT keeps BIP-370's tx-modifiable flags. v0 has no such
+ * field: it is implicitly modifiable until finalized. */
+static bool psbt_is_v2(const struct wally_psbt *psbt) {
+  size_t version = 0;
+  return psbt && wally_psbt_get_version(psbt, &version) == WALLY_OK &&
+         version == WALLY_PSBT_VERSION_2;
+}
+
+/* Bitcoin Core's IsWitnessProgram: OP_0 or OP_1..OP_16, then a single push of
+ * 2..40 bytes making up the whole script. */
+static bool spk_is_witness_program(const unsigned char *spk, size_t spk_len) {
+  if (spk_len < 4 || spk_len > 42)
+    return false;
+  if (spk[0] != OP_0 && (spk[0] < OP_1 || spk[0] > OP_16))
+    return false;
+  return (size_t)spk[1] + 2 == spk_len;
+}
+
+uint64_t psbt_output_dust_threshold(const unsigned char *spk, size_t spk_len) {
+  if (!spk || !spk_len || spk[0] == OP_RETURN)
+    return 0; /* provably unspendable: never dust */
+
+  /* Core's GetDustThreshold: the serialized output plus the cheapest input
+   * that could spend it, priced at the 3000 sat/kvB dust relay fee. The input
+   * side is 67 bytes for a witness program (the witness is discounted) and
+   * 148 for everything else. Yields the familiar 294 / 330 / 546 thresholds. */
+  size_t size = 8 + 1 + spk_len; /* value + script length + script */
+  size += spk_is_witness_program(spk, spk_len) ? 67 : 148;
+  return (uint64_t)size * 3000u / 1000u;
 }
 
 bool psbt_sighash_is_supported(uint32_t sighash) {
@@ -567,9 +637,8 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
 
-  struct wally_tx *global_tx = NULL;
-  if (wally_psbt_get_global_tx_alloc(psbt, &global_tx) != WALLY_OK ||
-      !global_tx)
+  struct wally_tx *global_tx = psbt_tx_alloc(psbt);
+  if (!global_tx)
     return result;
 
   if (i >= global_tx->num_outputs) {
@@ -929,6 +998,31 @@ static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
   return true;
 }
 
+/* BIP-370 signer rules: a signature that is not ANYONECANPAY pins the input
+ * set, and one that is not SIGHASH_NONE pins the output set, so both flags
+ * must be cleared once we have signed. `input_is_signable` refuses everything
+ * but ALL/DEFAULT, so reaching here means both apply unconditionally.
+ *
+ * libwally has this logic in wally_psbt_add_input_signature(), but its own
+ * signing path adds signatures at the input level and never runs it, so the
+ * flags survive a signing pass untouched. Leaving them set tells the next
+ * tool in the chain it may still add inputs or outputs, which would silently
+ * invalidate the signature we just produced. */
+static void apply_signer_modifiable_rules(struct wally_psbt *psbt) {
+  if (!psbt_is_v2(psbt))
+    return;
+
+  size_t flags = 0;
+  if (wally_psbt_get_tx_modifiable_flags(psbt, &flags) != WALLY_OK)
+    return;
+
+  uint32_t pinned = (uint32_t)flags & ~(uint32_t)(WALLY_PSBT_TXMOD_INPUTS |
+                                                  WALLY_PSBT_TXMOD_OUTPUTS);
+  if (pinned != (uint32_t)flags &&
+      wally_psbt_set_tx_modifiable_flags(psbt, pinned) != WALLY_OK)
+    ESP_LOGW(TAG, "Failed to clear tx-modifiable flags after signing");
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1032,6 +1126,9 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   for (size_t i = 0; i < num_inputs; i++)
     restore_input_state(psbt, i, &plan[i], result);
 
+  if (signatures_added)
+    apply_signer_modifiable_rules(psbt);
+
 cleanup:
   for (size_t i = 0; i < num_inputs; i++)
     release_input_state(&plan[i]);
@@ -1045,9 +1142,18 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
     return NULL;
   }
 
-  struct wally_tx *global_tx = NULL;
-  if (wally_psbt_get_global_tx_alloc(psbt, &global_tx) != WALLY_OK ||
-      !global_tx) {
+  /* The trimmed PSBT is rebuilt from a transaction, and that constructor only
+   * produces v0. Rebuilding a v2 one would mean either exporting it downgraded
+   * or upgrading it back -- and the upgrade path rewrites the tx-modifiable
+   * flags to fully-modifiable, undoing the signer rules applied above. Trim is
+   * only a payload-size optimisation, so decline it and let the caller export
+   * the PSBT as it arrived. */
+  if (psbt_is_v2(psbt)) {
+    return NULL;
+  }
+
+  struct wally_tx *global_tx = psbt_tx_alloc(psbt);
+  if (!global_tx) {
     return NULL;
   }
 

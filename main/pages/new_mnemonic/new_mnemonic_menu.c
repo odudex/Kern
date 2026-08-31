@@ -1,6 +1,7 @@
 // New Mnemonic Menu Page
 
 #include "new_mnemonic_menu.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
@@ -141,9 +142,12 @@ void new_mnemonic_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   if (!new_mnemonic_menu)
     return;
 
-  ui_menu_add_entry(new_mnemonic_menu, "From Dice Rolls", from_dice_rolls_cb);
-  ui_menu_add_entry(new_mnemonic_menu, "From Words", from_words_cb);
-  ui_menu_add_entry(new_mnemonic_menu, "From Camera", from_camera_cb);
+  ui_menu_add_entry_with_icon(new_mnemonic_menu, ICON_DICE, "From Dice Rolls",
+                              from_dice_rolls_cb);
+  ui_menu_add_entry_with_icon(new_mnemonic_menu, LV_SYMBOL_KEYBOARD,
+                              "From Words", from_words_cb);
+  ui_menu_add_entry_with_icon(new_mnemonic_menu, LV_SYMBOL_IMAGE, "From Camera",
+                              from_camera_cb);
   ui_menu_show(new_mnemonic_menu);
 }
 

@@ -78,7 +78,11 @@ esp_err_t nvs_secure_provision(void) {
 
   if (status == NVS_SECURE_KEY_NOT_PROVISIONED) {
     uint8_t key[32];
-    crypto_random_bytes(key, sizeof(key));
+    if (crypto_random_bytes(key, sizeof(key)) != CRYPTO_OK) {
+      secure_memzero(key, sizeof(key));
+      ESP_LOGE(TAG, "Failed to generate eFuse key");
+      return ESP_FAIL;
+    }
 
     esp_err_t err = esp_efuse_write_key(
         EFUSE_BLK_KEY4, ESP_EFUSE_KEY_PURPOSE_HMAC_UP, key, sizeof(key));

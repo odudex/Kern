@@ -5,7 +5,6 @@
 #include "../../core/key.h"
 #include "../../core/registry.h"
 #include "../../core/wallet.h"
-#include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/key_info.h"
@@ -16,9 +15,6 @@
 #include <lvgl.h>
 #include <stdio.h>
 #include <string.h>
-#include <wally_bip32.h>
-#include <wally_bip39.h>
-#include <wally_core.h>
 
 #include "../../core/settings.h"
 #include "../../utils/secure_mem.h"
@@ -53,7 +49,6 @@ static lv_obj_t *title_cont = NULL;
 static void (*return_callback)(void) = NULL;
 static char *stored_passphrase = NULL;
 static char *mnemonic_content = NULL;
-static char base_fingerprint_hex[9] = {0};
 static wallet_network_t selected_network = WALLET_NETWORK_DEFAULT;
 
 static bool g_settings_applied = false;
@@ -120,71 +115,12 @@ static void partial_signing_cb(lv_event_t *e) {
   settings_set_partial_signing(lv_obj_has_state(target, LV_STATE_CHECKED));
 }
 
-static void add_fingerprint_pair(lv_obj_t *parent, const char *fp_hex,
-                                 bool highlighted) {
-  lv_color_t color = highlighted ? highlight_color() : secondary_color();
-  ui_icon_text_row_create(parent, ICON_FINGERPRINT, fp_hex, color);
-}
-
-static void update_title_with_passphrase(const char *passphrase) {
-  if (!title_cont || !mnemonic_content)
+static void refresh_fingerprint_display(void) {
+  if (!title_cont)
     return;
 
-  // Clear existing content
   lv_obj_clean(title_cont);
-
-  // The pair row is centered in the nav band; reserving the back-button zone
-  // on the left shifts it right so the base fingerprint clears the button.
-  // A single fingerprint is narrow enough to stay centered.
-  lv_obj_t *bar = lv_obj_get_parent(title_cont);
-
-  // If no passphrase, show only base fingerprint (highlighted)
-  if (!passphrase || passphrase[0] == '\0') {
-    lv_obj_set_style_pad_left(bar, 0, 0);
-    add_fingerprint_pair(title_cont, base_fingerprint_hex, true);
-    return;
-  }
-
-  // Calculate fingerprint with passphrase
-  unsigned char seed[BIP39_SEED_LEN_512];
-  struct ext_key *master_key = NULL;
-
-  if (bip39_mnemonic_to_seed512(mnemonic_content, passphrase, seed,
-                                sizeof(seed)) != WALLY_OK) {
-    secure_memzero(seed, sizeof(seed));
-    return;
-  }
-
-  if (bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
-                                &master_key) != WALLY_OK) {
-    secure_memzero(seed, sizeof(seed));
-    return;
-  }
-
-  unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
-  bip32_key_get_fingerprint(master_key, fingerprint, BIP32_KEY_FINGERPRINT_LEN);
-  secure_memzero(seed, sizeof(seed));
-  bip32_key_free(master_key);
-
-  char *passphrase_fp_hex = NULL;
-  if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
-                           &passphrase_fp_hex) == WALLY_OK) {
-    lv_obj_set_style_pad_left(bar, theme_corner_button_width(), 0);
-
-    // Base fingerprint (not highlighted)
-    add_fingerprint_pair(title_cont, base_fingerprint_hex, false);
-
-    // Arrow separator
-    lv_obj_t *arrow = lv_label_create(title_cont);
-    lv_label_set_text(arrow, ">");
-    lv_obj_set_style_text_font(arrow, theme_font_small(), 0);
-    lv_obj_set_style_text_color(arrow, secondary_color(), 0);
-
-    // Passphrase fingerprint (highlighted)
-    add_fingerprint_pair(title_cont, passphrase_fp_hex, true);
-
-    wally_free_string(passphrase_fp_hex);
-  }
+  ui_fingerprint_create(title_cont, highlight_color());
 }
 
 static void passphrase_return_cb(void) {
@@ -203,9 +139,7 @@ static void passphrase_success_cb(const char *passphrase) {
   wallet_settings_page_show();
 
   apply_wallet_changes();
-
-  // Update title to show both fingerprints
-  update_title_with_passphrase(stored_passphrase);
+  refresh_fingerprint_display();
 }
 
 static void refresh_wallet_attributes(void) {
@@ -253,37 +187,6 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     return;
   }
 
-  // Calculate base fingerprint (without passphrase)
-  unsigned char seed[BIP39_SEED_LEN_512];
-  struct ext_key *master_key = NULL;
-
-  if (bip39_mnemonic_to_seed512(mnemonic_content, NULL, seed, sizeof(seed)) !=
-          WALLY_OK ||
-      bip32_key_from_seed_alloc(seed, sizeof(seed), BIP32_VER_MAIN_PRIVATE, 0,
-                                &master_key) != WALLY_OK) {
-    secure_memzero(seed, sizeof(seed));
-    dialog_show_error_timeout("Failed to process mnemonic", return_callback, 0);
-    return;
-  }
-
-  unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
-  bip32_key_get_fingerprint(master_key, fingerprint, BIP32_KEY_FINGERPRINT_LEN);
-  secure_memzero(seed, sizeof(seed));
-  bip32_key_free(master_key);
-
-  char *fingerprint_hex = NULL;
-  if (wally_hex_from_bytes(fingerprint, BIP32_KEY_FINGERPRINT_LEN,
-                           &fingerprint_hex) != WALLY_OK) {
-    dialog_show_error_timeout("Failed to format fingerprint", return_callback,
-                              0);
-    return;
-  }
-
-  strncpy(base_fingerprint_hex, fingerprint_hex,
-          sizeof(base_fingerprint_hex) - 1);
-  base_fingerprint_hex[sizeof(base_fingerprint_hex) - 1] = '\0';
-  wally_free_string(fingerprint_hex);
-
   // Main screen
   wallet_settings_screen = lv_obj_create(parent);
   lv_obj_set_size(wallet_settings_screen, LV_PCT(100), LV_PCT(100));
@@ -298,7 +201,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(wallet_settings_screen, theme_default_padding(), 0);
 
-  // Top nav bar: fingerprint pair centered in the corner-button band so it
+  // Top nav bar: fingerprint centered in the corner-button band so it
   // aligns with the back button.
   lv_obj_t *nav_bar = lv_obj_create(wallet_settings_screen);
   lv_obj_set_size(nav_bar, LV_PCT(100), theme_corner_button_height());
@@ -308,10 +211,10 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(nav_bar, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Container for fingerprint pair(s)
+  // Container for the fingerprint
   title_cont = theme_create_flex_row(nav_bar);
   lv_obj_set_style_pad_column(title_cont, 8, 0);
-  add_fingerprint_pair(title_cont, base_fingerprint_hex, true);
+  refresh_fingerprint_display();
 
   // Content below the nav bar — scrollable column of settings rows.
   lv_obj_t *content = lv_obj_create(wallet_settings_screen);
@@ -400,7 +303,6 @@ void wallet_settings_page_destroy(void) {
 
   network_dropdown = NULL;
   title_cont = NULL;
-  secure_memzero(base_fingerprint_hex, sizeof(base_fingerprint_hex));
   return_callback = NULL;
   selected_network = WALLET_NETWORK_DEFAULT;
 }

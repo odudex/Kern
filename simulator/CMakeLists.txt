@@ -130,6 +130,7 @@ set(APP_UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main/ui)
 set(SIM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
+    ${APP_UI_DIR}/entropy_input.c
     ${APP_UI_DIR}/font_policy.c
     ${APP_UI_DIR}/theme.c
     ${APP_UI_DIR}/theme_widgets.c
@@ -158,7 +159,10 @@ set(STUB_SOURCES
 # --- Application utilities ---
 set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/dice_quality.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/estimated_entropy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/worker_task.c
 )
 
 # --- Core application modules ---
@@ -168,6 +172,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/entropy_pool.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/wallet.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
@@ -252,6 +257,7 @@ if(SIM_WEBCAM)
             ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/v4l2_capture.c
         )
     endif()
+    set_target_properties(v4l2_capture PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_include_directories(v4l2_capture PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim/include
         ${CMAKE_CURRENT_SOURCE_DIR}/platform/video_sim
@@ -402,6 +408,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
     $<$<STREQUAL:${SIM_BOARD},wave_43>:CONFIG_KERN_BOARD_WAVE_43=1>
     $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
+    $<$<STREQUAL:${SIM_BOARD},wave_7b>:CONFIG_KERN_BOARD_WAVE_7B=1>
     $<$<STREQUAL:${SIM_BOARD},tdisplay_p4>:CONFIG_KERN_BOARD_TDISPLAY_P4=1>
 )
 
@@ -453,7 +460,9 @@ add_executable(kern_sim_storage_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage_smoke.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/entropy_pool.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/stubs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/sim_flash.c

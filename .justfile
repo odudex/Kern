@@ -2,12 +2,12 @@ export IDF_PATH := env_var("HOME") + "/esp/esp-idf"
 export IDF_PATH_FORCE := "1"
 
 # Board parameter: "wave_4b" (default), "wave_35", "wave_5", "wave_43",
-# "crowpanel", or "tdisplay_p4"
+# "crowpanel", "wave_7b", or "tdisplay_p4"
 # Usage: just build wave_35, just flash wave_4b, just build tdisplay_p4
 # Each board builds into its own build_<board>/ directory, so switching
 # boards is instant (no clean required) and per-board builds stay incremental.
 
-boards := "wave_4b wave_35 wave_5 wave_43 crowpanel tdisplay_p4"
+boards := "wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b tdisplay_p4"
 
 _check_board board:
     #!/usr/bin/env sh
@@ -29,6 +29,12 @@ monitor board="wave_4b": (_check_board board)
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig monitor
 
+# Build with the PBKDF2 accelerator and its on-device check, then watch it run
+pbkdf2-check board="wave_4b": (_check_board board)
+    #!/usr/bin/env sh
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    idf.py -B build_pbkdf2_{{board}} -D SDKCONFIG=build_pbkdf2_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}};sdkconfig.pbkdf2check' flash monitor
+
 format:
     ./scripts/format.sh
 
@@ -36,12 +42,14 @@ test:
     ./scripts/test.sh
 
 clean:
-    rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_tdisplay_p4
+    rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b build_tdisplay_p4
+    rm -fRd build_pbkdf2_*
     rm -f sdkconfig
     rm -fRd compile_commands.json
     rm -fRd .cache/
     rm -rf simulator/build
     make -C components/bbqr/test clean
+    make -C main/qr/test clean
     make -C main/core/test clean
 
 # Stages branding and any locally built firmware into site/ the same way the
@@ -71,15 +79,14 @@ site port="8000":
     python3 -m http.server {{port}} -d site
 
 # Simulator board resolution mapping
-# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800,
-# crowpanel: 1024x600, tdisplay_p4: 568x1232
+# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800, crowpanel: 1024x600, wave_7b: 1024x600, tdisplay_p4: 568x1232
 _sim_h_res board:
     #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; wave_43) echo 480;; crowpanel) echo 1024;; tdisplay_p4) echo 568;; *) echo 720;; esac
+    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; wave_43) echo 480;; crowpanel) echo 1024;; wave_7b) echo 1024;; tdisplay_p4) echo 568;; *) echo 720;; esac
 
 _sim_v_res board:
     #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; wave_43) echo 800;; crowpanel) echo 600;; tdisplay_p4) echo 1232;; *) echo 720;; esac
+    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; wave_43) echo 800;; crowpanel) echo 600;; wave_7b) echo 600;; tdisplay_p4) echo 1232;; *) echo 720;; esac
 
 # Build the desktop simulator
 sim-build board="wave_4b": (_check_board board)

@@ -8,14 +8,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <lvgl.h>
-#include <math.h>
 #include <string.h>
 #include <wally_crypto.h>
 
 #include "../components/video/video.h"
+#include "../core/crypto_utils.h"
+#include "../core/entropy_pool.h"
 #include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
 #include "../ui/theme_widgets.h"
+#include "../utils/estimated_entropy.h"
 #include "../utils/memory_utils.h"
 #include "../utils/secure_mem.h"
 
@@ -38,7 +40,12 @@ static const char *TAG = "capture_entropy";
 #define CAMERA_SIZE ((CAMERA_INPUT_CROP * CAMERA_PPA_FRAG) / 16)
 #define CAMERA_WIDTH CAMERA_SIZE
 #define CAMERA_HEIGHT CAMERA_SIZE
-#define ENTROPY_THRESHOLD 6.0 // Minimum acceptable entropy (bits)
+// Minimum acceptable bits per pixel. Not derived from the 128/256 bits the seed
+// needs. It is a sanity gate on the frame, set high only because the camera is
+// a rich source and demanding more costs nothing: what fails it is a covered
+// lens, a dark room, or a blank wall.
+#define ESTIMATED_ENTROPY_THRESHOLD 5.0f
+#define ESTIMATED_ENTROPY_UNAVAILABLE (-1.0f)
 
 typedef enum {
   CAMERA_EVENT_TASK_RUN = BIT(0),
@@ -105,16 +112,17 @@ static uint8_t *allocate_buffer(size_t size) {
   return buf;
 }
 
-static double calculate_shannon_entropy(const uint8_t *rgb565_data,
-                                        size_t pixel_count) {
+// Returns bits per pixel, or ESTIMATED_ENTROPY_UNAVAILABLE if the histogram
+// could not be allocated - a distinct outcome from a genuinely flat frame.
+static float calculate_estimated_shannon_entropy(const uint8_t *rgb565_data,
+                                                 size_t pixel_count) {
   // Allocate histogram for all 65536 possible RGB565 values
-  uint32_t *histogram = heap_caps_calloc(65536, sizeof(uint32_t),
-                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  uint32_t *histogram =
+      heap_caps_calloc(65536, sizeof(uint32_t), MALLOC_CAP_SPIRAM);
   if (!histogram) {
-    histogram = heap_caps_calloc(65536, sizeof(uint32_t),
-                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    histogram = heap_caps_calloc(65536, sizeof(uint32_t), MALLOC_CAP_INTERNAL);
     if (!histogram)
-      return 0.0;
+      return ESTIMATED_ENTROPY_UNAVAILABLE;
   }
 
   // Count pixel values
@@ -123,17 +131,11 @@ static double calculate_shannon_entropy(const uint8_t *rgb565_data,
     histogram[pixels[i]]++;
   }
 
-  // Calculate entropy: H = -Σ(p × log2(p))
-  double entropy = 0.0;
-  for (int i = 0; i < 65536; i++) {
-    if (histogram[i] > 0) {
-      double p = (double)histogram[i] / pixel_count;
-      entropy -= p * log2(p);
-    }
-  }
+  float estimated_entropy =
+      estimated_shannon_entropy_from_counts_f(histogram, 65536, pixel_count);
 
   free(histogram);
-  return entropy;
+  return estimated_entropy;
 }
 
 static bool allocate_buffers(void) {
@@ -223,6 +225,21 @@ static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
     return;
   }
 
+  // Sensor shot noise is real physical entropy and the frame is already here.
+  // memcpy rather than a uint32_t cast: the callback contract hands over a
+  // uint8_t *, so alignment is an assumption about today's allocator, not a
+  // guarantee. Three separate stirs rather than one XOR of the three, which
+  // would let equal samples cancel on a uniform frame.
+  if (display_buffer_size >= sizeof(uint32_t)) {
+    size_t last = (display_buffer_size - sizeof(uint32_t)) & ~(size_t)3;
+    size_t offsets[3] = {0, (last / 2) & ~(size_t)3, last};
+    for (size_t i = 0; i < 3; i++) {
+      uint32_t word;
+      memcpy(&word, back_buffer + offsets[i], sizeof(word));
+      entropy_pool_stir(word);
+    }
+  }
+
   if (!closing && !dialog_showing && bsp_display_lock(0)) {
     if (!closing && camera_img) {
       current_display_buffer = back_buffer;
@@ -290,27 +307,49 @@ static void touch_event_cb(lv_event_t *e) {
     return;
 
   size_t pixel_count = CAMERA_WIDTH * CAMERA_HEIGHT;
-  double entropy =
-      calculate_shannon_entropy(current_display_buffer, pixel_count);
+  float estimated_entropy =
+      calculate_estimated_shannon_entropy(current_display_buffer, pixel_count);
 
-  if (entropy < ENTROPY_THRESHOLD) {
-    dialog_showing = true;
-    dialog_show_confirm("Low entropy\nTry again?", low_entropy_prompt_cb, NULL,
-                        DIALOG_STYLE_OVERLAY);
+  if (estimated_entropy < 0.0f) {
+    dialog_show_error_timeout("Not enough memory to check estimated entropy",
+                              NULL, 0);
     return;
   }
 
-  unsigned char hash[SHA256_LEN];
-  size_t buffer_size = pixel_count * 2;
-
-  if (wally_sha256(current_display_buffer, buffer_size, hash, sizeof(hash)) ==
-      WALLY_OK) {
-    memcpy(captured_entropy, hash, 32);
-    entropy_captured = true;
-    closing = true;
-    if (return_callback)
-      return_callback();
+  if (estimated_entropy < ESTIMATED_ENTROPY_THRESHOLD) {
+    dialog_showing = true;
+    dialog_show_confirm("Low estimated entropy\nTry again?",
+                        low_entropy_prompt_cb, NULL, DIALOG_STYLE_OVERLAY);
+    return;
   }
+
+  // Fold the hardware TRNG into the frame digest. A photo of a scene the
+  // attacker knows has plenty of pixel-value diversity and no secrecy, so the
+  // frame alone cannot be trusted to be unpredictable. Hashing rather than
+  // XOR-ing means a TRNG that could observe the frame still cannot steer the
+  // result: it would have to invert SHA-256 to land on a chosen seed.
+  uint8_t mixed[SHA256_LEN * 2];
+  size_t buffer_size = pixel_count * 2;
+  bool mixed_ok = false;
+
+  if (wally_sha256(current_display_buffer, buffer_size, mixed, SHA256_LEN) ==
+      WALLY_OK) {
+    mixed_ok =
+        crypto_random_bytes(mixed + SHA256_LEN, SHA256_LEN) == CRYPTO_OK &&
+        wally_sha256(mixed, sizeof(mixed), captured_entropy,
+                     sizeof(captured_entropy)) == WALLY_OK;
+  }
+  secure_memzero(mixed, sizeof(mixed));
+
+  if (!mixed_ok) {
+    dialog_show_error_timeout("Failed to derive entropy", NULL, 0);
+    return;
+  }
+
+  entropy_captured = true;
+  closing = true;
+  if (return_callback)
+    return_callback();
 }
 
 void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
@@ -343,7 +382,7 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_center(camera_img);
   lv_obj_clear_flag(camera_img, LV_OBJ_FLAG_SCROLLABLE);
 
-  theme_create_page_title(capture_screen, "Capture Entropy");
+  theme_create_page_title(capture_screen, "Capture Image");
 
   lv_obj_t *instruction =
       theme_create_label(capture_screen, "Tap to capture", false);
@@ -408,6 +447,8 @@ void capture_entropy_page_destroy(void) {
     vEventGroupDelete(camera_event_group);
     camera_event_group = NULL;
   }
+
+  capture_entropy_clear();
 
   return_callback = NULL;
   closing = false;

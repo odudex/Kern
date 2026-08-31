@@ -5,6 +5,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
+#include "../../utils/dice_quality.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,8 @@
 #define MAX_ROLLS 256
 #define ENTROPY_12_WORDS 16
 #define ENTROPY_24_WORDS 32
+#define TARGET_ESTIMATED_ENTROPY_12_WORDS 128
+#define TARGET_ESTIMATED_ENTROPY_24_WORDS 256
 
 static lv_obj_t *dice_rolls_screen = NULL;
 static lv_obj_t *back_btn = NULL;
@@ -42,6 +45,7 @@ static void on_word_count_selected(int word_count);
 static void back_cb(void);
 static void dice_btnmatrix_event_cb(lv_event_t *e);
 static void update_display(void);
+static void show_finish_prompt(void);
 static bool generate_mnemonic_from_rolls(void);
 static void finish_dice_rolls(void);
 static void confirm_finish_cb(bool confirmed, void *user_data);
@@ -220,12 +224,8 @@ static void dice_btnmatrix_event_cb(lv_event_t *e) {
     return;
 
   if (strcmp(txt, "Done") == 0) {
-    if (rolls_count >= min_rolls) {
-      char msg[64];
-      snprintf(msg, sizeof(msg), "Generate %d-word mnemonic from %d rolls?",
-               total_words, rolls_count);
-      dialog_show_confirm(msg, confirm_finish_cb, NULL, DIALOG_STYLE_OVERLAY);
-    }
+    if (rolls_count >= min_rolls)
+      show_finish_prompt();
   } else if (strcmp(txt, LV_SYMBOL_BACKSPACE) == 0) {
     if (rolls_count > 0) {
       rolls_count--;
@@ -240,6 +240,40 @@ static void dice_btnmatrix_event_cb(lv_event_t *e) {
       update_display();
     }
   }
+}
+
+static void show_finish_prompt(void) {
+  uint32_t target_estimated_entropy = total_words == 12
+                                          ? TARGET_ESTIMATED_ENTROPY_12_WORDS
+                                          : TARGET_ESTIMATED_ENTROPY_24_WORDS;
+  dice_quality_result_t quality;
+  if (!dice_quality_analyze_d6(rolls_string, (size_t)rolls_count,
+                               (size_t)min_rolls, target_estimated_entropy,
+                               &quality)) {
+    dialog_show_error_timeout("Failed to evaluate dice rolls", NULL, 0);
+    return;
+  }
+
+  if (quality.low_estimated_entropy || quality.pattern_detected) {
+    const char *warning;
+    if (quality.low_estimated_entropy && quality.pattern_detected) {
+      warning = "Low estimated entropy.\nMore rolls are recommended.\n"
+                "Pattern detected.\nProceed anyway?";
+    } else if (quality.low_estimated_entropy) {
+      warning = "Low estimated entropy.\nMore rolls are recommended.\n"
+                "Proceed anyway?";
+    } else {
+      warning = "Pattern detected.\nProceed anyway?";
+    }
+    dialog_show_danger_confirm(warning, confirm_finish_cb, NULL,
+                               DIALOG_STYLE_OVERLAY);
+    return;
+  }
+
+  char message[64];
+  snprintf(message, sizeof(message), "Generate %d-word mnemonic from %d rolls?",
+           total_words, rolls_count);
+  dialog_show_confirm(message, confirm_finish_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
 static void confirm_finish_cb(bool confirmed, void *user_data) {

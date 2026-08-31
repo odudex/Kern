@@ -17,6 +17,15 @@ typedef struct {
     uint32_t features;
 } esp_chip_info_t;
 
+// Reset reason (subset used by firmware)
+typedef enum {
+    ESP_RST_UNKNOWN = 0,
+    ESP_RST_POWERON = 1,
+    ESP_RST_SW      = 3,
+} esp_reset_reason_t;
+
+esp_reset_reason_t esp_reset_reason(void);
+
 void     esp_restart(void) __attribute__((noreturn));
 void     esp_chip_info(esp_chip_info_t *out_info);
 uint32_t esp_get_free_heap_size(void);

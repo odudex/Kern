@@ -73,7 +73,7 @@ jobs:
         run: git log -1 --oneline
 
       - name: Install check dependencies
-        run: apt-get update && apt-get install -y clang-format zlib1g-dev
+        run: apt-get update && apt-get install -y clang-format zlib1g-dev libmbedtls-dev
 
       - name: Configure git identity (required by rebase)
         run: |

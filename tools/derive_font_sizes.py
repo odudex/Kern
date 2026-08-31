@@ -36,6 +36,7 @@ BOARDS = [
     {"name": "wave_43", "sdkconfig": "sdkconfig.defaults.wave_43", "w": 480, "h": 800, "diag_in": 4.3},
     {"name": "wave_4b", "sdkconfig": "sdkconfig.defaults.wave_4b", "w": 720, "h": 720, "diag_in": 4.0},
     {"name": "crowpanel", "sdkconfig": "sdkconfig.defaults.crowpanel", "w": 1024, "h": 600, "diag_in": 7.0},
+    {"name": "wave_7b", "sdkconfig": "sdkconfig.defaults.wave_7b", "w": 1024, "h": 600, "diag_in": 7.0},
     {"name": "wave_5", "sdkconfig": "sdkconfig.defaults.wave_5", "w": 720, "h": 1280, "diag_in": 5.0},
 ]
 

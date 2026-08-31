@@ -95,21 +95,37 @@ KERN_WARN_UNUSED_RESULT int qr_encode_binary(const uint8_t *data, size_t len,
                                              uint8_t *qr_buf);
 
 /**
+ * @brief Pixels one module takes when `cell` of them fill a widget's canvas.
+ *
+ * The size qr_draw_region() will draw at, read from the canvas rather than the
+ * widget, so it holds before LVGL has laid the widget out too. Returns 0 when
+ * there is no canvas to measure.
+ *
+ * @param qr_obj QR widget (canvas)
+ * @param cell Module span filling the canvas (>= 1)
+ */
+int32_t qr_module_scale(lv_obj_t *qr_obj, int cell);
+
+/**
  * @brief Draw a sub-rectangle of an encoded QR onto a widget's canvas.
  *
  * Draws modules [x0,x0+w) x [y0,y0+h) of qr_buf, scaled so a span of `cell`
- * modules fills the canvas, centered. Pass cell == w == h == modules to draw
- * the whole QR, or cell == grid interval to magnify one region at a constant
- * module size. The caller retains ownership of qr_buf.
+ * modules fills the canvas, centered, then slid by (ofs_x, ofs_y) pixels.
+ * Pass cell == w == h == modules to draw the whole QR, or cell == grid
+ * interval to magnify one region at a constant module size. Modules landing
+ * outside the canvas are clipped, so an offset draw may hand over the
+ * neighbouring regions and let them slide into view. The caller retains
+ * ownership of qr_buf.
  *
  * @param qr_obj QR widget (canvas)
  * @param qr_buf Buffer previously filled by qr_encode_optimal/binary
  * @param x0,y0 Top-left module of the region
- * @param w,h Module extent to draw (clamped by the caller)
+ * @param w,h Module extent to draw
  * @param cell Module span used to compute scale/centering (>= 1)
+ * @param ofs_x,ofs_y Pixels to slide the drawing by, 0 for none
  */
 void qr_draw_region(lv_obj_t *qr_obj, const uint8_t *qr_buf, int x0, int y0,
-                    int w, int h, int cell);
+                    int w, int h, int cell, int32_t ofs_x, int32_t ofs_y);
 
 /**
  * @brief Uppercase a bech32 string for QR alphanumeric mode

@@ -86,6 +86,8 @@ uint32_t esp_random(void) {
     return val;
 }
 
+esp_reset_reason_t esp_reset_reason(void) { return ESP_RST_POWERON; }
+
 void esp_fill_random(void *buf, size_t len) {
     urandom_read_or_die(buf, len);
 }

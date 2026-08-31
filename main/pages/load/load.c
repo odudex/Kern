@@ -36,7 +36,10 @@ static void load_on_file_selected(const char *full_path, const char *dir,
   esp_err_t ret = sd_card_read_file(full_path, &data, &len);
   if (ret != ESP_OK || !data || len == 0) {
     free(data);
-    dialog_show_error_timeout("Failed to read file", NULL, 0);
+    dialog_show_error_timeout(ret == ESP_ERR_INVALID_SIZE
+                                  ? "File is too large"
+                                  : "Failed to read file",
+                              NULL, 0);
     return;
   }
 

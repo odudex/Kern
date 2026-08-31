@@ -94,8 +94,11 @@ crypto_aes_gcm_decrypt(const uint8_t key[CRYPTO_AES_KEY_SIZE],
 
 /* --- Random --- */
 
-/* Fill buf with cryptographically secure random bytes (hardware TRNG). */
-void crypto_random_bytes(uint8_t *buf, size_t len);
+/* Fill buf with cryptographically secure random bytes (hardware TRNG).
+ * Returns CRYPTO_ERR_INVALID_ARG for a NULL buf or zero len, and
+ * CRYPTO_ERR_INTERNAL if the RNG returned an all-zero block. On any error the
+ * buffer holds no usable entropy - callers must not use its contents. */
+KERN_WARN_UNUSED_RESULT int crypto_random_bytes(uint8_t *buf, size_t len);
 
 /* --- Padding --- */
 

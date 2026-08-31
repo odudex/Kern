@@ -25,6 +25,17 @@ static int get_grid_interval(int modules) {
   return (modules == 21) ? GRID_INTERVAL_21 : GRID_INTERVAL_DEFAULT;
 }
 
+// Region columns, which equals the number of rows: the grid is always square.
+// False when there is no encoded QR to divide.
+static bool get_grid_divisions(int modules, int *divisions) {
+  if (modules <= 0)
+    return false;
+
+  int interval = get_grid_interval(modules);
+  *divisions = (modules + interval - 1) / interval;
+  return true;
+}
+
 typedef enum {
   QR_TYPE_PLAINTEXT = 0,
   QR_TYPE_SEEDQR = 1,
@@ -70,7 +81,17 @@ static qr_encode_result_t last_qr_result = {0, 0};
 static uint8_t *zoom_qr_buf = NULL;
 static int zoom_modules = 0;
 static qr_type_t zoom_buf_type = (qr_type_t)-1;
-static lv_obj_t *zoom_label_overlay = NULL;
+static lv_obj_t *zoom_col_strip = NULL;
+static lv_obj_t *zoom_row_strip = NULL;
+static lv_obj_t *zoom_grid_clip = NULL;
+static lv_obj_t *zoom_grid_lines = NULL;
+/* Where the sliding sheet of gridlines sits when the region is centred */
+static int32_t zoom_grid_origin = 0;
+/* Grid viewport size once a drag opens it out to the whole cell */
+static int32_t zoom_grid_open = 0;
+/* Pixels the drawn region is currently slid by, 0 when it sits on centre */
+static int32_t zoom_slide_x = 0;
+static int32_t zoom_slide_y = 0;
 
 /* Encrypted QR state */
 static char *encrypted_qr_data = NULL;
@@ -79,8 +100,11 @@ static qr_type_t previous_qr_type = QR_TYPE_PLAINTEXT;
 /* Forward declarations */
 static void update_qr_code(void);
 static void render_zoom(void);
+static void draw_zoom_region(int32_t ofs_x, int32_t ofs_y);
+static int32_t clamp_zoom_slide(int32_t ofs, bool horizontal);
 static int ensure_zoom_encoded(void);
-static void destroy_zoom_labels(void);
+static void destroy_zoom_overlays(void);
+static void slide_zoom_overlays(int32_t ofs_x, int32_t ofs_y);
 
 static void back_cb(lv_event_t *e) {
   (void)e;
@@ -146,17 +170,16 @@ static void create_shade_overlay(void) {
 
   int modules = last_qr_result.modules;
   int32_t scale = last_qr_result.scale;
-  if (modules == 0 || scale == 0)
+  int divisions;
+  if (scale == 0 || !get_grid_divisions(modules, &divisions))
     return;
 
-  int grid_interval = get_grid_interval(modules);
-  int divisions = (modules + grid_interval - 1) / grid_interval;
   int row = shade_region_index / divisions;
   int col = shade_region_index % divisions;
 
   int32_t content_size = modules * scale;
   int32_t margin = (qr_widget_size - content_size) / 2;
-  int32_t cell_px = scale * grid_interval;
+  int32_t cell_px = scale * get_grid_interval(modules);
 
   lv_obj_update_layout(qr_code);
   lv_area_t qr_coords, container_coords, content_coords;
@@ -208,13 +231,43 @@ static void create_shade_overlay(void) {
   update_grid_label_highlight(row, col);
 }
 
+/* Move the region cursor one step per axis. Each axis moves on its own, so the
+ * other one never follows: a step past the last column stays on its row. */
+static void step_region(int drow, int dcol) {
+  /* Zoomed mode draws from its own encode, the other views from the widget's
+   * last one. */
+  int modules = (view_mode == VIEW_ZOOMED) ? ensure_zoom_encoded()
+                                           : last_qr_result.modules;
+  int divisions;
+  if (!get_grid_divisions(modules, &divisions))
+    return;
+
+  /* The cursor outlives a QR type change, which can shrink the grid. */
+  if (shade_region_index < 0 || shade_region_index >= divisions * divisions)
+    shade_region_index = 0;
+
+  int row = shade_region_index / divisions;
+  int col = shade_region_index % divisions;
+  if (view_mode == VIEW_ZOOMED) {
+    /* The drag brings the neighbour in under the finger, and past the last row
+     * or column there is none to bring, so the zoomed view stops at the edge
+     * instead of wrapping to the far side. */
+    row = LV_CLAMP(0, row + drow, divisions - 1);
+    col = LV_CLAMP(0, col + dcol, divisions - 1);
+  } else {
+    row = (row + drow + divisions) % divisions;
+    col = (col + dcol + divisions) % divisions;
+  }
+  shade_region_index = row * divisions + col;
+}
+
 static void qr_area_tap_cb(lv_event_t *e) {
   (void)e;
 
   if (view_mode == VIEW_REGIONS) {
-    int modules = last_qr_result.modules;
-    int grid_interval = get_grid_interval(modules);
-    int divisions = (modules + grid_interval - 1) / grid_interval;
+    int divisions;
+    if (!get_grid_divisions(last_qr_result.modules, &divisions))
+      return;
     int total_regions = divisions * divisions;
 
     if (!shade_mode_active) {
@@ -233,12 +286,74 @@ static void qr_area_tap_cb(lv_event_t *e) {
   }
 }
 
+/* Dragging moves the grid under the finger: left brings in the next column, up
+ * the next row. The zoomed view follows the finger the whole way, the others
+ * step once the touch ends. */
+static void qr_area_drag_cb(int32_t dx, int32_t dy, bool released) {
+  if (!released) {
+    if (view_mode != VIEW_ZOOMED)
+      return;
+
+    bool horizontal = LV_ABS(dx) >= LV_ABS(dy);
+    int32_t slide = clamp_zoom_slide(horizontal ? dx : dy, horizontal);
+    int32_t slide_x = horizontal ? slide : 0;
+    int32_t slide_y = horizontal ? 0 : slide;
+    /* A held finger keeps reporting: only a moved one is worth redrawing. */
+    if (slide_x == zoom_slide_x && slide_y == zoom_slide_y)
+      return;
+    /* Open the viewport to the whole cell so a neighbour can slide in: an edge
+     * region rests on fewer modules than a cell holds. */
+    if (zoom_slide_x == 0 && zoom_slide_y == 0 && zoom_grid_clip)
+      lv_obj_set_size(zoom_grid_clip, zoom_grid_open, zoom_grid_open);
+    zoom_slide_x = slide_x;
+    zoom_slide_y = slide_y;
+
+    slide_zoom_overlays(slide_x, slide_y);
+    draw_zoom_region(slide_x, slide_y);
+    return;
+  }
+
+  int drow = 0, dcol = 0;
+  lv_dir_t dir;
+  if (ui_drag_is_swipe(dx, dy, &dir)) {
+    switch (dir) {
+    case LV_DIR_LEFT:
+      dcol = 1;
+      break;
+    case LV_DIR_RIGHT:
+      dcol = -1;
+      break;
+    case LV_DIR_TOP:
+      drow = 1;
+      break;
+    default:
+      drow = -1;
+      break;
+    }
+  }
+
+  if (view_mode == VIEW_ZOOMED) {
+    /* Both steps are no-ops for a drag that fell short, and the render lands
+     * the region back on centre either way. */
+    step_region(drow, dcol);
+    render_zoom();
+  } else if (view_mode == VIEW_REGIONS && (drow || dcol)) {
+    /* First swipe opens the shade on region A1, like the first tap does. */
+    if (shade_mode_active)
+      step_region(drow, dcol);
+    else
+      shade_region_index = 0;
+    create_shade_overlay();
+  }
+}
+
 static void create_grid_overlay(void) {
   destroy_grid_overlay();
 
   int modules = last_qr_result.modules;
   int32_t scale = last_qr_result.scale;
-  if (modules == 0 || scale == 0)
+  int divisions;
+  if (scale == 0 || !get_grid_divisions(modules, &divisions))
     return;
 
   int32_t content_size = modules * scale;
@@ -261,7 +376,6 @@ static void create_grid_overlay(void) {
 
   lv_color_t color = highlight_color();
   int grid_interval = get_grid_interval(modules);
-  int divisions = (modules + grid_interval - 1) / grid_interval;
   int32_t cell_px = scale * grid_interval;
   int32_t label_pad = LV_MAX(theme_small_padding(), 2);
 
@@ -343,7 +457,7 @@ static void view_mode_cb(lv_event_t *e) {
 
   reset_shade_mode();
   destroy_grid_overlay();
-  destroy_zoom_labels();
+  destroy_zoom_overlays();
   shade_region_index = 0; /* fresh region cursor for grid/zoom */
 
   view_mode = new_mode;
@@ -398,10 +512,19 @@ static void start_encrypted_flow(void) {
                           compact_seedqr_len, NULL);
 }
 
-static void destroy_zoom_labels(void) {
-  if (zoom_label_overlay) {
-    lv_obj_del(zoom_label_overlay);
-    zoom_label_overlay = NULL;
+static void destroy_zoom_overlays(void) {
+  if (zoom_grid_clip) {
+    lv_obj_del(zoom_grid_clip);
+    zoom_grid_clip = NULL;
+    zoom_grid_lines = NULL;
+  }
+  if (zoom_col_strip) {
+    lv_obj_del(zoom_col_strip);
+    zoom_col_strip = NULL;
+  }
+  if (zoom_row_strip) {
+    lv_obj_del(zoom_row_strip);
+    zoom_row_strip = NULL;
   }
 }
 
@@ -434,24 +557,31 @@ static int ensure_zoom_encoded(void) {
   return modules;
 }
 
-static void add_zoom_label(const char *txt, bool is_row, int32_t qr_x,
-                           int32_t qr_y, int32_t qr_w, int32_t qr_h,
-                           int32_t label_pad) {
-  lv_obj_t *lbl = lv_label_create(zoom_label_overlay);
+/* A strip holds one label per region: the current one and the neighbours,
+ * parked a span away on each side. It clips whatever hangs outside the QR, so
+ * sliding the labels brings the next one in as the current one leaves. */
+static lv_obj_t *create_zoom_strip(int32_t x, int32_t y, int32_t w, int32_t h) {
+  lv_obj_t *strip = lv_obj_create(content_area);
+  lv_obj_remove_style_all(strip);
+  lv_obj_set_pos(strip, x, y);
+  lv_obj_set_size(strip, w, h);
+  lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(strip, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  return strip;
+}
+
+static lv_obj_t *add_zoom_strip_label(lv_obj_t *strip, const char *txt) {
+  lv_obj_t *lbl = lv_label_create(strip);
   lv_label_set_text(lbl, txt);
   lv_obj_set_style_text_color(lbl, highlight_color(), 0);
   lv_obj_set_style_text_font(lbl, theme_font_medium(), 0);
   lv_obj_update_layout(lbl);
-  int32_t lw = lv_obj_get_width(lbl);
-  int32_t lh = lv_obj_get_height(lbl);
-  if (is_row)
-    lv_obj_set_pos(lbl, qr_x - label_pad - lw, qr_y + (qr_h - lh) / 2);
-  else
-    lv_obj_set_pos(lbl, qr_x + (qr_w - lw) / 2, qr_y - label_pad - lh);
+  return lbl;
 }
 
-static void add_zoom_gridline(int32_t x, int32_t y, int32_t w, int32_t h) {
-  lv_obj_t *line = lv_obj_create(zoom_label_overlay);
+static void add_zoom_gridline(lv_obj_t *parent, int32_t x, int32_t y, int32_t w,
+                              int32_t h) {
+  lv_obj_t *line = lv_obj_create(parent);
   lv_obj_remove_style_all(line);
   lv_obj_set_pos(line, x, y);
   lv_obj_set_size(line, w, h);
@@ -459,13 +589,153 @@ static void add_zoom_gridline(int32_t x, int32_t y, int32_t w, int32_t h) {
   lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
 }
 
-static void render_zoom(void) {
+/* Three regions of gridlines sit inside a clipped viewport that never moves.
+ * At rest it ends with the current region's last module; dragging opens it out
+ * to the whole cell, which is all the blit will draw into anyway. */
+static void create_zoom_grid(int interval, int32_t scale, int32_t line_w,
+                             int32_t margin, int32_t qr_x, int32_t qr_y,
+                             int32_t span_w, int32_t span_h) {
+  int32_t sheet = 3 * interval * scale;
+  int32_t span = interval * scale;
+  int32_t line_head = line_w / 2;
+  /* The border lines straddle the cell's edges, so the viewport carries half a
+   * line on the near side and the other half on the far one. */
+  int32_t line_tail = (line_w + 1) / 2;
+
+  zoom_grid_open = span + line_head + line_tail;
+  zoom_grid_clip = create_zoom_strip(
+      qr_x + margin - line_head, qr_y + margin - line_head,
+      span_w + line_head + line_tail, span_h + line_head + line_tail);
+
+  zoom_grid_lines = lv_obj_create(zoom_grid_clip);
+  lv_obj_remove_style_all(zoom_grid_lines);
+  lv_obj_set_size(zoom_grid_lines, sheet, sheet);
+  lv_obj_clear_flag(zoom_grid_lines,
+                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+  /* Its middle region covers the drawn one. */
+  zoom_grid_origin = line_head - span;
+  lv_obj_set_pos(zoom_grid_lines, zoom_grid_origin, zoom_grid_origin);
+
+  for (int i = 0; i <= 3 * interval; i++) {
+    add_zoom_gridline(zoom_grid_lines, i * scale - line_head, 0, line_w, sheet);
+    add_zoom_gridline(zoom_grid_lines, 0, i * scale - line_head, sheet, line_w);
+  }
+}
+
+/* Each strip is sized from the labels it ends up holding, so it is built at the
+ * QR's own extent first and moved into its margin once they are measured. */
+static void create_zoom_labels(int row, int col, int divisions, int32_t qr_x,
+                               int32_t qr_y, int32_t qr_w, int32_t qr_h,
+                               int32_t span, int32_t label_pad) {
+  zoom_col_strip = create_zoom_strip(qr_x, qr_y, qr_w, 0);
+  int32_t strip_h = 0;
+  for (int k = -1; k <= 1; k++) {
+    if (col + k < 0 || col + k >= divisions)
+      continue;
+    char txt[12];
+    snprintf(txt, sizeof(txt), "%d", col + k + 1);
+    lv_obj_t *lbl = add_zoom_strip_label(zoom_col_strip, txt);
+    lv_obj_set_pos(lbl, k * span + (qr_w - lv_obj_get_width(lbl)) / 2, 0);
+    strip_h = LV_MAX(strip_h, lv_obj_get_height(lbl));
+  }
+  lv_obj_set_pos(zoom_col_strip, qr_x, qr_y - label_pad - strip_h);
+  lv_obj_set_height(zoom_col_strip, strip_h);
+
+  zoom_row_strip = create_zoom_strip(qr_x, qr_y, qr_w, qr_h);
+  int32_t strip_w = 0;
+  for (int k = -1; k <= 1; k++) {
+    if (row + k < 0 || row + k >= divisions)
+      continue;
+    char txt[2] = {(char)('A' + row + k), '\0'};
+    lv_obj_t *lbl = add_zoom_strip_label(zoom_row_strip, txt);
+    lv_obj_set_y(lbl, k * span + (qr_h - lv_obj_get_height(lbl)) / 2);
+    strip_w = LV_MAX(strip_w, lv_obj_get_width(lbl));
+  }
+  /* Right-aligned against the QR, as the numbers are centred on it. */
+  uint32_t letters = lv_obj_get_child_count(zoom_row_strip);
+  for (uint32_t i = 0; i < letters; i++) {
+    lv_obj_t *lbl = lv_obj_get_child(zoom_row_strip, i);
+    lv_obj_set_x(lbl, strip_w - lv_obj_get_width(lbl));
+  }
+  lv_obj_set_pos(zoom_row_strip, qr_x - label_pad - strip_w, qr_y);
+  lv_obj_set_width(zoom_row_strip, strip_w);
+}
+
+/* Only the axis being dragged moves: sliding sideways leaves the row letter
+ * where it is, and the other way round. The grid follows both. */
+static void slide_zoom_overlays(int32_t ofs_x, int32_t ofs_y) {
+  if (zoom_grid_lines)
+    lv_obj_set_pos(zoom_grid_lines, zoom_grid_origin + ofs_x,
+                   zoom_grid_origin + ofs_y);
+
+  if (zoom_col_strip) {
+    uint32_t n = lv_obj_get_child_count(zoom_col_strip);
+    for (uint32_t i = 0; i < n; i++)
+      lv_obj_set_style_translate_x(lv_obj_get_child(zoom_col_strip, i), ofs_x,
+                                   0);
+  }
+  if (zoom_row_strip) {
+    uint32_t n = lv_obj_get_child_count(zoom_row_strip);
+    for (uint32_t i = 0; i < n; i++)
+      lv_obj_set_style_translate_y(lv_obj_get_child(zoom_row_strip, i), ofs_y,
+                                   0);
+  }
+}
+
+/* Draw the region cursor's cell, slid by (ofs_x, ofs_y) px. The blit gets one
+ * region of margin on every side, so a slide brings the neighbours in and the
+ * rest is clipped. */
+static void draw_zoom_region(int32_t ofs_x, int32_t ofs_y) {
   int modules = ensure_zoom_encoded();
-  if (modules <= 0)
+  int divisions;
+  if (!get_grid_divisions(modules, &divisions))
     return;
 
   int interval = get_grid_interval(modules);
-  int divisions = (modules + interval - 1) / interval;
+  if (shade_region_index < 0 || shade_region_index >= divisions * divisions)
+    shade_region_index = 0;
+
+  int x0 = (shade_region_index % divisions) * interval;
+  int y0 = (shade_region_index / divisions) * interval;
+  /* From the canvas, not the widget: a resize reaches the canvas first, and
+   * this runs before the layout that would catch the widget up. */
+  int32_t scale = qr_module_scale(qr_code, interval);
+
+  /* cell == interval keeps a constant module size; edge regions leave blanks.
+   * The neighbours ride along for a slide to bring in and are clipped to the
+   * cell until one does. */
+  qr_draw_region(qr_code, zoom_qr_buf, x0 - interval, y0 - interval,
+                 3 * interval, 3 * interval, interval, ofs_x - interval * scale,
+                 ofs_y - interval * scale);
+}
+
+/* How far the region may slide towards its neighbour: one region at most, and
+ * nowhere at all at the edge, where there is no neighbour to bring in. */
+static int32_t clamp_zoom_slide(int32_t ofs, bool horizontal) {
+  int modules = ensure_zoom_encoded();
+  int divisions;
+  if (!get_grid_divisions(modules, &divisions))
+    return 0;
+
+  int interval = get_grid_interval(modules);
+  int32_t span = qr_module_scale(qr_code, interval) * interval;
+  int pos = horizontal ? shade_region_index % divisions
+                       : shade_region_index / divisions;
+
+  /* Sliding the content towards negative brings in the region after it. */
+  if (ofs < 0)
+    return (pos + 1 < divisions) ? LV_MAX(ofs, -span) : 0;
+  return (pos > 0) ? LV_MIN(ofs, span) : 0;
+}
+
+static void render_zoom(void) {
+  int modules = ensure_zoom_encoded();
+  int divisions;
+  if (!get_grid_divisions(modules, &divisions))
+    return;
+
+  int interval = get_grid_interval(modules);
   int total = divisions * divisions;
   if (shade_region_index < 0 || shade_region_index >= total)
     shade_region_index = 0;
@@ -477,10 +747,11 @@ static void render_zoom(void) {
   int w = LV_MIN(interval, modules - x0);
   int h = LV_MIN(interval, modules - y0);
 
-  /* cell == interval keeps a constant module size; edge regions leave blanks */
-  qr_draw_region(qr_code, zoom_qr_buf, x0, y0, w, h, interval);
+  zoom_slide_x = 0;
+  zoom_slide_y = 0;
+  draw_zoom_region(0, 0);
 
-  destroy_zoom_labels();
+  destroy_zoom_overlays();
   lv_obj_update_layout(qr_code);
   lv_area_t qr_coords, content_coords;
   lv_obj_get_coords(qr_code, &qr_coords);
@@ -491,32 +762,18 @@ static void render_zoom(void) {
   int32_t qr_h = lv_obj_get_height(qr_code);
   int32_t label_pad = LV_MAX(theme_small_padding(), 2);
 
-  zoom_label_overlay = lv_obj_create(content_area);
-  lv_obj_remove_style_all(zoom_label_overlay);
-  lv_obj_set_size(zoom_label_overlay, LV_PCT(100), LV_PCT(100));
-  lv_obj_clear_flag(zoom_label_overlay,
-                    LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(zoom_label_overlay, LV_OBJ_FLAG_IGNORE_LAYOUT);
-
   /* Inter-cell grid; same scale/centering as qr_draw_region so lines land on
    * the module boundaries. */
-  int32_t scale = qr_w / interval;
+  int32_t scale = qr_module_scale(qr_code, interval);
   int32_t margin = (qr_w - interval * scale) / 2;
-  int32_t gx = qr_x + margin;
-  int32_t gy = qr_y + margin;
   int32_t span_w = w * scale;
   int32_t span_h = h * scale;
-  int32_t line_w = LV_MAX(1, scale / 40);
-  for (int i = 0; i <= w; i++)
-    add_zoom_gridline(gx + i * scale - line_w / 2, gy, line_w, span_h);
-  for (int j = 0; j <= h; j++)
-    add_zoom_gridline(gx, gy + j * scale - line_w / 2, span_w, line_w);
-
-  char num[12];
-  snprintf(num, sizeof(num), "%d", col + 1);
-  add_zoom_label(num, false, qr_x, qr_y, qr_w, qr_h, label_pad);
-  char letter[2] = {(char)('A' + row), '\0'};
-  add_zoom_label(letter, true, qr_x, qr_y, qr_w, qr_h, label_pad);
+  /* Two pixels minimum: a hairline reads as an artefact next to the modules on
+   * boards whose zoomed cells land under 80 px. */
+  int32_t line_w = LV_MAX(2, scale / 40);
+  create_zoom_grid(interval, scale, line_w, margin, qr_x, qr_y, span_w, span_h);
+  create_zoom_labels(row, col, divisions, qr_x, qr_y, qr_w, qr_h,
+                     interval * scale, label_pad);
 }
 
 static void update_qr_code(void) {
@@ -529,7 +786,7 @@ static void update_qr_code(void) {
     return;
   }
 
-  destroy_zoom_labels();
+  destroy_zoom_overlays();
   if (current_qr_type == QR_TYPE_COMPACT_SEEDQR) {
     if (compact_seedqr_data && compact_seedqr_len > 0)
       qr_update_binary(qr_code, compact_seedqr_data, compact_seedqr_len,
@@ -679,8 +936,7 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   qr_code = qr_create_optimal(qr_container, qr_widget_size, NULL);
 
-  lv_obj_add_flag(qr_container, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(qr_container, qr_area_tap_cb, LV_EVENT_CLICKED, NULL);
+  ui_enable_tap_drag(qr_container, qr_area_tap_cb, qr_area_drag_cb);
 
   update_qr_code();
 }
@@ -700,7 +956,7 @@ void mnemonic_qr_page_destroy(void) {
 
   reset_shade_mode();
   destroy_grid_overlay();
-  destroy_zoom_labels();
+  destroy_zoom_overlays();
 
   if (zoom_qr_buf) {
     secure_memzero(zoom_qr_buf, QR_CODE_BUF_LEN);
@@ -731,7 +987,10 @@ void mnemonic_qr_page_destroy(void) {
 
   qr_type_dropdown = NULL;
   view_dropdown = NULL;
-  zoom_label_overlay = NULL;
+  zoom_col_strip = NULL;
+  zoom_row_strip = NULL;
+  zoom_grid_clip = NULL;
+  zoom_grid_lines = NULL;
   qr_code = NULL;
   qr_container = NULL;
   content_area = NULL;
@@ -740,6 +999,9 @@ void mnemonic_qr_page_destroy(void) {
   view_mode = VIEW_STANDARD;
   zoom_modules = 0;
   zoom_buf_type = (qr_type_t)-1;
+  zoom_slide_x = 0;
+  zoom_slide_y = 0;
+  zoom_grid_open = 0;
   shade_region_index = 0;
   qr_widget_size = 0;
   qr_box_size = 0;

@@ -28,6 +28,7 @@ DIRS=(
     "$REPO_ROOT/components/wave_35"
     "$REPO_ROOT/components/wave_43"
     "$REPO_ROOT/components/crowpanel"
+    "$REPO_ROOT/components/wave_7b"
     "$REPO_ROOT/components/tdisplay_p4"
 )
 

@@ -9,6 +9,7 @@
 
 #include "kef.h"
 #include "../utils/secure_mem.h"
+#include "base43.h"
 #include "crypto_utils.h"
 
 /* Raw deflate compress / decompress (wbits = 10) */
@@ -105,6 +106,24 @@ static int compute_hidden_auth(const uint8_t *data, size_t data_len,
     memcpy(out, hash, auth_size);
   secure_memzero(hash, sizeof(hash));
   return rc;
+}
+
+/*
+ * Verify auth bytes hidden at the tail of a decrypted buffer: the truncated
+ * SHA256 over dec[0..data_len) must equal the auth_size bytes that follow it.
+ * Returns KEF_OK, KEF_ERR_AUTH on mismatch, or KEF_ERR_CRYPTO.
+ */
+static kef_error_t verify_hidden_auth(const uint8_t *dec, size_t data_len,
+                                      size_t auth_size) {
+  uint8_t hash[CRYPTO_SHA256_SIZE];
+  kef_error_t err;
+  if (crypto_sha256(dec, data_len, hash) != CRYPTO_OK)
+    err = KEF_ERR_CRYPTO;
+  else
+    err = (secure_memcmp(hash, dec + data_len, auth_size) == 0) ? KEF_OK
+                                                                : KEF_ERR_AUTH;
+  secure_memzero(hash, sizeof(hash));
+  return err;
 }
 
 /* SHA256(version || iv || data || key) truncated to auth_size bytes. */
@@ -277,17 +296,13 @@ static kef_error_t nul_unpad_verify_hidden(const uint8_t *dec, size_t dec_len,
       break;
 
     size_t dlen = candidate - auth_size;
-    uint8_t hash[CRYPTO_SHA256_SIZE];
-    if (crypto_sha256(dec, dlen, hash) != CRYPTO_OK) {
-      secure_memzero(hash, sizeof(hash));
-      return KEF_ERR_CRYPTO;
-    }
-    if (secure_memcmp(hash, dec + dlen, auth_size) == 0) {
-      secure_memzero(hash, sizeof(hash));
+    kef_error_t err = verify_hidden_auth(dec, dlen, auth_size);
+    if (err == KEF_OK) {
       *data_len_out = dlen;
       return KEF_OK;
     }
-    secure_memzero(hash, sizeof(hash));
+    if (err != KEF_ERR_AUTH)
+      return err;
   }
   return KEF_ERR_AUTH;
 }
@@ -349,12 +364,16 @@ kef_error_t kef_parse_header(const uint8_t *envelope, size_t env_len,
   if (env_len < header_size)
     return KEF_ERR_ENVELOPE_TOO_SHORT;
 
+  uint32_t iterations = kef_decode_iterations(envelope + 1 + id_len + 1);
+  if (iterations < KEF_MIN_ITERATIONS || iterations > KEF_MAX_ITERATIONS)
+    return KEF_ERR_INVALID_ITERATIONS;
+
   *id_out = envelope + 1;
   *id_len_out = id_len;
   if (version_out)
     *version_out = envelope[1 + id_len];
   if (iterations_out)
-    *iterations_out = kef_decode_iterations(envelope + 1 + id_len + 1);
+    *iterations_out = iterations;
   return KEF_OK;
 }
 
@@ -381,9 +400,13 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
 
   /* --- Validate -------------------------------------------------- */
   if (!id || id_len == 0 || id_len > KEF_MAX_ID_LEN || !password ||
-      pw_len == 0 || !plaintext || pt_len == 0 || !out || !out_len ||
-      iterations == 0)
+      pw_len == 0 || !plaintext || pt_len == 0 || !out || !out_len)
     return KEF_ERR_INVALID_ARG;
+
+  /* Same window the reader enforces, so nothing writes an envelope it could
+   * not read back. */
+  if (iterations < KEF_MIN_ITERATIONS || iterations > KEF_MAX_ITERATIONS)
+    return KEF_ERR_INVALID_ITERATIONS;
 
   const kef_version_info_t *vi = find_version(version);
   if (!vi)
@@ -399,8 +422,13 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
 
   /* --- Generate IV ----------------------------------------------- */
   memset(iv, 0, sizeof(iv));
-  if (vi->iv_size > 0)
-    crypto_random_bytes(iv, vi->iv_size);
+  if (vi->iv_size > 0) {
+    rc = crypto_random_bytes(iv, vi->iv_size);
+    if (rc != CRYPTO_OK) {
+      err = KEF_ERR_CRYPTO;
+      goto cleanup;
+    }
+  }
 
   /* --- Compress -------------------------------------------------- */
   const uint8_t *work = plaintext;
@@ -418,6 +446,11 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
   }
 
   /* --- Build pre-pad buffer (work + hidden auth if applicable) --- */
+  /* Exposed / GCM append no hidden auth, so they pad `work` directly rather
+   * than paying an extra copy of the secret. */
+  const uint8_t *to_pad = work;
+  size_t to_pad_len = work_len;
+
   if (vi->auth_type == AUTH_HIDDEN) {
     rc = compute_hidden_auth(work, work_len, auth_buf, vi->auth_size);
     if (rc != CRYPTO_OK) {
@@ -432,19 +465,12 @@ kef_error_t kef_encrypt(const uint8_t *id, size_t id_len, uint8_t version,
     }
     memcpy(pre_pad, work, work_len);
     memcpy(pre_pad + work_len, auth_buf, vi->auth_size);
-  } else {
-    /* Exposed / GCM — no hidden auth appended */
-    pre_pad_len = work_len;
-    pre_pad = malloc(pre_pad_len);
-    if (!pre_pad) {
-      err = KEF_ERR_ALLOC;
-      goto cleanup;
-    }
-    memcpy(pre_pad, work, work_len);
+    to_pad = pre_pad;
+    to_pad_len = pre_pad_len;
   }
 
   /* --- Pad ------------------------------------------------------- */
-  err = apply_padding(vi->padding, pre_pad, pre_pad_len, &padded, &padded_len);
+  err = apply_padding(vi->padding, to_pad, to_pad_len, &padded, &padded_len);
   if (err != KEF_OK)
     goto cleanup;
 
@@ -664,20 +690,9 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
     }
     plain_len = unpadded - vi->auth_size;
 
-    /* Verify hidden auth */
-    uint8_t hash[CRYPTO_SHA256_SIZE];
-    rc = crypto_sha256(decrypted, plain_len, hash);
-    if (rc != CRYPTO_OK) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_CRYPTO;
+    err = verify_hidden_auth(decrypted, plain_len, vi->auth_size);
+    if (err != KEF_OK)
       goto cleanup;
-    }
-    if (secure_memcmp(hash, decrypted + plain_len, vi->auth_size) != 0) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_AUTH;
-      goto cleanup;
-    }
-    secure_memzero(hash, sizeof(hash));
 
   } else {
     /* PAD_NONE with hidden auth (CTR modes) */
@@ -687,19 +702,16 @@ kef_error_t kef_decrypt(const uint8_t *envelope, size_t env_len,
     }
     plain_len = cipher_len - vi->auth_size;
 
-    uint8_t hash[CRYPTO_SHA256_SIZE];
-    rc = crypto_sha256(decrypted, plain_len, hash);
-    if (rc != CRYPTO_OK) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_CRYPTO;
+    err = verify_hidden_auth(decrypted, plain_len, vi->auth_size);
+    if (err != KEF_OK)
       goto cleanup;
-    }
-    if (secure_memcmp(hash, decrypted + plain_len, vi->auth_size) != 0) {
-      secure_memzero(hash, sizeof(hash));
-      err = KEF_ERR_AUTH;
-      goto cleanup;
-    }
-    secure_memzero(hash, sizeof(hash));
+  }
+
+  /* kef_encrypt refuses an empty plaintext, so a zero-length payload here is
+   * a crafted envelope, not an allocation problem. */
+  if (plain_len == 0) {
+    err = KEF_ERR_AUTH;
+    goto cleanup;
   }
 
   /* --- Decompress ------------------------------------------------ */
@@ -789,9 +801,10 @@ uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
     return copy;
   }
 
-  /* Base64-armored envelope. Trim trailing whitespace an editor may have
-   * appended, then require both a clean decode and a valid KEF header before
-   * accepting it (a plaintext descriptor contains '(' and fails to decode). */
+  /* Armored envelope. Trim trailing whitespace an editor may have appended,
+   * then require both a clean decode and a valid KEF header before accepting
+   * it (a plaintext descriptor contains '(' and fails to decode). Base64 is
+   * how Kern armors KEF on SD; base43 is how it armors KEF into a QR. */
   size_t eff = len;
   while (eff > 0 && (data[eff - 1] == '\n' || data[eff - 1] == '\r' ||
                      data[eff - 1] == '\t' || data[eff - 1] == ' '))
@@ -799,24 +812,30 @@ uint8_t *kef_envelope_from_bytes(const uint8_t *data, size_t len,
   if (eff == 0)
     return NULL;
 
+  uint8_t *decoded = NULL;
   size_t decoded_len = 0;
-  if (mbedtls_base64_decode(NULL, 0, &decoded_len, data, eff) !=
-      MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
-    return NULL;
-
-  uint8_t *decoded = malloc(decoded_len);
-  if (!decoded)
-    return NULL;
-  if (mbedtls_base64_decode(decoded, decoded_len, &decoded_len, data, eff) !=
-      0) {
-    free(decoded);
-    return NULL;
+  if (mbedtls_base64_decode(NULL, 0, &decoded_len, data, eff) ==
+      MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+    decoded = malloc(decoded_len);
+    if (!decoded)
+      return NULL;
+    if (mbedtls_base64_decode(decoded, decoded_len, &decoded_len, data, eff) !=
+            0 ||
+        !kef_is_envelope(decoded, decoded_len)) {
+      free(decoded);
+      decoded = NULL;
+    }
   }
 
-  if (!kef_is_envelope(decoded, decoded_len)) {
-    free(decoded);
-    return NULL;
+  if (!decoded) {
+    if (!base43_decode((const char *)data, eff, &decoded, &decoded_len))
+      return NULL;
+    if (!kef_is_envelope(decoded, decoded_len)) {
+      free(decoded);
+      return NULL;
+    }
   }
+
   *out_len = decoded_len;
   return decoded;
 }
@@ -845,6 +864,8 @@ const char *kef_error_str(kef_error_t err) {
     return "decompression failed";
   case KEF_ERR_ENVELOPE_TOO_SHORT:
     return "envelope too short";
+  case KEF_ERR_INVALID_ITERATIONS:
+    return "invalid PBKDF2 iteration count";
   case KEF_ERR_DUPLICATE_BLOCKS:
     return "duplicate ECB blocks detected";
   }
