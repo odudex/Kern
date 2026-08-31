@@ -46,10 +46,6 @@
 #include <wally_script.h>
 #include <wally_transaction.h>
 
-// Reject a valid PSBT prefix followed by trailing bytes, so what is shown and
-// signed is the whole payload rather than a parser-chosen slice of it.
-#define PSBT_PARSE_FLAGS WALLY_PSBT_PARSE_FLAG_COMPLETE
-
 // Fee share of the inputs at which the review screen stops calling it normal.
 #define HIGH_FEE_PERCENT 10u
 
@@ -574,8 +570,7 @@ static void process_scan_result(void) {
           if (psbt_bytes) {
             cleanup_psbt_data();
             parse_success =
-                (wally_psbt_from_bytes(psbt_bytes, psbt_len, PSBT_PARSE_FLAGS,
-                                       &current_psbt) == WALLY_OK);
+                psbt_parse_payload(psbt_bytes, psbt_len, &current_psbt);
           }
           psbt_free(psbt_data);
         }
@@ -619,9 +614,8 @@ static void process_scan_result(void) {
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
       cleanup_psbt_data();
-      parse_success =
-          (wally_psbt_from_bytes((const uint8_t *)qr_content, qr_content_len,
-                                 PSBT_PARSE_FLAGS, &current_psbt) == WALLY_OK);
+      parse_success = psbt_parse_payload((const uint8_t *)qr_content,
+                                         qr_content_len, &current_psbt);
       if (parse_success) {
         free(qr_content);
         qr_content = NULL;
@@ -789,16 +783,7 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
   // A file may hold a serialized binary PSBT — try that first (mirroring the
   // BBQr path); otherwise normalize the text for the layer-2 detectors.
   cleanup_psbt_data();
-  // A serialized PSBT ends on its 0x00 separator, so trailing whitespace is
-  // file padding rather than payload; trim it or the strict parse rejects an
-  // otherwise valid file.
-  size_t psbt_len = len;
-  while (psbt_len > 0 &&
-         (data[psbt_len - 1] == '\n' || data[psbt_len - 1] == '\r' ||
-          data[psbt_len - 1] == ' ' || data[psbt_len - 1] == '\t'))
-    psbt_len--;
-  bool parse_success = (wally_psbt_from_bytes(data, psbt_len, PSBT_PARSE_FLAGS,
-                                              &current_psbt) == WALLY_OK);
+  bool parse_success = psbt_parse_payload(data, len, &current_psbt);
 
   char *content = NULL;
   if (!parse_success) {

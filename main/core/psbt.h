@@ -10,6 +10,13 @@
 #include "registry.h"
 #include "ss_whitelist.h"
 
+/* Parse a serialized PSBT, requiring the parse to consume the whole payload so
+ * a valid prefix followed by trailing bytes is rejected rather than silently
+ * truncated. Trailing whitespace is container padding, not payload: a PSBT
+ * ends on its 0x00 separator, so it is trimmed before the strict parse. */
+KERN_WARN_UNUSED_RESULT bool psbt_parse_payload(const uint8_t *data, size_t len,
+                                                struct wally_psbt **psbt_out);
+
 typedef enum {
   CLAIM_WHITELIST,
   CLAIM_REGISTRY,

@@ -15,3 +15,4 @@ test_bip322
 test_estimated_entropy
 test_pin_attempt
 test_kef
+test_psbt_parse
