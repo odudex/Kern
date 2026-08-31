@@ -20,7 +20,7 @@
 /* #undef HAVE_DLFCN_H */
 
 /* Define to 1 if you have the `explicit_bzero' function. */
-/* #undef HAVE_EXPLICIT_BZERO */
+#define HAVE_EXPLICIT_BZERO 1
 
 /* Define to 1 if you have the `explicit_memset' function. */
 /* #undef HAVE_EXPLICIT_MEMSET */
