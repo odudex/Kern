@@ -23,6 +23,8 @@ menu "Kern Configuration"
 
         config KERN_BOARD_WAVE_7B
             bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-7B (1024x600 MIPI DSI)"
+        config KERN_BOARD_TDISPLAY_P4
+            bool "LilyGO T-Display-P4 AMOLED (568x1232 MIPI DSI, RM69A10 + GT9895)"
     endchoice
 
     config KERN_PBKDF2_HW_SHA

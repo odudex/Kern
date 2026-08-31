@@ -18,74 +18,74 @@
 #define KB_BACKSPACE (LV_BUTTONMATRIX_CTRL_CHECKED | 2)
 #define KB_ACTION (LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2)
 
+// The same roles for the last row, which rounded displays inset with a hidden
+// spacer at each end. Every key there doubles its width so the row keeps its
+// proportions once the spacers take their share.
+#define KB_KEY_SAFE THEME_SAFE_ROW_WIDTH(1, 2)
+#define KB_SPACE_SAFE THEME_SAFE_ROW_WIDTH(5, 10)
+#define KB_MODE_SAFE                                                           \
+  (LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CLICK_TRIG |          \
+   THEME_SAFE_ROW_WIDTH(2, 4))
+#define KB_ACTION_SAFE                                                         \
+  (LV_KEYBOARD_CTRL_BUTTON_FLAGS | THEME_SAFE_ROW_WIDTH(2, 4))
+
+// clang-format off
 static const char *const compact_kb_map_lc[] = {
-    "q",  "w",  "e",  "r",   "t",  "y",
-    "u",  "i",  "o",  "p",   "\n", "a",
-    "s",  "d",  "f",  "g",   "h",  "j",
-    "k",  "l",  "\n", "ABC", "z",  "x",
-    "c",  "v",  "b",  "n",   "m",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
-    ""};
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    "ABC", "z", "x", "c", "v", "b", "n", "m", LV_SYMBOL_BACKSPACE, "\n",
+    THEME_SAFE_ROW_MAP("1#", ",", " ", ".", LV_SYMBOL_OK), ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_lc_map[] = {
     // q w e r t y u i o p
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
+    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // a s d f g h j k l
     KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // ABC z x c v b n m <-
-    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_BACKSPACE,
+    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_BACKSPACE,
     // 1# , _ . OK
-    KB_MODE, KB_KEY, KB_SPACE, KB_KEY, KB_ACTION};
+    THEME_SAFE_ROW_CTRL(KB_MODE_SAFE, KB_KEY_SAFE, KB_SPACE_SAFE, KB_KEY_SAFE,
+                        KB_ACTION_SAFE)};
 
 static const char *const compact_kb_map_uc[] = {
-    "Q",  "W",  "E",  "R",   "T",  "Y",
-    "U",  "I",  "O",  "P",   "\n", "A",
-    "S",  "D",  "F",  "G",   "H",  "J",
-    "K",  "L",  "\n", "abc", "Z",  "X",
-    "C",  "V",  "B",  "N",   "M",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
-    ""};
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    "abc", "Z", "X", "C", "V", "B", "N", "M", LV_SYMBOL_BACKSPACE, "\n",
+    THEME_SAFE_ROW_MAP("1#", ",", " ", ".", LV_SYMBOL_OK), ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_uc_map[] = {
     // Q W E R T Y U I O P
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
+    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // A S D F G H J K L
     KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // abc Z X C V B N M <-
-    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_BACKSPACE,
+    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_BACKSPACE,
     // 1# , _ . OK
-    KB_MODE, KB_KEY, KB_SPACE, KB_KEY, KB_ACTION};
+    THEME_SAFE_ROW_CTRL(KB_MODE_SAFE, KB_KEY_SAFE, KB_SPACE_SAFE, KB_KEY_SAFE,
+                        KB_ACTION_SAFE)};
 
 // Five rows covering every printable ASCII symbol (',' and '.' live on the
 // letter pages) so any externally created passphrase or KEF key can be typed.
 static const char *const compact_kb_map_spec[] = {
-    "1",  "2", "3",  "4",  "5",  "6",          "7",
-    "8",  "9", "0",  "\n", "@",  "#",          "$",
-    "%",  "&", "*",  "+",  "-",  "=",          "/",
-    "\n", "(", ")",  "[",  "]",  "{",          "}",
-    "<",  ">", "\"", "'",  "\n", "abc",        "!",
-    "?",  ";", ":",  "_",  "\\", "|",          LV_SYMBOL_BACKSPACE,
-    "\n", "~", "^",  "`",  " ",  LV_SYMBOL_OK, ""};
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+    "@", "#", "$", "%", "&", "*", "+", "-", "=", "/", "\n",
+    "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'", "\n",
+    "abc", "!", "?", ";", ":", "_", "\\", "|", LV_SYMBOL_BACKSPACE, "\n",
+    THEME_SAFE_ROW_MAP("~", "^", "`", " ", LV_SYMBOL_OK), ""};
 
 static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
     // 1 2 3 4 5 6 7 8 9 0
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
+    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // @ # $ % & * + - = /
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
+    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // ( ) [ ] { } < > " '
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
+    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
     // abc ! ? ; : _ \ | <-
-    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_BACKSPACE,
+    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_BACKSPACE,
     // ~ ^ ` _ OK
-    KB_KEY, KB_KEY, KB_KEY, KB_SPACE, KB_ACTION};
+    THEME_SAFE_ROW_CTRL(KB_KEY_SAFE, KB_KEY_SAFE, KB_KEY_SAFE, KB_SPACE_SAFE,
+                        KB_ACTION_SAFE)};
+// clang-format on
 
 // Corner buttons (back/power top-left, settings top-right) all share the
 // secondary grey style so they read as one consistent control class.
@@ -108,7 +108,7 @@ static lv_obj_t *create_corner_button(lv_obj_t *parent, lv_align_t align,
   theme_apply_touch_button(btn, false);
   lv_obj_set_size(btn, theme_corner_button_width(),
                   theme_corner_button_height());
-  lv_obj_align(btn, align, x_ofs, y_ofs);
+  theme_align_corner_safe(btn, align, x_ofs, y_ofs);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, symbol);

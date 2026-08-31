@@ -417,7 +417,8 @@ void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_size(addresses_screen, LV_PCT(100), LV_PCT(100));
   theme_apply_screen(addresses_screen);
   lv_obj_set_style_pad_all(addresses_screen, theme_default_padding(), 0);
-  lv_obj_set_style_pad_top(addresses_screen, theme_small_padding(), 0);
+  lv_obj_set_style_pad_top(addresses_screen,
+                           theme_safe_area_inset() + theme_small_padding(), 0);
   lv_obj_set_flex_flow(addresses_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(addresses_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

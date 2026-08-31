@@ -19,7 +19,8 @@ It signs PSBTs for single-sig, multisig and miniscript policies on both native s
 
 ## Hardware
 
-Kern supports five Waveshare ESP32-P4 boards and one Elecrow CrowPanel board:
+Kern supports five Waveshare ESP32-P4 boards, one Elecrow CrowPanel board and
+the LilyGO T-Display-P4:
 
 | Board | Display | Touch | Camera |
 |-------|---------|-------|--------|
@@ -29,14 +30,21 @@ Kern supports five Waveshare ESP32-P4 boards and one Elecrow CrowPanel board:
 | [ESP32-P4-WiFi6-Touch-LCD-4.3](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm) (`wave_43`) | 480x800 MIPI DSI | GT911 | OV5647, included |
 | [ESP32-P4-WiFi6-Touch-LCD-7B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm) (`wave_7b`) | 1024x600 MIPI DSI | GT911 | OV5647, sold separately |
 | [CrowPanel Advanced 10.1" ESP32-P4](https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen) and 7" siblings (`crowpanel`) | 1024x600 MIPI DSI | GT911 | SC2336, included |
+| [LilyGO T-Display-P4](https://lilygo.cc/en-us/products/t-display-p4) AMOLED (`tdisplay_p4`) | 568x1232 MIPI DSI (RM69A10) | GT9895 | OV2710, onboard |
 
 ESP32-P4 does not contain radio (WiFi, BLE), but these boards have a radio in a secondary chip (ESP32-C6 mini). Exploring radio-less, simpler and cheaper ESP32-P4-only boards is part of the project's hardware research.
 
-A MIPI CSI camera module is required for all boards. Kern ships drivers for the
+A MIPI CSI camera is required for all boards. Kern ships drivers for the
 OV5647 and SC2336 sensors and probes for whichever one is attached at boot, so
-either sensor works on any board. The 4B is the one board sold without a camera:
-pair it with an OV5647 module carrying a DW9714 voice coil motor, which is the
-only combination that gets autofocus.
+either sensor works on the Waveshare and CrowPanel boards. The 4B is the one
+board sold without a camera: pair it with an OV5647 module carrying a DW9714
+voice coil motor, which is the only combination that gets autofocus. The
+T-Display-P4 instead ships with an onboard OV2710.
+
+On the T-Display-P4 the ESP32-C6 CHIP_EN line, the panel/touch resets and the
+peripheral power rail are wired behind an XL9535 I2C GPIO expander (address
+0x20), so the air-gap reset and bring-up are issued over I2C rather than direct
+GPIO.
 
 ## Prerequisites
 
@@ -72,7 +80,7 @@ git submodule update --init --recursive
 
 ### Building the Project
 
-Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter, one of `wave_4b` (default), `wave_35`, `wave_5`, `wave_43`, `crowpanel`, or `wave_7b`:
+Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter, one of `wave_4b` (default), `wave_35`, `wave_5`, `wave_43`, `crowpanel`, `wave_7b`, or `tdisplay_p4`:
 
 ```bash
 just build              # Build for wave_4b (default)
@@ -81,6 +89,7 @@ just build wave_5       # Build for wave_5
 just build wave_43      # Build for wave_43
 just build crowpanel    # Build for CrowPanel 7" / 10.1"
 just build wave_7b      # Build for wave_7b
+just build tdisplay_p4  # Build for LilyGO T-Display-P4 (AMOLED)
 just flash wave_5       # Flash for wave_5
 just monitor            # Serial monitor
 just clean              # Wipe all build_<board> dirs + sdkconfig
@@ -106,6 +115,9 @@ idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.crowpanel' b
 
 # wave_7b
 idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_7b' build
+
+# LilyGO T-Display-P4
+idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.tdisplay_p4' build
 ```
 
 > **Note:** `just` builds each board into its own `build_<board>/` directory, so switching boards needs no clean. The raw `idf.py` commands above share the default `build/` directory and `sdkconfig`: run `idf.py fullclean && rm sdkconfig` when switching boards that way.
@@ -123,6 +135,7 @@ just sim wave_5         # Run simulator as wave_5 (720x1280)
 just sim wave_43        # Run simulator as wave_43 (480x800)
 just sim crowpanel      # Run simulator as crowpanel (1024x600)
 just sim wave_7b        # Run simulator as wave_7b (1024x600)
+just sim tdisplay_p4    # Run simulator as T-Display-P4 (568x1232)
 just sim-build wave_35  # Build only
 just sim-clean          # Remove simulator build artifacts
 just sim-reset          # Wipe simulator data (factory reset)
@@ -225,6 +238,7 @@ Pre-release firmware is provided **for research and testing purposes only**. Any
 | `wave_43` | Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 | 480x800 MIPI DSI |
 | `crowpanel` | CrowPanel Advanced 7" / 10.1" ESP32-P4 | 1024x600 MIPI DSI |
 | `wave_7b` | Waveshare ESP32-P4-WiFi6-Touch-LCD-7B | 1024x600 MIPI DSI |
+| `tdisplay_p4` | LilyGO T-Display-P4 AMOLED | 568x1232 MIPI DSI |
 
 ### Requirements
 

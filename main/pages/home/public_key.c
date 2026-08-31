@@ -359,7 +359,8 @@ static lv_obj_t *create_public_key_screen(lv_obj_t *parent, bool landscape) {
   theme_apply_screen(screen);
   lv_obj_set_style_pad_all(
       screen, landscape ? theme_small_padding() : theme_default_padding(), 0);
-  lv_obj_set_style_pad_top(screen, theme_small_padding(), 0);
+  lv_obj_set_style_pad_top(screen,
+                           theme_safe_area_inset() + theme_small_padding(), 0);
   lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);

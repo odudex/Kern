@@ -6,45 +6,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *kb_map[] = {"q",
-                               "w",
-                               "e",
-                               "r",
-                               "t",
-                               "y",
-                               "u",
-                               "i",
-                               "o",
-                               "p",
-                               "\n",
-                               "a",
-                               "s",
-                               "d",
-                               "f",
-                               "g",
-                               "h",
-                               "j",
-                               "k",
-                               "l",
-                               "\n",
-                               "z",
-                               "x",
-                               "c",
-                               "v",
-                               "b",
-                               "n",
-                               "m",
-                               LV_SYMBOL_BACKSPACE,
-                               LV_SYMBOL_OK,
-                               ""};
-
+// clang-format off
+static const char *kb_map[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    THEME_SAFE_ROW_MAP("z", "x", "c", "v", "b", "n", "m",
+                       LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK), ""};
 static const char btn_to_char[] = {
-    'q',     'w', 'e', 'r', 't', 'y', 'u', 'i', 'o',
-    'p',     'a', 's', 'd', 'f', 'g', 'h', 'j', 'k',
-    'l',     'z', 'x', 'c', 'v', 'b', 'n', 'm', UI_KB_BACKSPACE,
-    UI_KB_OK};
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+    'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
+    THEME_SAFE_ROW_VALUES('z', 'x', 'c', 'v', 'b', 'n', 'm', UI_KB_BACKSPACE,
+                          UI_KB_OK)};
 
 #define BTN_COUNT (sizeof(btn_to_char) / sizeof((btn_to_char)[0]))
+
+static const lv_buttonmatrix_ctrl_t kb_ctrl[] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    THEME_SAFE_ROW_CTRL(THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 2),
+                        THEME_SAFE_ROW_WIDTH(1, 2), THEME_SAFE_ROW_WIDTH(1, 4),
+                        THEME_SAFE_ROW_WIDTH(1, 4))};
+// clang-format on
 
 static int get_key_index_from_btn(uint32_t btn_id) {
   if (btn_id >= BTN_COUNT)
@@ -64,17 +48,18 @@ static inline char get_char_for_btn(uint32_t btn_id) {
 }
 
 static int get_btn_for_key_index(int key_index) {
+  char target = 0;
   if (key_index == UI_KB_KEY_BACKSPACE)
-    return 26;
-  if (key_index == UI_KB_KEY_OK)
-    return 27;
-  if (key_index >= UI_KB_KEY_A && key_index <= UI_KB_KEY_Z) {
-    char target = 'a' + key_index;
-    for (size_t i = 0; i < BTN_COUNT; i++) {
-      if (btn_to_char[i] == target)
-        return (int)i;
-    }
-  }
+    target = UI_KB_BACKSPACE;
+  else if (key_index == UI_KB_KEY_OK)
+    target = UI_KB_OK;
+  else if (key_index >= UI_KB_KEY_A && key_index <= UI_KB_KEY_Z)
+    target = 'a' + key_index;
+
+  for (size_t i = 0; target != 0 && i < BTN_COUNT; i++)
+    if (btn_to_char[i] == target)
+      return (int)i;
+
   return -1;
 }
 
@@ -133,6 +118,7 @@ ui_keyboard_t *ui_keyboard_create(lv_obj_t *parent, const char *title,
 
   kb->btnmatrix = lv_buttonmatrix_create(parent);
   lv_buttonmatrix_set_map(kb->btnmatrix, kb_map);
+  lv_buttonmatrix_set_ctrl_map(kb->btnmatrix, kb_ctrl);
   lv_obj_set_size(kb->btnmatrix, LV_PCT(100), LV_PCT(50));
   lv_obj_align(kb->btnmatrix, LV_ALIGN_BOTTOM_MID, 0, 0);
   theme_apply_btnmatrix(kb->btnmatrix);
@@ -152,8 +138,10 @@ ui_keyboard_t *ui_keyboard_create(lv_obj_t *parent, const char *title,
   lv_obj_add_event_cb(kb->btnmatrix, kb_event_handler, LV_EVENT_VALUE_CHANGED,
                       kb);
   lv_buttonmatrix_set_selected_button(kb->btnmatrix, 0);
-  lv_buttonmatrix_set_button_ctrl(kb->btnmatrix, 27,
-                                  LV_BUTTONMATRIX_CTRL_DISABLED);
+  int ok_btn = get_btn_for_key_index(UI_KB_KEY_OK);
+  if (ok_btn >= 0)
+    lv_buttonmatrix_set_button_ctrl(kb->btnmatrix, ok_btn,
+                                    LV_BUTTONMATRIX_CTRL_DISABLED);
 
   return kb;
 }

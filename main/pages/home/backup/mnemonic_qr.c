@@ -862,11 +862,14 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(mnemonic_qr_screen, theme_default_padding(), 0);
   lv_obj_set_style_pad_gap(mnemonic_qr_screen, theme_default_padding(), 0);
-  // Top control row doubles as the page title; pull it up to small_padding so
-  // it lines up with the overlaid back button (which sits there on parent).
-  lv_obj_set_style_pad_top(mnemonic_qr_screen, theme_small_padding(), 0);
 
   bool portrait = theme_screen_height() > theme_screen_width();
+  int32_t top_pad = theme_small_padding();
+  if (portrait && theme_safe_area_inset())
+    top_pad += theme_safe_area_inset() + theme_corner_button_height() +
+               theme_small_padding();
+  lv_obj_set_style_pad_top(mnemonic_qr_screen, top_pad, 0);
+
   int32_t ctrl_h = theme_min_touch_size();
   int32_t ctrl_gap = theme_small_padding();
   int32_t ctrl_w_pct = portrait ? PORTRAIT_CONTROL_WIDTH_PCT : 40;

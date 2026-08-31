@@ -615,7 +615,8 @@ static void create_word_grid(void) {
   int margin_h = theme_small_padding();
   // Clear the corner back button on top and the load button at the bottom,
   // both sized proportionally to the screen, leaving a small gap each side.
-  int top_offset = theme_corner_button_height() + 2 * theme_small_padding();
+  int top_offset = theme_safe_area_inset() + theme_corner_button_height() +
+                   2 * theme_small_padding();
   int bottom_offset = theme_min_touch_size() + theme_default_padding();
   int grid_width = screen_width - (2 * margin_h);
   int grid_height = screen_height - top_offset - bottom_offset;
@@ -661,7 +662,9 @@ static void create_word_grid(void) {
 static void create_ui(void) {
   header_container = theme_create_flex_row(mnemonic_editor_screen);
   lv_obj_set_style_pad_column(header_container, 8, 0);
-  lv_obj_align(header_container, LV_ALIGN_TOP_MID, 0, theme_default_padding());
+  int32_t safe_area = theme_safe_area_inset();
+  lv_obj_align(header_container, LV_ALIGN_TOP_MID, safe_area,
+               safe_area + theme_default_padding());
 
   lv_obj_t *title = lv_label_create(header_container);
   lv_label_set_text(title, "Mnemonic");
@@ -682,7 +685,7 @@ static void create_ui(void) {
   int32_t pad = theme_default_padding();
   load_btn = lv_btn_create(mnemonic_editor_screen);
   lv_obj_set_size(load_btn, 140, theme_min_touch_size());
-  lv_obj_align(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
+  theme_align_corner_safe(load_btn, LV_ALIGN_BOTTOM_RIGHT, -pad / 3, -pad / 3);
   theme_apply_touch_button(load_btn, true);
   lv_obj_add_event_cb(load_btn, load_btn_cb, LV_EVENT_CLICKED, NULL);
 

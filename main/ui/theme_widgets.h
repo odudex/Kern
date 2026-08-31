@@ -6,6 +6,22 @@
 // Widget factory: builders and stylers that assemble LVGL objects from the
 // theme tokens (colours, fonts, sizes) declared in theme.h.
 
+// Optional edge padding for the last row of button matrices.
+#ifdef CONFIG_KERN_BOARD_TDISPLAY_P4
+#define THEME_SAFE_ROW_MAP(...) " ", __VA_ARGS__, " "
+#define THEME_SAFE_ROW_CTRL(...)                                               \
+  LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1,             \
+      __VA_ARGS__,                                                             \
+      LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED | 1
+#define THEME_SAFE_ROW_VALUES(...) 0, __VA_ARGS__, 0
+#define THEME_SAFE_ROW_WIDTH(default_width, safe_width) (safe_width)
+#else
+#define THEME_SAFE_ROW_MAP(...) __VA_ARGS__
+#define THEME_SAFE_ROW_CTRL(...) __VA_ARGS__
+#define THEME_SAFE_ROW_VALUES(...) __VA_ARGS__
+#define THEME_SAFE_ROW_WIDTH(default_width, safe_width) (default_width)
+#endif
+
 // Called by theme_init() after fonts and scaled dimensions are ready.
 void theme_widgets_init(void);
 
@@ -21,6 +37,8 @@ void theme_apply_btnmatrix(lv_obj_t *btnmatrix);
 // re-applied from its stored ctrl maps on every mode switch.
 void theme_apply_btnmatrix_styles(lv_obj_t *btnmatrix);
 void theme_set_btnmatrix_action(lv_obj_t *btnmatrix, uint32_t btn_id);
+void theme_align_corner_safe(lv_obj_t *obj, lv_align_t align, int32_t x_ofs,
+                             int32_t y_ofs);
 // Standard slider look: scaled track, highlight indicator/knob, knob grown to
 // min_touch size. The knob overhangs the track by theme_slider_knob_pad() on
 // each side — callers must leave that much vertical clearance.

@@ -27,13 +27,18 @@ elseif(CONFIG_KERN_BOARD_WAVE_7B)
     set(TOUCH_DRIVER esp_lcd_touch_gt911)
     set(FONT_POLICY_WIDTH 1024)
     set(FONT_POLICY_HEIGHT 600)
+elseif(CONFIG_KERN_BOARD_TDISPLAY_P4)
+    # GT9895 touch driver ships inside the tdisplay_p4 component itself.
+    set(TOUCH_DRIVER "")
+    set(FONT_POLICY_WIDTH 568)
+    set(FONT_POLICY_HEIGHT 1232)
 endif()
 
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS .
     PRIV_REQUIRES lvgl ${TOUCH_DRIVER} k_quirc esp_timer wave_4b wave_35 wave_5 wave_43
-                  crowpanel wave_7b libwally-core cUR sd_card bbqr deflate_codec video spiffs
+                  crowpanel wave_7b tdisplay_p4 libwally-core cUR sd_card bbqr deflate_codec video spiffs
                   nvs_flash efuse esp_hw_support esp_app_format mbedtls
                   esp_driver_ppa app_update bootloader_support
 )
