@@ -31,6 +31,9 @@ CONFIG_SECURE_BOOT_SIGNING_KEY="dev_signing_key.pem"
 # (fw_update_boot_confirm) or the bootloader returns to the previous slot.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Stack canaries on functions with local buffers: PSBT, descriptor and QR
+# payloads are attacker-supplied and parsed on the 16KB LVGL task stack.
+CONFIG_COMPILER_STACK_CHECK_MODE_STRONG=y
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_1=y
 CONFIG_SPIRAM=y
