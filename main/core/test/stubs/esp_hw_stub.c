@@ -4,10 +4,13 @@
  * Makefile's TEST_INCS); only the implementations live here.
  */
 
+#include <esp_app_desc.h>
+#include <esp_mac.h>
 #include <freertos/task.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 void esp_fill_random(void *buf, size_t len) {
@@ -41,3 +44,19 @@ int esp_reset_reason(void) { return 1; /* ESP_RST_POWERON */ }
 
 /* Seeding jitter has no meaning on a host with no HW RNG refill window. */
 void vTaskDelay(TickType_t ticks) { (void)ticks; }
+
+esp_err_t esp_efuse_mac_get_default(uint8_t *mac) {
+  static const uint8_t s_mac[6] = {0x02, 0x00, 0x00, 0x54, 0x53, 0x54};
+  if (!mac)
+    return ESP_ERR_INVALID_ARG;
+  memcpy(mac, s_mac, sizeof(s_mac));
+  return ESP_OK;
+}
+
+const esp_app_desc_t *esp_app_get_description(void) {
+  static const esp_app_desc_t s_desc = {.version = "host-test",
+                                        .project_name = "kern_core_tests",
+                                        .idf_ver = "host",
+                                        .app_elf_sha256 = {0}};
+  return &s_desc;
+}
