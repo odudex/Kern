@@ -71,12 +71,12 @@ void app_main(void) {
   lv_refr_now(NULL);
   bsp_display_unlock();
 
-  // Initialize PMIC (AXP2101 on wave_35; no-op on wave_4b)
   esp_err_t pmic_ret = bsp_pmic_init();
   if (pmic_ret == ESP_OK) {
-    ESP_LOGI(TAG, "PMIC initialized");
+    ESP_LOGI(TAG, "Battery monitoring initialized");
   } else if (pmic_ret != ESP_ERR_NOT_SUPPORTED) {
-    ESP_LOGW(TAG, "PMIC init failed: %s", esp_err_to_name(pmic_ret));
+    ESP_LOGW(TAG, "Battery monitoring init failed: %s",
+             esp_err_to_name(pmic_ret));
   }
 
   theme_init();
