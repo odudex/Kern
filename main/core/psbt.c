@@ -906,8 +906,15 @@ static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
  * after. */
 typedef struct {
   input_ownership_t owner;
-  bool denied;  /* policy refused this input */
-  bool tracked; /* a snapshot was taken (denied and it names some key) */
+  bool denied;    /* policy refused this input */
+  bool tracked;   /* a snapshot was taken (denied and it names some key) */
+  bool attempted; /* policy cleared it and a signing key was derived */
+  /* Signature count before the pass began. One wally_psbt_sign() call signs
+   * every input naming the key it was given, so an input can already be
+   * signed by the time its own turn comes round -- two inputs on one address
+   * are the common case. Only a baseline taken before any signing can tell
+   * "already signed by us" from "never signed". */
+  size_t sig_baseline;
   size_t sig_count;
   struct wally_map signatures;
   struct wally_map leaf_signatures;
@@ -1054,6 +1061,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     plan[i].owner = psbt_classify_input(psbt, i, is_testnet);
     if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
       signable_any = true;
+      plan[i].sig_baseline = input_signature_count(psbt, i);
       continue;
     }
     plan[i].denied = true;
@@ -1103,10 +1111,8 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       continue;
     }
 
-    if (result)
-      result->attempted++;
+    plan[i].attempted = true;
 
-    size_t sigs_before = input_signature_count(psbt, i);
     int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
                               EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
     bip32_key_free(derived_key);
@@ -1116,15 +1122,24 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     } else {
       ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
     }
-
-    if (result && input_signature_count(psbt, i) > sigs_before)
-      result->signed_ok++;
   }
 
   wally_psbt_signing_cache_disable(psbt);
 
   for (size_t i = 0; i < num_inputs; i++)
     restore_input_state(psbt, i, &plan[i], result);
+
+  /* Tally against the final PSBT rather than per call: what matters is
+   * whether an input we cleared ended the pass holding a new signature. */
+  if (result) {
+    for (size_t i = 0; i < num_inputs; i++) {
+      if (!plan[i].attempted)
+        continue;
+      result->attempted++;
+      if (input_signature_count(psbt, i) > plan[i].sig_baseline)
+        result->signed_ok++;
+    }
+  }
 
   if (signatures_added)
     apply_signer_modifiable_rules(psbt);

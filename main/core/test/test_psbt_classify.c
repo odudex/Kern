@@ -1602,6 +1602,97 @@ static void test_classify_output_psbt_v2(void) {
   wally_psbt_free(psbt);
 }
 
+/* Two inputs spending the same address: one key, two UTXOs. Every field is
+ * identical except the prevout txid, which is what address reuse looks like
+ * on the wire. */
+static struct wally_psbt *make_reused_address_psbt(void) {
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived))
+    return NULL;
+
+  const uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 (stub) */
+      0x54, 0x00, 0x00, 0x80, /* 84' */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x80, /* 0'  */
+      0x00, 0x00, 0x00, 0x00, /* 0 (chain) */
+      0x00, 0x00, 0x00, 0x00, /* 0 (index) */
+  };
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 2, 1, &tx) != WALLY_OK) {
+    bip32_key_free(derived);
+    return NULL;
+  }
+  uint8_t txid_a[32] = {0xa1};
+  uint8_t txid_b[32] = {0xb2};
+  wally_tx_add_raw_input(tx, txid_a, sizeof(txid_a), 0, 0xffffffff, NULL, 0,
+                         NULL, 0);
+  wally_tx_add_raw_input(tx, txid_b, sizeof(txid_b), 2, 0xffffffff, NULL, 0,
+                         NULL, 0);
+  const uint8_t op_return[] = {0x6a};
+  wally_tx_add_raw_output(tx, 0, op_return, sizeof(op_return), 0);
+
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK) {
+    bip32_key_free(derived);
+    return NULL;
+  }
+
+  for (size_t i = 0; i < 2; i++) {
+    struct wally_tx_output *utxo = NULL;
+    wally_tx_output_init_alloc(100000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                               &utxo);
+    wally_psbt_set_input_witness_utxo(psbt, i, utxo);
+    wally_tx_output_free(utxo);
+    wally_map_add(&psbt->inputs[i].keypaths, derived->pub_key,
+                  sizeof(derived->pub_key), kp_val, sizeof(kp_val));
+  }
+
+  bip32_key_free(derived);
+  return psbt;
+}
+
+/* Regression: one wally_psbt_sign() call signs every input naming the key it
+ * was handed, so signing input 0 also signs input 1 when both sit on the same
+ * address. Counting per call saw input 1 gain nothing on its own turn and
+ * reported it unsigned, warning the user that a fully signed PSBT was
+ * incomplete. */
+static void test_sign_counts_reused_address(void) {
+  TEST("psbt_sign: both inputs on a reused address count as signed");
+
+  struct wally_psbt *psbt = make_reused_address_psbt();
+  if (!psbt) {
+    FAIL("make_reused_address_psbt");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t result;
+  const size_t added = psbt_sign(psbt, false, policy, &result);
+
+  size_t sigs0 = 0, sigs1 = 0;
+  wally_psbt_get_input_signatures_size(psbt, 0, &sigs0);
+  wally_psbt_get_input_signatures_size(psbt, 1, &sigs1);
+
+  if (!added)
+    FAIL("the signing pass did nothing");
+  else if (!sigs0 || !sigs1)
+    FAIL("libwally should have signed both inputs on the shared address");
+  else if (result.attempted != 2)
+    FAIL("both inputs should have been attempted");
+  else if (result.signed_ok != 2)
+    FAIL("both inputs are signed, so both must be counted");
+  else if (result.blocked)
+    FAIL("nothing was policy-denied here");
+  else
+    PASS();
+
+  wally_psbt_free(psbt);
+}
+
 /* BIP-370: once a non-ANYONECANPAY / non-NONE signature is present the input
  * and output sets are pinned. libwally does not do this on its signing path,
  * so psbt_sign() has to. */
@@ -2525,6 +2616,7 @@ int main(void) {
 
   test_classify_output_psbt_v2();
   test_sign_clears_tx_modifiable();
+  test_sign_counts_reused_address();
   test_tx_alloc_rejects_bad_amount();
   test_trim_declines_psbt_v2();
 
