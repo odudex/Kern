@@ -458,6 +458,7 @@ target_link_libraries(kern_simulator PRIVATE
 add_executable(kern_sim_storage_smoke
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage_smoke.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/freertos_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/kef.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_utils.c
@@ -493,6 +494,7 @@ target_compile_options(kern_sim_storage_smoke PRIVATE
 
 target_link_libraries(kern_sim_storage_smoke PRIVATE
     m
+    pthread
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}
     ${MBEDX509_LIB}

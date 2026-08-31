@@ -5,10 +5,13 @@
 
 #include <string.h>
 
+#include <bootloader_random.h>
 #include <esp_cpu.h>
 #include <esp_random.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #define POOL_WORDS 8
 
@@ -47,12 +50,16 @@ void entropy_pool_init(void) {
   entropy_pool_stir((uint32_t)esp_reset_reason());
   entropy_pool_stir((uint32_t)esp_timer_get_time());
 
-  // Whatever the RNG holds this early is still the bootloader's seeding.
-  uint32_t boot[POOL_WORDS];
-  esp_fill_random(boot, sizeof(boot));
-  for (size_t i = 0; i < POOL_WORDS; i++)
-    entropy_pool_stir(boot[i]);
-  secure_memzero(boot, sizeof(boot));
+  // Without the SAR ADC noise source esp_random() only replays the
+  // bootloader's seeding. Enable it, then take a word per refill window
+  // rather than one bulk read: 32 bits is the whole HW RNG state, and the
+  // delay leaves scheduler jitter between draws.
+  bootloader_random_enable();
+  for (size_t i = 0; i < POOL_WORDS; i++) {
+    entropy_pool_stir(esp_random());
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  bootloader_random_disable();
 }
 
 void entropy_pool_mix(uint8_t *buf, size_t len) {

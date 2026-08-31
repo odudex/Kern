@@ -4,6 +4,7 @@
  * Makefile's TEST_INCS); only the implementations live here.
  */
 
+#include <freertos/task.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -37,3 +38,6 @@ int64_t esp_timer_get_time(void) {
 }
 
 int esp_reset_reason(void) { return 1; /* ESP_RST_POWERON */ }
+
+/* Seeding jitter has no meaning on a host with no HW RNG refill window. */
+void vTaskDelay(TickType_t ticks) { (void)ticks; }
