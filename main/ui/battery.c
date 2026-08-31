@@ -4,11 +4,23 @@
 #include <stdio.h>
 
 #define BATTERY_REFRESH_MS 30000
+#define BATTERY_LOW_MV 3500
+#define BATTERY_LOW_CLEAR_MV 3600
 
 static void battery_update(lv_obj_t *label) {
   uint8_t pct;
-  if (bsp_pmic_get_battery_percent(&pct) != ESP_OK)
+  if (bsp_pmic_get_battery_percent(&pct) != ESP_OK) {
+    /* Voltage-only board: the icon keeps its width but stays transparent
+       until the pack is nearly empty. */
+    static bool low = false;
+    uint16_t mv;
+    if (bsp_pmic_get_battery_mv(&mv) == ESP_OK)
+      low = low ? mv < BATTERY_LOW_CLEAR_MV : mv <= BATTERY_LOW_MV;
+    lv_label_set_text(label, LV_SYMBOL_BATTERY_EMPTY);
+    lv_obj_set_style_text_color(label, error_color(), 0);
+    lv_obj_set_style_text_opa(label, low ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     return;
+  }
   bsp_pmic_chg_t chg = BSP_PMIC_CHG_DISCHARGING;
   bsp_pmic_get_charge_status(&chg);
 
