@@ -548,6 +548,15 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
   }
 }
 
+/* Show the info dialog, or auto-confirm when the caller passed no callback. */
+static void show_info_or_auto_confirm(void) {
+  pending_generation = current_ctx->generation;
+  if (current_ctx->info_confirm_cb)
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+  else
+    info_confirm_proceed(true, NULL);
+}
+
 static void psb_warn_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
   if (!ctx_callback_is_live())
@@ -557,12 +566,7 @@ static void psb_warn_confirm_cb(bool confirmed, void *user_data) {
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
-  if (current_ctx->info_confirm_cb) {
-    pending_generation = current_ctx->generation;
-    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
-  } else {
-    info_confirm_proceed(true, NULL);
-  }
+  show_info_or_auto_confirm();
 }
 
 /* Run the purpose/script-binding warning (if pending) then the info dialog. */
@@ -576,12 +580,7 @@ static void proceed_psb_or_info(void) {
     }
     return;
   }
-  if (current_ctx->info_confirm_cb) {
-    pending_generation = current_ctx->generation;
-    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
-  } else {
-    info_confirm_proceed(true, NULL);
-  }
+  show_info_or_auto_confirm();
 }
 
 // Verify xpub matches wallet, extract info, and show it.
@@ -835,13 +834,7 @@ static void watch_only_show_info(struct wally_descriptor *descriptor) {
   extract_descriptor_info(descriptor, current_ctx->descriptor_str, -1,
                           &current_ctx->info);
   wally_descriptor_free(descriptor);
-
-  if (current_ctx->info_confirm_cb) {
-    pending_generation = current_ctx->generation;
-    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
-  } else {
-    info_confirm_proceed(true, NULL);
-  }
+  show_info_or_auto_confirm();
 }
 
 bool descriptor_infer_network(const char *descriptor_str,
