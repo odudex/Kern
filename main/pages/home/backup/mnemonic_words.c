@@ -4,6 +4,7 @@
 #include "../../../core/key.h"
 #include "../../../ui/theme.h"
 #include "../../../ui/theme_widgets.h"
+#include "../../../utils/secure_mem.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,7 +123,7 @@ void mnemonic_words_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   }
 
   for (size_t i = 0; i < word_count; i++)
-    free(words[i]);
+    SECURE_FREE_STRING(words[i]);
   free(words);
 
   lv_obj_t *hint = theme_create_label(mnemonic_screen, "Tap to return", true);

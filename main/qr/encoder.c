@@ -1,4 +1,5 @@
 #include "encoder.h"
+#include "../utils/secure_mem.h"
 #include "src/libs/qrcode/qrcodegen.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <ctype.h>
@@ -206,13 +207,13 @@ char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len) {
     int word_index = atoi(index_str);
 
     if (word_index < 0 || word_index > 2047) {
-      free(mnemonic);
+      SECURE_FREE_BUFFER(mnemonic, max_len);
       return NULL;
     }
 
     const char *word = bip39_get_word_by_index(wordlist, (size_t)word_index);
     if (!word) {
-      free(mnemonic);
+      SECURE_FREE_BUFFER(mnemonic, max_len);
       return NULL;
     }
 
@@ -222,7 +223,7 @@ char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len) {
 
     size_t word_len = strlen(word);
     if (offset + word_len >= max_len) {
-      free(mnemonic);
+      SECURE_FREE_BUFFER(mnemonic, max_len);
       return NULL;
     }
 
@@ -232,7 +233,7 @@ char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len) {
   mnemonic[offset] = '\0';
 
   if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    free(mnemonic);
+    SECURE_FREE_BUFFER(mnemonic, max_len);
     return NULL;
   }
 
@@ -263,7 +264,7 @@ char *mnemonic_qr_to_mnemonic(const char *data, size_t len,
   case MNEMONIC_QR_PLAINTEXT: {
     char *mnemonic = strndup(data, len);
     if (mnemonic && bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-      free(mnemonic);
+      SECURE_FREE_STRING(mnemonic);
       return NULL;
     }
     return mnemonic;

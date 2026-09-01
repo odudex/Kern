@@ -297,8 +297,7 @@ static bool generate_mnemonic_from_rolls(void) {
     return false;
   }
 
-  if (completed_mnemonic)
-    free(completed_mnemonic);
+  SECURE_FREE_STRING(completed_mnemonic);
   completed_mnemonic = strdup(mnemonic);
   wally_free_string(mnemonic);
 
@@ -342,10 +341,7 @@ void dice_rolls_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
 
-  if (completed_mnemonic) {
-    free(completed_mnemonic);
-    completed_mnemonic = NULL;
-  }
+  SECURE_FREE_STRING(completed_mnemonic);
 
   total_words = 0;
   min_rolls = 0;

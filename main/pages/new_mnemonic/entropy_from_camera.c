@@ -155,8 +155,7 @@ static void proceed_cb(lv_event_t *e) {
     return;
   }
 
-  if (completed_mnemonic)
-    free(completed_mnemonic);
+  SECURE_FREE_STRING(completed_mnemonic);
   completed_mnemonic = strdup(mnemonic);
   wally_free_string(mnemonic);
 
@@ -183,10 +182,7 @@ void entropy_from_camera_page_create(lv_obj_t *parent,
 
   return_callback = return_cb;
 
-  if (completed_mnemonic) {
-    free(completed_mnemonic);
-    completed_mnemonic = NULL;
-  }
+  SECURE_FREE_STRING(completed_mnemonic);
 
   total_words = 0;
   hash_captured = false;

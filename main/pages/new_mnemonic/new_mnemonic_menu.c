@@ -5,6 +5,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/secure_mem.h"
 #include "../home/home.h"
 #include "../load_mnemonic/manual_input.h"
 #include "../shared/key_confirmation.h"
@@ -39,7 +40,7 @@ static void return_from_dice_rolls_cb(void) {
         lv_screen_active(), return_from_mnemonic_editor_cb,
         success_from_key_confirmation_cb, mnemonic, true);
     mnemonic_editor_page_show();
-    free(mnemonic);
+    SECURE_FREE_STRING(mnemonic);
   } else {
     new_mnemonic_menu_page_show();
   }
@@ -54,7 +55,7 @@ static void return_from_entropy_from_camera_cb(void) {
         lv_screen_active(), return_from_mnemonic_editor_cb,
         success_from_key_confirmation_cb, mnemonic, true);
     mnemonic_editor_page_show();
-    free(mnemonic);
+    SECURE_FREE_STRING(mnemonic);
   } else {
     new_mnemonic_menu_page_show();
   }
