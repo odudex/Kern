@@ -17,3 +17,4 @@ test_pin_attempt
 test_kef
 test_psbt_parse
 test_fw_update
+test_descriptor_validator
