@@ -163,6 +163,8 @@ bool key_get_xpub(const char *path, char **xpub_out) {
                         KEY_MAX_DERIVATION_DEPTH)) {
     return false;
   }
+  if (path_depth == 0)
+    return key_get_master_xpub(xpub_out);
 
   struct ext_key *derived_key = NULL;
   int ret =
