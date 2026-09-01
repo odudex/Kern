@@ -34,6 +34,9 @@ static bool create_psbt_info_display(void);
 
 // Fee share of the inputs at which the review screen stops calling it normal.
 #define HIGH_FEE_PERCENT 10u
+// Past these counts a section collapses to a single totals row.
+#define NONSTANDARD_INPUT_INLINE_THRESHOLD 4
+#define SELF_TRANSFER_INLINE_THRESHOLD 4
 
 typedef enum {
   OUTPUT_TYPE_SELF_TRANSFER,
@@ -289,273 +292,278 @@ bool scan_psbt_check_mismatch(void) {
   return true;
 }
 
-static bool create_psbt_info_display(void) {
-  if (!scan_ctx.screen || !scan_ctx.psbt || !wallet_is_initialized()) {
-    return false;
-  }
-
-  if (scan_psbt_check_mismatch()) {
-    return true;
-  }
-
-  size_t num_inputs = 0;
-  size_t num_outputs = 0;
-
-  if (wally_psbt_get_num_inputs(scan_ctx.psbt, &num_inputs) != WALLY_OK ||
-      wally_psbt_get_num_outputs(scan_ctx.psbt, &num_outputs) != WALLY_OK) {
-    return false;
-  }
-
-  if (num_inputs == 0 || num_outputs == 0) {
-    return false;
-  }
-
-  uint64_t *input_amounts = malloc(num_inputs * sizeof(uint64_t));
-  if (!input_amounts) {
-    return false;
-  }
-  lv_color_t *input_colors = malloc(num_inputs * sizeof(lv_color_t));
-  if (!input_colors) {
-    free(input_amounts);
-    return false;
-  }
-  classified_input_t *classified_inputs =
-      calloc(num_inputs, sizeof(classified_input_t));
-  if (!classified_inputs) {
-    free(input_colors);
-    free(input_amounts);
-    return false;
-  }
+/* Everything the review screen shows, gathered before any widget is created
+ * so the render helpers below never touch the PSBT or wally. */
+typedef struct {
+  classified_input_t *inputs;
+  size_t num_inputs;
+  size_t external_inputs;
+  classified_output_t *outputs;
+  size_t num_outputs;
+  uint64_t total_input;
+  uint64_t total_output;
+  uint64_t fee;
+  uint32_t locktime;
+  bool signals_rbf;
+  size_t dust_count;
+  size_t first_dust;
+  uint64_t first_dust_value;
   psbt_amount_audit_t amount_audit;
-  psbt_audit_input_amounts(scan_ctx.psbt, &amount_audit);
+} review_data_t;
 
-  uint64_t total_input_value = 0;
-  size_t external_input_count = 0;
-  for (size_t i = 0; i < num_inputs; i++) {
-    input_amounts[i] = psbt_get_input_value(scan_ctx.psbt, i);
-    total_input_value += input_amounts[i];
+/* psbt_scriptpubkey_to_address returns a wally string, except the literal
+ * OP_RETURN marker which is plain malloc. */
+static void free_address(char *address) {
+  if (!address)
+    return;
+  if (strcmp(address, "OP_RETURN") == 0)
+    free(address);
+  else
+    wally_free_string(address);
+}
+
+static void review_data_free(review_data_t *d) {
+  if (d->inputs)
+    for (size_t i = 0; i < d->num_inputs; i++)
+      free_address(d->inputs[i].address);
+  free(d->inputs);
+  if (d->outputs)
+    for (size_t i = 0; i < d->num_outputs; i++)
+      free_address(d->outputs[i].address);
+  free(d->outputs);
+  memset(d, 0, sizeof(*d));
+}
+
+static bool review_data_collect(review_data_t *d) {
+  memset(d, 0, sizeof(*d));
+  if (wally_psbt_get_num_inputs(scan_ctx.psbt, &d->num_inputs) != WALLY_OK ||
+      wally_psbt_get_num_outputs(scan_ctx.psbt, &d->num_outputs) != WALLY_OK ||
+      d->num_inputs == 0 || d->num_outputs == 0)
+    return false;
+
+  d->inputs = calloc(d->num_inputs, sizeof(*d->inputs));
+  d->outputs = calloc(d->num_outputs, sizeof(*d->outputs));
+  if (!d->inputs || !d->outputs)
+    goto fail;
+
+  psbt_audit_input_amounts(scan_ctx.psbt, &d->amount_audit);
+
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    classified_input_t *in = &d->inputs[i];
+    in->index = i;
+    in->value = psbt_get_input_value(scan_ctx.psbt, i);
+    d->total_input += in->value;
 
     input_ownership_t own =
         psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
-    classified_inputs[i].index = i;
-    classified_inputs[i].ownership = own.ownership;
-    classified_inputs[i].value = input_amounts[i];
-    input_colors[i] = (own.ownership == PSBT_OWNERSHIP_EXTERNAL)
-                          ? error_color()
-                          : primary_color();
-    format_input_policy(&own, classified_inputs[i].policy,
-                        sizeof(classified_inputs[i].policy));
-    classified_inputs[i].path[0] = '\0';
+    in->ownership = own.ownership;
+    format_input_policy(&own, in->policy, sizeof(in->policy));
     if ((own.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE ||
          own.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED) &&
-        !psbt_format_keypath(own.raw_keypath, own.raw_keypath_len,
-                             classified_inputs[i].path,
-                             sizeof(classified_inputs[i].path)))
-      classified_inputs[i].path[0] = '\0'; // renders no path line
+        !psbt_format_keypath(own.raw_keypath, own.raw_keypath_len, in->path,
+                             sizeof(in->path)))
+      in->path[0] = '\0'; // renders no path line
 
-    /* External inputs need their address rendered in the warning section.
-     * Skip address decoding for owned inputs — they're not displayed. */
+    /* Only external inputs show their address, in the co-signing warning. */
     if (own.ownership == PSBT_OWNERSHIP_EXTERNAL) {
-      external_input_count++;
+      d->external_inputs++;
       unsigned char spk[34];
       size_t spk_len = 0;
-      if (psbt_input_utxo_script(scan_ctx.psbt, i, spk, sizeof(spk),
-                                 &spk_len)) {
-        classified_inputs[i].address =
+      if (psbt_input_utxo_script(scan_ctx.psbt, i, spk, sizeof(spk), &spk_len))
+        in->address =
             psbt_scriptpubkey_to_address(spk, spk_len, scan_ctx.is_testnet);
+    }
+  }
+
+  struct wally_tx *tx = psbt_tx_alloc(scan_ctx.psbt);
+  if (!tx)
+    goto fail;
+
+  /* BIP-125 opts a transaction into replaceability when any input's sequence
+   * is below 0xfffffffe. */
+  d->locktime = tx->locktime;
+  for (size_t i = 0; i < tx->num_inputs; i++)
+    if (tx->inputs[i].sequence < 0xfffffffeu)
+      d->signals_rbf = true;
+
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    classified_output_t *out = &d->outputs[i];
+    const struct wally_tx_output *txo = &tx->outputs[i];
+    out->index = i;
+    out->value = txo->satoshi;
+    d->total_output += out->value;
+    out->address = psbt_scriptpubkey_to_address(txo->script, txo->script_len,
+                                                scan_ctx.is_testnet);
+    out->type =
+        classify_output(i, &out->address_index, out->path, sizeof(out->path));
+    out->is_dust =
+        out->value < psbt_output_dust_threshold(txo->script, txo->script_len);
+    if (out->is_dust) {
+      if (!d->dust_count) {
+        d->first_dust = i;
+        d->first_dust_value = out->value;
       }
+      d->dust_count++;
     }
   }
+  wally_tx_free(tx);
 
-  struct wally_tx *global_tx = psbt_tx_alloc(scan_ctx.psbt);
-  if (!global_tx) {
-    for (size_t i = 0; i < num_inputs; i++)
-      free(classified_inputs[i].address);
-    free(classified_inputs);
-    free(input_colors);
-    free(input_amounts);
+  d->fee =
+      d->total_input > d->total_output ? d->total_input - d->total_output : 0;
+  return true;
+
+fail:
+  review_data_free(d);
+  return false;
+}
+
+/* ---------- widgets shared by the sections ---------- */
+
+static lv_obj_t *section_title(lv_obj_t *parent, const char *text,
+                               lv_color_t color, bool spaced) {
+  lv_obj_t *title = theme_create_label(parent, text, false);
+  theme_apply_label(title, true);
+  lv_obj_set_style_text_color(title, color, 0);
+  if (spaced)
+    lv_obj_set_style_margin_top(title, 15, 0);
+  lv_obj_set_width(title, LV_PCT(100));
+  return title;
+}
+
+static void indented_amount_row(lv_obj_t *parent, const char *prefix,
+                                uint64_t sats) {
+  lv_obj_t *row =
+      scan_create_btc_value_row(parent, prefix, sats, primary_color());
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_style_pad_left(row, 20, 0);
+}
+
+static lv_color_t output_type_color(output_type_t type) {
+  switch (type) {
+  case OUTPUT_TYPE_CHANGE:
+    return good_color();
+  case OUTPUT_TYPE_EXPECTED_OWNED:
+    return error_color();
+  case OUTPUT_TYPE_SPEND:
+    return highlight_color();
+  case OUTPUT_TYPE_SELF_TRANSFER:
+  case OUTPUT_TYPE_OWNED_UNSAFE:
+  default:
+    return accent_color();
+  }
+}
+
+/* ---------- diagram ---------- */
+
+static bool render_diagram(lv_obj_t *parent, const review_data_t *d) {
+  size_t diagram_outputs = d->num_outputs + (d->fee > 0 ? 1 : 0);
+  uint64_t *in_amounts = malloc(d->num_inputs * sizeof(uint64_t));
+  lv_color_t *in_colors = malloc(d->num_inputs * sizeof(lv_color_t));
+  uint64_t *out_amounts = malloc(diagram_outputs * sizeof(uint64_t));
+  lv_color_t *out_colors = malloc(diagram_outputs * sizeof(lv_color_t));
+  if (!in_amounts || !in_colors || !out_amounts || !out_colors) {
+    free(in_amounts);
+    free(in_colors);
+    free(out_amounts);
+    free(out_colors);
     return false;
   }
 
-  classified_output_t *classified_outputs =
-      calloc(num_outputs, sizeof(classified_output_t));
-  if (!classified_outputs) {
-    for (size_t i = 0; i < num_inputs; i++)
-      free(classified_inputs[i].address);
-    free(classified_inputs);
-    free(input_colors);
-    free(input_amounts);
-    wally_tx_free(global_tx);
-    return false;
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    in_amounts[i] = d->inputs[i].value;
+    in_colors[i] = d->inputs[i].ownership == PSBT_OWNERSHIP_EXTERNAL
+                       ? error_color()
+                       : primary_color();
   }
 
-  uint64_t total_output_value = 0;
-  for (size_t i = 0; i < num_outputs; i++) {
-    total_output_value += global_tx->outputs[i].satoshi;
-  }
-
-  /* Both are read off the global tx, which is freed before the notes are
-   * rendered. BIP-125 opts a transaction into replaceability when any input's
-   * sequence is below 0xfffffffe. */
-  uint32_t locktime = global_tx->locktime;
-  bool signals_rbf = false;
-  for (size_t i = 0; i < global_tx->num_inputs; i++) {
-    if (global_tx->inputs[i].sequence < 0xfffffffeu)
-      signals_rbf = true;
-  }
-  uint64_t fee = (total_input_value > total_output_value)
-                     ? (total_input_value - total_output_value)
-                     : 0;
-
-  size_t diagram_output_count = num_outputs + (fee > 0 ? 1 : 0);
-  uint64_t *output_amounts = malloc(diagram_output_count * sizeof(uint64_t));
-  lv_color_t *output_colors = malloc(diagram_output_count * sizeof(lv_color_t));
-  if (!output_amounts || !output_colors) {
-    for (size_t i = 0; i < num_inputs; i++)
-      free(classified_inputs[i].address);
-    free(classified_inputs);
-    free(input_colors);
-    free(input_amounts);
-    free(output_amounts);
-    free(output_colors);
-    free(classified_outputs);
-    wally_tx_free(global_tx);
-    return false;
-  }
-
-  for (size_t i = 0; i < num_outputs; i++) {
-    classified_outputs[i].index = i;
-    classified_outputs[i].value = global_tx->outputs[i].satoshi;
-    classified_outputs[i].address = psbt_scriptpubkey_to_address(
-        global_tx->outputs[i].script, global_tx->outputs[i].script_len,
-        scan_ctx.is_testnet);
-    classified_outputs[i].path[0] = '\0';
-    classified_outputs[i].type = classify_output(
-        i, &classified_outputs[i].address_index, classified_outputs[i].path,
-        sizeof(classified_outputs[i].path));
-    classified_outputs[i].is_dust =
-        classified_outputs[i].value <
-        psbt_output_dust_threshold(global_tx->outputs[i].script,
-                                   global_tx->outputs[i].script_len);
-  }
-
-  size_t diagram_idx = 0;
-
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
-      output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = accent_color();
-      diagram_idx++;
+  /* Outputs are grouped by kind in the order the sections below use. */
+  static const output_type_t order[] = {
+      OUTPUT_TYPE_SELF_TRANSFER, OUTPUT_TYPE_CHANGE, OUTPUT_TYPE_OWNED_UNSAFE,
+      OUTPUT_TYPE_EXPECTED_OWNED, OUTPUT_TYPE_SPEND};
+  size_t idx = 0;
+  for (size_t t = 0; t < sizeof(order) / sizeof(order[0]); t++) {
+    for (size_t i = 0; i < d->num_outputs; i++) {
+      if (d->outputs[i].type != order[t])
+        continue;
+      out_amounts[idx] = d->outputs[i].value;
+      out_colors[idx] = output_type_color(order[t]);
+      idx++;
     }
   }
-
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
-      output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = good_color();
-      diagram_idx++;
-    }
+  if (d->fee > 0) {
+    out_amounts[idx] = d->fee;
+    out_colors[idx] = error_color();
   }
 
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_OWNED_UNSAFE) {
-      output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = accent_color();
-      diagram_idx++;
-    }
-  }
-
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_EXPECTED_OWNED) {
-      output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = error_color();
-      diagram_idx++;
-    }
-  }
-
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_SPEND) {
-      output_amounts[diagram_idx] = classified_outputs[i].value;
-      output_colors[diagram_idx] = highlight_color();
-      diagram_idx++;
-    }
-  }
-
-  if (fee > 0) {
-    output_amounts[diagram_idx] = fee;
-    output_colors[diagram_idx] = error_color();
-  }
-
-  scan_ctx.info_container = theme_create_scroll_column(scan_ctx.screen, 10, 10);
-
-  lv_obj_update_layout(scan_ctx.info_container);
+  lv_obj_update_layout(parent);
   int32_t diagram_width = lv_obj_get_width(scan_ctx.screen) - 20;
   int32_t diagram_height = lv_obj_get_height(scan_ctx.screen) / 4;
-  scan_ctx.tx_diagram = sankey_diagram_create(scan_ctx.info_container,
-                                              diagram_width, diagram_height);
+  scan_ctx.tx_diagram =
+      sankey_diagram_create(parent, diagram_width, diagram_height);
   if (scan_ctx.tx_diagram) {
-    sankey_diagram_set_inputs(scan_ctx.tx_diagram, input_amounts, num_inputs,
-                              input_colors);
-    sankey_diagram_set_outputs(scan_ctx.tx_diagram, output_amounts,
-                               diagram_output_count, output_colors);
+    sankey_diagram_set_inputs(scan_ctx.tx_diagram, in_amounts, d->num_inputs,
+                              in_colors);
+    sankey_diagram_set_outputs(scan_ctx.tx_diagram, out_amounts,
+                               diagram_outputs, out_colors);
     sankey_diagram_render(scan_ctx.tx_diagram);
   }
+  free(in_amounts);
+  free(in_colors);
+  free(out_amounts);
+  free(out_colors);
 
   size_t input_overflow =
       sankey_diagram_get_input_overflow(scan_ctx.tx_diagram);
   size_t output_overflow =
       sankey_diagram_get_output_overflow(scan_ctx.tx_diagram);
+  if (input_overflow == 0 && output_overflow == 0)
+    return true;
 
-  if (input_overflow > 0 || output_overflow > 0) {
-    lv_obj_t *overflow_row = lv_obj_create(scan_ctx.info_container);
-    lv_obj_set_size(overflow_row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(overflow_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(overflow_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(overflow_row, 0, 0);
-    lv_obj_set_style_bg_opa(overflow_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(overflow_row, 0, 0);
+  lv_obj_t *overflow_row = lv_obj_create(parent);
+  lv_obj_set_size(overflow_row, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(overflow_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(overflow_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(overflow_row, 0, 0);
+  lv_obj_set_style_bg_opa(overflow_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(overflow_row, 0, 0);
 
-    if (input_overflow > 0) {
-      char overflow_text[32];
-      snprintf(overflow_text, sizeof(overflow_text), "+%zu more",
-               input_overflow);
-      lv_obj_t *label = theme_create_label(overflow_row, overflow_text, false);
-      lv_obj_set_style_text_color(label, secondary_color(), 0);
-    } else {
-      lv_obj_t *spacer = lv_obj_create(overflow_row);
-      lv_obj_set_size(spacer, 1, 1);
-      lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
-      lv_obj_set_style_border_width(spacer, 0, 0);
-    }
-
-    if (output_overflow > 0) {
-      char overflow_text[32];
-      snprintf(overflow_text, sizeof(overflow_text), "+%zu more",
-               output_overflow);
-      lv_obj_t *label = theme_create_label(overflow_row, overflow_text, false);
-      lv_obj_set_style_text_color(label, secondary_color(), 0);
-    }
+  if (input_overflow > 0) {
+    char overflow_text[32];
+    snprintf(overflow_text, sizeof(overflow_text), "+%zu more", input_overflow);
+    lv_obj_t *label = theme_create_label(overflow_row, overflow_text, false);
+    lv_obj_set_style_text_color(label, secondary_color(), 0);
+  } else {
+    lv_obj_t *spacer = lv_obj_create(overflow_row);
+    lv_obj_set_size(spacer, 1, 1);
+    lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spacer, 0, 0);
   }
 
-  free(input_amounts);
-  free(input_colors);
-  free(output_amounts);
-  free(output_colors);
+  if (output_overflow > 0) {
+    char overflow_text[32];
+    snprintf(overflow_text, sizeof(overflow_text), "+%zu more",
+             output_overflow);
+    lv_obj_t *label = theme_create_label(overflow_row, overflow_text, false);
+    lv_obj_set_style_text_color(label, secondary_color(), 0);
+  }
+  return true;
+}
 
-  /* Group owned-safe inputs by their signing policy and render one
-   * "Inputs(N): <amount> from <policy>" row per distinct source.
-   * UNSAFE / EXPECTED / External inputs keep their dedicated warning
-   * sections below — those carry the count + amount + path/address
-   * inline so they don't need a top-level breakdown. */
-  for (size_t i = 0; i < num_inputs; i++) {
-    const char *policy = classified_inputs[i].policy;
+/* ---------- input sections ---------- */
+
+/* One "Inputs(N): <amount> from <policy>" row per distinct signing policy of
+ * the owned-safe inputs. The other ownership classes get their own warning
+ * sections below, which already carry count, amount and path or address. */
+static void render_input_policy_rows(lv_obj_t *parent, const review_data_t *d) {
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    const char *policy = d->inputs[i].policy;
     if (policy[0] == '\0')
       continue;
 
     bool already = false;
     for (size_t j = 0; j < i; j++) {
-      if (strcmp(classified_inputs[j].policy, policy) == 0) {
+      if (strcmp(d->inputs[j].policy, policy) == 0) {
         already = true;
         break;
       }
@@ -565,17 +573,17 @@ static bool create_psbt_info_display(void) {
 
     size_t count = 0;
     uint64_t total = 0;
-    for (size_t k = i; k < num_inputs; k++) {
-      if (strcmp(classified_inputs[k].policy, policy) == 0) {
+    for (size_t k = i; k < d->num_inputs; k++) {
+      if (strcmp(d->inputs[k].policy, policy) == 0) {
         count++;
-        total += classified_inputs[k].value;
+        total += d->inputs[k].value;
       }
     }
 
     char prefix[32];
     snprintf(prefix, sizeof(prefix), "Inputs(%zu): ", count);
-    lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, prefix,
-                                              total, primary_color());
+    lv_obj_t *row =
+        scan_create_btc_value_row(parent, prefix, total, primary_color());
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
 
@@ -586,336 +594,186 @@ static bool create_psbt_info_display(void) {
     lv_label_set_long_mode(src, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_max_width(src, LV_PCT(100), 0);
   }
-  (void)total_input_value; /* now distributed across per-policy rows */
+}
 
-  /* Count non-standard owned inputs up-front so we can collapse to a
-   * totals row when the list would scroll-fatigue the review screen. */
-#define NONSTANDARD_INPUT_INLINE_THRESHOLD 4
-  size_t unsafe_input_count = 0;
-  uint64_t total_unsafe_input = 0;
-  for (size_t i = 0; i < num_inputs; i++) {
-    if (classified_inputs[i].ownership == PSBT_OWNERSHIP_OWNED_UNSAFE) {
-      unsafe_input_count++;
-      total_unsafe_input += classified_inputs[i].value;
+/* Owned inputs on a non-standard path collapse to a totals row when listing
+ * them all would scroll-fatigue the review screen. */
+static void render_nonstandard_inputs(lv_obj_t *parent,
+                                      const review_data_t *d) {
+  size_t count = 0;
+  uint64_t total = 0;
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    if (d->inputs[i].ownership == PSBT_OWNERSHIP_OWNED_UNSAFE) {
+      count++;
+      total += d->inputs[i].value;
     }
   }
+  if (count == 0)
+    return;
 
-  if (unsafe_input_count > NONSTANDARD_INPUT_INLINE_THRESHOLD) {
-    char title_text[64];
-    snprintf(title_text, sizeof(title_text),
-             "Owned inputs, non-standard path (%zu): ", unsafe_input_count);
-    lv_obj_t *title =
-        theme_create_label(scan_ctx.info_container, title_text, false);
-    theme_apply_label(title, true);
-    lv_obj_set_style_text_color(title, accent_color(), 0);
-    lv_obj_set_style_margin_top(title, 15, 0);
-    lv_obj_set_width(title, LV_PCT(100));
-
-    lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container,
-                                              "Total: ", total_unsafe_input,
-                                              primary_color());
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_style_pad_left(row, 20, 0);
-  } else if (unsafe_input_count > 0) {
-    lv_obj_t *title = theme_create_label(
-        scan_ctx.info_container, "Owned inputs (non-standard path): ", false);
-    theme_apply_label(title, true);
-    lv_obj_set_style_text_color(title, accent_color(), 0);
-    lv_obj_set_style_margin_top(title, 15, 0);
-    lv_obj_set_width(title, LV_PCT(100));
-
-    for (size_t i = 0; i < num_inputs; i++) {
-      if (classified_inputs[i].ownership != PSBT_OWNERSHIP_OWNED_UNSAFE)
-        continue;
-      char text[128];
-      snprintf(text, sizeof(text),
-               "Input %zu (%s): ", classified_inputs[i].index,
-               classified_inputs[i].path[0] ? classified_inputs[i].path : "?");
-      lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, text,
-                                                classified_inputs[i].value,
-                                                primary_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-    }
+  if (count > NONSTANDARD_INPUT_INLINE_THRESHOLD) {
+    char title[64];
+    snprintf(title, sizeof(title),
+             "Owned inputs, non-standard path (%zu): ", count);
+    section_title(parent, title, accent_color(), true);
+    indented_amount_row(parent, "Total: ", total);
+    return;
   }
 
-  bool has_expected_inputs = false;
-  for (size_t i = 0; i < num_inputs; i++) {
-    if (classified_inputs[i].ownership != PSBT_OWNERSHIP_EXPECTED_OWNED)
+  section_title(parent, "Owned inputs (non-standard path): ", accent_color(),
+                true);
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    const classified_input_t *in = &d->inputs[i];
+    if (in->ownership != PSBT_OWNERSHIP_OWNED_UNSAFE)
       continue;
-    if (!has_expected_inputs) {
-      lv_obj_t *title =
-          theme_create_label(scan_ctx.info_container,
-                             "Expected ownership inputs (UNVERIFIED): ", false);
-      theme_apply_label(title, true);
-      lv_obj_set_style_text_color(title, error_color(), 0);
-      lv_obj_set_style_margin_top(title, 15, 0);
-      lv_obj_set_width(title, LV_PCT(100));
-      has_expected_inputs = true;
-    }
-
     char text[128];
-    snprintf(text, sizeof(text), "Input %zu (%s): ", classified_inputs[i].index,
-             classified_inputs[i].path[0] ? classified_inputs[i].path : "?");
-    lv_obj_t *row =
-        scan_create_btc_value_row(scan_ctx.info_container, text,
-                                  classified_inputs[i].value, primary_color());
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_style_pad_left(row, 20, 0);
+    snprintf(text, sizeof(text), "Input %zu (%s): ", in->index,
+             in->path[0] ? in->path : "?");
+    indented_amount_row(parent, text, in->value);
   }
+}
 
-  /* External inputs warning section. The Partial-signing gate has already
-   * passed (otherwise we wouldn't reach the review screen with externals
-   * present), but the user must still see what they're co-signing — we
-   * sign our inputs only, leaving externals to whoever holds those keys.
-   * Render each external input's amount + address so the user can spot a
-   * forgery (an attacker tricking us into co-signing their address). */
-  if (external_input_count > 0) {
-    lv_obj_t *warn_title = theme_create_label(
-        scan_ctx.info_container,
-        "External inputs (NOT YOURS) -- you are co-signing:", false);
-    theme_apply_label(warn_title, true);
-    lv_obj_set_style_text_color(warn_title, error_color(), 0);
-    lv_obj_set_style_margin_top(warn_title, 15, 0);
-    lv_obj_set_width(warn_title, LV_PCT(100));
-    lv_label_set_long_mode(warn_title, LV_LABEL_LONG_WRAP);
-
-    for (size_t i = 0; i < num_inputs; i++) {
-      if (classified_inputs[i].ownership != PSBT_OWNERSHIP_EXTERNAL)
-        continue;
-      char text[64];
-      snprintf(text, sizeof(text), "Input %zu: ", classified_inputs[i].index);
-      lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, text,
-                                                classified_inputs[i].value,
-                                                primary_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-
-      if (classified_inputs[i].address) {
-        scan_create_address_label(scan_ctx.info_container,
-                                  classified_inputs[i].address, error_color(),
-                                  ADDRESS_INDENT_PX);
-      }
-    }
-  }
-
-  lv_obj_t *separator1 =
-      theme_create_separator(scan_ctx.info_container, primary_color());
-  lv_obj_set_style_margin_top(separator1, 15, 0);
-
-  /* Count self-transfers up-front so we can collapse to a totals row when
-   * the list would otherwise scroll-fatigue the review screen. */
-#define SELF_TRANSFER_INLINE_THRESHOLD 4
-  size_t self_transfer_count = 0;
-  uint64_t total_self_transfer = 0;
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
-      self_transfer_count++;
-      total_self_transfer += classified_outputs[i].value;
-    }
-  }
-
-  if (self_transfer_count > SELF_TRANSFER_INLINE_THRESHOLD) {
-    char title_text[48];
-    snprintf(title_text, sizeof(title_text),
-             "Self-Transfer (%zu): ", self_transfer_count);
-    lv_obj_t *title =
-        theme_create_label(scan_ctx.info_container, title_text, false);
-    theme_apply_label(title, true);
-    lv_obj_set_style_text_color(title, accent_color(), 0);
-    lv_obj_set_width(title, LV_PCT(100));
-
-    lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container,
-                                              "Total: ", total_self_transfer,
-                                              primary_color());
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_style_pad_left(row, 20, 0);
-  } else if (self_transfer_count > 0) {
-    lv_obj_t *title =
-        theme_create_label(scan_ctx.info_container, "Self-Transfer: ", false);
-    theme_apply_label(title, true);
-    lv_obj_set_style_text_color(title, accent_color(), 0);
-    lv_obj_set_width(title, LV_PCT(100));
-
-    for (size_t i = 0; i < num_outputs; i++) {
-      if (classified_outputs[i].type != OUTPUT_TYPE_SELF_TRANSFER)
-        continue;
-
-      char text[64];
-      snprintf(text, sizeof(text),
-               "Receive #%u: ", classified_outputs[i].address_index);
-      lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, text,
-                                                classified_outputs[i].value,
-                                                primary_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-
-      if (classified_outputs[i].address) {
-        scan_create_address_label(scan_ctx.info_container,
-                                  classified_outputs[i].address, accent_color(),
-                                  ADDRESS_INDENT_PX);
-      }
-    }
-  }
-
-  /* Change is verified-owned (derive reproduces the spk on chain=1); the
-   * specific addresses don't need user review. Collapse to a single total
-   * row so the review screen stays focused on outgoing spends. Outputs we
-   * can't verify (fp matches but derive fails) classify as
-   * EXPECTED_OWNED, not CHANGE, and render in their own warning section. */
-  uint64_t total_change = 0;
-  size_t change_count = 0;
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_CHANGE) {
-      total_change += classified_outputs[i].value;
-      change_count++;
-    }
-  }
-  if (change_count > 0) {
-    lv_obj_t *row = scan_create_btc_value_row(
-        scan_ctx.info_container, "Change: ", total_change, good_color());
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_style_margin_top(row, 15, 0);
-  }
-
-  bool has_owned_unsafe = false;
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_OWNED_UNSAFE) {
-      if (!has_owned_unsafe) {
-        lv_obj_t *title = theme_create_label(
-            scan_ctx.info_container, "Owned (non-standard path): ", false);
-        theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, accent_color(), 0);
-        lv_obj_set_style_margin_top(title, 15, 0);
-        lv_obj_set_width(title, LV_PCT(100));
-        has_owned_unsafe = true;
-      }
-
-      char text[128];
-      snprintf(
-          text, sizeof(text), "Output %zu (%s): ", classified_outputs[i].index,
-          classified_outputs[i].path[0] ? classified_outputs[i].path : "?");
-      lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, text,
-                                                classified_outputs[i].value,
-                                                primary_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-
-      if (classified_outputs[i].address) {
-        scan_create_address_label(scan_ctx.info_container,
-                                  classified_outputs[i].address, accent_color(),
-                                  ADDRESS_INDENT_PX);
-      }
-    }
-  }
-
-  bool has_expected = false;
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_EXPECTED_OWNED) {
-      if (!has_expected) {
-        lv_obj_t *title =
-            theme_create_label(scan_ctx.info_container,
-                               "Expected ownership (UNVERIFIED): ", false);
-        theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, error_color(), 0);
-        lv_obj_set_style_margin_top(title, 15, 0);
-        lv_obj_set_width(title, LV_PCT(100));
-        has_expected = true;
-      }
-
-      char text[128];
-      snprintf(
-          text, sizeof(text), "Output %zu (%s): ", classified_outputs[i].index,
-          classified_outputs[i].path[0] ? classified_outputs[i].path : "?");
-      lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, text,
-                                                classified_outputs[i].value,
-                                                primary_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-
-      if (classified_outputs[i].address) {
-        scan_create_address_label(scan_ctx.info_container,
-                                  classified_outputs[i].address, error_color(),
-                                  ADDRESS_INDENT_PX);
-      }
-    }
-  }
-
-  bool has_spends = false;
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].type == OUTPUT_TYPE_SPEND) {
-      if (!has_spends) {
-        lv_obj_t *title =
-            theme_create_label(scan_ctx.info_container, "Spending: ", false);
-        theme_apply_label(title, true);
-        lv_obj_set_style_text_color(title, highlight_color(), 0);
-        lv_obj_set_style_margin_top(title, 15, 0);
-        lv_obj_set_width(title, LV_PCT(100));
-        has_spends = true;
-      }
-
-      char text[64];
-      snprintf(text, sizeof(text), "Output %zu: ", classified_outputs[i].index);
-      lv_obj_t *row = scan_create_btc_value_row(scan_ctx.info_container, text,
-                                                classified_outputs[i].value,
-                                                primary_color());
-      lv_obj_set_width(row, LV_PCT(100));
-      lv_obj_set_style_pad_left(row, 20, 0);
-
-      if (classified_outputs[i].address) {
-        scan_create_address_label(scan_ctx.info_container,
-                                  classified_outputs[i].address,
-                                  highlight_color(), ADDRESS_INDENT_PX);
-      }
-    }
-  }
-
-  size_t dust_count = 0;
-  size_t first_dust = 0;
-  uint64_t first_dust_value = 0;
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (!classified_outputs[i].is_dust)
+static void render_expected_inputs(lv_obj_t *parent, const review_data_t *d) {
+  bool titled = false;
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    const classified_input_t *in = &d->inputs[i];
+    if (in->ownership != PSBT_OWNERSHIP_EXPECTED_OWNED)
       continue;
-    if (!dust_count) {
-      first_dust = classified_outputs[i].index;
-      first_dust_value = classified_outputs[i].value;
+    if (!titled) {
+      section_title(parent,
+                    "Expected ownership inputs (UNVERIFIED): ", error_color(),
+                    true);
+      titled = true;
     }
-    dust_count++;
+    char text[128];
+    snprintf(text, sizeof(text), "Input %zu (%s): ", in->index,
+             in->path[0] ? in->path : "?");
+    indented_amount_row(parent, text, in->value);
   }
+}
 
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (classified_outputs[i].address) {
-      if (strcmp(classified_outputs[i].address, "OP_RETURN") == 0) {
-        free(classified_outputs[i].address);
-      } else {
-        wally_free_string(classified_outputs[i].address);
-      }
+/* The Partial-signing gate has already passed, but the user must still see
+ * what they are co-signing: we sign our inputs only and leave externals to
+ * whoever holds those keys. Each external input's amount and address is
+ * shown so a forgery (an attacker slipping their own address in) stands out. */
+static void render_external_inputs(lv_obj_t *parent, const review_data_t *d) {
+  if (d->external_inputs == 0)
+    return;
+
+  lv_obj_t *title = section_title(
+      parent,
+      "External inputs (NOT YOURS) -- you are co-signing:", error_color(),
+      true);
+  lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+
+  for (size_t i = 0; i < d->num_inputs; i++) {
+    const classified_input_t *in = &d->inputs[i];
+    if (in->ownership != PSBT_OWNERSHIP_EXTERNAL)
+      continue;
+    char text[64];
+    snprintf(text, sizeof(text), "Input %zu: ", in->index);
+    indented_amount_row(parent, text, in->value);
+    if (in->address)
+      scan_create_address_label(parent, in->address, error_color(),
+                                ADDRESS_INDENT_PX);
+  }
+}
+
+/* ---------- output sections ---------- */
+
+/* Self-transfers collapse to a totals row past the inline threshold. */
+static void render_self_transfers(lv_obj_t *parent, const review_data_t *d) {
+  size_t count = 0;
+  uint64_t total = 0;
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    if (d->outputs[i].type == OUTPUT_TYPE_SELF_TRANSFER) {
+      count++;
+      total += d->outputs[i].value;
     }
   }
-  free(classified_outputs);
+  if (count == 0)
+    return;
 
-  for (size_t i = 0; i < num_inputs; i++) {
-    if (classified_inputs[i].address) {
-      if (strcmp(classified_inputs[i].address, "OP_RETURN") == 0)
-        free(classified_inputs[i].address);
-      else
-        wally_free_string(classified_inputs[i].address);
+  if (count > SELF_TRANSFER_INLINE_THRESHOLD) {
+    char title[48];
+    snprintf(title, sizeof(title), "Self-Transfer (%zu): ", count);
+    section_title(parent, title, accent_color(), false);
+    indented_amount_row(parent, "Total: ", total);
+    return;
+  }
+
+  section_title(parent, "Self-Transfer: ", accent_color(), false);
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    const classified_output_t *out = &d->outputs[i];
+    if (out->type != OUTPUT_TYPE_SELF_TRANSFER)
+      continue;
+    char text[64];
+    snprintf(text, sizeof(text), "Receive #%u: ", out->address_index);
+    indented_amount_row(parent, text, out->value);
+    if (out->address)
+      scan_create_address_label(parent, out->address, accent_color(),
+                                ADDRESS_INDENT_PX);
+  }
+}
+
+/* Change is verified-owned (derive reproduces the spk on chain=1), so the
+ * addresses need no review and a single total keeps the screen focused on
+ * outgoing spends. Outputs that cannot be verified classify as EXPECTED_OWNED
+ * and render in their own warning section. */
+static void render_change(lv_obj_t *parent, const review_data_t *d) {
+  uint64_t total = 0;
+  size_t count = 0;
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    if (d->outputs[i].type == OUTPUT_TYPE_CHANGE) {
+      total += d->outputs[i].value;
+      count++;
     }
   }
-  free(classified_inputs);
+  if (count == 0)
+    return;
+  lv_obj_t *row =
+      scan_create_btc_value_row(parent, "Change: ", total, good_color());
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_style_margin_top(row, 15, 0);
+}
 
-  if (global_tx) {
-    wally_tx_free(global_tx);
-    global_tx = NULL;
+/* A titled list of every output of one kind: amount row plus address, with
+ * the derivation path in the row label when the kind carries one. */
+static void render_output_group(lv_obj_t *parent, const review_data_t *d,
+                                output_type_t type, const char *title,
+                                bool with_path) {
+  lv_color_t color = output_type_color(type);
+  bool titled = false;
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    const classified_output_t *out = &d->outputs[i];
+    if (out->type != type)
+      continue;
+    if (!titled) {
+      section_title(parent, title, color, true);
+      titled = true;
+    }
+    char text[128];
+    if (with_path)
+      snprintf(text, sizeof(text), "Output %zu (%s): ", out->index,
+               out->path[0] ? out->path : "?");
+    else
+      snprintf(text, sizeof(text), "Output %zu: ", out->index);
+    indented_amount_row(parent, text, out->value);
+    if (out->address)
+      scan_create_address_label(parent, out->address, color, ADDRESS_INDENT_PX);
   }
+}
 
-  uint32_t fee_percent = psbt_fee_percent(fee, total_input_value);
+/* ---------- fee and notes ---------- */
 
-  if (fee > 0) {
-    theme_create_separator(scan_ctx.info_container, primary_color());
+static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
+  uint32_t fee_percent = psbt_fee_percent(d->fee, d->total_input);
 
-    lv_obj_t *fee_row = scan_create_btc_value_row(scan_ctx.info_container,
-                                                  "Fee: ", fee, error_color());
+  if (d->fee > 0) {
+    theme_create_separator(parent, primary_color());
+
+    lv_obj_t *fee_row =
+        scan_create_btc_value_row(parent, "Fee: ", d->fee, error_color());
     lv_obj_set_width(fee_row, LV_PCT(100));
     lv_obj_set_flex_flow(fee_row, LV_FLEX_FLOW_ROW_WRAP);
 
@@ -935,21 +793,21 @@ static bool create_psbt_info_display(void) {
                LV_SYMBOL_WARNING " High fee: %" PRIu32
                                  "%% of the inputs is going to miners.",
                fee_percent);
-      scan_create_review_note(scan_ctx.info_container, note, error_color());
+      scan_create_review_note(parent, note, error_color());
     }
   }
 
   /* The fee is inputs minus outputs, and the outputs are committed to by the
    * sighash. The inputs are only as good as their proof, so say so here rather
    * than let the number read as verified. */
-  if (!psbt_amounts_are_proven(&amount_audit)) {
+  if (!psbt_amounts_are_proven(&d->amount_audit)) {
     char note[160];
     snprintf(note, sizeof(note),
              LV_SYMBOL_WARNING " Unproven fee: %zu of %zu input amounts are "
                                "not backed by their previous transaction.",
-             amount_audit.num_inputs - amount_audit.proven,
-             amount_audit.num_inputs);
-    scan_create_review_note(scan_ctx.info_container, note, highlight_color());
+             d->amount_audit.num_inputs - d->amount_audit.proven,
+             d->amount_audit.num_inputs);
+    scan_create_review_note(parent, note, highlight_color());
   }
 
   /* The gate refuses a PSBT whose outputs exceed the inputs, so reaching here
@@ -957,61 +815,96 @@ static bool create_psbt_info_display(void) {
    * The unproven-fee note above already says the numbers are not backed; name
    * the missing fee too, because no fee row at all otherwise reads as "no
    * fee". */
-  if (total_output_value > total_input_value) {
-    scan_create_review_note(
-        scan_ctx.info_container,
-        LV_SYMBOL_WARNING " Fee unknown: the outputs exceed the input amounts "
-                          "this PSBT supplied.",
-        error_color());
+  if (d->total_output > d->total_input) {
+    scan_create_review_note(parent,
+                            LV_SYMBOL_WARNING
+                            " Fee unknown: the outputs exceed the input "
+                            "amounts this PSBT supplied.",
+                            error_color());
   }
 
   /* Below the relay dust threshold an output costs more to spend than it
    * holds, so the transaction is unlikely to propagate at all. */
-  if (dust_count) {
+  if (d->dust_count) {
     char note[192];
-    if (dust_count == 1)
+    if (d->dust_count == 1)
       snprintf(note, sizeof(note),
                LV_SYMBOL_WARNING " Dust: output %zu holds only %llu sats, "
                                  "below the amount needed to relay.",
-               first_dust, (unsigned long long)first_dust_value);
+               d->first_dust, (unsigned long long)d->first_dust_value);
     else
       snprintf(note, sizeof(note),
                LV_SYMBOL_WARNING " Dust: %zu outputs are below the amount "
                                  "needed to relay.",
-               dust_count);
-    scan_create_review_note(scan_ctx.info_container, note, highlight_color());
+               d->dust_count);
+    scan_create_review_note(parent, note, highlight_color());
   }
 
   /* Neither is visible anywhere else on this screen, and both change what
    * signing actually commits to: a future locktime is not broadcastable yet,
    * and an RBF-signalling transaction can be replaced before it confirms. */
-  if (locktime) {
+  if (d->locktime) {
     char note[160];
-    if (locktime < 500000000u)
+    if (d->locktime < 500000000u)
       snprintf(note, sizeof(note),
                LV_SYMBOL_WARNING " Locked until block %" PRIu32
                                  ": not broadcastable before then.",
-               locktime);
+               d->locktime);
     else
       snprintf(note, sizeof(note),
                LV_SYMBOL_WARNING " Locked until unix time %" PRIu32
                                  ": not broadcastable before then.",
-               locktime);
-    scan_create_review_note(scan_ctx.info_container, note, highlight_color());
+               d->locktime);
+    scan_create_review_note(parent, note, highlight_color());
   }
 
-  if (signals_rbf) {
-    scan_create_review_note(
-        scan_ctx.info_container,
-        LV_SYMBOL_WARNING
-        " Replaceable (RBF): this transaction can be replaced "
-        "by a different one before it confirms.",
-        secondary_color());
+  if (d->signals_rbf) {
+    scan_create_review_note(parent,
+                            LV_SYMBOL_WARNING
+                            " Replaceable (RBF): this transaction can be "
+                            "replaced by a different one before it confirms.",
+                            secondary_color());
+  }
+}
+
+static bool create_psbt_info_display(void) {
+  if (!scan_ctx.screen || !scan_ctx.psbt || !wallet_is_initialized())
+    return false;
+  if (scan_psbt_check_mismatch())
+    return true;
+
+  review_data_t data;
+  if (!review_data_collect(&data))
+    return false;
+
+  scan_ctx.info_container = theme_create_scroll_column(scan_ctx.screen, 10, 10);
+  lv_obj_t *c = scan_ctx.info_container;
+
+  if (!render_diagram(c, &data)) {
+    review_data_free(&data);
+    return false;
   }
 
-  scan_create_sign_action_row(scan_ctx.info_container,
-                              scan_psbt_sign_button_cb);
+  render_input_policy_rows(c, &data);
+  render_nonstandard_inputs(c, &data);
+  render_expected_inputs(c, &data);
+  render_external_inputs(c, &data);
 
+  lv_obj_t *separator = theme_create_separator(c, primary_color());
+  lv_obj_set_style_margin_top(separator, 15, 0);
+
+  render_self_transfers(c, &data);
+  render_change(c, &data);
+  render_output_group(c, &data, OUTPUT_TYPE_OWNED_UNSAFE,
+                      "Owned (non-standard path): ", true);
+  render_output_group(c, &data, OUTPUT_TYPE_EXPECTED_OWNED,
+                      "Expected ownership (UNVERIFIED): ", true);
+  render_output_group(c, &data, OUTPUT_TYPE_SPEND, "Spending: ", false);
+
+  render_fee_and_notes(c, &data);
+  review_data_free(&data);
+
+  scan_create_sign_action_row(c, scan_psbt_sign_button_cb);
   return true;
 }
 
