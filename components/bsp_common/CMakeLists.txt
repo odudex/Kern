@@ -4,7 +4,8 @@
 set(srcs "")
 # Boards without a dedicated PMIC chip read the battery over an ADC divider,
 # or get the no-op stub if they cannot read it at all.
-if(CONFIG_KERN_BOARD_WAVE_43 OR CONFIG_KERN_BOARD_WAVE_5)
+if(CONFIG_KERN_BOARD_WAVE_43 OR CONFIG_KERN_BOARD_WAVE_5
+   OR CONFIG_KERN_BOARD_WAVE_7B)
     list(APPEND srcs "pmic_adc.c")
 elseif(NOT CONFIG_KERN_BOARD_WAVE_35 AND NOT CONFIG_KERN_BOARD_CROWPANEL)
     list(APPEND srcs "pmic_stub.c")

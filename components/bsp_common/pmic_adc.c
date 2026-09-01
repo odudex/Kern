@@ -7,8 +7,8 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_check.h"
 
-/* BAT --[R12 200k]-- BAT_ADC --[R15 100k]-- GND on GPIO20, ADC1 channel 4,
-   on wave_43 and wave_5 alike. Verified on wave_43 hardware only. */
+/* BAT --[200k]-- BAT_ADC --[100k]-- GND on GPIO20, ADC1 channel 4, the same
+   on wave_43, wave_5 and wave_7b. Verified on wave_43 and wave_5 hardware. */
 #define BAT_ADC_CHANNEL ADC_CHANNEL_4
 #define BAT_DIVIDER_MUL 3
 #define BAT_ADC_UNIT ADC_UNIT_1
