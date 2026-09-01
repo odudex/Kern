@@ -36,6 +36,9 @@ lv_obj_t *ui_derivation_create(lv_obj_t *parent, lv_color_t color) {
 lv_obj_t *ui_key_info_create(lv_obj_t *parent) {
   lv_obj_t *cont = theme_create_flex_row(parent);
   lv_obj_set_style_pad_column(cont, theme_default_padding(), 0);
+  /* The nav bar is only one corner button tall: a wrapped line has to sit
+     directly under the first one or it is clipped (wave_35). */
+  lv_obj_set_style_pad_row(cont, 0, 0);
 
   // The parent (menu nav bar or key info bar) reserves the corner-button
   // zones; wrap as a last resort if the content still doesn't fit.
