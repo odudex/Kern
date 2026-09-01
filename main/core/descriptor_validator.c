@@ -430,11 +430,13 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
     // Derivation path
     char *path_str = NULL;
     if (wally_descriptor_get_key_origin_path_str(descriptor, i, &path_str) ==
-        WALLY_OK) {
+            WALLY_OK &&
+        path_str && path_str[0] != '\0') {
       snprintf(info->keys[i].derivation, sizeof(info->keys[i].derivation),
                "m/%s", path_str);
       wally_free_string(path_str);
     } else {
+      wally_free_string(path_str);
       strncpy(info->keys[i].derivation, "N/A",
               sizeof(info->keys[i].derivation));
     }
