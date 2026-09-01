@@ -19,14 +19,17 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/.." &
 DIRS=(
     "$REPO_ROOT/main"
     "$REPO_ROOT/components/bbqr"
+    "$REPO_ROOT/components/bsp_common"
     "$REPO_ROOT/components/cUR"
     "$REPO_ROOT/components/deflate_codec"
     "$REPO_ROOT/components/k_quirc"
+    "$REPO_ROOT/components/mbedtls_compat"
     "$REPO_ROOT/components/sd_card"
     "$REPO_ROOT/components/video"
     "$REPO_ROOT/components/wave_4b"
     "$REPO_ROOT/components/wave_35"
     "$REPO_ROOT/components/wave_43"
+    "$REPO_ROOT/components/wave_5"
     "$REPO_ROOT/components/crowpanel"
     "$REPO_ROOT/components/wave_7b"
 )

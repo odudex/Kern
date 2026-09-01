@@ -3,12 +3,12 @@
 #include "bsp/touch.h"
 #include "bsp_err_check.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_lcd_hx8394.h"
 #include "esp_lcd_mipi_dsi.h"
-#include "driver/i2c_master.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_ldo_regulator.h"
@@ -316,8 +316,8 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
     ESP_LOGI(TAG, "GT911 found at 0x%02X", ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS);
     esp_lcd_panel_io_i2c_config_t cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     memcpy(&tp_io_config, &cfg, sizeof(cfg));
-  } else if (bsp_i2c_device_probe(
-                 ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP) == ESP_OK) {
+  } else if (bsp_i2c_device_probe(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP) ==
+             ESP_OK) {
     ESP_LOGI(TAG, "GT911 found at 0x%02X",
              ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP);
     esp_lcd_panel_io_i2c_config_t cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();

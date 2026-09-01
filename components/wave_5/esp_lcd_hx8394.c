@@ -66,8 +66,7 @@ esp_lcd_new_panel_hx8394(const esp_lcd_panel_io_handle_t io,
                       ESP_ERR_INVALID_ARG, TAG, "invalid vendor config");
 
   esp_err_t ret = ESP_OK;
-  hx8394_panel_t *hx8394 =
-      (hx8394_panel_t *)calloc(1, sizeof(hx8394_panel_t));
+  hx8394_panel_t *hx8394 = (hx8394_panel_t *)calloc(1, sizeof(hx8394_panel_t));
   ESP_RETURN_ON_FALSE(hx8394, ESP_ERR_NO_MEM, TAG, "no mem for hx8394 panel");
 
   if (panel_dev_config->reset_gpio_num >= 0) {
@@ -208,14 +207,14 @@ static esp_err_t panel_hx8394_init(esp_lcd_panel_t *panel) {
   ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_SLPOUT, NULL, 0),
                       TAG, "SLPOUT failed");
   vTaskDelay(pdMS_TO_TICKS(120));
-  ESP_RETURN_ON_ERROR(
-      esp_lcd_panel_io_tx_param(io, LCD_CMD_MADCTL,
-                                (uint8_t[]){hx8394->madctl_val}, 1),
-      TAG, "MADCTL failed");
-  ESP_RETURN_ON_ERROR(
-      esp_lcd_panel_io_tx_param(io, LCD_CMD_COLMOD,
-                                (uint8_t[]){hx8394->colmod_val}, 1),
-      TAG, "COLMOD failed");
+  ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_MADCTL,
+                                                (uint8_t[]){hx8394->madctl_val},
+                                                1),
+                      TAG, "MADCTL failed");
+  ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, LCD_CMD_COLMOD,
+                                                (uint8_t[]){hx8394->colmod_val},
+                                                1),
+                      TAG, "COLMOD failed");
   ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, HX8394_CMD_DSI_INT0,
                                                 (uint8_t[]){lane_command}, 1),
                       TAG, "DSI_INT0 failed");
@@ -225,8 +224,8 @@ static esp_err_t panel_hx8394_init(esp_lcd_panel_t *panel) {
     init_cmds_size = hx8394->init_cmds_size;
   } else {
     init_cmds = vendor_specific_init_code_default;
-    init_cmds_size =
-        sizeof(vendor_specific_init_code_default) / sizeof(hx8394_lcd_init_cmd_t);
+    init_cmds_size = sizeof(vendor_specific_init_code_default) /
+                     sizeof(hx8394_lcd_init_cmd_t);
   }
 
   for (int i = 0; i < init_cmds_size; i++) {
@@ -281,8 +280,7 @@ static esp_err_t panel_hx8394_invert_color(esp_lcd_panel_t *panel,
   return ESP_OK;
 }
 
-static esp_err_t panel_hx8394_disp_on_off(esp_lcd_panel_t *panel,
-                                          bool on_off) {
+static esp_err_t panel_hx8394_disp_on_off(esp_lcd_panel_t *panel, bool on_off) {
   hx8394_panel_t *hx8394 = (hx8394_panel_t *)panel->user_data;
   int command = on_off ? LCD_CMD_DISPON : LCD_CMD_DISPOFF;
   ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(hx8394->io, command, NULL, 0),

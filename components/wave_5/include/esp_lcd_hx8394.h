@@ -1,11 +1,11 @@
 #pragma once
 
-#include <stdint.h>
 #include "soc/soc_caps.h"
+#include <stdint.h>
 
 #if SOC_MIPI_DSI_SUPPORTED
-#include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_mipi_dsi.h"
+#include "esp_lcd_panel_vendor.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,9 +28,10 @@ typedef struct {
   } mipi_config;
 } hx8394_vendor_config_t;
 
-esp_err_t esp_lcd_new_panel_hx8394(const esp_lcd_panel_io_handle_t io,
-                                   const esp_lcd_panel_dev_config_t *panel_dev_config,
-                                   esp_lcd_panel_handle_t *ret_panel);
+esp_err_t
+esp_lcd_new_panel_hx8394(const esp_lcd_panel_io_handle_t io,
+                         const esp_lcd_panel_dev_config_t *panel_dev_config,
+                         esp_lcd_panel_handle_t *ret_panel);
 
 #ifdef __cplusplus
 }
