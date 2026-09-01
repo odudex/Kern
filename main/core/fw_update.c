@@ -25,9 +25,10 @@ static size_t signature_offset(FILE *f, const esp_image_header_t *hdr,
     if (fseek(f, pos, SEEK_SET) != 0 ||
         fread(&seg, 1, sizeof(seg), f) != sizeof(seg))
       return 0;
-    pos += sizeof(seg) + seg.data_len;
-    if (pos > file_size)
+    pos += sizeof(seg);
+    if (pos > file_size || seg.data_len > file_size - pos)
       return 0;
+    pos += seg.data_len;
   }
   pos = (pos + 1 + 15) & ~(size_t)15; /* checksum byte, padded to 16 */
   if (hdr->hash_appended)
