@@ -20,6 +20,9 @@ endif()
 # Board feature flags
 if(SIM_BOARD STREQUAL "wave_35")
   set(BSP_HAS_PMIC TRUE)
+elseif(SIM_BOARD STREQUAL "wave_43" OR SIM_BOARD STREQUAL "wave_5"
+       OR SIM_BOARD STREQUAL "wave_7b")
+  set(BSP_BATTERY_ADC TRUE)
 endif()
 
 find_package(SDL2 REQUIRED)
@@ -404,6 +407,7 @@ target_compile_definitions(kern_simulator PRIVATE
     K_QUIRC_BILINEAR_THRESHOLD
     $<$<BOOL:${SIM_WEBCAM}>:SIM_WEBCAM=1>
     $<$<BOOL:${BSP_HAS_PMIC}>:BSP_HAS_PMIC=1>
+    $<$<BOOL:${BSP_BATTERY_ADC}>:BSP_BATTERY_ADC=1>
     $<$<STREQUAL:${SIM_BOARD},wave_4b>:CONFIG_KERN_BOARD_WAVE_4B=1>
     $<$<STREQUAL:${SIM_BOARD},wave_35>:CONFIG_KERN_BOARD_WAVE_35=1>
     $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
