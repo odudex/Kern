@@ -18,3 +18,5 @@ test_kef
 test_psbt_parse
 test_fw_update
 test_descriptor_validator
+test_storage
+test_storage_core.o
