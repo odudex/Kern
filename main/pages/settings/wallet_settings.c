@@ -174,6 +174,17 @@ static void passphrase_btn_cb(lv_event_t *e) {
                          passphrase_success_cb);
 }
 
+/* Share the column's leftover height across the items instead of
+ * leaving it pooled under the last row. Growing also gives each row a
+ * resolved height, which is what makes its widget centre vertically —
+ * LVGL top-aligns the track of a LV_SIZE_CONTENT row. */
+static void distribute_item(lv_obj_t *item) {
+  if (!item)
+    return;
+  lv_obj_set_flex_grow(item, 1);
+  lv_obj_set_style_max_height(item, theme_min_touch_size() * 2, 0);
+}
+
 void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   if (!parent || !key_is_loaded() || !wallet_is_initialized())
     return;
@@ -198,7 +209,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_flow(wallet_settings_screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(wallet_settings_screen, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(wallet_settings_screen, theme_default_padding(), 0);
+  lv_obj_set_style_pad_gap(wallet_settings_screen, theme_small_padding(), 0);
 
   // Top nav bar: fingerprint centered in the corner-button band so it
   // aligns with the back button.
@@ -230,9 +241,7 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  /* Tight gap — the rows are already touch-target tall and self-pad
-   * internally; default_padding looked too sparse in 320×480. */
-  lv_obj_set_style_pad_gap(content, 4, 0);
+  lv_obj_set_style_pad_gap(content, theme_small_padding(), 0);
 
   /* Uniform single-column layout: every row is `[Label] [Item] [?]`
    * (toggle/dropdown rows) or `[Label] [>]` (action rows). The
@@ -240,26 +249,30 @@ void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
    * widget, and trailing button — the per-row hand-rolled flex
    * containers that lived here previously are gone. */
 
-  settings_row_action(content, "Passphrase", passphrase_btn_cb);
-  settings_row_action(content, "Descriptors", descriptor_btn_cb);
+  distribute_item(
+      settings_row_action(content, "Passphrase", passphrase_btn_cb));
+  distribute_item(
+      settings_row_action(content, "Descriptors", descriptor_btn_cb));
 
   lv_obj_t *net_row = settings_row_dropdown(
       content, "Network", "Mainnet\nTestnet",
       (selected_network == WALLET_NETWORK_MAINNET) ? 0 : 1, network_dropdown_cb,
       "Network", NETWORK_HELP);
+  distribute_item(net_row);
   network_dropdown = settings_row_get_widget(net_row);
 
-  settings_row_toggle(content, "Permissive signing",
-                      settings_get_permissive_signing(), permissive_signing_cb,
-                      "Permissive signing", PERMISSIVE_HELP);
+  distribute_item(settings_row_toggle(
+      content, "Permissive signing", settings_get_permissive_signing(),
+      permissive_signing_cb, "Permissive signing", PERMISSIVE_HELP));
 
-  settings_row_toggle(content, "Partial signing",
-                      settings_get_partial_signing(), partial_signing_cb,
-                      "Partial signing", PARTIAL_HELP);
+  distribute_item(settings_row_toggle(
+      content, "Partial signing", settings_get_partial_signing(),
+      partial_signing_cb, "Partial signing", PARTIAL_HELP));
 
-  settings_row_toggle(
+  distribute_item(settings_row_toggle(
       content, "Expected-owned signing", settings_get_expected_owned_signing(),
-      expected_owned_signing_cb, "Expected-owned signing", EXPECTED_OWNED_HELP);
+      expected_owned_signing_cb, "Expected-owned signing",
+      EXPECTED_OWNED_HELP));
 
   /* Session Descriptors moved into the Descriptors sub-page
    * (descriptor_manager_page). This page is one level shallower. */
