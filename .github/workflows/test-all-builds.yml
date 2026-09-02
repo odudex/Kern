@@ -38,6 +38,10 @@ jobs:
         cp "$BUILD"/flasher_args.json "$STAGE"/
         cp "$BUILD"/*.bin "$STAGE"/ 2>/dev/null || true
         cp "$BUILD"/flash_args "$STAGE"/ 2>/dev/null || true
+        # The bundle is flat: strip the build-tree subdirectories so
+        # `esptool write-flash $(cat flash_args)` resolves from the zip root
+        sed -i 's#bootloader/bootloader.bin#bootloader.bin#; s#partition_table/partition-table.bin#partition-table.bin#' \
+            "$STAGE"/flash_args "$STAGE"/flasher_args.json
         cp "$BUILD"/*.elf "$STAGE"/ 2>/dev/null || true
         cp "$BUILD"/*.map "$STAGE"/ 2>/dev/null || true
     - name: Upload firmware artifact (${{ matrix.board }})

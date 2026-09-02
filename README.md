@@ -208,8 +208,14 @@ Every pull request and push to `master` produces a firmware artifact for each su
 5. Flash using the pre-computed offsets from `flash_args`:
 
    ```bash
-   esptool --chip esp32p4 --baud 460800 write_flash $(cat flash_args)
+   esptool --chip esp32p4 --baud 460800 write-flash $(cat flash_args)
    ```
+
+   > **Note:** Artifacts built before September 2026 ship a `flash_args` that still points at the `bootloader/` and `partition_table/` build subdirectories, which the flat zip does not contain. For those, pass the offsets explicitly:
+   >
+   > ```bash
+   > esptool --chip esp32p4 --baud 460800 write-flash --flash-mode dio --flash-freq 80m --flash-size keep 0x2000 bootloader.bin 0x10000 partition-table.bin 0x1e000 ota_data_initial.bin 0x20000 kern.bin
+   > ```
 
 ## Flashing Pre-releases
 
