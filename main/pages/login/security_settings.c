@@ -3,6 +3,7 @@
 #include "security_settings.h"
 #include "../../core/pin.h"
 #include "../../core/settings.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dropdown_page.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
@@ -115,11 +116,14 @@ static void rebuild_menu(void) {
   }
   security_menu = ui_menu_create(security_screen, "Security", security_back_cb);
   if (pin_is_configured()) {
-    ui_menu_add_entry(security_menu, "PIN Settings", pin_settings_cb);
+    ui_menu_add_entry_with_icon(security_menu, LV_SYMBOL_KEYBOARD,
+                                "PIN Settings", pin_settings_cb);
   } else {
-    ui_menu_add_entry(security_menu, "Set Up PIN", setup_pin_cb);
+    ui_menu_add_entry_with_icon(security_menu, LV_SYMBOL_KEYBOARD, "Set Up PIN",
+                                setup_pin_cb);
   }
-  ui_menu_add_entry(security_menu, "Session Timeout", show_timeout_page);
+  ui_menu_add_entry_with_icon(security_menu, LV_SYMBOL_BELL, "Session Timeout",
+                              show_timeout_page);
 }
 
 // ── Public lifecycle ──

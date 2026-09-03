@@ -3,6 +3,7 @@
 
 #include "login_settings.h"
 #include "../../core/settings.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dropdown_page.h"
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
@@ -171,10 +172,13 @@ void login_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   return_callback = return_cb;
   settings_screen = theme_create_page_container(parent);
   settings_menu = ui_menu_create(settings_screen, "Settings", settings_back_cb);
-  ui_menu_add_entry(settings_menu, "Security", security_cb);
-  ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
-  ui_menu_add_entry(settings_menu, "Screensaver", screensaver_cb);
-  ui_menu_add_entry(settings_menu, "Firmware Update", firmware_update_cb);
+  ui_menu_add_entry_with_icon(settings_menu, ICON_KEY, "Security", security_cb);
+  ui_menu_add_entry_with_icon(settings_menu, LV_SYMBOL_EYE_OPEN,
+                              "Screen Brightness", brightness_cb);
+  ui_menu_add_entry_with_icon(settings_menu, LV_SYMBOL_EYE_CLOSE, "Screensaver",
+                              screensaver_cb);
+  ui_menu_add_entry_with_icon(settings_menu, LV_SYMBOL_DOWNLOAD,
+                              "Firmware Update", firmware_update_cb);
 }
 
 void login_settings_page_show(void) {
