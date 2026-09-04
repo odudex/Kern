@@ -13,6 +13,7 @@ libwally.a
 test_miniscript_policy
 test_bip322
 test_estimated_entropy
+test_utf8
 test_pin_attempt
 test_kef
 test_psbt_parse
