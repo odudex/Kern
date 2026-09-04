@@ -15,6 +15,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/worker_task.h"
+#include "text_input_scan.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -129,6 +130,13 @@ static void keyboard_ready_cb(lv_event_t *e) {
   poll_timer = lv_timer_create(poll_timer_cb, 100, NULL);
 }
 
+static void scan_key_cb(void *user_data) {
+  (void)user_data;
+  text_input_scan_cfg_t cfg = {&text_input, kef_decrypt_page_hide,
+                               kef_decrypt_page_show, NULL};
+  text_input_scan_start(&cfg);
+}
+
 static void back_btn_cb(lv_event_t *e) {
   (void)e;
   if (return_callback)
@@ -179,6 +187,7 @@ void kef_decrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
 
   /* Text input (textarea + eye toggle + keyboard) */
   ui_text_input_create(&text_input, kef_screen, "key", true, keyboard_ready_cb);
+  ui_text_input_enable_scan(&text_input, scan_key_cb, NULL);
 
   progress_dialog = NULL;
 }

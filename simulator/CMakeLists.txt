@@ -311,6 +311,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/shared/mnemonic_editor.c
     ${APP_PAGES_DIR}/shared/sd_file_browser.c
     ${APP_PAGES_DIR}/shared/storage_browser.c
+    ${APP_PAGES_DIR}/shared/text_input_scan.c
     ${APP_PAGES_DIR}/shared/wipe_flash_dialog.c
     # Top-level pages
     ${APP_PAGES_DIR}/capture_entropy.c

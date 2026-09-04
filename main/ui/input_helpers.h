@@ -6,6 +6,8 @@
 #include <lvgl.h>
 #include <stdbool.h>
 
+typedef void (*ui_text_input_scan_cb_t)(void *user_data);
+
 // Shared text input: textarea + optional eye toggle + keyboard
 typedef struct {
   lv_obj_t *textarea;
@@ -13,6 +15,8 @@ typedef struct {
   lv_obj_t *eye_label;
   lv_obj_t *keyboard;
   lv_group_t *input_group;
+  ui_text_input_scan_cb_t scan_cb;
+  void *scan_user_data;
 } ui_text_input_t;
 
 // Creates textarea + eye toggle (if password_mode) + keyboard with dark theme.
@@ -23,6 +27,11 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
 void ui_text_input_show(ui_text_input_t *input);
 void ui_text_input_hide(ui_text_input_t *input);
 void ui_text_input_destroy(ui_text_input_t *input);
+
+// Adds a scan-QR key next to OK on all three text modes. The key only fires cb;
+// the caller runs the scanner and loads the text.
+void ui_text_input_enable_scan(ui_text_input_t *input,
+                               ui_text_input_scan_cb_t cb, void *user_data);
 
 // Creates back button at top-left with LV_SYMBOL_LEFT
 lv_obj_t *ui_create_back_button(lv_obj_t *parent, lv_event_cb_t event_cb);

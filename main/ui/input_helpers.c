@@ -3,6 +3,7 @@
 #include "input_helpers.h"
 #include "assets/icons.h"
 #include "theme_widgets.h"
+#include <string.h>
 
 // Compact keyboard maps shared by all boards.
 // Trade fewer keys per row for wider touch targets.
@@ -18,74 +19,64 @@
 #define KB_BACKSPACE (LV_BUTTONMATRIX_CTRL_CHECKED | 2)
 #define KB_ACTION (LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2)
 
-static const char *const compact_kb_map_lc[] = {
-    "q",  "w",  "e",  "r",   "t",  "y",
-    "u",  "i",  "o",  "p",   "\n", "a",
-    "s",  "d",  "f",  "g",   "h",  "j",
-    "k",  "l",  "\n", "ABC", "z",  "x",
-    "c",  "v",  "b",  "n",   "m",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
-    ""};
+// LVGL keeps one global map table for every keyboard, so a scan-capable and a
+// plain variant of each mode must both stay static, and create() always
+// re-installs the plain ones.
+#define KB_SCAN KB_MODE
 
-static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_lc_map[] = {
-    // q w e r t y u i o p
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
-    // a s d f g h j k l
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    // ABC z x c v b n m <-
-    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_BACKSPACE,
-    // 1# , _ . OK
-    KB_MODE, KB_KEY, KB_SPACE, KB_KEY, KB_ACTION};
+#define KB_ROWS_LC                                                             \
+  "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n", "a", "s", "d", "f",  \
+      "g", "h", "j", "k", "l", "\n", "ABC", "z", "x", "c", "v", "b", "n", "m", \
+      LV_SYMBOL_BACKSPACE, "\n", "1#", ",", " ", "."
 
-static const char *const compact_kb_map_uc[] = {
-    "Q",  "W",  "E",  "R",   "T",  "Y",
-    "U",  "I",  "O",  "P",   "\n", "A",
-    "S",  "D",  "F",  "G",   "H",  "J",
-    "K",  "L",  "\n", "abc", "Z",  "X",
-    "C",  "V",  "B",  "N",   "M",  LV_SYMBOL_BACKSPACE,
-    "\n", "1#", ",",  " ",   ".",  LV_SYMBOL_OK,
-    ""};
-
-static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_uc_map[] = {
-    // Q W E R T Y U I O P
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
-    // A S D F G H J K L
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    // abc Z X C V B N M <-
-    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_BACKSPACE,
-    // 1# , _ . OK
-    KB_MODE, KB_KEY, KB_SPACE, KB_KEY, KB_ACTION};
+#define KB_ROWS_UC                                                             \
+  "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n", "A", "S", "D", "F",  \
+      "G", "H", "J", "K", "L", "\n", "abc", "Z", "X", "C", "V", "B", "N", "M", \
+      LV_SYMBOL_BACKSPACE, "\n", "1#", ",", " ", "."
 
 // Five rows covering every printable ASCII symbol (',' and '.' live on the
 // letter pages) so any externally created passphrase or KEF key can be typed.
-static const char *const compact_kb_map_spec[] = {
-    "1",  "2", "3",  "4",  "5",  "6",          "7",
-    "8",  "9", "0",  "\n", "@",  "#",          "$",
-    "%",  "&", "*",  "+",  "-",  "=",          "/",
-    "\n", "(", ")",  "[",  "]",  "{",          "}",
-    "<",  ">", "\"", "'",  "\n", "abc",        "!",
-    "?",  ";", ":",  "_",  "\\", "|",          LV_SYMBOL_BACKSPACE,
-    "\n", "~", "^",  "`",  " ",  LV_SYMBOL_OK, ""};
+#define KB_ROWS_SPEC                                                           \
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n", "@", "#", "$", "%",  \
+      "&", "*", "+", "-", "=", "/", "\n", "(", ")", "[", "]", "{", "}", "<",   \
+      ">", "\"", "'", "\n", "abc", "!", "?", ";", ":", "_", "\\", "|",         \
+      LV_SYMBOL_BACKSPACE, "\n", "~", "^", "`", " "
 
-static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_map[] = {
-    // 1 2 3 4 5 6 7 8 9 0
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
-    // @ # $ % & * + - = /
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
-    // ( ) [ ] { } < > " '
-    KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_KEY,
-    // abc ! ? ; : _ \ | <-
-    KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,
-    KB_BACKSPACE,
-    // ~ ^ ` _ OK
-    KB_KEY, KB_KEY, KB_KEY, KB_SPACE, KB_ACTION};
+// q w e r t y u i o p / a s d f g h j k l / ABC z x c v b n m <- / 1# , _ .
+#define KB_CTRL_LETTERS                                                        \
+  KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,      \
+      KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,  \
+      KB_KEY, KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, \
+      KB_BACKSPACE, KB_MODE, KB_KEY, KB_SPACE, KB_KEY
+
+// 1..0 / @ # $ % & * + - = / / ( ) [ ] { } < > " ' / abc ! ? ; : _ \ | <- / ~ ^
+// ` _
+#define KB_CTRL_SPEC                                                           \
+  KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,      \
+      KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,  \
+      KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY,  \
+      KB_KEY, KB_KEY, KB_KEY, KB_MODE, KB_KEY, KB_KEY, KB_KEY, KB_KEY, KB_KEY, \
+      KB_KEY, KB_KEY, KB_BACKSPACE, KB_KEY, KB_KEY, KB_KEY, KB_SPACE
+
+static const char *const compact_kb_map_lc[] = {KB_ROWS_LC, LV_SYMBOL_OK, ""};
+static const char *const compact_kb_map_uc[] = {KB_ROWS_UC, LV_SYMBOL_OK, ""};
+static const char *const compact_kb_map_spec[] = {KB_ROWS_SPEC, LV_SYMBOL_OK,
+                                                  ""};
+static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_letters[] = {
+    KB_CTRL_LETTERS, KB_ACTION};
+static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec[] = {KB_CTRL_SPEC,
+                                                              KB_ACTION};
+
+static const char *const compact_kb_map_lc_scan[] = {KB_ROWS_LC, ICON_QR_CODE,
+                                                     LV_SYMBOL_OK, ""};
+static const char *const compact_kb_map_uc_scan[] = {KB_ROWS_UC, ICON_QR_CODE,
+                                                     LV_SYMBOL_OK, ""};
+static const char *const compact_kb_map_spec_scan[] = {
+    KB_ROWS_SPEC, ICON_QR_CODE, LV_SYMBOL_OK, ""};
+static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_letters_scan[] = {
+    KB_CTRL_LETTERS, KB_SCAN, KB_ACTION};
+static const lv_buttonmatrix_ctrl_t compact_kb_ctrl_spec_scan[] = {
+    KB_CTRL_SPEC, KB_SCAN, KB_ACTION};
 
 // Corner buttons (back/power top-left, settings top-right) all share the
 // secondary grey style so they read as one consistent control class.
@@ -317,13 +308,47 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
   lv_obj_add_event_cb(input->keyboard, ready_cb, LV_EVENT_READY, NULL);
 
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER,
-                      compact_kb_map_lc, compact_kb_ctrl_lc_map);
+                      compact_kb_map_lc, compact_kb_ctrl_letters);
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_UPPER,
-                      compact_kb_map_uc, compact_kb_ctrl_uc_map);
+                      compact_kb_map_uc, compact_kb_ctrl_letters);
   lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_SPECIAL,
-                      compact_kb_map_spec, compact_kb_ctrl_spec_map);
+                      compact_kb_map_spec, compact_kb_ctrl_spec);
 
   theme_apply_btnmatrix_styles(input->keyboard);
+  input->scan_cb = NULL;
+  input->scan_user_data = NULL;
+}
+
+// Replaces LVGL's default key handler so the scan key reaches the page instead
+// of being typed into the textarea.
+static void scan_kb_event_cb(lv_event_t *e) {
+  ui_text_input_t *input = lv_event_get_user_data(e);
+  lv_obj_t *kb = lv_event_get_current_target(e);
+  const char *txt = lv_buttonmatrix_get_button_text(
+      kb, lv_buttonmatrix_get_selected_button(kb));
+  if (txt && strcmp(txt, ICON_QR_CODE) == 0) {
+    if (input->scan_cb)
+      input->scan_cb(input->scan_user_data);
+    return;
+  }
+  lv_keyboard_def_event_cb(e);
+}
+
+void ui_text_input_enable_scan(ui_text_input_t *input,
+                               ui_text_input_scan_cb_t cb, void *user_data) {
+  if (!input || !input->keyboard)
+    return;
+  input->scan_cb = cb;
+  input->scan_user_data = user_data;
+  lv_obj_remove_event_cb(input->keyboard, lv_keyboard_def_event_cb);
+  lv_obj_add_event_cb(input->keyboard, scan_kb_event_cb, LV_EVENT_VALUE_CHANGED,
+                      input);
+  lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_LOWER,
+                      compact_kb_map_lc_scan, compact_kb_ctrl_letters_scan);
+  lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_TEXT_UPPER,
+                      compact_kb_map_uc_scan, compact_kb_ctrl_letters_scan);
+  lv_keyboard_set_map(input->keyboard, LV_KEYBOARD_MODE_SPECIAL,
+                      compact_kb_map_spec_scan, compact_kb_ctrl_spec_scan);
 }
 
 void ui_text_input_show(ui_text_input_t *input) {
@@ -356,4 +381,6 @@ void ui_text_input_destroy(ui_text_input_t *input) {
   input->textarea = NULL;
   input->eye_btn = NULL;
   input->eye_label = NULL;
+  input->scan_cb = NULL;
+  input->scan_user_data = NULL;
 }

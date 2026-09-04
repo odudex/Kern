@@ -16,6 +16,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/worker_task.h"
+#include "text_input_scan.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -150,6 +151,15 @@ static void key_changed_cb(lv_event_t *e) {
   }
 }
 
+static void refresh_strength(void) { key_changed_cb(NULL); }
+
+static void scan_key_cb(void *user_data) {
+  (void)user_data;
+  text_input_scan_cfg_t cfg = {&text_input, kef_encrypt_page_hide,
+                               kef_encrypt_page_show, refresh_strength};
+  text_input_scan_start(&cfg);
+}
+
 /* ---------- Overlay management ---------- */
 
 static void destroy_overlay(void) {
@@ -197,6 +207,7 @@ static void create_overlay(const char *title, const char *placeholder,
                        ready_cb);
 
   if (password_mode) {
+    ui_text_input_enable_scan(&text_input, scan_key_cb, NULL);
     strength_label = lv_label_create(overlay_screen);
     lv_label_set_text(strength_label, "");
     lv_obj_set_style_text_font(strength_label, theme_font_small(), 0);
@@ -414,11 +425,15 @@ void kef_encrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
 void kef_encrypt_page_show(void) {
   if (overlay_screen)
     lv_obj_clear_flag(overlay_screen, LV_OBJ_FLAG_HIDDEN);
+  if (text_input.keyboard)
+    lv_obj_clear_flag(text_input.keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
 void kef_encrypt_page_hide(void) {
   if (overlay_screen)
     lv_obj_add_flag(overlay_screen, LV_OBJ_FLAG_HIDDEN);
+  if (text_input.keyboard)
+    lv_obj_add_flag(text_input.keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
 void kef_encrypt_page_destroy(void) {
