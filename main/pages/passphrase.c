@@ -63,8 +63,8 @@ static void keyboard_ready_cb(lv_event_t *e) {
 
   char prompt[128];
   snprintf(prompt, sizeof(prompt),
-           "Confirm passphrase?\n\n" ICON_FINGERPRINT
-           " %s > #%06X " ICON_FINGERPRINT " %s#",
+           "Confirm passphrase?\n\n" ICON_FINGERPRINT " %s\n" LV_SYMBOL_DOWN
+           "\n#%06X " ICON_FINGERPRINT " %s#",
            before_hex, (unsigned)highlight, after_hex);
   dialog_show_confirm(prompt, confirm_passphrase_cb, NULL,
                       DIALOG_STYLE_OVERLAY);
