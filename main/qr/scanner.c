@@ -594,9 +594,9 @@ static void update_decode_roi(qr_decode_roi_t *roi,
   if (target_side > frame_min)
     target_side = frame_min;
 
-  // Keep the decoder allocation stable across small apparent-size changes.
-  // Position is still refreshed after every successful decode, growth is
-  // immediate, and shrinkage occurs once it crosses the hysteresis window.
+  // Keep the ROI stable across small apparent-size changes. Position is still
+  // refreshed after every successful decode, growth is immediate, and shrinkage
+  // occurs once it crosses the hysteresis window.
   if (roi->active && target_side < roi->width &&
       target_side + QR_ROI_SHRINK_HYSTERESIS >= roi->width) {
     target_side = roi->width;
@@ -652,8 +652,6 @@ static void qr_decode_task(void *pvParameters) {
   qr_frame_data_t frame_data;
   k_quirc_result_t qr_result;
   qr_decode_roi_t roi = {0};
-  uint32_t decoder_width = CAMERA_SCREEN_WIDTH;
-  uint32_t decoder_height = CAMERA_SCREEN_HEIGHT;
 
   while (true) {
     if (closing || destruction_in_progress)
@@ -688,24 +686,13 @@ static void qr_decode_task(void *pvParameters) {
       decode_height = frame_data.height;
     }
 
-    if (decoder_width != decode_width || decoder_height != decode_height) {
-      if (k_quirc_resize(qr_decoder, decode_width, decode_height) < 0) {
-        ESP_LOGW(TAG, "Failed to resize QR decoder to ROI %" PRIu32 "x%" PRIu32,
-                 decode_width, decode_height);
-        roi = (qr_decode_roi_t){0};
-        decode_x = 0;
-        decode_y = 0;
-        decode_width = frame_data.width;
-        decode_height = frame_data.height;
-        if (decoder_width != decode_width || decoder_height != decode_height) {
-          if (k_quirc_resize(qr_decoder, decode_width, decode_height) < 0) {
-            release_decode_frame(frame_data.frame_data);
-            continue;
-          }
-        }
-      }
-      decoder_width = decode_width;
-      decoder_height = decode_height;
+    // Initialization reserves the full frame, so all valid ROI transitions
+    // (including returning to the full frame) reuse that capacity.
+    if (k_quirc_resize(qr_decoder, decode_width, decode_height) < 0) {
+      ESP_LOGW(TAG, "Invalid QR decoder dimensions %" PRIu32 "x%" PRIu32,
+               decode_width, decode_height);
+      release_decode_frame(frame_data.frame_data);
+      continue;
     }
 
     uint8_t *qr_buf = k_quirc_begin(qr_decoder, NULL, NULL);

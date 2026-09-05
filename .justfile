@@ -53,6 +53,7 @@ clean:
     rm -rf simulator/build
     make -C components/bbqr/test clean
     make -C main/qr/test clean
+    rm -rf components/k_quirc/test/build
     make -C main/core/test clean
 
 # Stages branding and any locally built firmware into site/ the same way the
