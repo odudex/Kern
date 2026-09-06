@@ -956,6 +956,66 @@ static void apply_signer_modifiable_rules(struct wally_psbt *psbt) {
     ESP_LOGW(TAG, "Failed to clear tx-modifiable flags after signing");
 }
 
+/* One derivation this wallet is asked to sign an input with. */
+typedef struct {
+  uint32_t path[MAX_KEYPATH_TOTAL_DEPTH];
+  size_t path_len;
+} signing_path_t;
+
+/* The internal key plus the leaves one wallet realistically sits in. */
+#define MAX_SIGNING_PATHS_PER_INPUT 8
+
+/* Collect every distinct derivation the coordinator asked this wallet to sign
+ * input `i` with. A taproot input names our keys in
+ * PSBT_IN_TAP_BIP32_DERIVATION, one entry per key: the internal key, and the
+ * key in each leaf we sit in. All of them are wanted, so the caller signs with
+ * each rather than picking one.
+ *
+ * A key in several leaves is still one entry, and libwally signs every leaf it
+ * lists in one pass, so one derivation covers it.
+ *
+ * Returns false when the input is malformed, in which case nothing may be
+ * signed. Writes no paths for a non-taproot input, leaving the caller to fall
+ * back to the path its classification produced. */
+static bool collect_taproot_signing_paths(const struct wally_psbt *psbt,
+                                          size_t i, const unsigned char *our_fp,
+                                          signing_path_t *out, size_t cap,
+                                          size_t *out_count) {
+  const struct wally_map *tp_paths = &psbt->inputs[i].taproot_leaf_paths;
+
+  *out_count = 0;
+  for (size_t j = 0; j < tp_paths->num_items; j++) {
+    const struct wally_map_item *item = &tp_paths->items[j];
+    signing_path_t candidate = {0};
+
+    if (!keypath_matches_fingerprint(item->value, item->value_len, our_fp))
+      continue;
+    if (!bip32_path_from_keypath(item->value, item->value_len, candidate.path,
+                                 &candidate.path_len, MAX_KEYPATH_TOTAL_DEPTH))
+      continue;
+
+    for (size_t k = 0; k < *out_count; k++) {
+      if (out[k].path_len != candidate.path_len ||
+          memcmp(out[k].path, candidate.path,
+                 candidate.path_len * sizeof(candidate.path[0])) != 0)
+        continue;
+      /* A path derives exactly one key, so two entries claiming it name two
+       * different keys for one private key. Signing either would be picking
+       * for an attacker, so refuse the whole PSBT. */
+      ESP_LOGE(TAG, "Input %zu names two keys on one derivation path", i);
+      return false;
+    }
+
+    if (*out_count == cap) {
+      ESP_LOGE(TAG, "Input %zu asks for more than %zu signing keys", i, cap);
+      return false;
+    }
+    out[(*out_count)++] = candidate;
+  }
+
+  return true;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -980,12 +1040,26 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
 
   size_t signatures_added = 0;
 
+  unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
+  if (!key_get_fingerprint(our_fp)) {
+    ESP_LOGE(TAG, "No key loaded");
+    goto cleanup;
+  }
+
   /* Classify everything up front, then freeze the inputs we will not sign.
    * Bailing on a snapshot failure rather than signing unprotected. */
   bool signable_any = false;
   for (size_t i = 0; i < num_inputs; i++) {
     plan[i].owner = psbt_classify_input(psbt, i, is_testnet);
     if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
+      signing_path_t probe[MAX_SIGNING_PATHS_PER_INPUT];
+      size_t probe_count = 0;
+      /* Reject a malformed input here rather than in the signing loop, so a
+       * refusal hands the PSBT back with nothing signed. */
+      if (!collect_taproot_signing_paths(psbt, i, our_fp, probe,
+                                         MAX_SIGNING_PATHS_PER_INPUT,
+                                         &probe_count))
+        goto cleanup;
       signable_any = true;
       plan[i].sig_baseline = input_signature_count(psbt, i);
       continue;
@@ -1009,44 +1083,57 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     if (plan[i].denied)
       continue;
 
-    const uint32_t *path = NULL;
-    size_t path_len = 0;
-    uint32_t raw_comps[MAX_KEYPATH_TOTAL_DEPTH];
+    signing_path_t paths[MAX_SIGNING_PATHS_PER_INPUT];
+    size_t num_paths = 0;
 
-    if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
-      path = ownership.claim.derived_path;
-      path_len = ownership.claim.derived_path_len;
-    } else {
-      /* OWNED_UNSAFE / EXPECTED_OWNED — policy already vetted above; derive
-       * from the raw path supplied in the PSBT. */
-      if (!bip32_path_from_keypath(ownership.raw_keypath,
-                                   ownership.raw_keypath_len, raw_comps,
-                                   &path_len, MAX_KEYPATH_TOTAL_DEPTH))
+    /* Already validated in the classify pass, so this cannot fail here. */
+    if (!collect_taproot_signing_paths(psbt, i, our_fp, paths,
+                                       MAX_SIGNING_PATHS_PER_INPUT, &num_paths))
+      continue;
+
+    if (num_paths == 0) {
+      /* Not a taproot input: the single path its classification produced.
+       * OWNED_UNSAFE / EXPECTED_OWNED were vetted by the policy above, so
+       * derive from the raw path the PSBT supplied. */
+      if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
+        memcpy(paths[0].path, ownership.claim.derived_path,
+               sizeof(paths[0].path));
+        paths[0].path_len = ownership.claim.derived_path_len;
+      } else if (!bip32_path_from_keypath(ownership.raw_keypath,
+                                          ownership.raw_keypath_len,
+                                          paths[0].path, &paths[0].path_len,
+                                          MAX_KEYPATH_TOTAL_DEPTH)) {
         continue;
-      path = raw_comps;
+      }
+
+      /* An empty path derives the master key itself, which signs nothing we
+       * classified. */
+      if (!paths[0].path_len || paths[0].path_len > MAX_KEYPATH_TOTAL_DEPTH) {
+        ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
+        continue;
+      }
+      num_paths = 1;
     }
 
-    if (!path || path_len > MAX_KEYPATH_TOTAL_DEPTH) {
-      ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
-      continue;
-    }
+    for (size_t p = 0; p < num_paths; p++) {
+      struct ext_key *derived_key = NULL;
+      if (!key_get_derived_key_components(paths[p].path, paths[p].path_len,
+                                          &derived_key)) {
+        ESP_LOGE(TAG, "Failed to derive key for input %zu", i);
+        continue;
+      }
 
-    struct ext_key *derived_key = NULL;
-    if (!key_get_derived_key_components(path, path_len, &derived_key)) {
-      ESP_LOGE(TAG, "Failed to derive key for input %zu", i);
-      continue;
-    }
+      plan[i].attempted = true;
 
-    plan[i].attempted = true;
+      int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
+                                EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
+      bip32_key_free(derived_key);
 
-    int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
-                              EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
-    bip32_key_free(derived_key);
-
-    if (ret == WALLY_OK) {
-      signatures_added++;
-    } else {
-      ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
+      if (ret == WALLY_OK) {
+        signatures_added++;
+      } else {
+        ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
+      }
     }
   }
 

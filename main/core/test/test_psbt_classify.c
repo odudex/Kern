@@ -5,6 +5,7 @@
 #include <string.h>
 
 /* Wally types needed by stubs */
+#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_descriptor.h>
 #include <wally_psbt.h>
@@ -2466,6 +2467,281 @@ static void test_psbt_classify_multi_input_mixed(void) {
  * PSBT at once. Input 1 here is a second UTXO at an address we own, labelled
  * with someone else's fingerprint so it classifies EXTERNAL; its keypath still
  * names the key input 0 signs with, so wally_psbt_sign() reaches it. */
+/* ================================================================
+ * Taptree signing
+ *
+ * A tr() whose internal key is spendable and whose leaves also name our keys
+ * gets a PSBT_IN_TAP_BIP32_DERIVATION entry per key, which is the coordinator
+ * asking for a signature from each. The internal key signs the key path, a
+ * leaf key signs its leaves.
+ * ================================================================ */
+
+/* Internal key on m/86'/0'/0', one leaf key on m/84'/0'/0'. Two different
+ * keys, so no reuse between the internal key and the leaf. */
+#define DESC_TAPTREE                                                           \
+  "tr([00000000/86'/0'/0']" XPUB_86 "/0/*,"                                    \
+  "pk([00000000/84'/0'/0']" XPUB_84 "/0/*))"
+
+/* Build a single-input PSBT spending DESC_TAPTREE at child 0, populated the
+ * way a coordinator would: internal key, merkle root, leaf script with its
+ * control block, and a taproot keypath per key we are asked to sign with.
+ * `leaf_first` puts the leaf key ahead of the internal key in the derivation
+ * map, which is what a single-key signer would have picked. */
+/* Add one PSBT_IN_TAP_BIP32_DERIVATION entry: the keypath in taproot_leaf_paths
+ * and the tapleaf hashes it covers in taproot_leaf_hashes, both keyed by the
+ * x-only pubkey. An empty hash list marks the internal key. */
+static bool add_taproot_key(struct wally_psbt *psbt, const unsigned char *xonly,
+                            const uint8_t *keypath, size_t keypath_len,
+                            const unsigned char *leaf_hashes,
+                            size_t leaf_hashes_len) {
+  return wally_map_add(&psbt->inputs[0].taproot_leaf_paths, xonly,
+                       EC_XONLY_PUBLIC_KEY_LEN, keypath,
+                       keypath_len) == WALLY_OK &&
+         wally_map_merkle_path_add(&psbt->inputs[0].taproot_leaf_hashes, xonly,
+                                   EC_XONLY_PUBLIC_KEY_LEN, leaf_hashes,
+                                   leaf_hashes_len) == WALLY_OK;
+}
+
+static struct wally_psbt *make_taptree_psbt(bool leaf_first) {
+  struct wally_descriptor *desc = NULL;
+  struct wally_tx *tx = NULL;
+  struct wally_psbt *psbt = NULL;
+  struct wally_tx_output *utxo = NULL;
+  struct ext_key *internal = NULL, *leaf = NULL;
+  unsigned char spk[64], merkle[32], leaf_hash[32];
+  unsigned char script[128], control[128];
+  unsigned char txid[32];
+  size_t spk_len = 0, script_len = 0, control_len = 0;
+  /* fp(4) then little-endian path components, as PSBT keypath values are
+   * serialized: m/86'/0'/0'/0/0 and m/84'/0'/0'/0/0 under our fingerprint. */
+  const uint8_t kp_internal[] = {
+      0x00, 0x00, 0x00, 0x00, 0x56, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  const uint8_t kp_leaf[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+
+  if (wally_descriptor_parse(DESC_TAPTREE, NULL, WALLY_NETWORK_BITCOIN_MAINNET,
+                             0, &desc) != WALLY_OK)
+    return NULL;
+
+  if (wally_descriptor_to_script(desc, 0, 0, 0, 0, 0, 0, spk, sizeof(spk),
+                                 &spk_len) != WALLY_OK ||
+      wally_descriptor_get_taproot_merkle_root(desc, 0, 0, 0, merkle,
+                                               sizeof(merkle)) != WALLY_OK ||
+      wally_descriptor_get_taproot_leaf_hash(desc, 0, 0, 0, 0, leaf_hash,
+                                             sizeof(leaf_hash)) != WALLY_OK ||
+      wally_descriptor_get_taproot_leaf_script(
+          desc, 0, 0, 0, 0, script, sizeof(script), &script_len) != WALLY_OK ||
+      wally_descriptor_get_taproot_control_block(
+          desc, 0, 0, 0, 0, control, sizeof(control), &control_len) != WALLY_OK)
+    goto fail;
+
+  if (!key_get_derived_key("m/86'/0'/0'/0/0", &internal) ||
+      !key_get_derived_key("m/84'/0'/0'/0/0", &leaf))
+    goto fail;
+
+  memset(txid, 0xab, sizeof(txid));
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK)
+    goto fail;
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  {
+    unsigned char op_return[] = {0x6a};
+    wally_tx_add_raw_output(tx, 0, op_return, sizeof(op_return), 0);
+  }
+  if (wally_psbt_from_tx(tx, 0, 0, &psbt) != WALLY_OK)
+    goto fail;
+
+  if (wally_tx_output_init_alloc(100000, spk, spk_len, &utxo) != WALLY_OK ||
+      wally_psbt_set_input_witness_utxo(psbt, 0, utxo) != WALLY_OK)
+    goto fail;
+
+  if (wally_psbt_input_set_taproot_internal_key(
+          &psbt->inputs[0], internal->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN) !=
+          WALLY_OK ||
+      wally_psbt_input_add_taproot_leaf_script(&psbt->inputs[0], control,
+                                               control_len, script,
+                                               script_len) != WALLY_OK)
+    goto fail;
+  if (wally_map_add_integer(&psbt->inputs[0].psbt_fields,
+                            0x18 /* merkle root */, merkle,
+                            sizeof(merkle)) != WALLY_OK)
+    goto fail;
+
+  /* An empty tapleaf hash list marks the internal key; the leaf key lists the
+   * leaf it can spend. */
+  if (leaf_first &&
+      !add_taproot_key(psbt, leaf->pub_key + 1, kp_leaf, sizeof(kp_leaf),
+                       leaf_hash, sizeof(leaf_hash)))
+    goto fail;
+  if (!add_taproot_key(psbt, internal->pub_key + 1, kp_internal,
+                       sizeof(kp_internal), NULL, 0))
+    goto fail;
+  if (!leaf_first &&
+      !add_taproot_key(psbt, leaf->pub_key + 1, kp_leaf, sizeof(kp_leaf),
+                       leaf_hash, sizeof(leaf_hash)))
+    goto fail;
+
+  wally_tx_output_free(utxo);
+  wally_tx_free(tx);
+  bip32_key_free(internal);
+  bip32_key_free(leaf);
+  wally_descriptor_free(desc);
+  return psbt;
+
+fail:
+  if (utxo)
+    wally_tx_output_free(utxo);
+  if (tx)
+    wally_tx_free(tx);
+  if (psbt)
+    wally_psbt_free(psbt);
+  if (internal)
+    bip32_key_free(internal);
+  if (leaf)
+    bip32_key_free(leaf);
+  if (desc)
+    wally_descriptor_free(desc);
+  return NULL;
+}
+
+/* Registers DESC_TAPTREE so the input classifies against it, runs psbt_sign,
+ * and reports the signature counts. */
+static const char *sign_taptree(bool leaf_first, size_t *key_sig_len,
+                                size_t *leaf_sigs, psbt_sign_result_t *res) {
+  struct wally_psbt *psbt = make_taptree_psbt(leaf_first);
+  if (!psbt)
+    return "make_taptree_psbt";
+
+  registry_clear();
+  if (!registry_add_from_string("tt", DESC_TAPTREE, STORAGE_FLASH, false)) {
+    wally_psbt_free(psbt);
+    return "registry_add_from_string";
+  }
+
+  if (psbt_classify_input(psbt, 0, false).ownership !=
+      PSBT_OWNERSHIP_OWNED_SAFE) {
+    wally_psbt_free(psbt);
+    registry_clear();
+    return "taptree input did not classify OWNED_SAFE";
+  }
+
+  psbt_sign_policy_t policy = {0};
+  (void)psbt_sign(psbt, false, policy, res);
+
+  *key_sig_len = 0;
+  wally_psbt_get_input_taproot_signature_len(psbt, 0, key_sig_len);
+  *leaf_sigs = psbt->inputs[0].taproot_leaf_signatures.num_items;
+
+  wally_psbt_free(psbt);
+  registry_clear();
+  return NULL;
+}
+
+static void test_psbt_sign_taptree_signs_every_listed_key(void) {
+  TEST("psbt_sign: taptree input signs both the internal key and the leaf");
+
+  size_t key_sig_len = 0, leaf_sigs = 0;
+  psbt_sign_result_t res;
+  const char *err = sign_taptree(false, &key_sig_len, &leaf_sigs, &res);
+  if (err) {
+    FAIL(err);
+    return;
+  }
+
+  if (!key_sig_len)
+    FAIL("no key-path signature from the internal key");
+  else if (leaf_sigs != 1)
+    FAIL("expected exactly one leaf signature");
+  else if (res.attempted != 1 || res.signed_ok != 1)
+    FAIL("input not tallied as signed");
+  else
+    PASS();
+}
+
+static void test_psbt_sign_taptree_order_independent(void) {
+  TEST("psbt_sign: taptree signs both keys whichever is listed first");
+
+  size_t key_sig_len = 0, leaf_sigs = 0;
+  psbt_sign_result_t res;
+  const char *err = sign_taptree(true, &key_sig_len, &leaf_sigs, &res);
+  if (err) {
+    FAIL(err);
+    return;
+  }
+
+  if (!key_sig_len || leaf_sigs != 1)
+    FAIL("leaf-first ordering lost a signature");
+  else
+    PASS();
+}
+
+/* A derivation path derives exactly one key, so two entries claiming the same
+ * path name two different keys for one private key. Signing either would be
+ * choosing on an attacker's behalf. */
+static void test_psbt_sign_taptree_duplicate_path_refused(void) {
+  TEST("psbt_sign: two keys on one derivation path signs nothing");
+
+  struct wally_psbt *psbt = make_taptree_psbt(false);
+  if (!psbt) {
+    FAIL("make_taptree_psbt");
+    return;
+  }
+
+  struct ext_key *other = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/1", &other)) {
+    wally_psbt_free(psbt);
+    FAIL("key derivation failed");
+    return;
+  }
+
+  /* A third key on the leaf key's exact path. */
+  const uint8_t kp_leaf[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  unsigned char leaf_hash[32];
+  memcpy(leaf_hash, psbt->inputs[0].taproot_leaf_hashes.items[1].value,
+         sizeof(leaf_hash));
+  bool added = add_taproot_key(psbt, other->pub_key + 1, kp_leaf,
+                               sizeof(kp_leaf), leaf_hash, sizeof(leaf_hash));
+  bip32_key_free(other);
+  if (!added) {
+    wally_psbt_free(psbt);
+    FAIL("could not add the colliding keypath");
+    return;
+  }
+
+  registry_clear();
+  if (!registry_add_from_string("tt", DESC_TAPTREE, STORAGE_FLASH, false)) {
+    wally_psbt_free(psbt);
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  size_t signed_count = psbt_sign(psbt, false, policy, &res);
+
+  size_t key_sig_len = 0;
+  wally_psbt_get_input_taproot_signature_len(psbt, 0, &key_sig_len);
+  size_t leaf_sigs = psbt->inputs[0].taproot_leaf_signatures.num_items;
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (signed_count != 0)
+    FAIL("signing reported success");
+  else if (key_sig_len || leaf_sigs)
+    FAIL("a signature was written despite the refusal");
+  else if (res.signed_ok != 0 || res.attempted != 0)
+    FAIL("refused input was tallied as attempted");
+  else
+    PASS();
+}
+
 static void test_psbt_sign_denied_input_keeps_no_signature(void) {
   TEST("psbt_sign: denied input naming our key keeps no signature");
 
@@ -2795,6 +3071,9 @@ int main(void) {
   test_psbt_sign_gate_expected_blocked();
   test_psbt_sign_gate_external_always_skipped();
   test_psbt_classify_multi_input_mixed();
+  test_psbt_sign_taptree_signs_every_listed_key();
+  test_psbt_sign_taptree_order_independent();
+  test_psbt_sign_taptree_duplicate_path_refused();
   test_psbt_sign_denied_input_keeps_no_signature();
   test_psbt_classify_registry_wsh_owned();
   test_psbt_classify_registry_wsh_tampered_witness();
