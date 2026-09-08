@@ -291,7 +291,7 @@ static void descriptor_validation_cb(descriptor_validation_result_t result,
 
   if (result == VALIDATION_SUCCESS) {
     descriptor_changed = true;
-    refresh_menu_visibility();
+    descriptor_loader_show_loaded_menu(refresh_menu_visibility);
     return;
   }
 

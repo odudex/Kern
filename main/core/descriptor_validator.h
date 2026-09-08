@@ -156,4 +156,10 @@ descriptor_validate_keyed(const char *descriptor_str, int *key_index_out);
 KERN_WARN_UNUSED_RESULT bool
 descriptor_validator_get_duplicate_id(char *out, size_t out_len);
 
+/* After VALIDATION_SUCCESS from a keyed load, copy the session registry id the
+ * descriptor was registered under into `out`. Returns false for watch-only
+ * loads or when no load has succeeded since the last validate call. */
+KERN_WARN_UNUSED_RESULT bool descriptor_validator_get_loaded_id(char *out,
+                                                                size_t out_len);
+
 #endif // DESCRIPTOR_VALIDATOR_H

@@ -22,8 +22,7 @@
 // A descriptor finished loading — nothing left to browse for, so return to the
 // opener (home) when a completion callback is set; the QR scanner path has none
 // and falls back to its own return.
-static void descriptor_load_done_cb(void *user_data) {
-  (void)user_data;
+static void descriptor_load_done_cb(void) {
   if (scan_ctx.complete_cb)
     scan_ctx.complete_cb();
   else if (scan_ctx.return_cb)
@@ -35,8 +34,7 @@ static void scan_descriptor_validation_cb(descriptor_validation_result_t result,
   (void)user_data;
 
   if (result == VALIDATION_SUCCESS) {
-    dialog_show_info("Descriptor Loaded", "Wallet descriptor added to session",
-                     descriptor_load_done_cb, NULL, DIALOG_STYLE_FULLSCREEN);
+    descriptor_loader_show_loaded_menu(descriptor_load_done_cb);
     return;
   }
 

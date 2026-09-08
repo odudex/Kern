@@ -40,8 +40,7 @@ static void browser_hide(void) {
 
 /* ---------- Descriptor validation callback ---------- */
 
-static void success_callback_wrapper(void *user_data) {
-  (void)user_data;
+static void success_callback_wrapper(void) {
   if (success_callback)
     success_callback();
 }
@@ -49,15 +48,9 @@ static void success_callback_wrapper(void *user_data) {
 static void descriptor_validation_cb(descriptor_validation_result_t result,
                                      void *user_data) {
   if (result == VALIDATION_SUCCESS) {
-    if (user_data) {
-      free(pending_kef_descriptor);
-      pending_kef_descriptor = NULL;
-      dialog_show_info("Loaded", "Descriptor loaded for this session",
-                       success_callback_wrapper, NULL, DIALOG_STYLE_OVERLAY);
-    } else {
-      if (success_callback)
-        success_callback();
-    }
+    free(pending_kef_descriptor);
+    pending_kef_descriptor = NULL;
+    descriptor_loader_show_loaded_menu(success_callback_wrapper);
     return;
   }
 

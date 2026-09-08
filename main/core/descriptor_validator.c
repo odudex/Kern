@@ -59,6 +59,8 @@ static uint32_t pending_generation = 0;
  * descriptor_validator_get_duplicate_id() and renders the toast itself, so
  * core stays UI-free. Cleared at the start of each validate_and_load call. */
 static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
+/* Session id of the descriptor registered by the last successful load. */
+static char last_loaded_id[REGISTRY_ID_MAX_LEN];
 
 static uint32_t wallet_descriptor_network(void) {
   return (wallet_get_network() == WALLET_NETWORK_MAINNET)
@@ -532,6 +534,8 @@ static void session_register_current_descriptor(void) {
   if (!registry_set_label(id, label))
     ESP_LOGW(TAG, "Failed to label session descriptor '%s'", id);
 
+  if (!current_ctx->watch_only)
+    snprintf(last_loaded_id, sizeof(last_loaded_id), "%s", id);
   complete_validation(VALIDATION_SUCCESS);
 }
 
@@ -725,6 +729,7 @@ validation_begin(const char *descriptor_str, validation_complete_cb callback,
   *out = NULL;
   cleanup_context();
   last_duplicate_id[0] = '\0';
+  last_loaded_id[0] = '\0';
 
   if (!descriptor_str || !callback) {
     if (callback)
@@ -912,6 +917,15 @@ void descriptor_validate_and_load_watch_only(
     return;
 
   watch_only_show_info(descriptor);
+}
+
+bool descriptor_validator_get_loaded_id(char *out, size_t out_len) {
+  if (!out || out_len == 0 || last_loaded_id[0] == '\0' ||
+      strlen(last_loaded_id) >= out_len)
+    return false;
+  strncpy(out, last_loaded_id, out_len);
+  out[out_len - 1] = '\0';
+  return true;
 }
 
 bool descriptor_validator_get_duplicate_id(char *out, size_t out_len) {
