@@ -30,6 +30,9 @@ CONFIG_SECURE_BOOT_SIGNING_KEY="dev_signing_key.pem"
 # Rollback safety net: new OTA image must self-confirm on first boot
 # (fw_update_boot_confirm) or the bootloader returns to the previous slot.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# BIP138 descriptor backups (components/bip138) use ChaCha20-Poly1305 via PSA.
+CONFIG_MBEDTLS_CHACHA20_C=y
+CONFIG_MBEDTLS_CHACHAPOLY_C=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # Stack canaries on functions with local buffers: PSBT, descriptor and QR
 # payloads are attacker-supplied and parsed on the 16KB LVGL task stack.

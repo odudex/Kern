@@ -39,6 +39,7 @@ DIRS=(
     "$REPO_ROOT/main"
     "$REPO_ROOT/components/secure_memory"
     "$REPO_ROOT/components/bbqr"
+    "$REPO_ROOT/components/bip138"
     "$REPO_ROOT/components/bsp_common"
     "$REPO_ROOT/components/cUR"
     "$REPO_ROOT/components/deflate_codec"
