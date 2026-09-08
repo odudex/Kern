@@ -50,6 +50,7 @@ main/core/test/test_utf8
 main/core/test/test_pin_attempt
 main/core/test/test_kef
 main/core/test/test_bip138_keys
+main/core/test/test_bip138_backup
 main/core/test/combined.o
 main/core/test/libwally.a
 
