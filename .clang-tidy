@@ -26,7 +26,7 @@ Checks: >
 
 WarningsAsErrors: ''
 
-HeaderFilterRegex: '(main|components/(bbqr|cUR|k_quirc|sd_card|video|wave_4b|wave_35))/.*\.h$'
+HeaderFilterRegex: '(main|components/(bbqr|bip138|cUR|k_quirc|sd_card|video|wave_4b|wave_35))/.*\.h$'
 
 CheckOptions:
   - key: bugprone-suspicious-string-compare.WarnOnLogicalNotComparison
