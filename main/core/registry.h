@@ -35,9 +35,21 @@ registry_find_by_id(const char *id);
 KERN_WARN_UNUSED_RESULT bool registry_set_label(const char *id,
                                                 const char *label);
 KERN_WARN_UNUSED_RESULT bool registry_remove(const char *id);
+/* Removes only the session entry; a registered backup stays on flash. */
+KERN_WARN_UNUSED_RESULT bool registry_remove_at(size_t index);
+/* Deletes this entry's registered backup from flash and removes it from the
+ * session. Failure leaves the entry intact. */
+KERN_WARN_UNUSED_RESULT bool registry_deregister_at(size_t index);
 KERN_WARN_UNUSED_RESULT bool
 registry_add_from_string(const char *id, const char *descriptor_str,
                          storage_location_t loc, bool persist);
+
+/* Register a session entry: writes its BIP138 backup to flash under `name`,
+ * then renames and labels the entry. Registered descriptors load automatically
+ * whenever a key of theirs is loaded. Fails when no such session entry
+ * exists, the name is taken on flash, or the backup cannot be written; the
+ * entry is left untouched on failure. */
+KERN_WARN_UNUSED_RESULT bool registry_persist(const char *id, const char *name);
 
 /* Watch-only (keyless) session add: registers a descriptor for address viewing
  * without requiring the loaded key's fingerprint to be present. `my_key_index`
@@ -58,6 +70,7 @@ registry_session_has_duplicate_checksum(const char checksum[9], char *out_id,
                                         size_t out_id_size);
 
 void registry_clear(void);
+/* Clears the session and registers every flash backup the loaded key opens. */
 void registry_init(bool is_testnet);
 KERN_WARN_UNUSED_RESULT registry_entry_t *
 registry_match_keypath(const uint8_t *keypath, size_t keypath_len,

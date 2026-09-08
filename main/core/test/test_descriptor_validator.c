@@ -41,12 +41,12 @@ static int storage_saves;
 
 esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
                                   const uint8_t *data, size_t len,
-                                  bool encrypted) {
+                                  storage_descriptor_format_t format) {
   (void)loc;
   (void)id;
   (void)data;
   (void)len;
-  (void)encrypted;
+  (void)format;
   storage_saves++;
   return ESP_OK;
 }
@@ -68,12 +68,12 @@ esp_err_t storage_list_descriptors(storage_location_t loc,
 
 esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
                                   uint8_t **data_out, size_t *len_out,
-                                  bool *encrypted_out) {
+                                  storage_descriptor_format_t *format_out) {
   (void)loc;
   (void)filename;
   *data_out = NULL;
   *len_out = 0;
-  *encrypted_out = false;
+  *format_out = STORAGE_DESCRIPTOR_TXT;
   return -1;
 }
 

@@ -499,6 +499,7 @@ add_executable(kern_sim_storage_smoke
 
 target_include_directories(kern_sim_storage_smoke PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip138/include
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/include
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
     ${CMAKE_CURRENT_SOURCE_DIR}

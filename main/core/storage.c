@@ -515,35 +515,58 @@ bool storage_mnemonic_exists(storage_location_t loc, const char *id) {
 
 /* ========== Descriptor public API (thin wrappers) ========== */
 
+static const char *descriptor_ext(storage_location_t loc,
+                                  storage_descriptor_format_t format) {
+  switch (format) {
+  case STORAGE_DESCRIPTOR_KEF:
+    return STORAGE_DESCRIPTOR_EXT_KEF;
+  case STORAGE_DESCRIPTOR_BIP138:
+    return loc == STORAGE_SD ? STORAGE_DESCRIPTOR_EXT_BIP138_SD
+                             : STORAGE_DESCRIPTOR_EXT_BIP138;
+  default:
+    return STORAGE_DESCRIPTOR_EXT_TXT;
+  }
+}
+
+storage_descriptor_format_t storage_descriptor_format(const char *filename) {
+  if (!filename)
+    return STORAGE_DESCRIPTOR_TXT;
+  if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138_SD) ||
+      filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138))
+    return STORAGE_DESCRIPTOR_BIP138;
+  if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_KEF))
+    return STORAGE_DESCRIPTOR_KEF;
+  return STORAGE_DESCRIPTOR_TXT;
+}
+
 esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
                                   const uint8_t *data, size_t len,
-                                  bool encrypted) {
-  const char *ext =
-      encrypted ? STORAGE_DESCRIPTOR_EXT_KEF : STORAGE_DESCRIPTOR_EXT_TXT;
-  return item_save(&descriptor_config, loc, id, data, len, ext,
-                   encrypted /* only base64-encode .kef on SD */);
+                                  storage_descriptor_format_t format) {
+  return item_save(&descriptor_config, loc, id, data, len,
+                   descriptor_ext(loc, format),
+                   format != STORAGE_DESCRIPTOR_TXT);
 }
 
 esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
                                   uint8_t **data_out, size_t *len_out,
-                                  bool *encrypted_out) {
+                                  storage_descriptor_format_t *format_out) {
   if (!filename || !data_out || !len_out)
     return ESP_ERR_INVALID_ARG;
 
-  bool is_kef = filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_KEF);
-  if (encrypted_out)
-    *encrypted_out = is_kef;
+  storage_descriptor_format_t format = storage_descriptor_format(filename);
+  if (format_out)
+    *format_out = format;
 
-  /* base64 decode only for .kef files on SD card */
-  bool decode = is_kef && (loc == STORAGE_SD);
+  bool decode = format != STORAGE_DESCRIPTOR_TXT && loc == STORAGE_SD;
   return item_load_file(&descriptor_config, loc, filename, data_out, len_out,
                         decode);
 }
 
 esp_err_t storage_list_descriptors(storage_location_t loc,
                                    char ***filenames_out, int *count_out) {
-  const char *exts[] = {STORAGE_DESCRIPTOR_EXT_KEF, STORAGE_DESCRIPTOR_EXT_TXT};
-  return item_list(&descriptor_config, loc, exts, 2, filenames_out, count_out);
+  const char *exts[] = {STORAGE_DESCRIPTOR_EXT_KEF, STORAGE_DESCRIPTOR_EXT_TXT,
+                        STORAGE_DESCRIPTOR_EXT_BIP138};
+  return item_list(&descriptor_config, loc, exts, 3, filenames_out, count_out);
 }
 
 esp_err_t storage_delete_descriptor(storage_location_t loc,
@@ -552,25 +575,28 @@ esp_err_t storage_delete_descriptor(storage_location_t loc,
 }
 
 bool storage_descriptor_exists(storage_location_t loc, const char *id,
-                               bool encrypted) {
-  const char *ext =
-      encrypted ? STORAGE_DESCRIPTOR_EXT_KEF : STORAGE_DESCRIPTOR_EXT_TXT;
-  return item_exists(&descriptor_config, loc, id, ext);
+                               storage_descriptor_format_t format) {
+  return item_exists(&descriptor_config, loc, id, descriptor_ext(loc, format));
+}
+
+void storage_descriptor_filename(storage_location_t loc, const char *id,
+                                 storage_descriptor_format_t format, char *out,
+                                 size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+  char sanitized[STORAGE_MAX_SANITIZED_ID_LEN + 1];
+  storage_sanitize_id(id, sanitized, sizeof(sanitized));
+  item_build_filename(&descriptor_config, loc, sanitized,
+                      descriptor_ext(loc, format), out, out_size);
 }
 
 void storage_descriptor_path(storage_location_t loc, const char *id,
-                             bool encrypted, char *out, size_t out_size) {
+                             storage_descriptor_format_t format, char *out,
+                             size_t out_size) {
   if (!out || out_size == 0)
     return;
-
-  char sanitized[STORAGE_MAX_SANITIZED_ID_LEN + 1];
-  storage_sanitize_id(id, sanitized, sizeof(sanitized));
-
-  const char *ext =
-      encrypted ? STORAGE_DESCRIPTOR_EXT_KEF : STORAGE_DESCRIPTOR_EXT_TXT;
-  char filename[STORAGE_MAX_SANITIZED_ID_LEN + 8];
-  item_build_filename(&descriptor_config, loc, sanitized, ext, filename,
-                      sizeof(filename));
+  char filename[STORAGE_MAX_SANITIZED_ID_LEN + 16];
+  storage_descriptor_filename(loc, id, format, filename, sizeof(filename));
   item_build_path(&descriptor_config, loc, filename, out, out_size);
 }
 

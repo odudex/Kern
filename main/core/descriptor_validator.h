@@ -45,6 +45,9 @@ typedef enum {
    * unspendable nor attributable, so the key-path can silently bypass the
    * script policy. Rejected outright (matches Krux). */
   VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE,
+  /* Descriptor carries a private key (xprv/tprv). A signing device never
+   * needs one in a descriptor, and a backup would leak it. */
+  VALIDATION_PRIVATE_KEY,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,
@@ -136,6 +139,14 @@ void descriptor_validate_and_load_watch_only(
     const char *descriptor_str, wallet_network_t network,
     validation_complete_cb callback, validation_info_confirm_cb info_confirm_cb,
     void *user_data);
+
+/* Synchronous, UI-free keyed validation shared by the interactive load and the
+ * boot scan: notation, parse for the wallet network, private-key rejection,
+ * miniscript wrapper, script generatability, taproot internal key, wallet
+ * fingerprint membership and xpub match at the key's origin. Requires a loaded
+ * key. On success *key_index_out (optional) receives our key's index. */
+KERN_WARN_UNUSED_RESULT descriptor_validation_result_t
+descriptor_validate_keyed(const char *descriptor_str, int *key_index_out);
 
 /* When a VALIDATION_DUPLICATE result has just been delivered, copy the ID of
  * the existing registry entry into `out` and return true. Returns false if no

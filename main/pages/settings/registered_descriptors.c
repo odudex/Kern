@@ -25,6 +25,7 @@ static lv_obj_t *detail_screen = NULL;
 static void (*return_callback)(void) = NULL;
 static registered_descriptor_action_cb_t action_callback = NULL;
 static int pending_remove_index = -1;
+static int pending_deregister_index = -1;
 static int selected_descriptor_index = -1;
 
 static void build_rd_menu(void);
@@ -161,14 +162,14 @@ static void save_sd_cb(void) {
 
 static void remove_confirmed_cb(bool confirmed, void *user_data) {
   (void)user_data;
-  if (!confirmed || pending_remove_index < 0)
+  int idx = pending_remove_index;
+  pending_remove_index = -1;
+  if (!confirmed || idx < 0)
     return;
-  const registry_entry_t *entry = registry_get((size_t)pending_remove_index);
   // The list is rebuilt from the registry below, so a failed removal leaves the
   // entry visible rather than desyncing the UI - just say why.
-  if (entry && !registry_remove(entry->id))
+  if (!registry_remove_at((size_t)idx))
     dialog_show_error_timeout("Could not remove the descriptor", NULL, 0);
-  pending_remove_index = -1;
   selected_descriptor_index = -1;
   if (action_menu) {
     ui_menu_destroy(action_menu);
@@ -183,8 +184,43 @@ static void remove_confirmed_cb(bool confirmed, void *user_data) {
 
 static void remove_action_cb(void) {
   pending_remove_index = selected_descriptor_index;
-  dialog_show_danger_confirm("Remove this session descriptor?",
+  dialog_show_danger_confirm("Remove this descriptor from the session?\n"
+                             "Saved backups will remain.",
                              remove_confirmed_cb, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void deregister_confirmed_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  int idx = pending_deregister_index;
+  pending_deregister_index = -1;
+  if (!confirmed || idx < 0)
+    return;
+  if (!registry_deregister_at((size_t)idx)) {
+    dialog_show_error_timeout("Could not de-register the descriptor.\n"
+                              "The registration has not changed.",
+                              NULL, 0);
+    return;
+  }
+  selected_descriptor_index = -1;
+  build_rd_menu();
+}
+
+static void deregister_action_cb(void) {
+  if (selected_descriptor_index < 0)
+    return;
+  const registry_entry_t *entry =
+      registry_get((size_t)selected_descriptor_index);
+  if (!entry || !entry->persisted)
+    return;
+  pending_deregister_index = selected_descriptor_index;
+  char message[240];
+  snprintf(message, sizeof(message),
+           "Delete this descriptor and its registered backup from %s?\n"
+           "It will also be removed from this session. "
+           "Other saved copies are unchanged.",
+           entry->loc == STORAGE_SD ? "SD card" : "flash");
+  dialog_show_danger_confirm(message, deregister_confirmed_cb, NULL,
+                             DIALOG_STYLE_OVERLAY);
 }
 
 static void show_action_menu(void) {
@@ -213,6 +249,9 @@ static void show_action_menu(void) {
   ui_menu_add_entry(action_menu, "Export QR Code", export_qr_cb);
   ui_menu_add_entry(action_menu, "Save to Flash", save_flash_cb);
   ui_menu_add_entry(action_menu, "Save to SD Card", save_sd_cb);
+  if (entry->persisted)
+    ui_menu_add_entry(action_menu, "De-register and Delete",
+                      deregister_action_cb);
   ui_menu_add_entry(action_menu, "Remove from Session", remove_action_cb);
   ui_menu_show(action_menu);
 }
@@ -308,6 +347,7 @@ void registered_descriptors_page_destroy(void) {
     rd_screen = NULL;
   }
   pending_remove_index = -1;
+  pending_deregister_index = -1;
   selected_descriptor_index = -1;
   return_callback = NULL;
   action_callback = NULL;

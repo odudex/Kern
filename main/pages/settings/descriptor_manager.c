@@ -358,7 +358,7 @@ static void return_from_store_descriptor(void) {
   descriptor_manager_page_show();
 }
 
-static void save_encrypted_cb(void) {
+static void save_with_format(storage_descriptor_format_t format) {
   if (save_type_menu) {
     ui_menu_destroy(save_type_menu);
     save_type_menu = NULL;
@@ -373,27 +373,18 @@ static void save_encrypted_cb(void) {
   descriptor_manager_page_hide();
   store_descriptor_page_create_for_descriptor(
       lv_screen_active(), return_from_store_descriptor, pending_save_location,
-      true, entry->desc);
+      format, entry->desc);
   store_descriptor_page_show();
 }
 
+static void save_kef_cb(void) { save_with_format(STORAGE_DESCRIPTOR_KEF); }
+
+static void save_bip138_cb(void) {
+  save_with_format(STORAGE_DESCRIPTOR_BIP138);
+}
+
 static void save_plaintext_cb(void) {
-  if (save_type_menu) {
-    ui_menu_destroy(save_type_menu);
-    save_type_menu = NULL;
-  }
-  const registry_entry_t *entry =
-      registry_get((size_t)pending_save_descriptor_index);
-  if (!entry) {
-    dialog_show_error_timeout("No descriptor selected", NULL, 2000);
-    descriptor_manager_page_show();
-    return;
-  }
-  descriptor_manager_page_hide();
-  store_descriptor_page_create_for_descriptor(
-      lv_screen_active(), return_from_store_descriptor, pending_save_location,
-      false, entry->desc);
-  store_descriptor_page_show();
+  save_with_format(STORAGE_DESCRIPTOR_TXT);
 }
 
 static void save_type_back_cb(void) {
@@ -413,7 +404,12 @@ static void show_save_type_menu(storage_location_t loc) {
   if (!save_type_menu)
     return;
 
-  ui_menu_add_entry(save_type_menu, "Encrypted (KEF)", save_encrypted_cb);
+  /* On flash, BIP138 is what registering does; offer it as a plain file only
+   * on the card. */
+  if (loc == STORAGE_SD)
+    ui_menu_add_entry(save_type_menu, "Encrypted (BIP138)", save_bip138_cb);
+  ui_menu_add_entry(save_type_menu, "Encrypted with custom key (KEF)",
+                    save_kef_cb);
   ui_menu_add_entry(save_type_menu, "Plaintext", save_plaintext_cb);
   ui_menu_show(save_type_menu);
 }
