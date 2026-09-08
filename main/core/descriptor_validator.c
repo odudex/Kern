@@ -194,6 +194,12 @@ static char *extract_xpub_from_key(const char *key_str) {
   return xpub;
 }
 
+static bool descriptor_has_private_key(const struct wally_descriptor *desc) {
+  uint32_t features = 0;
+  return wally_descriptor_get_features(desc, &features) == WALLY_OK &&
+         (features & WALLY_MS_IS_PRIVATE);
+}
+
 // True if the parsed descriptor contains miniscript-only fragments.
 // libwally sets WALLY_MS_IS_DESCRIPTOR at parse start and clears it when a
 // non-descriptor (miniscript) fragment is found; multi()/sortedmulti() keep it.
@@ -587,24 +593,32 @@ static void proceed_psb_or_info(void) {
   show_info_or_auto_confirm();
 }
 
-// Verify xpub matches wallet, extract info, and show it.
-static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
-                                      int key_index) {
-  char *key_str = NULL;
-  if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK) {
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
-  }
+/* Keyless structural checks applied to every parsed descriptor. */
+static descriptor_validation_result_t
+static_checks(struct wally_descriptor *descriptor) {
+  if (descriptor_has_private_key(descriptor))
+    return VALIDATION_PRIVATE_KEY;
+  if (descriptor_is_miniscript(descriptor) &&
+      !miniscript_wrapper_is_supported(descriptor))
+    return VALIDATION_UNSUPPORTED_MINISCRIPT;
+  if (!descriptor_scripts_are_generatable(descriptor))
+    return VALIDATION_UNSUPPORTED_SCRIPT;
+  if (tr_internal_keypath_unprovable(descriptor))
+    return VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE;
+  return VALIDATION_SUCCESS;
+}
 
+/* The wallet's xpub at key_index's origin path must equal the descriptor's. A
+ * matching fingerprint alone is attacker-controllable text. */
+static descriptor_validation_result_t
+verify_xpub_match(const struct wally_descriptor *descriptor, int key_index) {
+  char *key_str = NULL;
+  if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK)
+    return VALIDATION_INTERNAL_ERROR;
   char *descriptor_xpub = extract_xpub_from_key(key_str);
   wally_free_string(key_str);
-
-  if (!descriptor_xpub) {
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_PARSE_ERROR);
-    return;
-  }
+  if (!descriptor_xpub)
+    return VALIDATION_PARSE_ERROR;
 
   char *origin_path_str = NULL;
   char full_path[72];
@@ -612,9 +626,7 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
                                                &origin_path_str) != WALLY_OK ||
       !origin_path_str) {
     free(descriptor_xpub);
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
+    return VALIDATION_INTERNAL_ERROR;
   }
   snprintf(full_path, sizeof(full_path), "m/%s", origin_path_str);
   wally_free_string(origin_path_str);
@@ -622,19 +634,24 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
   char *wallet_xpub = NULL;
   if (!key_get_xpub(full_path, &wallet_xpub)) {
     free(descriptor_xpub);
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
+    return VALIDATION_INTERNAL_ERROR;
   }
-
-  bool xpub_match = (strcmp(descriptor_xpub, wallet_xpub) == 0);
+  bool xpub_match = strcmp(descriptor_xpub, wallet_xpub) == 0;
   free(descriptor_xpub);
   wally_free_string(wallet_xpub);
-
-  if (!xpub_match) {
+  if (!xpub_match)
     ESP_LOGE(TAG, "XPub mismatch");
+  return xpub_match ? VALIDATION_SUCCESS : VALIDATION_XPUB_MISMATCH;
+}
+
+// Verify xpub matches wallet, extract info, and show it.
+static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
+                                      int key_index) {
+  descriptor_validation_result_t xpub_result =
+      verify_xpub_match(descriptor, key_index);
+  if (xpub_result != VALIDATION_SUCCESS) {
     wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_XPUB_MISMATCH);
+    complete_validation(xpub_result);
     return;
   }
 
@@ -749,27 +766,43 @@ validation_begin(const char *descriptor_str, validation_complete_cb callback,
     return parse_result;
   }
 
-  if (descriptor_is_miniscript(descriptor) &&
-      !miniscript_wrapper_is_supported(descriptor)) {
+  descriptor_validation_result_t static_result = static_checks(descriptor);
+  if (static_result != VALIDATION_SUCCESS) {
     wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_UNSUPPORTED_MINISCRIPT);
-    return VALIDATION_UNSUPPORTED_MINISCRIPT;
-  }
-
-  if (!descriptor_scripts_are_generatable(descriptor)) {
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_UNSUPPORTED_SCRIPT);
-    return VALIDATION_UNSUPPORTED_SCRIPT;
-  }
-
-  if (tr_internal_keypath_unprovable(descriptor)) {
-    wally_descriptor_free(descriptor);
-    complete_validation(VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE);
-    return VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE;
+    complete_validation(static_result);
+    return static_result;
   }
 
   *out = descriptor;
   return VALIDATION_SUCCESS;
+}
+
+descriptor_validation_result_t
+descriptor_validate_keyed(const char *descriptor_str, int *key_index_out) {
+  if (!descriptor_str || !key_is_loaded() || !wallet_is_initialized())
+    return VALIDATION_INTERNAL_ERROR;
+  if (descriptor_text_has_uppercase_hardened(descriptor_str))
+    return VALIDATION_INVALID_HARDENED_NOTATION;
+
+  struct wally_descriptor *descriptor = NULL;
+  descriptor_validation_result_t result =
+      parse_descriptor_for_wallet(descriptor_str, &descriptor);
+  if (result != VALIDATION_SUCCESS)
+    return result;
+
+  result = static_checks(descriptor);
+  int key_index = -1;
+  if (result == VALIDATION_SUCCESS) {
+    key_index = find_matching_key_index(descriptor);
+    if (key_index < 0)
+      result = VALIDATION_FINGERPRINT_NOT_FOUND;
+  }
+  if (result == VALIDATION_SUCCESS)
+    result = verify_xpub_match(descriptor, key_index);
+  wally_descriptor_free(descriptor);
+  if (result == VALIDATION_SUCCESS && key_index_out)
+    *key_index_out = key_index;
+  return result;
 }
 
 /* Store the descriptor checksum, then reject duplicates already in the

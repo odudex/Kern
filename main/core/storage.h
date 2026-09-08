@@ -39,6 +39,16 @@ typedef enum {
 #define STORAGE_DESCRIPTOR_PREFIX "d_"
 #define STORAGE_DESCRIPTOR_EXT_KEF ".kef"
 #define STORAGE_DESCRIPTOR_EXT_TXT ".txt"
+#define STORAGE_DESCRIPTOR_EXT_BIP138 ".bip138"
+#define STORAGE_DESCRIPTOR_EXT_BIP138_SD ".bip138.txt"
+
+/* On-disk form of a descriptor file, selected by its extension. KEF and
+ * BIP138 files are raw on flash and base64 text on SD. */
+typedef enum {
+  STORAGE_DESCRIPTOR_TXT = 0, /* plaintext descriptor */
+  STORAGE_DESCRIPTOR_KEF,     /* password-encrypted KEF envelope */
+  STORAGE_DESCRIPTOR_BIP138,  /* BIP138 container keyed to the descriptor */
+} storage_descriptor_format_t;
 
 /**
  * Initialize flash storage (mount SPIFFS). Safe to call multiple times.
@@ -131,35 +141,40 @@ KERN_WARN_UNUSED_RESULT char *storage_get_kef_display_name(const uint8_t *data,
 /* ---------- Descriptor storage ---------- */
 
 /**
- * Save a descriptor. If encrypted, saves KEF envelope (raw on flash,
- * base64 on SD). If plaintext, saves raw text on both.
+ * Save a descriptor. Plaintext is written as-is; KEF and BIP138 data is raw
+ * on flash and base64 on SD.
  *
- * @param loc       Flash or SD card
- * @param id        Raw ID (sanitized for the filename)
- * @param data      Descriptor data (KEF envelope or plaintext string)
- * @param len       Length of data
- * @param encrypted true for .kef, false for .txt
+ * @param loc    Flash or SD card
+ * @param id     Raw ID (sanitized for the filename)
+ * @param data   Descriptor data (plaintext, KEF envelope or BIP138 container)
+ * @param len    Length of data
+ * @param format Selects the extension and the base64 armouring on SD
  */
-KERN_WARN_UNUSED_RESULT esp_err_t
-storage_save_descriptor(storage_location_t loc, const char *id,
-                        const uint8_t *data, size_t len, bool encrypted);
+KERN_WARN_UNUSED_RESULT esp_err_t storage_save_descriptor(
+    storage_location_t loc, const char *id, const uint8_t *data, size_t len,
+    storage_descriptor_format_t format);
 
 /**
- * Load a descriptor file. Detects format by extension.
- * .kef on SD: base64-decoded. .txt: raw text. .kef on flash: raw binary.
+ * Load a descriptor file. The format comes from the extension; KEF and
+ * BIP138 files on SD are base64-decoded so callers always get raw bytes.
  *
- * @param loc           Flash or SD card
- * @param filename      Filename (e.g. "d_MyWallet.kef" or "MyWallet.txt")
- * @param data_out      Receives heap-allocated data
- * @param len_out       Receives length
- * @param encrypted_out Receives true if file is .kef, false if .txt
+ * @param loc        Flash or SD card
+ * @param filename   Filename (e.g. "d_MyWallet.kef" or "MyWallet.txt")
+ * @param data_out   Receives heap-allocated data
+ * @param len_out    Receives length
+ * @param format_out Receives the file's format (may be NULL)
  */
 KERN_WARN_UNUSED_RESULT esp_err_t storage_load_descriptor(
     storage_location_t loc, const char *filename, uint8_t **data_out,
-    size_t *len_out, bool *encrypted_out);
+    size_t *len_out, storage_descriptor_format_t *format_out);
 
 /**
- * List stored descriptor files (.kef and .txt).
+ * Format of a descriptor file, from its extension.
+ */
+storage_descriptor_format_t storage_descriptor_format(const char *filename);
+
+/**
+ * List stored descriptor files (.kef, .txt and .bip138 forms).
  */
 KERN_WARN_UNUSED_RESULT esp_err_t storage_list_descriptors(
     storage_location_t loc, char ***filenames_out, int *count_out);
@@ -173,9 +188,17 @@ storage_delete_descriptor(storage_location_t loc, const char *filename);
 /**
  * Check if a descriptor with the given ID already exists.
  */
-KERN_WARN_UNUSED_RESULT bool storage_descriptor_exists(storage_location_t loc,
-                                                       const char *id,
-                                                       bool encrypted);
+KERN_WARN_UNUSED_RESULT bool
+storage_descriptor_exists(storage_location_t loc, const char *id,
+                          storage_descriptor_format_t format);
+
+/**
+ * Build the filename a descriptor with the given ID is saved under, as listed
+ * by storage_list_descriptors and accepted by storage_delete_descriptor.
+ */
+void storage_descriptor_filename(storage_location_t loc, const char *id,
+                                 storage_descriptor_format_t format, char *out,
+                                 size_t out_size);
 
 /**
  * Build the full filesystem path a descriptor with the given ID would be saved
@@ -184,6 +207,7 @@ KERN_WARN_UNUSED_RESULT bool storage_descriptor_exists(storage_location_t loc,
  * filesystem access.
  */
 void storage_descriptor_path(storage_location_t loc, const char *id,
-                             bool encrypted, char *out, size_t out_size);
+                             storage_descriptor_format_t format, char *out,
+                             size_t out_size);
 
 #endif /* STORAGE_H */

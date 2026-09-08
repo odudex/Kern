@@ -1,9 +1,10 @@
 /*
  * Store Descriptor Page
  *
- * Saves the loaded descriptor to flash or SD card.
- * Encrypted: KEF encrypt flow -> save as .kef
- * Plaintext: ID prompt -> save as .txt
+ * Saves a descriptor to flash or SD card.
+ * KEF: password prompt -> save as .kef
+ * BIP138: name prompt -> encrypt to the descriptor's keys -> .bip138(.txt)
+ * Plaintext: name prompt -> save as .txt
  */
 
 #ifndef STORE_DESCRIPTOR_H
@@ -15,10 +16,12 @@
 struct wally_descriptor;
 
 void store_descriptor_page_create(lv_obj_t *parent, void (*return_cb)(void),
-                                  storage_location_t location, bool encrypted);
+                                  storage_location_t location,
+                                  storage_descriptor_format_t format);
 void store_descriptor_page_create_for_descriptor(
     lv_obj_t *parent, void (*return_cb)(void), storage_location_t location,
-    bool encrypted, const struct wally_descriptor *descriptor);
+    storage_descriptor_format_t format,
+    const struct wally_descriptor *descriptor);
 void store_descriptor_page_show(void);
 void store_descriptor_page_hide(void);
 void store_descriptor_page_destroy(void);

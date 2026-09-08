@@ -1,5 +1,5 @@
-#include "core/storage.h"
 #include "core/kef.h"
+#include "core/storage.h"
 #include "sim_flash.h"
 
 #include <dirent.h>
@@ -12,7 +12,7 @@
 #define CHECK(cond, msg)                                                       \
   do {                                                                         \
     if (!(cond)) {                                                             \
-      fprintf(stderr, "storage_smoke failed: %s\n", msg);                     \
+      fprintf(stderr, "storage_smoke failed: %s\n", msg);                      \
       return 1;                                                                \
     }                                                                          \
   } while (0)
@@ -74,7 +74,8 @@ static bool list_has(char **files, int count, const char *name) {
 static int expect_loaded(const uint8_t *expected, size_t expected_len,
                          const uint8_t *actual, size_t actual_len,
                          const char *label) {
-  if (actual_len != expected_len || memcmp(actual, expected, expected_len) != 0) {
+  if (actual_len != expected_len ||
+      memcmp(actual, expected, expected_len) != 0) {
     fprintf(stderr, "storage_smoke failed: %s bytes differ\n", label);
     return 1;
   }
@@ -83,7 +84,8 @@ static int expect_loaded(const uint8_t *expected, size_t expected_len,
 
 int main(void) {
   char root[256];
-  snprintf(root, sizeof(root), "/tmp/kern-sim-storage-smoke-%ld", (long)getpid());
+  snprintf(root, sizeof(root), "/tmp/kern-sim-storage-smoke-%ld",
+           (long)getpid());
 
   char flash_root[320];
   char nvs_root[320];
@@ -106,8 +108,8 @@ int main(void) {
   size_t kef_blob_len = 0;
   const uint8_t password[] = "test";
   const uint8_t secret[] = "seed entropy bytes";
-  CHECK(kef_encrypt((const uint8_t *)"SmokeName", 9, KEF_V16_CTR_Z_H4,
-                    password, strlen((const char *)password), 10000, secret,
+  CHECK(kef_encrypt((const uint8_t *)"SmokeName", 9, KEF_V16_CTR_Z_H4, password,
+                    strlen((const char *)password), 10000, secret,
                     sizeof(secret) - 1, &kef_blob, &kef_blob_len) == KEF_OK,
         "create KEF envelope");
   CHECK(kef_is_envelope(kef_blob, kef_blob_len), "valid KEF envelope");
@@ -132,8 +134,8 @@ int main(void) {
   CHECK(storage_load_mnemonic(STORAGE_FLASH, "m_Smoke_Name.kef", &loaded,
                               &loaded_len) == ESP_OK,
         "load flash mnemonic");
-  CHECK(expect_loaded(kef_blob, kef_blob_len, loaded, loaded_len,
-                      "mnemonic") == 0,
+  CHECK(expect_loaded(kef_blob, kef_blob_len, loaded, loaded_len, "mnemonic") ==
+            0,
         "mnemonic round-trip");
 
   char *display_name = storage_get_kef_display_name(loaded, loaded_len);
@@ -154,16 +156,18 @@ int main(void) {
   free(loaded);
 
   CHECK(storage_save_descriptor(STORAGE_FLASH, "Desc Kef", kef_blob,
-                                kef_blob_len, true) == ESP_OK,
+                                kef_blob_len, STORAGE_DESCRIPTOR_KEF) == ESP_OK,
         "save encrypted descriptor");
-  CHECK(storage_descriptor_exists(STORAGE_FLASH, "Desc Kef", true),
+  CHECK(storage_descriptor_exists(STORAGE_FLASH, "Desc Kef",
+                                  STORAGE_DESCRIPTOR_KEF),
         "encrypted descriptor exists");
 
   CHECK(storage_save_descriptor(STORAGE_FLASH, "Plain Desc",
-                                (const uint8_t *)descriptor,
-                                strlen(descriptor), false) == ESP_OK,
+                                (const uint8_t *)descriptor, strlen(descriptor),
+                                STORAGE_DESCRIPTOR_TXT) == ESP_OK,
         "save plaintext descriptor");
-  CHECK(storage_descriptor_exists(STORAGE_FLASH, "Plain Desc", false),
+  CHECK(storage_descriptor_exists(STORAGE_FLASH, "Plain Desc",
+                                  STORAGE_DESCRIPTOR_TXT),
         "plaintext descriptor exists");
 
   CHECK(storage_list_descriptors(STORAGE_FLASH, &files, &count) == ESP_OK,
@@ -174,20 +178,20 @@ int main(void) {
         "plaintext descriptor filename");
   storage_free_file_list(files, count);
 
-  bool encrypted = false;
+  storage_descriptor_format_t format = STORAGE_DESCRIPTOR_TXT;
   CHECK(storage_load_descriptor(STORAGE_FLASH, "d_Desc_Kef.kef", &loaded,
-                                &loaded_len, &encrypted) == ESP_OK,
+                                &loaded_len, &format) == ESP_OK,
         "load encrypted descriptor");
-  CHECK(encrypted, "encrypted flag");
+  CHECK(format == STORAGE_DESCRIPTOR_KEF, "encrypted flag");
   CHECK(expect_loaded(kef_blob, kef_blob_len, loaded, loaded_len,
                       "encrypted descriptor") == 0,
         "encrypted descriptor round-trip");
   free(loaded);
 
   CHECK(storage_load_descriptor(STORAGE_FLASH, "d_Plain_Desc.txt", &loaded,
-                                &loaded_len, &encrypted) == ESP_OK,
+                                &loaded_len, &format) == ESP_OK,
         "load plaintext descriptor");
-  CHECK(!encrypted, "plaintext flag");
+  CHECK(format == STORAGE_DESCRIPTOR_TXT, "plaintext flag");
   CHECK(expect_loaded((const uint8_t *)descriptor, strlen(descriptor), loaded,
                       loaded_len, "plaintext descriptor") == 0,
         "plaintext descriptor round-trip");

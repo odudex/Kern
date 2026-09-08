@@ -509,8 +509,8 @@ int main(void) {
     }
   }
 
-  /* --- Group 11: registry_init is RAM-only --- */
-  printf("\n--- Group 11: registry_init does not scan storage ---\n");
+  /* --- Group 11: registry_init scans storage for BIP138 backups --- */
+  printf("\n--- Group 11: registry_init scans descriptor storage ---\n");
   {
     registry_clear();
     registry_add_from_string("session", DESC_WPKH, STORAGE_FLASH, false);
@@ -525,12 +525,12 @@ int main(void) {
       FAIL("session entries were not cleared");
     }
 
-    TEST("registry_init: does not list descriptor storage");
-    if (registry_stub_storage_list_calls() == 0 &&
+    TEST("registry_init: lists flash descriptor storage");
+    if (registry_stub_storage_list_calls() == 1 &&
         registry_stub_storage_load_calls() == 0) {
       PASS();
     } else {
-      FAIL("storage was scanned");
+      FAIL("storage was not scanned");
     }
   }
 
