@@ -250,6 +250,8 @@ bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
   if (n_hints == SIZE_MAX)
     return false;
   size_t pt_cap = bip138_plaintext_max(&cont);
+  if (pt_cap == 0)
+    return false;
   uint8_t *pt = malloc(pt_cap);
   if (!pt)
     return false;
