@@ -208,6 +208,13 @@ static void test_common_account(void) {
         !bip138_backup_decrypt(blob, blob_len, &recovered, NULL));
   check("truncated blob fails",
         !bip138_backup_decrypt(blob, blob_len - 20, &recovered, NULL));
+  size_t ct_off = (size_t)(cont.ciphertext - blob);
+  blob[ct_off - 1] = 0;
+  check("empty ciphertext parses but does not decrypt",
+        cont.ciphertext_len < 0xfd &&
+            bip138_parse(blob, ct_off, &cont) == BIP138_OK &&
+            bip138_plaintext_max(&cont) == 0 &&
+            !bip138_backup_decrypt(blob, ct_off, &recovered, NULL));
   free(blob);
 }
 
