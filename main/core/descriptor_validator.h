@@ -10,6 +10,9 @@
 #include "storage.h"
 #include "wallet.h"
 
+/* Discard pending validation without invoking completion callbacks. */
+void descriptor_validation_cancel(void);
+
 typedef enum {
   VALIDATION_SUCCESS = 0,
   VALIDATION_FINGERPRINT_NOT_FOUND,

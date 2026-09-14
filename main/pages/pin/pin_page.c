@@ -12,6 +12,7 @@
 #include "../../ui/power.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
+#include "../../utils/session_cleanup.h"
 #include "../session_lock.h"
 
 #include <bsp/pmic.h>
@@ -106,10 +107,14 @@ static int keystroke_cache_len = 0;
 
 // Processing overlay (shown during slow crypto operations)
 static lv_obj_t *progress_dialog = NULL;
+static lv_timer_t *processing_timer;
+static lv_timer_t *restart_timer;
+static lv_timer_cb_t processing_callback;
 
 // Timer-compatible wrapper for esp_restart()
 static void restart_cb(lv_timer_t *timer) {
   (void)timer;
+  restart_timer = NULL;
   esp_restart();
 }
 
@@ -125,26 +130,6 @@ static void wrong_pin_dismissed_cb(void);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Overwrite LVGL textarea content before clearing to prevent PIN plaintext
-// from lingering in freed heap memory.
-static void secure_clear_textarea(lv_obj_t *textarea) {
-  if (!textarea)
-    return;
-  const char *text = lv_textarea_get_text(textarea);
-  size_t len = text ? strlen(text) : 0;
-  if (len > 0) {
-    // Overwrite with spaces (same length forces LVGL to reuse the buffer)
-    char dummy[PIN_MAX_LENGTH + 1];
-    if (len > PIN_MAX_LENGTH)
-      len = PIN_MAX_LENGTH;
-    memset(dummy, ' ', len);
-    dummy[len] = '\0';
-    lv_textarea_set_text(textarea, dummy);
-    secure_memzero(dummy, sizeof(dummy));
-  }
-  lv_textarea_set_text(textarea, "");
-}
 
 static void destroy_text_input(void) {
   if (text_input_active) {
@@ -230,11 +215,20 @@ static void dismiss_processing(void) {
   }
 }
 
+static void processing_timer_cb(lv_timer_t *timer) {
+  lv_timer_cb_t callback = processing_callback;
+  processing_timer = NULL;
+  processing_callback = NULL;
+  if (callback)
+    callback(timer);
+}
+
 static void show_processing(lv_timer_cb_t callback) {
   progress_dialog =
       dialog_show_progress("PIN", "Processing...", DIALOG_STYLE_OVERLAY);
-  lv_timer_t *t = lv_timer_create(callback, 50, NULL);
-  lv_timer_set_repeat_count(t, 1);
+  processing_callback = callback;
+  processing_timer = lv_timer_create(processing_timer_cb, 50, NULL);
+  lv_timer_set_repeat_count(processing_timer, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -270,8 +264,8 @@ static void deferred_verify_cb(lv_timer_t *timer) {
   case PIN_VERIFY_WIPED: {
     clear_buffers();
     dialog_show_error_timeout("Device wiped. All data erased.", NULL, 0);
-    lv_timer_t *rt = lv_timer_create(restart_cb, 3000, NULL);
-    lv_timer_set_repeat_count(rt, 1);
+    restart_timer = lv_timer_create(restart_cb, 3000, NULL);
+    lv_timer_set_repeat_count(restart_timer, 1);
     break;
   }
   default:
@@ -308,7 +302,7 @@ static void input_ready_cb(lv_event_t *e) {
     prefix_len = (int)len;
     suffix_len = 0;
     suffix_buf[0] = '\0';
-    secure_clear_textarea(text_input.textarea);
+    ui_secure_clear_textarea(text_input.textarea);
     show_processing(deferred_verify_cb);
     break;
   }
@@ -322,7 +316,7 @@ static void input_ready_cb(lv_event_t *e) {
     memcpy(setup_pin, text, len);
     setup_pin[len] = '\0';
     setup_pin_len = (int)len;
-    secure_clear_textarea(text_input.textarea);
+    ui_secure_clear_textarea(text_input.textarea);
     transition_to(STATE_SETUP_CONFIRM_PIN);
     break;
   }
@@ -331,14 +325,14 @@ static void input_ready_cb(lv_event_t *e) {
     if ((int)len != setup_pin_len || secure_memcmp(text, setup_pin, len) != 0) {
       secure_memzero(setup_pin, sizeof(setup_pin));
       setup_pin_len = 0;
-      secure_clear_textarea(text_input.textarea);
+      ui_secure_clear_textarea(text_input.textarea);
       // Defer the rebuild until the dialog dismisses; rebuilding now would
       // add the new keyboard above the error modal and hide the message.
       dialog_show_error_timeout("PINs don't match", pin_mismatch_dismissed_cb,
                                 1500);
       return;
     }
-    secure_clear_textarea(text_input.textarea);
+    ui_secure_clear_textarea(text_input.textarea);
     split_pos = setup_pin_len / 2;
     if (split_pos < 1)
       split_pos = 1;
@@ -1142,6 +1136,7 @@ static void back_btn_cb(lv_event_t *e) {
 void pin_page_create(lv_obj_t *parent, pin_page_mode_t mode,
                      pin_page_complete_cb_t complete_cb,
                      pin_page_cancel_cb_t cancel_cb) {
+  session_cleanup_register(pin_page_destroy);
   if (!parent)
     return;
 
@@ -1176,6 +1171,16 @@ void pin_page_hide(void) {
 }
 
 void pin_page_destroy(void) {
+  session_cleanup_unregister(pin_page_destroy);
+  if (processing_timer) {
+    lv_timer_delete(processing_timer);
+    processing_timer = NULL;
+  }
+  processing_callback = NULL;
+  if (restart_timer) {
+    lv_timer_delete(restart_timer);
+    restart_timer = NULL;
+  }
   clear_buffers();
   dismiss_processing();
   clear_state();

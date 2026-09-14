@@ -1,6 +1,7 @@
 // UI Input Helpers - Shared components for input pages
 
 #include "input_helpers.h"
+#include "../utils/secure_mem.h"
 #include "assets/icons.h"
 #include "theme_widgets.h"
 #include <string.h>
@@ -369,7 +370,20 @@ void ui_text_input_hide(ui_text_input_t *input) {
     lv_obj_add_flag(input->keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
+void ui_secure_clear_textarea(lv_obj_t *textarea) {
+  if (!textarea)
+    return;
+  const char *text = lv_textarea_get_text(textarea);
+  if (text)
+    secure_memzero((void *)text, strlen(text));
+  const char *label_text = lv_label_get_text(lv_textarea_get_label(textarea));
+  if (label_text)
+    secure_memzero((void *)label_text, strlen(label_text));
+  lv_textarea_set_text(textarea, "");
+}
+
 void ui_text_input_destroy(ui_text_input_t *input) {
+  ui_secure_clear_textarea(input->textarea);
   if (input->input_group) {
     lv_group_del(input->input_group);
     input->input_group = NULL;

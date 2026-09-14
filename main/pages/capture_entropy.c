@@ -1,6 +1,7 @@
 // Capture Entropy Page - Reusable camera page for capturing entropy
 
 #include "capture_entropy.h"
+#include "../utils/session_cleanup.h"
 
 #include <bsp/esp-bsp.h>
 #include <driver/ppa.h>
@@ -353,6 +354,7 @@ static void touch_event_cb(lv_event_t *e) {
 }
 
 void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(capture_entropy_page_destroy);
   (void)parent;
 
   return_callback = return_cb;
@@ -410,6 +412,7 @@ void capture_entropy_page_hide(void) {
 }
 
 void capture_entropy_page_destroy(void) {
+  session_cleanup_unregister(capture_entropy_page_destroy);
   closing = true;
   is_initialized = false;
 
@@ -425,7 +428,9 @@ void capture_entropy_page_destroy(void) {
     wait++;
   }
 
-  app_video_stop();
+  esp_err_t stop_err = app_video_stop();
+  if (stop_err != ESP_OK)
+    ESP_LOGW(TAG, "Camera stop failed: %s", esp_err_to_name(stop_err));
 
   bool locked = bsp_display_lock(1000);
   camera_img = NULL;

@@ -5,6 +5,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
+#include "../../utils/session_cleanup.h"
 #include "../capture_entropy.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -177,6 +178,7 @@ static void back_cb(void) {
 
 void entropy_from_camera_page_create(lv_obj_t *parent,
                                      void (*return_cb)(void)) {
+  session_cleanup_register(entropy_from_camera_page_destroy);
   if (!parent)
     return;
 
@@ -204,6 +206,7 @@ void entropy_from_camera_page_hide(void) {
 }
 
 void entropy_from_camera_page_destroy(void) {
+  session_cleanup_unregister(entropy_from_camera_page_destroy);
   cleanup_ui();
 
   if (entropy_screen) {

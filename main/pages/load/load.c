@@ -3,6 +3,7 @@
 #include "load.h"
 #include "../../ui/dialog.h"
 #include "../../utils/secure_mem.h"
+#include "../../utils/session_cleanup.h"
 #include "../scan/scan.h"
 #include "../shared/sd_file_browser.h"
 #include "sd_card.h"
@@ -52,6 +53,7 @@ static void load_on_file_selected(const char *full_path, const char *dir,
 /* ---------- Public lifecycle ---------- */
 
 void load_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(load_page_destroy);
   if (!parent)
     return;
 
@@ -70,6 +72,7 @@ void load_page_show(void) { sd_file_browser_show(); }
 void load_page_hide(void) { sd_file_browser_hide(); }
 
 void load_page_destroy(void) {
+  session_cleanup_unregister(load_page_destroy);
   sd_file_browser_destroy();
   load_return_cb = NULL;
 }

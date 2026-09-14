@@ -6,6 +6,7 @@
 #include "../../../ui/dialog.h"
 #include "../../../ui/menu.h"
 #include "../../../ui/theme_widgets.h"
+#include "../../../utils/session_cleanup.h"
 #include "../../store_mnemonic.h"
 #include "mnemonic_qr.h"
 #include "mnemonic_words.h"
@@ -87,6 +88,7 @@ static void back_cb(void) {
 }
 
 void backup_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(backup_menu_page_destroy);
   if (!parent)
     return;
 
@@ -126,6 +128,7 @@ void backup_menu_page_hide(void) {
 }
 
 void backup_menu_page_destroy(void) {
+  session_cleanup_unregister(backup_menu_page_destroy);
   if (backup_menu) {
     ui_menu_destroy(backup_menu);
     backup_menu = NULL;

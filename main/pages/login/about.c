@@ -5,6 +5,7 @@
 #include "../../qr/encoder.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include <esp_app_desc.h>
 #include <lvgl.h>
 #include <stdio.h>
@@ -30,6 +31,7 @@ static void create_return_touch_layer(lv_obj_t *parent) {
 }
 
 void about_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(about_page_destroy);
   if (!parent)
     return;
 
@@ -135,6 +137,7 @@ void about_page_hide(void) {
 }
 
 void about_page_destroy(void) {
+  session_cleanup_unregister(about_page_destroy);
   if (about_screen) {
     lv_obj_del(about_screen);
     about_screen = NULL;

@@ -9,6 +9,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "../shared/descriptor_loader.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -257,6 +258,7 @@ static void build_rd_menu(void) {
 void registered_descriptors_page_create(
     lv_obj_t *parent, void (*return_cb)(void),
     registered_descriptor_action_cb_t action_cb) {
+  session_cleanup_register(registered_descriptors_page_destroy);
   if (!parent)
     return;
   return_callback = return_cb;
@@ -288,6 +290,7 @@ void registered_descriptors_page_hide(void) {
 }
 
 void registered_descriptors_page_destroy(void) {
+  session_cleanup_unregister(registered_descriptors_page_destroy);
   if (detail_screen) {
     lv_obj_del(detail_screen);
     detail_screen = NULL;

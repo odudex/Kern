@@ -8,6 +8,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/bip39_filter.h"
+#include "../../utils/session_cleanup.h"
 #include "../shared/mnemonic_editor.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -371,6 +372,7 @@ static bool create_page(lv_obj_t *parent, void (*return_cb)(void),
 void manual_input_page_create(lv_obj_t *parent, void (*return_cb)(void),
                               void (*success_cb)(void),
                               bool checksum_filter_last_word) {
+  session_cleanup_register(manual_input_page_destroy);
   word_count_preselected = false;
   if (!create_page(parent, return_cb, success_cb, checksum_filter_last_word))
     return;
@@ -383,6 +385,7 @@ void manual_input_page_create_with_word_count(lv_obj_t *parent,
                                               void (*success_cb)(void),
                                               bool checksum_filter_last_word,
                                               int word_count) {
+  session_cleanup_register(manual_input_page_destroy);
   if (word_count != 12 && word_count != 24)
     return;
 
@@ -413,6 +416,7 @@ void manual_input_page_hide(void) {
 }
 
 void manual_input_page_destroy(void) {
+  session_cleanup_unregister(manual_input_page_destroy);
   cleanup_ui();
 
   if (manual_input_screen) {

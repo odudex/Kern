@@ -1,4 +1,5 @@
 #include "login.h"
+#include "../../utils/session_cleanup.h"
 
 #include <lvgl.h>
 
@@ -76,6 +77,7 @@ static void about_cb(lv_event_t *e) {
 }
 
 void login_page_create(lv_obj_t *parent) {
+  session_cleanup_register(login_page_destroy);
   login_screen = theme_create_page_container(parent);
 
   // Match the brand wordmark exactly: the name in uppercase in the medium
@@ -141,6 +143,7 @@ void login_page_hide(void) {
 }
 
 void login_page_destroy(void) {
+  session_cleanup_unregister(login_page_destroy);
   if (power_button) {
     lv_obj_del(power_button);
     power_button = NULL;

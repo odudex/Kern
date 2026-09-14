@@ -7,6 +7,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session.h"
+#include "../../utils/session_cleanup.h"
 #include "../pin/pin_page.h"
 #include "../pin/pin_settings.h"
 #include <lvgl.h>
@@ -125,6 +126,7 @@ static void rebuild_menu(void) {
 // ── Public lifecycle ──
 
 void security_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(security_settings_page_destroy);
   security_menu = NULL;
   timeout_screen = NULL;
   return_callback = return_cb;
@@ -143,6 +145,7 @@ void security_settings_page_hide(void) {
 }
 
 void security_settings_page_destroy(void) {
+  session_cleanup_unregister(security_settings_page_destroy);
   pin_settings_page_destroy();
   destroy_timeout_page();
   if (security_menu) {

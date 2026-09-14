@@ -4,6 +4,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "sd_card.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -245,6 +246,7 @@ static void deferred_init_cb(lv_timer_t *timer) {
 
 void sd_file_browser_create(lv_obj_t *parent,
                             const sd_file_browser_config_t *config) {
+  session_cleanup_register(sd_file_browser_destroy);
   if (!parent || !config)
     return;
 
@@ -275,6 +277,7 @@ void sd_file_browser_hide(void) {
 }
 
 void sd_file_browser_destroy(void) {
+  session_cleanup_unregister(sd_file_browser_destroy);
   if (init_timer) {
     lv_timer_del(init_timer);
     init_timer = NULL;

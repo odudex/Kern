@@ -8,6 +8,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/memory_utils.h"
+#include "../../utils/session_cleanup.h"
 #include <lvgl.h>
 #include <string.h>
 
@@ -102,6 +103,7 @@ static void create_ui(const char *fingerprint_hex) {
 void key_confirmation_page_create(lv_obj_t *parent, void (*return_cb)(void),
                                   void (*success_cb)(void), const char *content,
                                   size_t content_len) {
+  session_cleanup_register(key_confirmation_page_destroy);
   (void)parent;
   return_callback = return_cb;
   success_callback = success_cb;
@@ -133,6 +135,7 @@ void key_confirmation_page_hide(void) {
 }
 
 void key_confirmation_page_destroy(void) {
+  session_cleanup_unregister(key_confirmation_page_destroy);
   if (loading_timer) {
     lv_timer_del(loading_timer);
     loading_timer = NULL;

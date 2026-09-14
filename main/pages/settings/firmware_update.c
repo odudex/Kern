@@ -15,6 +15,7 @@
 #include "../../core/fw_update.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "../shared/sd_file_browser.h"
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -35,6 +36,7 @@ static char selected_path[320];
 static fw_update_info_t fw_info;
 static const char *task_err = NULL;
 static volatile bool task_done = false;
+static bool task_running;
 static volatile int task_result = -1;
 static volatile int install_percent = 0;
 static bool installing = false;
@@ -52,6 +54,7 @@ static void verify_task(void *arg) {
   (void)arg;
   task_result = fw_update_validate(selected_path, &fw_info, &task_err);
   task_done = true;
+  __atomic_store_n(&task_running, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
 }
 
@@ -60,6 +63,7 @@ static void install_task(void *arg) {
   task_result =
       fw_update_apply(selected_path, install_progress_cb, NULL, &task_err);
   task_done = true;
+  __atomic_store_n(&task_running, false, __ATOMIC_RELEASE);
   vTaskDelete(NULL);
 }
 
@@ -115,6 +119,8 @@ static void poll_timer_cb(lv_timer_t *timer) {
 
   if (!task_done)
     return;
+  while (__atomic_load_n(&task_running, __ATOMIC_ACQUIRE))
+    vTaskDelay(1);
 
   lv_timer_del(poll_timer);
   poll_timer = NULL;
@@ -151,10 +157,12 @@ static void poll_timer_cb(lv_timer_t *timer) {
 
 static void start_task(TaskFunction_t fn, const char *name) {
   task_done = false;
+  __atomic_store_n(&task_running, true, __ATOMIC_RELEASE);
   task_result = -1;
   task_err = "Update failed";
   if (xTaskCreatePinnedToCore(fn, name, UPDATE_TASK_STACK_SIZE, NULL, 5, NULL,
                               1) != pdPASS) {
+    __atomic_store_n(&task_running, false, __ATOMIC_RELEASE);
     if (verify_dialog) {
       lv_obj_del(verify_dialog);
       verify_dialog = NULL;
@@ -200,6 +208,7 @@ static void browser_return_cb(void) {
 // ── Public lifecycle ──
 
 void firmware_update_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(firmware_update_page_destroy);
   return_callback = return_cb;
   verify_dialog = NULL;
   install_screen = NULL;
@@ -222,6 +231,9 @@ void firmware_update_page_show(void) { sd_file_browser_show(); }
 void firmware_update_page_hide(void) { sd_file_browser_hide(); }
 
 void firmware_update_page_destroy(void) {
+  while (__atomic_load_n(&task_running, __ATOMIC_ACQUIRE))
+    vTaskDelay(1);
+  session_cleanup_unregister(firmware_update_page_destroy);
   if (poll_timer) {
     lv_timer_del(poll_timer);
     poll_timer = NULL;

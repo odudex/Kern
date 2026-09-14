@@ -29,6 +29,7 @@ void wallet_cleanup(void) {
 void wallet_unload(void) {
   key_unload();
   wallet_cleanup();
+  wallet_watch_only = false;
 }
 
 void wallet_set_watch_only(wallet_network_t network) {

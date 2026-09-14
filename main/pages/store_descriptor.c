@@ -8,6 +8,7 @@
 #include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
 #include "../ui/theme_widgets.h"
+#include "../utils/session_cleanup.h"
 #include "shared/kef_encrypt_page.h"
 
 #include <lvgl.h>
@@ -207,6 +208,7 @@ static void id_input_ready_cb(lv_event_t *e) {
 void store_descriptor_page_create_for_descriptor(
     lv_obj_t *parent, void (*return_cb)(void), storage_location_t location,
     bool encrypted, const struct wally_descriptor *descriptor) {
+  session_cleanup_register(store_descriptor_page_destroy);
   if (!parent || !descriptor)
     return;
 
@@ -247,6 +249,7 @@ void store_descriptor_page_create_for_descriptor(
 
 void store_descriptor_page_create(lv_obj_t *parent, void (*return_cb)(void),
                                   storage_location_t location, bool encrypted) {
+  session_cleanup_register(store_descriptor_page_destroy);
   const registry_entry_t *entry = registry_get(0);
   store_descriptor_page_create_for_descriptor(
       parent, return_cb, location, encrypted, entry ? entry->desc : NULL);
@@ -263,6 +266,7 @@ void store_descriptor_page_hide(void) {
 }
 
 void store_descriptor_page_destroy(void) {
+  session_cleanup_unregister(store_descriptor_page_destroy);
   if (save_timer) {
     lv_timer_del(save_timer);
     save_timer = NULL;

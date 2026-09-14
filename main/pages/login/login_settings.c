@@ -8,6 +8,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session.h"
+#include "../../utils/session_cleanup.h"
 #include "../settings/firmware_update.h"
 #include "security_settings.h"
 #include <bsp/display.h>
@@ -161,6 +162,7 @@ static void settings_back_cb(void) {
 // ── Public lifecycle ──
 
 void login_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(login_settings_page_destroy);
   // Statics may dangle if session expiry cleaned the screen while a detail
   // page was open; drop them so destroy doesn't delete freed objects.
   settings_menu = NULL;
@@ -188,6 +190,7 @@ void login_settings_page_hide(void) {
 }
 
 void login_settings_page_destroy(void) {
+  session_cleanup_unregister(login_settings_page_destroy);
   security_settings_page_destroy();
   destroy_brightness_page();
   destroy_screensaver_page();

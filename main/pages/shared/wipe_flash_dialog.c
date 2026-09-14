@@ -3,6 +3,7 @@
 #include "wipe_flash_dialog.h"
 #include "../../core/storage.h"
 #include "../../ui/dialog.h"
+#include "../../utils/session_cleanup.h"
 #include <lvgl.h>
 #include <stddef.h>
 
@@ -46,6 +47,7 @@ static void wipe_flash_confirm_cb(bool confirmed, void *user_data) {
 }
 
 void wipe_flash_dialog_start(void (*complete_cb)(void)) {
+  session_cleanup_register(wipe_flash_dialog_cleanup);
   wipe_done_cb = complete_cb;
   dialog_show_danger_confirm(
       "All mnemonics and descriptors stored in flash will be permanently "
@@ -54,6 +56,7 @@ void wipe_flash_dialog_start(void (*complete_cb)(void)) {
 }
 
 void wipe_flash_dialog_cleanup(void) {
+  session_cleanup_unregister(wipe_flash_dialog_cleanup);
   if (wipe_timer) {
     lv_timer_del(wipe_timer);
     wipe_timer = NULL;

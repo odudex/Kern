@@ -1,3 +1,4 @@
+#include "secure_memory.h"
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -588,6 +589,11 @@ esp_err_t app_video_start(app_video_frame_operation_cb_t cb, int core_id) {
   return ESP_OK;
 }
 
+static void scrub_capture_buffers(void) {
+  for (uint32_t i = 0; i < app_video.buffer_count; ++i)
+    kern_memory_wipe(app_video.camera_buffer[i], app_video.camera_buf_size);
+}
+
 esp_err_t app_video_stop(void) {
   if (!s_task_done)
     return ESP_OK;
@@ -595,12 +601,17 @@ esp_err_t app_video_stop(void) {
   TaskHandle_t task = app_video.task_handle;
   if (!task && !app_video.streaming) {
     app_video.frame_cb = NULL;
+    scrub_capture_buffers();
     return ESP_OK;
   }
 
   s_stop_requested = true;
   app_video.frame_cb = NULL;
   esp_err_t ret = stream_off();
+  // STREAMOFF is what stops DMA writes; an orphaned stream task only spins
+  // on DQBUF errors, so the frames can be scrubbed whether or not it joins.
+  if (ret == ESP_OK)
+    scrub_capture_buffers();
 
   if (task) {
     TickType_t timeout = pdMS_TO_TICKS(VIDEO_STOP_TIMEOUT_MS);

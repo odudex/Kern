@@ -10,6 +10,7 @@
 #include "../../ui/key_info.h"
 #include "../../ui/settings_row.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "../passphrase.h"
 #include "descriptor_manager.h"
 #include <lvgl.h>
@@ -186,6 +187,7 @@ static void distribute_item(lv_obj_t *item) {
 }
 
 void wallet_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(wallet_settings_page_destroy);
   if (!parent || !key_is_loaded() || !wallet_is_initialized())
     return;
 
@@ -298,6 +300,7 @@ void wallet_settings_page_hide(void) {
 }
 
 void wallet_settings_page_destroy(void) {
+  session_cleanup_unregister(wallet_settings_page_destroy);
   SECURE_FREE_STRING(stored_passphrase);
   SECURE_FREE_STRING(mnemonic_content);
 

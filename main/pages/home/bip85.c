@@ -6,6 +6,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/secure_mem.h"
+#include "../../utils/session_cleanup.h"
 #include "../shared/key_confirmation.h"
 #include <lvgl.h>
 #include <stdbool.h>
@@ -301,6 +302,7 @@ static void create_word_count_menu(void) {
 
 void bip85_page_create(lv_obj_t *parent, void (*return_cb)(void),
                        void (*success_cb)(void)) {
+  session_cleanup_register(bip85_page_destroy);
   if (!parent)
     return;
 
@@ -326,6 +328,7 @@ void bip85_page_hide(void) {
 }
 
 void bip85_page_destroy(void) {
+  session_cleanup_unregister(bip85_page_destroy);
   cleanup_flow_ui();
   clear_child_mnemonic();
 

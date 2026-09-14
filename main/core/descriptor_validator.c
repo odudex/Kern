@@ -124,6 +124,8 @@ static void complete_validation(descriptor_validation_result_t result) {
   }
 }
 
+void descriptor_validation_cancel(void) { cleanup_context(); }
+
 // Find key index in descriptor that matches our fingerprint
 // Returns -1 if not found
 static int find_matching_key_index(struct wally_descriptor *descriptor) {

@@ -5,6 +5,7 @@
 #include "../../ui/dialog.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "wipe_flash_dialog.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -213,6 +214,7 @@ static void deferred_list_cb(lv_timer_t *timer) {
 
 void storage_browser_create(lv_obj_t *parent,
                             const storage_browser_config_t *config) {
+  session_cleanup_register(storage_browser_destroy);
   if (!parent || !config)
     return;
 
@@ -247,6 +249,7 @@ void storage_browser_hide(void) {
 storage_location_t storage_browser_get_location(void) { return cfg.location; }
 
 void storage_browser_destroy(void) {
+  session_cleanup_unregister(storage_browser_destroy);
   wipe_flash_dialog_cleanup();
   if (init_timer) {
     lv_timer_del(init_timer);

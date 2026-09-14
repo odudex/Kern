@@ -1,7 +1,7 @@
 # Shared BSP headers and the default no-op PMIC implementation.
 # Each board's BSP REQUIRES this component and only ships board-specific code.
 
-set(srcs "")
+set(srcs "display_security.c")
 # Boards without a dedicated PMIC chip read the battery over an ADC divider,
 # or get the no-op stub if they cannot read it at all.
 if(CONFIG_KERN_BOARD_WAVE_43 OR CONFIG_KERN_BOARD_WAVE_5
@@ -14,5 +14,5 @@ endif()
 idf_component_register(
     SRCS ${srcs}
     INCLUDE_DIRS "include"
-    REQUIRES esp_adc
+    REQUIRES esp_adc esp_lcd secure_memory
 )

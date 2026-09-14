@@ -4,6 +4,7 @@
 #include "../core/kef.h"
 #include "../core/storage.h"
 #include "../ui/dialog.h"
+#include "../utils/session_cleanup.h"
 #include "sd_card.h"
 #include "shared/descriptor_loader.h"
 #include "shared/kef_decrypt_page.h"
@@ -228,6 +229,7 @@ void load_descriptor_storage_page_create(lv_obj_t *parent,
                                          void (*return_cb)(void),
                                          void (*success_cb)(void),
                                          storage_location_t location) {
+  session_cleanup_register(load_descriptor_storage_page_destroy);
   if (!parent)
     return;
 
@@ -263,6 +265,7 @@ void load_descriptor_storage_page_show(void) { browser_show(); }
 void load_descriptor_storage_page_hide(void) { browser_hide(); }
 
 void load_descriptor_storage_page_destroy(void) {
+  session_cleanup_unregister(load_descriptor_storage_page_destroy);
   kef_decrypt_page_destroy();
   if (active_browser == BROWSER_SD)
     sd_file_browser_destroy();

@@ -15,6 +15,7 @@
 #include "../../ui/text_fit.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
+#include "../../utils/session_cleanup.h"
 #include "../settings/wallet_settings.h"
 #include "../shared/address_checker.h"
 #include <lvgl.h>
@@ -397,6 +398,7 @@ static void scan_button_cb(lv_event_t *e) {
 }
 
 void addresses_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(addresses_page_destroy);
   if (!parent || (!wallet_is_initialized() && !wallet_is_watch_only()))
     return;
 
@@ -508,6 +510,7 @@ void addresses_page_hide(void) {
 }
 
 void addresses_page_destroy(void) {
+  session_cleanup_unregister(addresses_page_destroy);
   // Picker first: tears down any open numpad overlay before its parent row
   // (under addresses_screen) is deleted below.
   wallet_source_picker_destroy(picker);

@@ -7,6 +7,7 @@
 #include "../ui/dialog.h"
 #include "../ui/theme_widgets.h"
 #include "../utils/secure_mem.h"
+#include "../utils/session_cleanup.h"
 #include "shared/kef_encrypt_page.h"
 
 #include <lvgl.h>
@@ -136,6 +137,7 @@ static void encrypt_success_cb(const char *id, const uint8_t *envelope,
 
 void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
                                 storage_location_t location) {
+  session_cleanup_register(store_mnemonic_page_destroy);
   if (!parent || !key_is_loaded())
     return;
 
@@ -186,6 +188,7 @@ void store_mnemonic_page_hide(void) {
 }
 
 void store_mnemonic_page_destroy(void) {
+  session_cleanup_unregister(store_mnemonic_page_destroy);
   if (save_timer) {
     lv_timer_del(save_timer);
     save_timer = NULL;

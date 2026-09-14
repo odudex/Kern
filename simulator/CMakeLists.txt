@@ -121,7 +121,7 @@ if(NOT EXISTS "${LVGL_DIR}/src/lvgl.h")
   FetchContent_Declare(
     lvgl_upstream
     GIT_REPOSITORY https://github.com/lvgl/lvgl.git
-    GIT_TAG        v9.3.0
+    GIT_TAG        v9.5.0
   )
   FetchContent_GetProperties(lvgl_upstream)
   if(NOT lvgl_upstream_POPULATED)
@@ -165,6 +165,8 @@ set(STUB_SOURCES
 
 # --- Application utilities ---
 set(APP_UTIL_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/ui/display_cleanup.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session_cleanup.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/secure_memory/secure_memory.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/dice_quality.c
@@ -524,4 +526,35 @@ add_test(NAME storage_smoke COMMAND kern_sim_storage_smoke)
 target_include_directories(kern_simulator PRIVATE ../components/secure_memory/include)
 if(NOT APPLE)
     target_link_options(kern_simulator PRIVATE -Wl,--wrap=free -Wl,--wrap=realloc)
+endif()
+
+# Reuse the real application/platform objects in lifecycle regression tests.
+get_target_property(cleanup_runtime_sources kern_simulator SOURCES)
+list(REMOVE_ITEM cleanup_runtime_sources
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/main_sim.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../components/secure_memory/secure_memory.c")
+add_library(kern_sim_runtime OBJECT ${cleanup_runtime_sources})
+foreach(prop INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES)
+    get_target_property(runtime_${prop} kern_simulator ${prop})
+    set_property(TARGET kern_sim_runtime PROPERTY ${prop} "${runtime_${prop}}")
+endforeach()
+set_property(TARGET kern_simulator PROPERTY SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/main_sim.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../components/secure_memory/secure_memory.c"
+    $<TARGET_OBJECTS:kern_sim_runtime>)
+
+if(NOT APPLE)
+    add_executable(kern_sim_cleanup
+        tests/cleanup.c
+        ../components/secure_memory/secure_memory.c
+        $<TARGET_OBJECTS:kern_sim_runtime>)
+    foreach(prop INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES LINK_OPTIONS)
+        get_target_property(test_${prop} kern_simulator ${prop})
+        set_property(TARGET kern_sim_cleanup PROPERTY ${prop} "${test_${prop}}")
+    endforeach()
+    target_compile_definitions(kern_sim_cleanup PRIVATE SECURE_MEMORY_TEST_OBSERVER)
+    target_compile_options(kern_sim_cleanup PRIVATE -UNDEBUG)
+    target_link_options(kern_sim_cleanup PRIVATE -Wl,--wrap=strdup -Wl,--wrap=kern_secret_strdup)
+    add_test(NAME sensitive_cleanup COMMAND kern_sim_cleanup)
+    set_tests_properties(sensitive_cleanup PROPERTIES TIMEOUT 30)
 endif()

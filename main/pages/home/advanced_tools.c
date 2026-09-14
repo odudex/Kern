@@ -1,6 +1,7 @@
 #include "advanced_tools.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "bip85.h"
 #include <lvgl.h>
 
@@ -34,6 +35,7 @@ static void back_cb(void) {
 }
 
 void advanced_tools_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(advanced_tools_page_destroy);
   if (!parent)
     return;
 
@@ -68,6 +70,7 @@ void advanced_tools_page_hide(void) {
 }
 
 void advanced_tools_page_destroy(void) {
+  session_cleanup_unregister(advanced_tools_page_destroy);
   if (advanced_tools_menu) {
     ui_menu_destroy(advanced_tools_menu);
     advanced_tools_menu = NULL;

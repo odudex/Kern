@@ -7,9 +7,9 @@
  * the task watchdog.  The re-subscribe is guaranteed by the trampoline, so
  * no caller can leak it by returning early.
  *
- * The worker owns its own lifetime: it self-deletes and is never killed from
- * outside, which is what keeps the handle from going stale.  Callers poll
- * *done_flag from an LVGL timer.
+ * Callers poll *done_flag from an LVGL timer and join with worker_task_wait()
+ * before releasing inputs or finishing the flow. The worker suspends after
+ * completion so the join can synchronously release and erase its stack.
  */
 
 #ifndef WORKER_TASK_H
@@ -21,8 +21,12 @@
 
 typedef void (*worker_task_fn_t)(void);
 
+/* Join work before releasing its inputs or deleting its completion timer.
+ * Workers never take the LVGL lock, so the UI thread can safely wait here. */
+void worker_task_wait(void);
+
 /*
- * Run fn() on CPU 1, then set *done_flag and self-delete.
+ * Run fn() on CPU 1, then set *done_flag and suspend until joined.
  *
  * name        — FreeRTOS task name
  * stack_bytes — task stack size

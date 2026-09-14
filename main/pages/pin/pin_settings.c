@@ -6,6 +6,7 @@
 #include "../../ui/dropdown_page.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "pin_page.h"
 
 #include <lvgl.h>
@@ -127,6 +128,7 @@ static void settings_back_cb(void) {
 // ---------------------------------------------------------------------------
 
 void pin_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(pin_settings_page_destroy);
   // Statics may dangle if session expiry cleaned the screen while a detail
   // page was open; drop them so destroy doesn't delete freed objects.
   settings_menu = NULL;
@@ -151,6 +153,7 @@ void pin_settings_page_hide(void) {
 }
 
 void pin_settings_page_destroy(void) {
+  session_cleanup_unregister(pin_settings_page_destroy);
   destroy_threshold_page();
   if (settings_menu) {
     ui_menu_destroy(settings_menu);

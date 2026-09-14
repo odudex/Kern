@@ -85,6 +85,7 @@ void screensaver_create(lv_obj_t *parent, screensaver_dismiss_cb_t cb,
 bool screensaver_is_active(void) { return active; }
 
 void screensaver_destroy(void) {
+  lv_async_call_cancel(deferred_dismiss, NULL);
   active = false;
   if (!scr_container)
     return;

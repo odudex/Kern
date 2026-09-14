@@ -8,6 +8,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/bip39_filter.h"
+#include "../../utils/session_cleanup.h"
 #include "key_confirmation.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -698,6 +699,7 @@ static void create_ui(void) {
 void mnemonic_editor_page_create(lv_obj_t *parent, void (*return_cb)(void),
                                  void (*success_cb)(void), const char *mnemonic,
                                  bool new_mnemonic) {
+  session_cleanup_register(mnemonic_editor_page_destroy);
   if (!parent)
     return;
 
@@ -751,6 +753,7 @@ void mnemonic_editor_page_hide(void) {
 }
 
 void mnemonic_editor_page_destroy(void) {
+  session_cleanup_unregister(mnemonic_editor_page_destroy);
   cleanup_editing_ui();
 
   if (mnemonic_editor_screen) {

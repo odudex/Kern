@@ -101,6 +101,10 @@ sim-build board="wave_4b": (_check_board board)
         -DSIM_LCD_V_RES=$(just _sim_v_res {{board}}) \
         && cmake --build build -- -j$(nproc)
 
+# Run simulator storage and sensitive-data lifecycle regressions
+sim-test board="wave_4b": (sim-build board)
+    ctest --test-dir simulator/build --output-on-failure
+
 # Run the desktop simulator with webcam
 # SDL env vars: software renderer for compatibility with ssh -X
 sim board="wave_4b": (sim-build-webcam board)

@@ -9,6 +9,7 @@
 #include "../ui/theme_widgets.h"
 #include "../utils/memory_utils.h"
 #include "../utils/secure_mem.h"
+#include "../utils/session_cleanup.h"
 #include "parser.h"
 #include <bsp/esp-bsp.h>
 #include <driver/ppa.h>
@@ -906,8 +907,9 @@ static void qr_decoder_cleanup(void) {
   closing = true;
 
   if (qr_decode_task_handle && qr_task_done_sem) {
-    if (xSemaphoreTake(qr_task_done_sem, pdMS_TO_TICKS(500)) != pdTRUE)
-      ESP_LOGW(TAG, "Timeout waiting for QR decode task");
+    // Let the decoder release its local allocations before deleting its
+    // stack; forced deletion mid-decode can strand secrets and heap locks.
+    xSemaphoreTake(qr_task_done_sem, portMAX_DELAY);
     vTaskDeleteWithCaps(qr_decode_task_handle);
     qr_decode_task_handle = NULL;
   }
@@ -1204,6 +1206,7 @@ static bool camera_run(void) {
 }
 
 void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(qr_scanner_page_destroy);
   (void)parent;
 
   return_callback = return_cb;
@@ -1288,6 +1291,7 @@ void qr_scanner_page_hide(void) {
 }
 
 void qr_scanner_page_destroy(void) {
+  session_cleanup_unregister(qr_scanner_page_destroy);
   destruction_in_progress = true;
   closing = true;
   is_fully_initialized = false;
@@ -1321,7 +1325,9 @@ void qr_scanner_page_destroy(void) {
     ESP_LOGW(TAG, "Timeout waiting for frame operations (remaining: %d)",
              remaining_ops);
 
-  app_video_stop();
+  esp_err_t stop_err = app_video_stop();
+  if (stop_err != ESP_OK)
+    ESP_LOGW(TAG, "Camera stop failed: %s", esp_err_to_name(stop_err));
 
   qr_decoder_cleanup();
 

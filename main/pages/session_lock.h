@@ -10,6 +10,14 @@
  * with the LVGL lock held, after settings_init() and pin_init(). */
 void session_lock_init(void);
 
+/* Tear down sensitive state and render the lock face before shutdown/reboot.
+ * Call on the LVGL thread. Does not itself power off the device. */
+void session_lock_now(void);
+
+/* Leave the lock face rendered by session_lock_now() and show the gate again
+ * (PIN unlock or login), as a tap on the lock face would. */
+void session_lock_dismiss(void);
+
 /* Show the boot gate on `screen`: PIN unlock page if a PIN is configured,
  * otherwise the login page. */
 void session_lock_boot_gate(lv_obj_t *screen);

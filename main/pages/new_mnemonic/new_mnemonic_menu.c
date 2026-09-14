@@ -6,6 +6,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
+#include "../../utils/session_cleanup.h"
 #include "../home/home.h"
 #include "../load_mnemonic/manual_input.h"
 #include "../shared/key_confirmation.h"
@@ -131,6 +132,7 @@ static void back_cb(void) {
 }
 
 void new_mnemonic_menu_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(new_mnemonic_menu_page_destroy);
   if (!parent)
     return;
 
@@ -163,6 +165,7 @@ void new_mnemonic_menu_page_hide(void) {
 }
 
 void new_mnemonic_menu_page_destroy(void) {
+  session_cleanup_unregister(new_mnemonic_menu_page_destroy);
   if (new_mnemonic_menu) {
     ui_menu_destroy(new_mnemonic_menu);
     new_mnemonic_menu = NULL;

@@ -7,6 +7,7 @@
 #include "../../../ui/dialog.h"
 #include "../../../ui/input_helpers.h"
 #include "../../../ui/theme_widgets.h"
+#include "../../../utils/session_cleanup.h"
 #include "../../shared/kef_encrypt_page.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -825,6 +826,7 @@ static void dropdown_cb(lv_event_t *e) {
 }
 
 void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(mnemonic_qr_page_destroy);
   if (!parent || !key_is_loaded())
     return;
 
@@ -949,6 +951,7 @@ void mnemonic_qr_page_hide(void) {
 }
 
 void mnemonic_qr_page_destroy(void) {
+  session_cleanup_unregister(mnemonic_qr_page_destroy);
   kef_encrypt_page_destroy();
 
   reset_shade_mode();

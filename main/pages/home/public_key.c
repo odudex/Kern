@@ -10,6 +10,7 @@
 #include "../../ui/path_keypad.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
+#include "../../utils/session_cleanup.h"
 #include "../settings/wallet_settings.h"
 #include "sd_card.h"
 #include <lvgl.h>
@@ -29,6 +30,7 @@ static lv_obj_t *account_label = NULL;
 static lv_obj_t *account_minus_btn = NULL;
 static lv_obj_t *account_plus_btn = NULL;
 static lv_obj_t *progress_dialog = NULL;
+static lv_timer_t *save_timer;
 static wallet_source_picker_t *picker = NULL;
 static wallet_source_t current_source = {0, 0};
 
@@ -344,6 +346,7 @@ static void dismiss_progress(void) {
 // re-saves overwrite instead of piling up copies.
 static void deferred_save_xpub_cb(lv_timer_t *timer) {
   (void)timer;
+  save_timer = NULL;
 
   // The card may have been swapped (no card-detect line) — remount fresh.
   esp_err_t mret = sd_card_remount();
@@ -396,8 +399,8 @@ static void save_sd_button_cb(lv_event_t *e) {
   // the work so LVGL gets to render it first.
   progress_dialog =
       dialog_show_progress("Save", "Saving...", DIALOG_STYLE_OVERLAY);
-  lv_timer_t *t = lv_timer_create(deferred_save_xpub_cb, 50, NULL);
-  lv_timer_set_repeat_count(t, 1);
+  save_timer = lv_timer_create(deferred_save_xpub_cb, 50, NULL);
+  lv_timer_set_repeat_count(save_timer, 1);
 }
 
 // Match the picker's account button so the two settings rows align.
@@ -528,6 +531,7 @@ static void delete_obj(lv_obj_t **obj) {
 }
 
 void public_key_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(public_key_page_destroy);
   if (!parent || !key_is_loaded() || !wallet_is_initialized())
     return;
 
@@ -561,6 +565,11 @@ void public_key_page_hide(void) {
 }
 
 void public_key_page_destroy(void) {
+  if (save_timer) {
+    lv_timer_delete(save_timer);
+    save_timer = NULL;
+  }
+  session_cleanup_unregister(public_key_page_destroy);
   dismiss_progress();
   ui_path_keypad_close(&path_keypad);
   wallet_source_picker_destroy(picker);

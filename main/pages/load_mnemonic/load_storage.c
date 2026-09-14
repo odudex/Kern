@@ -4,6 +4,7 @@
 #include "../../core/kef.h"
 #include "../../core/storage.h"
 #include "../../ui/dialog.h"
+#include "../../utils/session_cleanup.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"
 #include "../shared/storage_browser.h"
@@ -88,6 +89,7 @@ static char *get_display_name(storage_location_t loc, const char *filename) {
 void load_storage_page_create(lv_obj_t *parent, void (*return_cb)(void),
                               void (*success_cb)(void),
                               storage_location_t location) {
+  session_cleanup_register(load_storage_page_destroy);
   if (!parent)
     return;
 
@@ -111,6 +113,7 @@ void load_storage_page_show(void) { storage_browser_show(); }
 void load_storage_page_hide(void) { storage_browser_hide(); }
 
 void load_storage_page_destroy(void) {
+  session_cleanup_unregister(load_storage_page_destroy);
   storage_browser_destroy();
   success_callback = NULL;
 }

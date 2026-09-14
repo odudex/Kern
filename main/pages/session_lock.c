@@ -6,12 +6,14 @@
 #include "../core/settings.h"
 #include "../core/wallet.h"
 #include "../ui/dialog.h"
+#include "../ui/display_cleanup.h"
 #include "../utils/session.h"
+#include "../utils/session_cleanup.h"
+#include "../utils/worker_task.h"
 #include "disclaimer.h"
 #include "login/login.h"
 #include "pin/pin_page.h"
 #include "screensaver.h"
-#include "video.h"
 #include <bsp/pmic.h>
 #include <esp_log.h>
 
@@ -97,32 +99,35 @@ static void lock_dismissed_cb(void) {
   }
 }
 
-static void session_expired_handler(void) {
-  if (device_locked) {
-    // Nothing left to protect at the lock face / PIN gate; power-off boards
-    // save the battery instead of idling there.
-    if (bsp_pmic_can_power_off())
-      bsp_pmic_power_off();
-    return;
-  }
+void session_lock_now(void) {
+  // A locked device may still have a partially entered PIN to discard.
   device_locked = true;
   // Tear down a plain screensaver before cleaning the screen, otherwise its
   // statics would dangle and the lock-face create below would touch freed
   // objects.
   screensaver_destroy();
+  // Workers never call LVGL. Join them before deleting poll timers or buffers.
+  worker_task_wait();
+  session_cleanup_run();
   wallet_unload();
-  // Boards with software power-off shut down instead of locking. ESP_OK only
-  // means the PMIC accepted the write, so still fall through to the lock
-  // face in case power doesn't actually cut (e.g. powered via USB).
-  if (bsp_pmic_can_power_off())
-    bsp_pmic_power_off();
-  // Stop any live camera stream before cleaning: lv_obj_clean bypasses the
-  // owning page's teardown, and a late frame would write to freed widgets.
-  if (app_video_is_streaming())
-    app_video_stop();
   lv_obj_clean(lv_screen_active());
+  ui_display_scrub();
   screensaver_create(lv_screen_active(), lock_dismissed_cb,
                      pin_is_configured() ? "Locked" : "Unloaded");
+  // Finish the clean frame before attempting power-off (USB can keep us on).
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(NULL);
+}
+
+void session_lock_dismiss(void) {
+  screensaver_destroy();
+  lock_dismissed_cb();
+}
+
+static void session_expired_handler(void) {
+  session_lock_now();
+  if (bsp_pmic_can_power_off())
+    bsp_pmic_power_off();
 }
 
 static void screensaver_trigger_handler(void) {

@@ -26,6 +26,7 @@ void ui_text_input_create(ui_text_input_t *input, lv_obj_t *parent,
                           lv_event_cb_t ready_cb);
 void ui_text_input_show(ui_text_input_t *input);
 void ui_text_input_hide(ui_text_input_t *input);
+void ui_secure_clear_textarea(lv_obj_t *textarea);
 void ui_text_input_destroy(ui_text_input_t *input);
 
 // Adds a scan-QR key next to OK on all three text modes. The key only fires cb;

@@ -11,6 +11,7 @@
 #include "../../ui/input_helpers.h"
 #include "../../ui/menu.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
 #include "../store_descriptor.h"
@@ -519,6 +520,7 @@ static void refresh_menu_visibility(void) {
 /* ---------- Page lifecycle ---------- */
 
 void descriptor_manager_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(descriptor_manager_page_destroy);
   if (!parent)
     return;
 
@@ -545,6 +547,7 @@ void descriptor_manager_page_hide(void) {
 }
 
 void descriptor_manager_page_destroy(void) {
+  session_cleanup_unregister(descriptor_manager_page_destroy);
   cleanup_qr_state();
   descriptor_loader_destroy_source_menu();
 

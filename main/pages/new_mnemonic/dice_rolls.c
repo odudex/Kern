@@ -6,6 +6,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../ui/word_selector.h"
 #include "../../utils/dice_quality.h"
+#include "../../utils/session_cleanup.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -336,6 +337,7 @@ static void back_cb(void) {
 }
 
 void dice_rolls_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(dice_rolls_page_destroy);
   if (!parent)
     return;
 
@@ -364,6 +366,7 @@ void dice_rolls_page_hide(void) {
 }
 
 void dice_rolls_page_destroy(void) {
+  session_cleanup_unregister(dice_rolls_page_destroy);
   cleanup_ui();
 
   if (dice_rolls_screen) {

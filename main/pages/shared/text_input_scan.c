@@ -4,12 +4,19 @@
 #include "../../qr/scanner.h"
 #include "../../ui/dialog.h"
 #include "../../utils/secure_mem.h"
+#include "../../utils/session_cleanup.h"
 #include "../../utils/utf8.h"
 #include <stdlib.h>
 #include <string.h>
 
 static text_input_scan_cfg_t s_cfg;
 static bool s_active = false;
+
+static void cancel_scan(void) {
+  session_cleanup_unregister(cancel_scan);
+  memset(&s_cfg, 0, sizeof(s_cfg));
+  s_active = false;
+}
 
 // Must run before qr_scanner_page_destroy(). NULL with *err unset means cancel
 // or a failure the scanner already reported.
@@ -64,6 +71,7 @@ static void scan_return_cb(void) {
   qr_scanner_page_hide();
   qr_scanner_page_destroy();
 
+  session_cleanup_unregister(cancel_scan);
   s_active = false;
   if (s_cfg.show_page)
     s_cfg.show_page();
@@ -102,6 +110,7 @@ static void scan_return_cb(void) {
 void text_input_scan_start(const text_input_scan_cfg_t *cfg) {
   if (s_active || !cfg || !cfg->input)
     return;
+  session_cleanup_register(cancel_scan);
   s_cfg = *cfg;
   s_active = true;
   if (s_cfg.hide_page)

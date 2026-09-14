@@ -584,6 +584,15 @@ static void test_generation_guard(void) {
   capture_reset();
   info_auto = false;
   descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
+  void (*canceled_proceed)(bool, void *) = info_proceed;
+  descriptor_validation_cancel();
+  descriptor_validation_cancel();
+  canceled_proceed(true, NULL);
+  check("session cancellation ignores pending confirmation",
+        done_calls == 0 && registry_count() == 0);
+  capture_reset();
+  info_auto = false;
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
   void (*stale_proceed)(bool, void *) = info_proceed;
   check("first flow waits on the info dialog",
         info_calls == 1 && done_calls == 0 && stale_proceed != NULL);

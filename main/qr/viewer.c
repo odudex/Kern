@@ -7,6 +7,7 @@
 #include "../ui/input_helpers.h"
 #include "../ui/theme.h"
 #include "../ui/theme_widgets.h"
+#include "../utils/session_cleanup.h"
 #include "encoder.h"
 #include "parser.h"
 #include <lvgl.h>
@@ -642,6 +643,7 @@ static bool setup_qr_viewer_ui(lv_obj_t *parent, const char *title) {
 bool qr_viewer_page_create_with_format(lv_obj_t *parent, int qr_format,
                                        const char *content, const char *title,
                                        void (*return_cb)(void)) {
+  session_cleanup_register(qr_viewer_page_destroy);
   if (!parent || !content) {
     return false;
   }
@@ -739,6 +741,7 @@ void qr_viewer_page_hide(void) {
 }
 
 void qr_viewer_page_destroy(void) {
+  session_cleanup_unregister(qr_viewer_page_destroy);
   if (animation_timer) {
     lv_timer_del(animation_timer);
     animation_timer = NULL;

@@ -31,10 +31,11 @@ bool nvs_secure_is_encrypted(void) { return encrypted; }
 // interrupted provisioning); transient errors (no-mem, flash driver) must
 // propagate without destroying valid encrypted data.
 static esp_err_t secure_init_default(void) {
-  nvs_sec_cfg_t cfg;
+  nvs_sec_cfg_t cfg = {0};
   esp_err_t err = nvs_flash_read_security_cfg_v2(
       nvs_flash_get_default_security_scheme(), &cfg);
   if (err != ESP_OK) {
+    secure_memzero(&cfg, sizeof(cfg));
     ESP_LOGE(TAG, "Failed to derive NVS keys: %s", esp_err_to_name(err));
     return err;
   }

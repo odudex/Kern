@@ -14,6 +14,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/text_fit.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -260,6 +261,17 @@ typedef struct {
 
 static id_prompt_ctx_t *g_id_prompt_ctx = NULL;
 
+static void id_prompt_cleanup(void) {
+  session_cleanup_unregister(id_prompt_cleanup);
+  if (!g_id_prompt_ctx)
+    return;
+  ui_text_input_destroy(&g_id_prompt_ctx->input);
+  if (g_id_prompt_ctx->screen)
+    lv_obj_delete(g_id_prompt_ctx->screen);
+  free(g_id_prompt_ctx);
+  g_id_prompt_ctx = NULL;
+}
+
 static void id_prompt_ready_cb(lv_event_t *e) {
   (void)e;
   if (!g_id_prompt_ctx)
@@ -276,13 +288,7 @@ static void id_prompt_ready_cb(lv_event_t *e) {
 
   void (*proceed)(const char *, storage_location_t, void *) =
       g_id_prompt_ctx->proceed;
-  ui_text_input_destroy(&g_id_prompt_ctx->input);
-  if (g_id_prompt_ctx->screen) {
-    lv_obj_del(g_id_prompt_ctx->screen);
-    g_id_prompt_ctx->screen = NULL;
-  }
-  free(g_id_prompt_ctx);
-  g_id_prompt_ctx = NULL;
+  id_prompt_cleanup();
 
   proceed(id_copy, STORAGE_FLASH, NULL);
 }
@@ -304,6 +310,7 @@ static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
   theme_apply_screen(ctx->screen);
   lv_obj_clear_flag(ctx->screen, LV_OBJ_FLAG_SCROLLABLE);
   g_id_prompt_ctx = ctx;
+  session_cleanup_register(id_prompt_cleanup);
   ui_text_input_create(&ctx->input, ctx->screen, "Descriptor name", false,
                        id_prompt_ready_cb);
 }
@@ -323,6 +330,10 @@ typedef struct {
   lv_obj_t *root;
 } info_confirm_context_t;
 
+static void info_confirm_deleted(lv_event_t *e) {
+  free(lv_event_get_user_data(e));
+}
+
 static void info_confirm_respond(lv_event_t *e, bool confirmed) {
   info_confirm_context_t *ctx = lv_event_get_user_data(e);
   if (!ctx)
@@ -330,7 +341,6 @@ static void info_confirm_respond(lv_event_t *e, bool confirmed) {
   void (*proceed)(bool, void *) = ctx->proceed;
   if (ctx->root)
     lv_obj_del(ctx->root);
-  free(ctx);
   if (proceed)
     proceed(confirmed, NULL);
 }
@@ -524,6 +534,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   theme_apply_screen(root);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   ctx->root = root;
+  lv_obj_add_event_cb(root, info_confirm_deleted, LV_EVENT_DELETE, ctx);
 
   // Title with "Load?" prompt
   char title[48];
@@ -687,6 +698,7 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
     char *converted = bluewallet_to_descriptor(descriptor_str);
     const char *to_process = converted ? converted : descriptor_str;
     char *unambiguous = descriptor_to_unambiguous(to_process);
+    session_cleanup_register(descriptor_validation_cancel);
     descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                  validation_cb, descriptor_confirm_wrapper,
                                  descriptor_info_confirm_wrapper,
@@ -714,6 +726,7 @@ void descriptor_loader_process_string(const char *descriptor_str,
   char *converted = bluewallet_to_descriptor(descriptor_str);
   const char *to_process = converted ? converted : descriptor_str;
   char *unambiguous = descriptor_to_unambiguous(to_process);
+  session_cleanup_register(descriptor_validation_cancel);
   descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                validation_cb, descriptor_confirm_wrapper,
                                descriptor_info_confirm_wrapper,
@@ -746,6 +759,7 @@ void descriptor_loader_process_string_watch_only(
   }
 
   wallet_set_watch_only(net);
+  session_cleanup_register(descriptor_validation_cancel);
   descriptor_validate_and_load_watch_only(
       final, net, validation_cb, descriptor_info_confirm_wrapper, user_data);
   free(unambiguous);
@@ -761,6 +775,7 @@ void descriptor_loader_show_source_menu(lv_obj_t *parent, void (*qr_cb)(void),
                                         void (*sd_cb)(void),
                                         void (*back_cb)(void)) {
   descriptor_loader_destroy_source_menu();
+  session_cleanup_register(descriptor_loader_destroy_source_menu);
 
   source_menu = ui_menu_create(parent, "Load Descriptor", back_cb);
   if (!source_menu)
@@ -774,6 +789,7 @@ void descriptor_loader_show_source_menu(lv_obj_t *parent, void (*qr_cb)(void),
 }
 
 void descriptor_loader_destroy_source_menu(void) {
+  session_cleanup_unregister(descriptor_loader_destroy_source_menu);
   if (source_menu) {
     ui_menu_destroy(source_menu);
     source_menu = NULL;

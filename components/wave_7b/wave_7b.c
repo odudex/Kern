@@ -1,4 +1,5 @@
 #include "bsp/display.h"
+#include "bsp/display_security.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_7b.h"
 #include "bsp/touch.h"
 #include "bsp_err_check.h"
@@ -302,6 +303,9 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config,
 static lv_display_t *bsp_display_lcd_init(void) {
   bsp_lcd_handles_t lcd_panels;
   BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new_with_handles(NULL, &lcd_panels));
+  bsp_display_register_sensitive_buffers(
+      lcd_panels.panel, CONFIG_BSP_LCD_DPI_BUFFER_NUMS,
+      (size_t)BSP_LCD_H_RES * BSP_LCD_V_RES * BSP_LCD_BITS_PER_PIXEL / 8);
 
   ESP_LOGD(TAG, "Add LCD screen");
   esp_lv_adapter_display_config_t disp_cfg = {

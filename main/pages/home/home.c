@@ -9,6 +9,7 @@
 #include "../../ui/menu.h"
 #include "../../ui/power.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include "../load/load.h"
 #include "../scan/scan.h"
 #include "../settings/wallet_settings.h"
@@ -166,6 +167,7 @@ static void return_from_wallet_settings_cb(void) {
 }
 
 void home_page_create(lv_obj_t *parent) {
+  session_cleanup_register(home_page_destroy);
   if (!parent || !key_is_loaded() || !wallet_is_initialized())
     return;
 
@@ -219,6 +221,7 @@ void home_page_hide(void) {
 }
 
 void home_page_destroy(void) {
+  session_cleanup_unregister(home_page_destroy);
   if (power_button) {
     lv_obj_del(power_button);
     power_button = NULL;

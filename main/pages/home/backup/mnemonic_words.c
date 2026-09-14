@@ -5,6 +5,7 @@
 #include "../../../ui/theme.h"
 #include "../../../ui/theme_widgets.h"
 #include "../../../utils/secure_mem.h"
+#include "../../../utils/session_cleanup.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,7 @@ static void add_word_row(lv_obj_t *col, size_t index, const char *word,
 }
 
 void mnemonic_words_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
+  session_cleanup_register(mnemonic_words_page_destroy);
   if (!parent || !key_is_loaded())
     return;
 
@@ -142,6 +144,7 @@ void mnemonic_words_page_hide(void) {
 }
 
 void mnemonic_words_page_destroy(void) {
+  session_cleanup_unregister(mnemonic_words_page_destroy);
   if (mnemonic_screen) {
     lv_obj_del(mnemonic_screen);
     mnemonic_screen = NULL;
