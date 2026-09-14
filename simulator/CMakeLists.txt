@@ -54,10 +54,14 @@ endif()
 set(WALLY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/libwally-core)
 
 add_library(wally STATIC
+    ${WALLY_DIR}/kern_wally.c
+    ../components/secure_memory/secret_alloc.c
     ${WALLY_DIR}/upstream/src/amalgamation/combined.c
 )
 set_target_properties(wally PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(wally PUBLIC
+    ../components/secure_memory/include
+    ${WALLY_DIR}
     ${WALLY_DIR}/upstream/include
 )
 
@@ -161,6 +165,7 @@ set(STUB_SOURCES
 
 # --- Application utilities ---
 set(APP_UTIL_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/secure_memory/secure_memory.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/dice_quality.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/estimated_entropy.c
@@ -515,3 +520,8 @@ target_link_libraries(kern_sim_storage_smoke PRIVATE
 
 enable_testing()
 add_test(NAME storage_smoke COMMAND kern_sim_storage_smoke)
+
+target_include_directories(kern_simulator PRIVATE ../components/secure_memory/include)
+if(NOT APPLE)
+    target_link_options(kern_simulator PRIVATE -Wl,--wrap=free -Wl,--wrap=realloc)
+endif()

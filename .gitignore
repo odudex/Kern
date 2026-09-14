@@ -28,6 +28,8 @@ simulator/build*/
 simulator/sim_data/
 
 # Tests
+components/secure_memory/test/test_cleanup
+components/secure_memory/test/test_secret_alloc
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/deflate_codec/test/test_deflate_codec
@@ -66,3 +68,7 @@ __pycache__/
 AGENTS.md
 CLAUDE.md
 .claude/
+
+# Secret-allocation host test objects
+main/core/test/kern_wally.o
+main/core/test/secret_alloc.o

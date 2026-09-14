@@ -23,15 +23,20 @@ static void codec_zfree(voidpf opaque, voidpf address) {
   (void)opaque;
   heap_caps_free(address);
 }
+#else
+static voidpf codec_zalloc(voidpf opaque, uInt items, uInt size) {
+  (void)opaque;
+  return calloc(items, size);
+}
+static void codec_zfree(voidpf opaque, voidpf address) {
+  (void)opaque;
+  free(address);
+}
 #endif
 
 static void stream_set_allocator(z_stream *stream) {
-#ifdef ESP_PLATFORM
   stream->zalloc = codec_zalloc;
   stream->zfree = codec_zfree;
-#else
-  (void)stream;
-#endif
 }
 
 uint8_t *deflate_compress_raw_alloc(const uint8_t *source, size_t source_len,

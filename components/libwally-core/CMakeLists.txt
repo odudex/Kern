@@ -1,6 +1,8 @@
 idf_component_register(SRCS
+                       "kern_wally.c"
                        "upstream/src/amalgamation/combined.c"
                        INCLUDE_DIRS
+                       "."
                        "upstream/include"
                        PRIV_INCLUDE_DIRS
                        "."
@@ -21,7 +23,7 @@ idf_component_register(SRCS
                        "upstream/src/secp256k1/src/modules/schnorrsig"
                        "upstream/src/secp256k1/src/modules/surjection"
                        "upstream/src/secp256k1/src/modules/whitelist"
-                       PRIV_REQUIRES mbedtls mbedtls_compat)
+                       PRIV_REQUIRES mbedtls mbedtls_compat secure_memory)
 
 set_source_files_properties(
     upstream/src/amalgamation/combined.c

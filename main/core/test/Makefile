@@ -35,7 +35,7 @@ WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS) \
 ESP_STUBS_INC = stubs
 
 # Test includes: wally public headers + esp stubs + main source tree
-TEST_INCS = -I$(WALLY_INC) -I$(ESP_STUBS_INC) -I$(ROOT)/main
+TEST_INCS = -I$(WALLY_INC) -I$(WALLY_DIR) -I$(ROOT)/components/secure_memory/include -I$(ESP_STUBS_INC) -I$(ROOT)/main
 
 # KEF pulls in crypto_utils/entropy_pool/deflate_codec, which need a handful of
 # ESP-IDF headers.  Reuse the simulator's stub headers instead of a second copy;

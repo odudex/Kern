@@ -18,6 +18,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/.." &
 
 DIRS=(
     "$REPO_ROOT/main"
+    "$REPO_ROOT/components/secure_memory"
     "$REPO_ROOT/components/bbqr"
     "$REPO_ROOT/components/bsp_common"
     "$REPO_ROOT/components/cUR"
@@ -56,6 +57,13 @@ for dir in "${DIRS[@]}"; do
     done < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/build/*" \
         -not -name "stb_image.h" \
         -print0)
+done
+
+for file in "$REPO_ROOT/components/libwally-core/kern_wally.c" \
+            "$REPO_ROOT/components/libwally-core/kern_wally.h"; do
+    if ! clang-format $FORMAT_ARGS "$file"; then
+        FAILED=true
+    fi
 done
 
 if $CHECK_MODE && $FAILED; then

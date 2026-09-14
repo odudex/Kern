@@ -9,6 +9,9 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef ESP_PLATFORM
+#include "secure_memory.h"
+#endif
 
 /*
  * Volatile function pointer prevents the compiler from optimizing away
@@ -20,7 +23,11 @@ static void *(*const volatile secure_memset_fn)(void *, int, size_t) = memset;
 /* Guaranteed memory zeroing - cannot be optimized away */
 static inline void secure_memzero(void *ptr, size_t len) {
   if (ptr && len > 0) {
+#ifdef ESP_PLATFORM
+    kern_memory_wipe(ptr, len);
+#else
     secure_memset_fn(ptr, 0, len);
+#endif
   }
 }
 

@@ -35,7 +35,7 @@ idf_component_register(
     PRIV_REQUIRES lvgl ${TOUCH_DRIVER} k_quirc esp_timer wave_4b wave_35 wave_5 wave_43
                   crowpanel wave_7b libwally-core cUR sd_card bbqr deflate_codec video spiffs
                   nvs_flash efuse esp_hw_support esp_app_format mbedtls
-                  esp_driver_ppa app_update bootloader_support
+                  esp_driver_ppa app_update bootloader_support secure_memory bsp_common
 )
 
 # Ignoring a warn_unused_result return is a build error, not a warning. The
