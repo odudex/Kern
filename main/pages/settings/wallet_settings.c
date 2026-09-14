@@ -13,6 +13,7 @@
 #include "../../utils/session_cleanup.h"
 #include "../passphrase.h"
 #include "descriptor_manager.h"
+#include "secure_memory.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <string.h>
@@ -130,11 +131,16 @@ static void passphrase_return_cb(void) {
 }
 
 static void passphrase_success_cb(const char *passphrase) {
-  SECURE_FREE_STRING(stored_passphrase);
-
+  char *replacement = NULL;
   if (passphrase && passphrase[0] != '\0') {
-    stored_passphrase = strdup(passphrase);
+    replacement = kern_secret_strdup(passphrase);
+    if (!replacement) {
+      dialog_show_error_timeout("Not enough internal RAM", NULL, 0);
+      return;
+    }
   }
+  SECURE_FREE_STRING(stored_passphrase);
+  stored_passphrase = replacement;
 
   passphrase_page_destroy();
   wallet_settings_page_show();

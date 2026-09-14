@@ -1,5 +1,7 @@
 #include "encoder.h"
 #include "../utils/secure_mem.h"
+#include "kern_wally.h"
+#include "secure_memory.h"
 #include "src/libs/qrcode/qrcodegen.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <ctype.h>
@@ -166,7 +168,8 @@ char *mnemonic_qr_compact_to_mnemonic(const unsigned char *data, size_t len) {
   }
 
   char *wally_mnemonic = NULL;
-  if (bip39_mnemonic_from_bytes(NULL, data, len, &wally_mnemonic) != WALLY_OK ||
+  if (kern_bip39_mnemonic_from_bytes(NULL, data, len, &wally_mnemonic) !=
+          WALLY_OK ||
       !wally_mnemonic) {
     return NULL;
   }
@@ -176,9 +179,7 @@ char *mnemonic_qr_compact_to_mnemonic(const unsigned char *data, size_t len) {
     return NULL;
   }
 
-  char *mnemonic = strdup(wally_mnemonic);
-  wally_free_string(wally_mnemonic);
-  return mnemonic;
+  return wally_mnemonic;
 }
 
 char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len) {
@@ -195,7 +196,7 @@ char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len) {
   }
 
   size_t max_len = word_count * 12;
-  char *mnemonic = malloc(max_len);
+  char *mnemonic = kern_secret_alloc(max_len);
   if (!mnemonic) {
     return NULL;
   }
@@ -262,7 +263,7 @@ char *mnemonic_qr_to_mnemonic(const char *data, size_t len,
     return mnemonic_qr_seedqr_to_mnemonic(data, len);
 
   case MNEMONIC_QR_PLAINTEXT: {
-    char *mnemonic = strndup(data, len);
+    char *mnemonic = kern_secret_strndup(data, len);
     if (mnemonic && bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
       SECURE_FREE_STRING(mnemonic);
       return NULL;
@@ -323,7 +324,7 @@ char *mnemonic_to_seedqr(const char *mnemonic) {
 
   // Allocate output buffer (4 digits per word + null terminator)
   size_t output_len = (size_t)word_count * 4 + 1;
-  char *seedqr = malloc(output_len);
+  char *seedqr = kern_secret_alloc(output_len);
   if (!seedqr) {
     return NULL;
   }
@@ -401,7 +402,7 @@ unsigned char *mnemonic_to_compact_seedqr(const char *mnemonic,
     return NULL;
   }
 
-  unsigned char *result = malloc(entropy_len);
+  unsigned char *result = kern_secret_alloc(entropy_len);
   if (!result) {
     return NULL;
   }

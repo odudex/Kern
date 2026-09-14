@@ -172,7 +172,7 @@ int main(void) {
   home_page_create(lv_screen_active());
   mnemonic_qr_page_create(lv_screen_active(), unexpected_callback);
   kef_encrypt_page_create(lv_screen_active(), unexpected_callback, NULL,
-                          (const uint8_t *)mnemonic, strlen(mnemonic), "test");
+                          (const uint8_t *)mnemonic, strlen(mnemonic), "test", true);
   session_lock_init();
   session_set_screensaver_timeout(0);
   session_set_timeout(1);

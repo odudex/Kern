@@ -8,6 +8,8 @@
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
 #include "../shared/key_confirmation.h"
+#include "kern_wally.h"
+#include "secure_memory.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -86,7 +88,7 @@ static bool derive_child_mnemonic(void) {
                               &written) != WALLY_OK)
     goto cleanup;
 
-  if (bip39_mnemonic_from_bytes(NULL, entropy, written, &mnemonic) !=
+  if (kern_bip39_mnemonic_from_bytes(NULL, entropy, written, &mnemonic) !=
           WALLY_OK ||
       !mnemonic)
     goto cleanup;
@@ -117,13 +119,16 @@ static void append_words_to_buffer(char *out, size_t out_len, char **words,
 }
 
 static void create_word_labels(lv_obj_t *parent) {
-  char *mnemonic_copy = strdup(child_mnemonic);
+  const size_t mnemonic_copy_size = strlen(child_mnemonic) + 1;
+  char *mnemonic_copy = kern_secret_strdup(child_mnemonic);
   char *words[24] = {0};
   int word_count = 0;
   char word_list[512];
 
-  if (!mnemonic_copy)
+  if (!mnemonic_copy) {
+    dialog_show_error_timeout("Not enough internal RAM for mnemonic", NULL, 0);
     return;
+  }
 
   char *token = strtok(mnemonic_copy, " ");
   while (token && word_count < 24) {
@@ -149,7 +154,7 @@ static void create_word_labels(lv_obj_t *parent) {
   }
 
   secure_memzero(word_list, sizeof(word_list));
-  SECURE_FREE_STRING(mnemonic_copy);
+  SECURE_FREE_BUFFER(mnemonic_copy, mnemonic_copy_size);
 }
 
 static void result_back_btn_cb(lv_event_t *e) {

@@ -17,6 +17,7 @@
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
 #include "../../utils/worker_task.h"
+#include "secure_memory.h"
 #include "text_input_scan.h"
 
 #include <stdio.h>
@@ -295,9 +296,11 @@ static void password_ready_cb(lv_event_t *e) {
 
   if (!confirm_key) {
     /* First entry — save and ask for confirmation */
-    confirm_key = malloc(len);
-    if (!confirm_key)
+    confirm_key = kern_secret_alloc(len);
+    if (!confirm_key) {
+      dialog_show_error_timeout("Not enough internal RAM", NULL, 0);
       return;
+    }
     memcpy(confirm_key, text, len);
     confirm_key_len = len;
     ui_secure_clear_textarea(text_input.textarea);
@@ -388,7 +391,7 @@ static void id_confirm_cb(bool confirmed, void *user_data) {
 void kef_encrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
                              kef_encrypt_success_cb_t success_cb,
                              const uint8_t *data, size_t data_len,
-                             const char *suggested_id) {
+                             const char *suggested_id, bool mnemonic_data) {
   session_cleanup_register(kef_encrypt_page_destroy);
   (void)parent;
   if (!data || data_len == 0)
@@ -398,9 +401,13 @@ void kef_encrypt_page_create(lv_obj_t *parent, void (*return_cb)(void),
   success_callback = success_cb;
 
   /* Copy data to encrypt */
-  data_copy = malloc(data_len);
-  if (!data_copy)
+  data_copy = mnemonic_data ? kern_secret_alloc(data_len) : malloc(data_len);
+  if (!data_copy) {
+    dialog_show_error_timeout(mnemonic_data ? "Not enough internal RAM"
+                                            : "Not enough memory",
+                              return_cb, 0);
     return;
+  }
   memcpy(data_copy, data, data_len);
   data_copy_len = data_len;
 

@@ -174,7 +174,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
   lv_obj_align(title_label, LV_ALIGN_CENTER, 0, 0);
 
   kef_encrypt_page_create(parent, encrypt_return_cb, encrypt_success_cb,
-                          compact_seedqr_data, compact_seedqr_len, NULL);
+                          compact_seedqr_data, compact_seedqr_len, NULL, true);
 }
 
 void store_mnemonic_page_show(void) {

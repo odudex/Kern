@@ -510,7 +510,7 @@ static void start_encrypted_flow(void) {
 
   kef_encrypt_page_create(lv_screen_active(), encrypt_return_cb,
                           encrypt_success_cb, compact_seedqr_data,
-                          compact_seedqr_len, NULL);
+                          compact_seedqr_len, NULL, true);
 }
 
 static void destroy_zoom_overlays(void) {
@@ -832,8 +832,11 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
 
-  if (!key_get_mnemonic(&mnemonic_data) || !mnemonic_data)
+  if (!key_get_mnemonic(&mnemonic_data) || !mnemonic_data) {
+    dialog_show_error_timeout("Not enough internal RAM for mnemonic", return_cb,
+                              0);
     return;
+  }
 
   seedqr_data = mnemonic_to_seedqr(mnemonic_data);
   compact_seedqr_data =
@@ -845,6 +848,8 @@ void mnemonic_qr_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     SECURE_FREE_STRING(seedqr_data);
     SECURE_FREE_BUFFER(compact_seedqr_data, compact_seedqr_len);
     compact_seedqr_len = 0;
+    dialog_show_error_timeout("Not enough internal RAM for mnemonic", return_cb,
+                              0);
     return;
   }
 

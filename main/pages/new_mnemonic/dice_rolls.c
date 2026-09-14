@@ -7,6 +7,8 @@
 #include "../../ui/word_selector.h"
 #include "../../utils/dice_quality.h"
 #include "../../utils/session_cleanup.h"
+#include "kern_wally.h"
+#include "secure_memory.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -288,9 +290,10 @@ static bool generate_mnemonic_from_rolls(void) {
     return false;
 
   char *mnemonic = NULL;
-  if (bip39_mnemonic_from_bytes(NULL, hash, entropy_len, &mnemonic) !=
-          WALLY_OK ||
-      !mnemonic)
+  int result =
+      kern_bip39_mnemonic_from_bytes(NULL, hash, entropy_len, &mnemonic);
+  secure_memzero(hash, sizeof(hash));
+  if (result != WALLY_OK || !mnemonic)
     return false;
 
   if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
@@ -299,8 +302,7 @@ static bool generate_mnemonic_from_rolls(void) {
   }
 
   SECURE_FREE_STRING(completed_mnemonic);
-  completed_mnemonic = strdup(mnemonic);
-  wally_free_string(mnemonic);
+  completed_mnemonic = mnemonic;
 
   secure_memzero(hash, sizeof(hash));
   secure_memzero(rolls_string, sizeof(rolls_string));

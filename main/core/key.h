@@ -9,6 +9,8 @@
 
 KERN_WARN_UNUSED_RESULT bool key_init(void);
 KERN_WARN_UNUSED_RESULT bool key_is_loaded(void);
+/* Owned mnemonic/private-key allocations require internal RAM on firmware.
+ * False includes internal-memory exhaustion; no PSRAM fallback is attempted. */
 KERN_WARN_UNUSED_RESULT bool key_load_from_mnemonic(const char *mnemonic,
                                                     const char *passphrase,
                                                     bool is_testnet);

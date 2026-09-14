@@ -8,6 +8,8 @@
 
 #include "../../utils/secure_mem.h"
 #include "../key.h"
+#include "kern_wally.h"
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +20,63 @@
 
 static int tests_run = 0;
 static int tests_failed = 0;
+
+/* Observe the tokenized duplicate while it is still allocated. This tests
+ * key.c's explicit wipe independently of firmware's global release policy. */
+static int fail_after = -1;
+static bool probe_other_thread, other_thread_allocated;
+static void *public_allocation_thread(void *unused) {
+  (void)unused;
+  void *p = wally_malloc(4096);
+  other_thread_allocated = p != NULL;
+  wally_free(p);
+  return NULL;
+}
+static bool deny_secret_allocation(void) {
+  if (fail_after < 0)
+    return false;
+  if (fail_after == 0)
+    return true;
+  --fail_after;
+  return false;
+}
+void *__real_kern_secret_alloc(size_t size);
+void *__wrap_kern_secret_alloc(size_t size) {
+  if (probe_other_thread) {
+    probe_other_thread = false;
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, public_allocation_thread, NULL) != 0)
+      abort();
+    pthread_join(thread, NULL);
+  }
+  return deny_secret_allocation() ? NULL : __real_kern_secret_alloc(size);
+}
+static bool track_duplicate, duplicate_wiped;
+static char *tracked_duplicate;
+static size_t tracked_size;
+char *__real_kern_secret_strdup(const char *s);
+void __real_free(void *p);
+char *__wrap_kern_secret_strdup(const char *s) {
+  if (deny_secret_allocation())
+    return NULL;
+  char *p = __real_kern_secret_strdup(s);
+  if (track_duplicate && !tracked_duplicate) {
+    tracked_duplicate = p;
+    tracked_size = strlen(s) + 1;
+  }
+  return p;
+}
+void __wrap_free(void *p) {
+  if (p && p == tracked_duplicate) {
+    duplicate_wiped = true;
+    for (size_t i = 0; i < tracked_size; ++i)
+      if (((unsigned char *)p)[i])
+        duplicate_wiped = false;
+    tracked_duplicate = NULL;
+    track_duplicate = false;
+  }
+  __real_free(p);
+}
 
 static void check(const char *name, bool ok) {
   tests_run++;
@@ -196,7 +255,10 @@ static void test_mnemonic_access(void) {
 
   char **words = NULL;
   size_t n = 0;
+  track_duplicate = true;
+  duplicate_wiped = false;
   check("mnemonic words split", key_get_mnemonic_words(&words, &n) && n == 12);
+  check("tokenized copy wiped through original terminator", duplicate_wiped);
   check("first and last words", n == 12 && strcmp(words[0], "abandon") == 0 &&
                                     strcmp(words[11], "about") == 0);
   for (size_t i = 0; i < n; i++)
@@ -296,6 +358,46 @@ static void test_unload(void) {
   check("cleanup unloads", !key_is_loaded());
 }
 
+static void test_internal_memory_exhaustion(void) {
+  for (int n = 0; n < 3; ++n) {
+    fail_after = n;
+    check("load fails closed at each secret allocation",
+          !key_load_from_mnemonic(TEST_MNEMONIC, "", false) &&
+              !key_is_loaded());
+  }
+  fail_after = -1;
+  check("load recovers after memory becomes available",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", false));
+  fail_after = 0;
+  struct ext_key *derived = NULL;
+  check("master copy has no fallback",
+        !key_get_derived_key("m", &derived) && !derived);
+  check("derived private key has no fallback",
+        !key_get_derived_key("m/84h/0h/0h", &derived) && !derived);
+  char *phrase = NULL;
+  check("mnemonic copy has no fallback", !key_get_mnemonic(&phrase) && !phrase);
+  unsigned char entropy[16] = {0};
+  probe_other_thread = true;
+  other_thread_allocated = false;
+  check("libwally mnemonic generation has no fallback",
+        kern_bip39_mnemonic_from_bytes(NULL, entropy, sizeof(entropy),
+                                       &phrase) == WALLY_ENOMEM &&
+            !phrase);
+  check("secret scope does not constrain a concurrent public-data thread",
+        other_thread_allocated);
+  void *public_data = wally_malloc(4096);
+  check("public libwally allocation is unaffected and secret scope restored",
+        public_data != NULL);
+  wally_free(public_data);
+  fail_after = 3;
+  char **words = NULL;
+  size_t count = 0;
+  check("partial word allocation failure cleans up without output",
+        !key_get_mnemonic_words(&words, &count) && !words && !count);
+  fail_after = -1;
+  key_unload();
+}
+
 int main(void) {
   printf("=== key tests ===\n\n");
   test_unloaded();
@@ -305,6 +407,7 @@ int main(void) {
   test_mnemonic_access();
   test_passphrase_and_network();
   test_unload();
+  test_internal_memory_exhaustion();
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);
   return tests_failed == 0 ? 0 : 1;

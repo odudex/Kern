@@ -1,6 +1,7 @@
 // BIP39 word filtering utilities for smart keyboard input
 
 #include "bip39_filter.h"
+#include "kern_wally.h"
 #include <string.h>
 #include <wally_bip39.h>
 #include <wally_core.h>
@@ -160,8 +161,8 @@ int bip39_filter_get_valid_last_words(const char entered_words[24][16],
     }
 
     char *new_mnemonic = NULL;
-    if (bip39_mnemonic_from_bytes(NULL, test_packed, entropy_bytes,
-                                  &new_mnemonic) != WALLY_OK)
+    if (kern_bip39_mnemonic_from_bytes(NULL, test_packed, entropy_bytes,
+                                       &new_mnemonic) != WALLY_OK)
       continue;
 
     char *last_space = strrchr(new_mnemonic, ' ');

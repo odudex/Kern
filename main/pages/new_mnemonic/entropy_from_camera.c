@@ -7,6 +7,8 @@
 #include "../../ui/word_selector.h"
 #include "../../utils/session_cleanup.h"
 #include "../capture_entropy.h"
+#include "kern_wally.h"
+#include "secure_memory.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,8 +145,8 @@ static void proceed_cb(lv_event_t *e) {
       (total_words == 12) ? ENTROPY_12_WORDS : ENTROPY_24_WORDS;
 
   char *mnemonic = NULL;
-  if (bip39_mnemonic_from_bytes(NULL, entropy_hash, entropy_len, &mnemonic) !=
-          WALLY_OK ||
+  if (kern_bip39_mnemonic_from_bytes(NULL, entropy_hash, entropy_len,
+                                     &mnemonic) != WALLY_OK ||
       !mnemonic) {
     dialog_show_error_timeout("Failed to generate mnemonic", NULL, 0);
     return;
@@ -157,8 +159,7 @@ static void proceed_cb(lv_event_t *e) {
   }
 
   SECURE_FREE_STRING(completed_mnemonic);
-  completed_mnemonic = strdup(mnemonic);
-  wally_free_string(mnemonic);
+  completed_mnemonic = mnemonic;
 
   secure_memzero(entropy_hash, sizeof(entropy_hash));
   hash_captured = false;

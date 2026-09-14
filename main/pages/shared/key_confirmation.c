@@ -111,7 +111,9 @@ void key_confirmation_page_create(lv_obj_t *parent, void (*return_cb)(void),
   SAFE_FREE_STATIC(mnemonic_content);
   mnemonic_content = mnemonic_qr_to_mnemonic(content, content_len, NULL);
   if (!mnemonic_content) {
-    dialog_show_error_timeout("Invalid mnemonic phrase", return_callback, 0);
+    dialog_show_error_timeout(
+        "Could not read mnemonic: invalid data or insufficient internal RAM",
+        return_callback, 0);
     return;
   }
 

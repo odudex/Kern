@@ -10,6 +10,7 @@
 #include "../../utils/secure_mem.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
+#include "kern_wally.h"
 #include "scan_internal.h"
 #include <lvgl.h>
 #include <stdio.h>
@@ -115,31 +116,12 @@ void scan_handle_mnemonic(const char *data, size_t len) {
   if (!key_get_fingerprint_hex(current_fp))
     strcpy(current_fp, "????????");
 
-  // Compute new mnemonic's fingerprint without touching the loaded key
-  wallet_network_t net = wallet_get_network();
-  bool is_test = (net == WALLET_NETWORK_TESTNET);
-
-  char new_fp[9] = "????????";
-  {
-    unsigned char seed[BIP39_SEED_LEN_512];
-    size_t seed_len = 0;
-    if (bip39_mnemonic_to_seed(mnemonic, NULL, seed, sizeof(seed), &seed_len) ==
-        WALLY_OK) {
-      uint32_t ver = is_test ? BIP32_VER_TEST_PRIVATE : BIP32_VER_MAIN_PRIVATE;
-      struct ext_key *tmp_key = NULL;
-      if (bip32_key_from_seed_alloc(seed, seed_len, ver, 0, &tmp_key) ==
-          WALLY_OK) {
-        unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
-        if (bip32_key_get_fingerprint(tmp_key, fp, BIP32_KEY_FINGERPRINT_LEN) ==
-            WALLY_OK) {
-          for (int i = 0; i < BIP32_KEY_FINGERPRINT_LEN; i++)
-            sprintf(new_fp + (i * 2), "%02x", fp[i]);
-          new_fp[BIP32_KEY_FINGERPRINT_LEN * 2] = '\0';
-        }
-        bip32_key_free(tmp_key);
-      }
-      secure_memzero(seed, sizeof(seed));
-    }
+  char new_fp[9];
+  if (!key_mnemonic_fingerprint_hex(mnemonic, new_fp)) {
+    SECURE_FREE_STRING(mnemonic);
+    dialog_show_error_timeout("Failed to process mnemonic", scan_ctx.return_cb,
+                              0);
+    return;
   }
 
   // Store mnemonic for confirmation callback

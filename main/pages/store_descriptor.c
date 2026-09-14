@@ -238,7 +238,7 @@ void store_descriptor_page_create_for_descriptor(
     kef_encrypt_page_create(
         parent, encrypt_return_cb, encrypt_success_cb,
         (const uint8_t *)descriptor_text, strlen(descriptor_text),
-        descriptor_default_id[0] ? descriptor_default_id : NULL);
+        descriptor_default_id[0] ? descriptor_default_id : NULL, false);
   } else {
     /* Show ID text input for plaintext save */
     ui_text_input_create(&id_input, parent, "Descriptor name", false,

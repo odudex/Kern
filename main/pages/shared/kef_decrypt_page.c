@@ -16,6 +16,7 @@
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
 #include "../../utils/worker_task.h"
+#include "secure_memory.h"
 #include "text_input_scan.h"
 #include <stdlib.h>
 #include <string.h>
@@ -108,9 +109,11 @@ static void keyboard_ready_cb(lv_event_t *e) {
 
   /* Copy key before clearing textarea */
   key_copy_len = strlen(text);
-  key_copy = malloc(key_copy_len);
-  if (!key_copy)
+  key_copy = kern_secret_alloc(key_copy_len);
+  if (!key_copy) {
+    dialog_show_error_timeout("Not enough internal RAM", NULL, 0);
     return;
+  }
   memcpy(key_copy, text, key_copy_len);
 
   ui_secure_clear_textarea(text_input.textarea);
