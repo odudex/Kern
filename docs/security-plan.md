@@ -5,7 +5,7 @@ This is a research plan. It documents the hardening approaches Kern explores on 
 ## Baseline
 
 - **Air-gapped by design**: no radio on ESP32-P4, QR-only I/O
-- **Session-only keys**: mnemonics live in RAM, cleared on unload
+- **Session-only keys**: mnemonics and private keys live in internal SRAM only, wiped on unload, lock, power-off and reboot (see [0c](#0c-secrets-in-ram-))
 - **libwally-core**: proven Bitcoin cryptographic primitives
 - **Entropy validation**: Shannon entropy threshold for camera-based seed generation
 
@@ -22,8 +22,8 @@ This is a research plan. It documents the hardening approaches Kern explores on 
 | Firmware downgrade | Flash older vulnerable version | **Anti-rollback (eFuse counter)** |
 | Firmware downgrade via SD | Load older vulnerable firmware via update | **Anti-rollback (eFuse counter)** |
 | No update path after lockdown | Serial flash disabled in release mode | **Air-gapped SD card updates** |
-| RAM snooping via PSRAM | Probing external PSRAM bus | **Flash encryption auto-enables PSRAM encryption** |
-| Cold boot / remanence | Reading RAM after power-off | **Secure memory wiping** |
+| RAM snooping via PSRAM | Probing external PSRAM bus | **Secrets allocated in internal SRAM (0c); PSRAM encryption (Phase 5) for working buffers** |
+| Cold boot / remanence | Reading RAM after power-off | **Secure memory wiping + session teardown (0c)** |
 | PIN-counter rewind | Snapshot/restore of external flash to reset failure counter | **Residual risk: PIN entropy is the backstop (see below)** |
 | Fault injection | Voltage/EM glitching of boot or PIN checks | **Residual risk: not a secure element (see below)** |
 
@@ -162,7 +162,7 @@ Some features only reach their full security guarantee when combined with later 
 | NVS encryption (3) | Secure Boot (6) | `HMAC_UP` computations are software-invokable: until secure boot, attacker firmware on the *same chip* can drive the HMAC peripheral to derive the NVS keys and decrypt a dumped `nvs` partition (PIN hash included). Without the chip, the keys stay out of reach either way. |
 | Wipe-after-N-failures (2) | Secure Boot (6) | Custom firmware could reset the failure counter or skip the wipe check. Secure boot prevents running unauthorized firmware. |
 | SD card OTA (4) | Secure Boot (6) | The OTA path already verifies Secure Boot v2 RSA-3072 signatures via `SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`, trusting the public keys embedded in the running app, but nothing verifies firmware at *boot*, so an attacker with serial access can still flash unsigned firmware directly. Secure boot closes the serial path and upgrades the software downgrade check to the eFuse anti-rollback counter. |
-| Session timeout (2) | Flash Encryption (5) | After timeout, keys are wiped from RAM, but PSRAM contents could theoretically be probed. Flash encryption auto-enables PSRAM encryption, closing this gap. |
+| Session timeout (2) | Flash Encryption (5) | Timeout tears down every secret owner and scrubs camera/display buffers (0c), but working buffers that may hold secret-bearing data (compression state, QR/cUR payloads, frames) still live unencrypted in PSRAM until Phase 5. |
 
 **In summary**: Phase 2 provides strong *usability-layer* security (PIN gating, anti-phishing UX, auto-wipe), and Phase 3 encrypts the PIN hash at rest by default, but tamper-detection guarantees are only as strong as firmware integrity. Secure boot (Phase 6) and flash encryption (Phase 5) are what turn anti-phishing from "detects accidental device swaps" into "cryptographically proves device authenticity".
 
@@ -211,6 +211,18 @@ Per Espressif's security-features workflow, **Flash Encryption must be enabled b
 - `crypto_utils.c` wrapping ESP-IDF's mbedTLS AES (uses hardware accelerator transparently)
 - Functions: `aes_encrypt_buffer()`, `aes_decrypt_buffer()`, `pbkdf2_derive_key()`
 - Building block for KEF, PIN-protected storage, etc.
+
+#### 0c. Secrets in RAM ✅
+Rules for any code that touches mnemonics, private keys, passphrases, PINs or KEF passwords (mechanics in `components/secure_memory/README.md`):
+- **Placement.** Secret objects are allocated with `kern_secret_alloc()`: internal SRAM only, no PSRAM fallback, and allocation failure is an error shown to the user, never a silent downgrade. libwally calls that produce such objects go through the `kern_` adapters in `components/libwally-core/kern_wally.h`, never the raw allocating APIs. Public data (PSBTs, descriptors, images) stays on the default heap so internal RAM is not exhausted.
+- **Release.** Every heap free and realloc is wrapped to zero the whole block, padding included, and write PSRAM ranges back before release; realloc copies then wipes rather than resizing in place. Stack and static secrets, and buffers whose apparent length changed (tokenised strings), are still wiped explicitly with the original length.
+- **Ownership.** A page or flow that holds a secret copy registers its destructor with `session_cleanup_register()` before allocating and unregisters at the top of its idempotent destroy. `session_lock_now()` (timeout, power-off, reboot) joins workers, runs those destructors child-first, unloads the wallet, clears the screen and scrubs draw and panel buffers before rendering the lock face. `wallet_unload()` alone is not a session teardown.
+- **Producers stop first.** Camera and display buffers are wiped only after their DMA writers stop. Workers suspend on completion and are joined and deleted by the UI thread so their stacks are wiped synchronously, never left to the idle task.
+- **Inputs.** Secret textareas are cleared with `ui_secure_clear_textarea()`; setting an empty string alone leaves LVGL copies behind.
+
+Accepted until Phase 5: a live secret can be observed while in use, and compression state, cUR buffers, camera and display pixels (SeedQR display and scan moments) and NVS cipher contexts keep default placement, which may be PSRAM. Cleanup shortens retention; it does not protect live data.
+
+Open: validate PSRAM write-back and power-off remanence on hardware; move zlib, cUR and NVS cipher state to internal RAM if capacity allows. The release policy's time cost is settled (wipes run at 99 MiB/s in PSRAM and 270 MiB/s internally; a scanner close or session lock spends under 100 ms in it); the constraint is internal heap headroom, which copy-on-realloc lowers by about 60 KiB, so check the internal heap low-water mark on device before adding internal-only allocations.
 
 ### Phase 1: KEF Encryption ✅
 
