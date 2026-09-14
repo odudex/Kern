@@ -6,6 +6,7 @@
 #include "../../qr/encoder.h"
 #include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
+#include "../../ui/oneshot.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/memory_utils.h"
 #include "../../utils/session_cleanup.h"
@@ -15,18 +16,13 @@
 #define LOADING_DELAY_MS 1000
 
 static lv_obj_t *key_confirmation_screen = NULL;
-static lv_timer_t *loading_timer = NULL;
+static ui_oneshot_t loading_timer;
 static void (*return_callback)(void) = NULL;
 static void (*success_callback)(void) = NULL;
 static char *mnemonic_content = NULL;
 
 static void loading_timer_cb(lv_timer_t *timer) {
   (void)timer;
-  if (loading_timer) {
-    lv_timer_del(loading_timer);
-    loading_timer = NULL;
-  }
-
   wallet_network_t net = settings_get_network();
   if (key_load_from_mnemonic(mnemonic_content, NULL,
                              net == WALLET_NETWORK_TESTNET)) {
@@ -96,8 +92,7 @@ static void create_ui(const char *fingerprint_hex) {
   lv_obj_set_style_text_font(fp_text, theme_font_medium(), 0);
   lv_obj_set_style_text_color(fp_text, highlight_color(), 0);
 
-  loading_timer = lv_timer_create(loading_timer_cb, LOADING_DELAY_MS, NULL);
-  lv_timer_set_repeat_count(loading_timer, 1);
+  ui_oneshot_start(&loading_timer, loading_timer_cb, LOADING_DELAY_MS);
 }
 
 void key_confirmation_page_create(lv_obj_t *parent, void (*return_cb)(void),
@@ -138,10 +133,7 @@ void key_confirmation_page_hide(void) {
 
 void key_confirmation_page_destroy(void) {
   session_cleanup_unregister(key_confirmation_page_destroy);
-  if (loading_timer) {
-    lv_timer_del(loading_timer);
-    loading_timer = NULL;
-  }
+  ui_oneshot_cancel(&loading_timer);
   SAFE_FREE_STATIC(mnemonic_content);
   if (key_confirmation_screen) {
     lv_obj_del(key_confirmation_screen);

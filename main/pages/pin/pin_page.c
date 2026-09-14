@@ -9,6 +9,7 @@
 #include "../../core/pin.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
+#include "../../ui/oneshot.h"
 #include "../../ui/power.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
@@ -107,14 +108,12 @@ static int keystroke_cache_len = 0;
 
 // Processing overlay (shown during slow crypto operations)
 static lv_obj_t *progress_dialog = NULL;
-static lv_timer_t *processing_timer;
-static lv_timer_t *restart_timer;
-static lv_timer_cb_t processing_callback;
+static ui_oneshot_t processing_timer;
+static ui_oneshot_t restart_timer;
 
 // Timer-compatible wrapper for esp_restart()
 static void restart_cb(lv_timer_t *timer) {
   (void)timer;
-  restart_timer = NULL;
   esp_restart();
 }
 
@@ -215,20 +214,10 @@ static void dismiss_processing(void) {
   }
 }
 
-static void processing_timer_cb(lv_timer_t *timer) {
-  lv_timer_cb_t callback = processing_callback;
-  processing_timer = NULL;
-  processing_callback = NULL;
-  if (callback)
-    callback(timer);
-}
-
 static void show_processing(lv_timer_cb_t callback) {
   progress_dialog =
       dialog_show_progress("PIN", "Processing...", DIALOG_STYLE_OVERLAY);
-  processing_callback = callback;
-  processing_timer = lv_timer_create(processing_timer_cb, 50, NULL);
-  lv_timer_set_repeat_count(processing_timer, 1);
+  ui_oneshot_start(&processing_timer, callback, 50);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,8 +253,7 @@ static void deferred_verify_cb(lv_timer_t *timer) {
   case PIN_VERIFY_WIPED: {
     clear_buffers();
     dialog_show_error_timeout("Device wiped. All data erased.", NULL, 0);
-    restart_timer = lv_timer_create(restart_cb, 3000, NULL);
-    lv_timer_set_repeat_count(restart_timer, 1);
+    ui_oneshot_start(&restart_timer, restart_cb, 3000);
     break;
   }
   default:
@@ -1172,15 +1160,8 @@ void pin_page_hide(void) {
 
 void pin_page_destroy(void) {
   session_cleanup_unregister(pin_page_destroy);
-  if (processing_timer) {
-    lv_timer_delete(processing_timer);
-    processing_timer = NULL;
-  }
-  processing_callback = NULL;
-  if (restart_timer) {
-    lv_timer_delete(restart_timer);
-    restart_timer = NULL;
-  }
+  ui_oneshot_cancel(&processing_timer);
+  ui_oneshot_cancel(&restart_timer);
   clear_buffers();
   dismiss_processing();
   clear_state();

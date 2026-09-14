@@ -5,6 +5,7 @@
 #include "../../core/ss_whitelist.h"
 #include "../../core/wallet.h"
 #include "../../ui/dialog.h"
+#include "../../ui/oneshot.h"
 #include "../../ui/theme_widgets.h"
 #include "../../ui/wallet_source_picker.h"
 #include "../../utils/session_cleanup.h"
@@ -24,7 +25,7 @@ static uint32_t search_limit = SEARCH_BATCH;
 static void (*on_found)(void) = NULL;
 static void (*on_not_found)(void) = NULL;
 static lv_obj_t *progress_dialog = NULL;
-static lv_timer_t *sweep_timer;
+static ui_oneshot_t sweep_timer;
 
 // Source picker state — persists between invocations (page-scoped)
 static wallet_source_t ac_source = {0, 0};
@@ -123,13 +124,11 @@ static void not_found_confirm_cb(bool confirmed, void *user_data) {
 static void perform_sweep(void) {
   progress_dialog = dialog_show_progress("Verifying", "Checking addresses...",
                                          DIALOG_STYLE_FULLSCREEN);
-  sweep_timer = lv_timer_create(perform_sweep_deferred, 50, NULL);
-  lv_timer_set_repeat_count(sweep_timer, 1);
+  ui_oneshot_start(&sweep_timer, perform_sweep_deferred, 50);
 }
 
 static void perform_sweep_deferred(lv_timer_t *timer) {
   (void)timer;
-  sweep_timer = NULL;
   bool is_testnet = (wallet_get_network() == WALLET_NETWORK_TESTNET);
   const registry_entry_t *reg_entry = NULL;
 
@@ -285,10 +284,7 @@ void address_checker_search_more(void) {
 
 void address_checker_destroy(void) {
   session_cleanup_unregister(address_checker_destroy);
-  if (sweep_timer) {
-    lv_timer_delete(sweep_timer);
-    sweep_timer = NULL;
-  }
+  ui_oneshot_cancel(&sweep_timer);
   dismiss_progress();
   destroy_source_picker();
   if (checked_address) {

@@ -5,6 +5,7 @@
 #include "../core/storage.h"
 #include "../qr/encoder.h"
 #include "../ui/dialog.h"
+#include "../ui/oneshot.h"
 #include "../ui/theme_widgets.h"
 #include "../utils/secure_mem.h"
 #include "../utils/session_cleanup.h"
@@ -18,7 +19,7 @@
 
 static lv_obj_t *main_screen = NULL;
 static lv_obj_t *progress_dialog = NULL;
-static lv_timer_t *save_timer = NULL;
+static ui_oneshot_t save_timer;
 static void (*return_callback)(void) = NULL;
 static storage_location_t target_location;
 
@@ -95,7 +96,6 @@ static void overwrite_confirm_cb(bool confirmed, void *user_data) {
 
 static void deferred_save_cb(lv_timer_t *timer) {
   (void)timer;
-  save_timer = NULL;
 
   if (storage_mnemonic_exists(target_location, pending_id)) {
     if (progress_dialog) {
@@ -129,8 +129,7 @@ static void encrypt_success_cb(const char *id, const uint8_t *envelope,
      before the potentially-blocking storage call */
   progress_dialog =
       dialog_show_progress("KEF", "Saving...", DIALOG_STYLE_OVERLAY);
-  save_timer = lv_timer_create(deferred_save_cb, 50, NULL);
-  lv_timer_set_repeat_count(save_timer, 1);
+  ui_oneshot_start(&save_timer, deferred_save_cb, 50);
 }
 
 /* ---------- Page lifecycle ---------- */
@@ -189,10 +188,7 @@ void store_mnemonic_page_hide(void) {
 
 void store_mnemonic_page_destroy(void) {
   session_cleanup_unregister(store_mnemonic_page_destroy);
-  if (save_timer) {
-    lv_timer_del(save_timer);
-    save_timer = NULL;
-  }
+  ui_oneshot_cancel(&save_timer);
   if (progress_dialog) {
     lv_obj_del(progress_dialog);
     progress_dialog = NULL;

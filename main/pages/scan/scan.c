@@ -19,6 +19,7 @@
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
 #include "../../ui/dialog.h"
+#include "../../ui/oneshot.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
@@ -43,16 +44,7 @@ scan_ctx_t scan_ctx = {
     .qr_format = FORMAT_NONE,
 };
 
-static lv_timer_t *deferred_timer;
-static lv_timer_cb_t deferred_callback;
-
-static void deferred_timer_cb(lv_timer_t *timer) {
-  lv_timer_cb_t callback = deferred_callback;
-  deferred_timer = NULL;
-  deferred_callback = NULL;
-  if (callback)
-    callback(timer);
-}
+static ui_oneshot_t deferred_timer;
 
 // Shows a progress dialog and runs cb from a one-shot timer so LVGL renders
 // the dialog before the slow work starts.
@@ -60,9 +52,7 @@ void scan_defer_with_progress(const char *title, const char *text,
                               lv_timer_cb_t cb) {
   scan_ctx.progress_dialog =
       dialog_show_progress(title, text, DIALOG_STYLE_OVERLAY);
-  deferred_callback = cb;
-  deferred_timer = lv_timer_create(deferred_timer_cb, 50, NULL);
-  lv_timer_set_repeat_count(deferred_timer, 1);
+  ui_oneshot_start(&deferred_timer, cb, 50);
 }
 
 static void scan_kef_return_cb(void);
@@ -517,11 +507,7 @@ void scan_page_hide(void) {
 
 void scan_page_destroy(void) {
   session_cleanup_unregister(scan_page_destroy);
-  if (deferred_timer) {
-    lv_timer_delete(deferred_timer);
-    deferred_timer = NULL;
-  }
-  deferred_callback = NULL;
+  ui_oneshot_cancel(&deferred_timer);
   scan_dismiss_progress();
   scan_export_destroy_menu();
   qr_scanner_page_destroy();
