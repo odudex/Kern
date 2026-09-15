@@ -23,6 +23,35 @@ menu "Kern Configuration"
 
         config KERN_BOARD_WAVE_7B
             bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-7B (1024x600 MIPI DSI)"
+
+        config KERN_BOARD_P4_PICO
+            bool "Waveshare ESP32-P4-Pico + Raspberry Pi 800x480 MIPI DSI display"
+    endchoice
+
+    choice KERN_PICO_DSI_BRIDGE
+        prompt "ESP32-P4-Pico display bridge protocol"
+        depends on KERN_BOARD_P4_PICO
+        default KERN_PICO_DSI_BRIDGE_RPI_TS
+        help
+            Raspberry Pi DSI displays carry no LCD reset or backlight pins;
+            a small MCU at I2C address 0x45 powers the panel and drives the
+            backlight, and a DSI-to-RGB bridge sits in front of the glass.
+            Two incompatible MCU/bridge families exist behind that address.
+
+        config KERN_PICO_DSI_BRIDGE_RPI_TS
+            bool "Raspberry Pi official 7\" touchscreen protocol (TC358762, 1 lane)"
+            help
+                The 2015 Raspberry Pi Touch Display and its many 800x480
+                clones: Atmel MCU registers 0x80.., a Toshiba TC358762
+                bridge configured over DSI generic writes, one data lane,
+                FT5406 touch at 0x38.
+
+        config KERN_PICO_DSI_BRIDGE_WAVESHARE
+            bool "Waveshare DSI LCD protocol (registers 0xAA..0xC2, 2 lanes)"
+            help
+                Waveshare's Raspberry Pi DSI LCD family: MCU registers
+                0xC0/0xC2/0xAC to power up, 0xAB/0xAA for backlight, 0xAD
+                to enable, two data lanes, GT911 or FT5x06 touch.
     endchoice
 
     config KERN_PBKDF2_HW_SHA

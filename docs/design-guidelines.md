@@ -47,6 +47,7 @@ Font sizes are **derived, not hand-picked**. `tools/derive_font_sizes.py` holds 
 |-------|----------------|
 | wave_35 | 16 / 22 |
 | wave_43 | 22 / 30 |
+| p4_pico | 22 / 30 |
 | wave_4b | 24 / 32 |
 | crowpanel | 24 / 34 |
 | wave_7b | 24 / 34 |

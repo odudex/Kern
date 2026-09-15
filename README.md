@@ -19,7 +19,7 @@ It signs PSBTs for single-sig, multisig and miniscript policies on both native s
 
 ## Hardware
 
-Kern supports five Waveshare ESP32-P4 boards and one Elecrow CrowPanel board:
+Kern supports five Waveshare ESP32-P4 boards, one Elecrow CrowPanel board, and the display-less Waveshare ESP32-P4-Pico paired with a Raspberry Pi DSI display:
 
 | Board | Display | Touch | Camera |
 |-------|---------|-------|--------|
@@ -29,8 +29,9 @@ Kern supports five Waveshare ESP32-P4 boards and one Elecrow CrowPanel board:
 | [ESP32-P4-WiFi6-Touch-LCD-4.3](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm) (`wave_43`) | 480x800 MIPI DSI | GT911 | OV5647, included |
 | [ESP32-P4-WiFi6-Touch-LCD-7B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-7b.htm) (`wave_7b`) | 1024x600 MIPI DSI | GT911 | OV5647, sold separately |
 | [CrowPanel Advanced 10.1" ESP32-P4](https://github.com/Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen) and 7" siblings (`crowpanel`) | 1024x600 MIPI DSI | GT911 | SC2336, included |
+| [ESP32-P4-Pico](https://www.waveshare.com/esp32-p4-pico.htm) (`p4_pico`) with a Raspberry Pi 800x480 DSI display | 800x480 MIPI DSI, sold separately | GT911 or FT5x06, on the display | sold separately, OV5647 |
 
-ESP32-P4 does not contain radio (WiFi, BLE), but these boards have a radio in a secondary chip (ESP32-C6 mini). Exploring radio-less, simpler and cheaper ESP32-P4-only boards is part of the project's hardware research.
+ESP32-P4 does not contain radio (WiFi, BLE), but the Touch-LCD and CrowPanel boards have a radio in a secondary chip (ESP32-C6 mini). The ESP32-P4-Pico has no radio chip at all; it is the first radio-less target and needs a Raspberry Pi style DSI display on its DISPLAY connector. The port targets the Raspberry Pi Touch Display protocol (TC358762 bridge, one lane) by default; Waveshare's own DSI LCD family is selectable under `Kern Configuration` in `menuconfig`. Both are untested on hardware so far.
 
 A MIPI CSI camera module is required for all boards. Kern ships drivers for the
 OV5647 and SC2336 sensors and probes for whichever one is attached at boot, so
@@ -72,13 +73,14 @@ git submodule update --init --recursive
 
 ### Building the Project
 
-Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter, one of `wave_4b` (default), `wave_35`, `wave_5`, `wave_43`, `crowpanel`, or `wave_7b`:
+Build with [just](https://github.com/casey/just) (recommended) or `idf.py` directly. All `just` commands accept a board parameter, one of `wave_4b` (default), `wave_35`, `wave_5`, `wave_43`, `crowpanel`, `wave_7b`, or `p4_pico`:
 
 ```bash
 just build              # Build for wave_4b (default)
 just build wave_35      # Build for wave_35
 just build wave_5       # Build for wave_5
 just build wave_43      # Build for wave_43
+just build p4_pico      # Build for the ESP32-P4-Pico + Raspberry Pi DSI display
 just build crowpanel    # Build for CrowPanel 7" / 10.1"
 just build wave_7b      # Build for wave_7b
 just flash wave_5       # Flash for wave_5
@@ -101,6 +103,9 @@ idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_5' buil
 # wave_43
 idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_43' build
 
+# p4_pico
+idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.p4_pico' build
+
 # crowpanel (7" / 10.1")
 idf.py -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.crowpanel' build
 
@@ -121,6 +126,7 @@ just sim                # Run simulator as wave_4b (720x720) with webcam (V4L2)
 just sim wave_35        # Run simulator as wave_35 (320x480)
 just sim wave_5         # Run simulator as wave_5 (720x1280)
 just sim wave_43        # Run simulator as wave_43 (480x800)
+just sim p4_pico        # Run simulator as p4_pico (800x480)
 just sim crowpanel      # Run simulator as crowpanel (1024x600)
 just sim wave_7b        # Run simulator as wave_7b (1024x600)
 just sim-build wave_35  # Build only
@@ -231,6 +237,7 @@ Pre-release firmware is provided **for research and testing purposes only**. Any
 | `wave_43` | Waveshare ESP32-P4-WiFi6-Touch-LCD-4.3 | 480x800 MIPI DSI |
 | `crowpanel` | CrowPanel Advanced 7" / 10.1" ESP32-P4 | 1024x600 MIPI DSI |
 | `wave_7b` | Waveshare ESP32-P4-WiFi6-Touch-LCD-7B | 1024x600 MIPI DSI |
+| `p4_pico` | Waveshare ESP32-P4-Pico + Raspberry Pi DSI display | 800x480 MIPI DSI |
 
 ### Requirements
 

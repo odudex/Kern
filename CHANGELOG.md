@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Board target for the Waveshare ESP32-P4-Pico (`p4_pico`), a display-less module with Raspberry Pi style DSI and CSI connectors and no radio chip, paired with an 800x480 Raspberry Pi DSI display. The display's MCU at I2C 0x45 handles power and backlight, so the BSP speaks the Raspberry Pi Touch Display protocol by default (TC358762 bridge configured over DSI generic writes, one data lane, FT5406 touch) with Waveshare's DSI LCD protocol selectable in menuconfig; the touch controller is probed at boot (GT911 at 0x5D/0x14, FT5x06 at 0x38). Untested on hardware
+
 ### Fixed
 - Camera preview flicker in bright areas on CrowPanel (SC2336): esp_ipa 2.2.0 hunts around the AE target where 2.1.0 did not. The SC2336 tuning now widens the AGC dead band from roughly ±3.5 to ±10 luma around the target, slows the increase and decrease speeds, and recomputes exposure every third frame instead of every frame. A scanner is better served by steady exposure than by precise exposure, and the result is calmer than 0.0.18 was
 

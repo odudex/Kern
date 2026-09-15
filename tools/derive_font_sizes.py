@@ -38,6 +38,7 @@ BOARDS = [
     {"name": "crowpanel", "sdkconfig": "sdkconfig.defaults.crowpanel", "w": 1024, "h": 600, "diag_in": 7.0},
     {"name": "wave_7b", "sdkconfig": "sdkconfig.defaults.wave_7b", "w": 1024, "h": 600, "diag_in": 7.0},
     {"name": "wave_5", "sdkconfig": "sdkconfig.defaults.wave_5", "w": 720, "h": 1280, "diag_in": 5.0},
+    {"name": "p4_pico", "sdkconfig": "sdkconfig.defaults.p4_pico", "w": 800, "h": 480, "diag_in": 7.0},
 ]
 
 # --- Curve knobs (adjust these) ----------------------------------------------

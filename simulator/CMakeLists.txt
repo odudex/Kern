@@ -429,6 +429,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},wave_43>:CONFIG_KERN_BOARD_WAVE_43=1>
     $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
     $<$<STREQUAL:${SIM_BOARD},wave_7b>:CONFIG_KERN_BOARD_WAVE_7B=1>
+    $<$<STREQUAL:${SIM_BOARD},p4_pico>:CONFIG_KERN_BOARD_P4_PICO=1>
 )
 
 target_compile_options(kern_simulator PRIVATE
