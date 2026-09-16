@@ -433,6 +433,7 @@ target_compile_definitions(kern_simulator PRIVATE
 
 target_compile_options(kern_simulator PRIVATE
     -Wall -Wextra
+    -Werror=vla
     -Wno-unused-parameter
     -Wno-unused-function
     -Wno-sign-compare

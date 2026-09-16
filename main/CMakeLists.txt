@@ -41,7 +41,8 @@ idf_component_register(
 # Ignoring a warn_unused_result return is a build error, not a warning. The
 # k_quirc and cUR entry points carry the attribute and report failure that way
 # and nothing else.
-target_compile_options(${COMPONENT_LIB} PRIVATE -Werror=unused-result)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Werror=unused-result
+                                              -Werror=vla)
 
 if(DEFINED FONT_POLICY_WIDTH AND DEFINED FONT_POLICY_HEIGHT)
     find_program(PYTHON3_EXECUTABLE python3 REQUIRED)

@@ -1,4 +1,5 @@
 #include "bip32_path.h"
+#include "ss_whitelist.h"
 
 #include <stdio.h>
 
@@ -122,8 +123,11 @@ bool bip32_path_from_keypath(const unsigned char *raw_keypath,
 bool bip32_path_format_keypath(const unsigned char *raw_keypath,
                                size_t raw_keypath_len, char *buf,
                                size_t buf_size, size_t max_depth) {
-  uint32_t components[max_depth > 0 ? max_depth : 1];
+  uint32_t components[MAX_KEYPATH_TOTAL_DEPTH];
   size_t depth = 0;
+
+  if (max_depth == 0 || max_depth > MAX_KEYPATH_TOTAL_DEPTH)
+    return false;
 
   if (!bip32_path_from_keypath(raw_keypath, raw_keypath_len, components, &depth,
                                max_depth))
