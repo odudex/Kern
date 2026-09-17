@@ -1344,6 +1344,81 @@ static void test_amount_audit_mixed(void) {
   wally_tx_free(prev);
 }
 
+static void test_fee_trust_by_input_count(void) {
+  TEST("psbt_fee_is_trusted: one asserted input trusted, two not, invalid "
+       "never");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+
+  psbt_amount_audit_t audit;
+  psbt_audit_input_amounts(psbt, &audit);
+  if (psbt_fee_is_trusted(&audit)) {
+    FAIL("single missing input trusted");
+    goto done;
+  }
+
+  set_witness_value(psbt, 100000);
+  psbt_audit_input_amounts(psbt, &audit);
+  if (audit.asserted != 1 || !psbt_fee_is_trusted(&audit)) {
+    FAIL("single asserted input not trusted");
+    goto done;
+  }
+
+  struct wally_tx *tx = NULL;
+  wally_psbt_get_global_tx_alloc(psbt, &tx);
+  uint8_t other_txid[32] = {0};
+  other_txid[0] = 0x77;
+  wally_tx_add_raw_input(tx, other_txid, sizeof(other_txid), 0, 0xffffffff,
+                         NULL, 0, NULL, 0);
+  struct wally_psbt *two = NULL;
+  wally_psbt_from_tx(tx, 0, 0, &two);
+  wally_tx_free(tx);
+  if (!two) {
+    FAIL("two-input rebuild");
+    goto done;
+  }
+  struct wally_tx_output *utxo = NULL;
+  wally_tx_output_init_alloc(100000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                             &utxo);
+  wally_psbt_set_input_witness_utxo(two, 0, utxo);
+  wally_psbt_set_input_witness_utxo(two, 1, utxo);
+  wally_tx_output_free(utxo);
+
+  psbt_audit_input_amounts(two, &audit);
+  if (audit.asserted != 2 || psbt_fee_is_trusted(&audit)) {
+    FAIL("two asserted inputs trusted");
+    wally_psbt_free(two);
+    goto done;
+  }
+
+  wally_psbt_set_input_utxo(two, 0, prev);
+  psbt_audit_input_amounts(two, &audit);
+  if (audit.proven != 1 || psbt_fee_is_trusted(&audit)) {
+    FAIL("one proven of two trusted");
+    wally_psbt_free(two);
+    goto done;
+  }
+  wally_psbt_free(two);
+
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+  set_witness_value(psbt, 1000);
+  psbt_audit_input_amounts(psbt, &audit);
+  if (audit.invalid != 1 || psbt_fee_is_trusted(&audit))
+    FAIL("single invalid input trusted");
+  else
+    PASS();
+
+done:
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
 /* ================================================================
  * Sighash and fee-percentage tests
  * ================================================================ */
@@ -2589,6 +2664,7 @@ int main(void) {
   test_amount_fabricated_prev_tx();
   test_amount_understated_witness_loses();
   test_amount_audit_mixed();
+  test_fee_trust_by_input_count();
 
   printf("\n=== sighash and fee tests ===\n\n");
 

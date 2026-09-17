@@ -139,6 +139,20 @@ static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
   return audit->num_inputs > 0 && audit->proven == audit->num_inputs;
 }
 
+// True when the displayed fee cannot be manipulated by lying about an
+// asserted amount. A signature commits to its own input's amount (BIP143) or
+// to every input's (BIP341), so a lie about a single-input transaction yields
+// only an invalid signature. Stealing fee needs two inputs signed in two
+// rounds with the lie moved between them, and needs ALL/DEFAULT sighash, which
+// psbt_sighash_is_supported() enforces. Counts every input, not only owned
+// ones: the two-round attack can hide ownership of the other input per round.
+// Contradictory or absent data is never trusted, whatever the count.
+static inline bool psbt_fee_is_trusted(const psbt_amount_audit_t *audit) {
+  if (audit->num_inputs == 0 || audit->invalid || audit->missing)
+    return false;
+  return audit->num_inputs == 1 || psbt_amounts_are_proven(audit);
+}
+
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
 

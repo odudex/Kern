@@ -799,8 +799,9 @@ static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
 
   /* The fee is inputs minus outputs, and the outputs are committed to by the
    * sighash. The inputs are only as good as their proof, so say so here rather
-   * than let the number read as verified. */
-  if (!psbt_amounts_are_proven(&d->amount_audit)) {
+   * than let the number read as verified. A single input is exempt: its
+   * signature commits to the amount, so a lie there cannot confirm. */
+  if (!psbt_fee_is_trusted(&d->amount_audit)) {
     char note[160];
     snprintf(note, sizeof(note),
              LV_SYMBOL_WARNING " Unproven fee: %zu of %zu input amounts are "
