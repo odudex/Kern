@@ -394,20 +394,24 @@ unsigned char *mnemonic_to_compact_seedqr(const char *mnemonic,
   size_t entropy_len = 0;
   if (bip39_mnemonic_to_bytes(NULL, mnemonic, entropy, sizeof(entropy),
                               &entropy_len) != WALLY_OK) {
+    secure_memzero(entropy, sizeof(entropy));
     return NULL;
   }
 
   if (entropy_len != COMPACT_SEEDQR_12_WORDS_LEN &&
       entropy_len != COMPACT_SEEDQR_24_WORDS_LEN) {
+    secure_memzero(entropy, sizeof(entropy));
     return NULL;
   }
 
   unsigned char *result = kern_secret_alloc(entropy_len);
   if (!result) {
+    secure_memzero(entropy, sizeof(entropy));
     return NULL;
   }
 
   memcpy(result, entropy, entropy_len);
+  secure_memzero(entropy, sizeof(entropy));
   *out_len = entropy_len;
   return result;
 }
