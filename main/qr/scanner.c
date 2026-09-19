@@ -11,6 +11,7 @@
 #include "../utils/secure_mem.h"
 #include "../utils/session_cleanup.h"
 #include "parser.h"
+#include "progress.h"
 #include <bsp/esp-bsp.h>
 #include <driver/ppa.h>
 #include <esp_log.h>
@@ -51,8 +52,7 @@
 #define QR_DECODE_TASK_STACK_SIZE 32768
 #define QR_DECODE_TASK_PRIORITY 5
 #define PROGRESS_BAR_HEIGHT 20
-#define PROGRESS_FRAME_PADD 2
-#define PROGRESS_BLOC_PAD 1
+#define PROGRESS_FRAME_INSET 6
 #define PROGRESS_UPDATE_INTERVAL_MS 50
 #define QR_ROI_MARGIN_PERCENT 20
 #define QR_ROI_MIN_SIZE 64
@@ -63,7 +63,6 @@
 // processed so PPA work and full-image LVGL invalidations don't starve
 // touch handling; the preview still updates enough to judge exposure.
 #define SETTINGS_PREVIEW_FRAME_DIVISOR 8
-#define MAX_QR_PARTS 100
 #define RGB565_RED_BITS 5
 #define RGB565_GREEN_BITS 6
 #define RGB565_BLUE_BITS 5
@@ -84,9 +83,8 @@ typedef struct {
 
 typedef struct {
   int format;
-  int total;
-  int part_index;
   float percent_complete;
+  qr_part_progress_t parts;
 } qr_progress_update_t;
 
 typedef struct {
@@ -103,8 +101,11 @@ static const char *TAG = "QR_SCANNER";
 static lv_obj_t *qr_scanner_screen = NULL;
 static lv_obj_t *camera_img = NULL;
 static lv_obj_t *progress_frame = NULL;
-static lv_obj_t **progress_rectangles = NULL;
-static int progress_rectangles_count = 0;
+static lv_obj_t *progress_grid = NULL;
+static lv_obj_t *progress_label = NULL;
+static qr_part_progress_t displayed_progress;
+static qr_progress_grid_t progress_layout;
+static qr_progress_canvas_t progress_canvas;
 static lv_obj_t *ur_progress_bar = NULL;
 static lv_obj_t *ur_progress_indicator = NULL;
 static int ur_progress_bar_inner_width = 0;
@@ -131,14 +132,12 @@ static uint8_t *held_decode_buffer = NULL;
 static k_quirc_t *qr_decoder = NULL;
 static TaskHandle_t qr_decode_task_handle = NULL;
 static QueueHandle_t qr_frame_queue = NULL;
-// Progress updates from the decoder task, drained fully by the LVGL timer.
-// Depth 2 so two distinct part indices within one timer period both land.
+// Latest complete progress snapshot, consumed by the LVGL timer.
 static QueueHandle_t qr_progress_queue = NULL;
 // Buffers the decoder is done reading, returned to the camera task.
 static QueueHandle_t qr_buffer_return_queue = NULL;
 static SemaphoreHandle_t qr_task_done_sem = NULL;
 static QRPartParser *qr_parser = NULL;
-static int previously_parsed = -1;
 
 // Direct RGB565-to-grayscale lookup table (64KB, initialized once)
 static uint8_t *rgb565_gray_lut = NULL;
@@ -188,71 +187,113 @@ static void qr_decoder_cleanup(void);
 static bool camera_run(void);
 static bool camera_init(void);
 static void create_progress_indicators(int total_parts);
-static void update_progress_indicator(int part_index);
+static void update_progress_indicators(const qr_part_progress_t *progress);
 static void cleanup_progress_indicators(void);
 static void create_ur_progress_bar(void);
 static void update_ur_progress_bar(float percent_complete);
 static void cleanup_ur_progress_bar(void);
 static void process_pending_progress_update(void);
 
-static void create_progress_indicators(int total_parts) {
-  if (total_parts <= 1 || total_parts > MAX_QR_PARTS || !qr_scanner_screen) {
-    return;
-  }
-
-  int progress_frame_width = lv_obj_get_width(qr_scanner_screen) * 80 / 100;
-  int rect_width = progress_frame_width / total_parts;
-  rect_width -= PROGRESS_BLOC_PAD;
-  progress_frame_width = total_parts * rect_width + 1;
-  progress_frame_width += 2 * PROGRESS_FRAME_PADD + 2;
-
-  progress_frame = lv_obj_create(qr_scanner_screen);
-  lv_obj_set_size(progress_frame, progress_frame_width, PROGRESS_BAR_HEIGHT);
-  lv_obj_align(progress_frame, LV_ALIGN_BOTTOM_MID, 0, -10);
-  theme_apply_frame(progress_frame);
-  lv_obj_set_style_pad_all(progress_frame, 2, 0);
-
-  progress_rectangles = malloc(total_parts * sizeof(lv_obj_t *));
-  if (!progress_rectangles) {
-    ESP_LOGE(TAG, "Failed to allocate progress rectangles array");
-    lv_obj_del(progress_frame);
-    progress_frame = NULL;
-    return;
-  }
-  progress_rectangles_count = total_parts;
-
-  lv_obj_update_layout(progress_frame);
-
-  for (int i = 0; i < total_parts; i++) {
-    progress_rectangles[i] = lv_obj_create(progress_frame);
-    lv_obj_set_size(progress_rectangles[i], rect_width - PROGRESS_BLOC_PAD, 12);
-    lv_obj_set_pos(progress_rectangles[i], i * rect_width, 0);
-    theme_apply_solid_rectangle(progress_rectangles[i]);
-  }
+// The canvas only borrows its pixels, so they must outlive it: tie the buffer
+// to the widget rather than to the order the page is torn down in.
+static void progress_grid_deleted_cb(lv_event_t *event) {
+  lv_draw_buf_destroy(lv_event_get_user_data(event));
 }
 
-static void update_progress_indicator(int part_index) {
-  if (!progress_rectangles || part_index < 0 ||
-      part_index >= progress_rectangles_count) {
+// The grid covers the camera preview, which LVGL redraws on every frame. One
+// cell per draw task would queue up to two thousand tasks per frame, so cells
+// are painted into a canvas when they change and blitted as a single image.
+static void create_progress_grid(void) {
+  lv_draw_buf_t *buf =
+      lv_draw_buf_create(progress_layout.width, progress_layout.height,
+                         LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+  if (!buf)
+    return;
+
+  progress_grid = lv_canvas_create(progress_frame);
+  if (!progress_grid) {
+    lv_draw_buf_destroy(buf);
+    return;
+  }
+  lv_canvas_set_draw_buf(progress_grid, buf);
+  lv_obj_add_event_cb(progress_grid, progress_grid_deleted_cb, LV_EVENT_DELETE,
+                      buf);
+  lv_obj_set_size(progress_grid, progress_layout.width, progress_layout.height);
+  lv_obj_align(progress_grid, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+  progress_canvas = (qr_progress_canvas_t){
+      .pixels = (uint16_t *)buf->data,
+      .stride = buf->header.stride / sizeof(uint16_t),
+      .gap = lv_color_to_u16(panel_color()),
+      .missing = lv_color_to_u16(bg_color()),
+      .missing_border = lv_color_to_u16(
+          lv_color_mix(secondary_color(), bg_color(), LV_OPA_50)),
+      .received = lv_color_to_u16(primary_color()),
+      .latest = lv_color_to_u16(highlight_color()),
+  };
+}
+
+static void create_progress_indicators(int total_parts) {
+  if (total_parts <= 1 || !qr_scanner_screen)
+    return;
+
+  lv_obj_update_layout(qr_scanner_screen);
+  int width = lv_obj_get_width(qr_scanner_screen) * 80 / 100;
+  progress_layout =
+      qr_progress_grid_layout(total_parts, width - 2 * PROGRESS_FRAME_INSET);
+  if (!progress_layout.columns)
+    return;
+
+  progress_frame = lv_obj_create(qr_scanner_screen);
+  theme_apply_frame(progress_frame);
+  lv_obj_set_style_bg_opa(progress_frame, LV_OPA_COVER, 0);
+  lv_obj_set_style_pad_all(progress_frame, PROGRESS_FRAME_INSET - 2, 0);
+  lv_obj_remove_flag(progress_frame, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(progress_frame, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+  progress_label = theme_create_label(progress_frame, "", false);
+  lv_obj_align(progress_label, LV_ALIGN_TOP_MID, 0, 0);
+
+  // Without memory for the grid the frame count alone still shows progress.
+  create_progress_grid();
+  int height =
+      lv_font_get_line_height(theme_font_small()) + 2 * PROGRESS_FRAME_INSET;
+  if (progress_grid)
+    height += progress_layout.height + 4;
+  lv_obj_set_size(progress_frame,
+                  progress_layout.width + 2 * PROGRESS_FRAME_INSET, height);
+  lv_obj_align(progress_frame, LV_ALIGN_BOTTOM_MID, 0, -10);
+}
+
+static void update_progress_indicators(const qr_part_progress_t *progress) {
+  bool created = false;
+  if (!progress_frame) {
+    create_progress_indicators(progress->total);
+    if (!progress_frame)
+      return;
+    created = true;
+  } else if (displayed_progress.received == progress->received &&
+             displayed_progress.latest == progress->latest) {
     return;
   }
 
-  if (previously_parsed != part_index) {
-    lv_obj_set_style_bg_color(progress_rectangles[part_index],
-                              highlight_color(), 0);
-    if (previously_parsed >= 0) {
-      lv_obj_set_style_bg_color(progress_rectangles[previously_parsed],
-                                primary_color(), 0);
-    }
-    previously_parsed = part_index;
-  }
+  if (created || displayed_progress.received != progress->received)
+    lv_label_set_text_fmt(progress_label, "%d / %d frames", progress->received,
+                          progress->total);
+  if (progress_grid &&
+      qr_progress_paint(&progress_canvas, &progress_layout,
+                        created ? NULL : &displayed_progress, progress))
+    lv_obj_invalidate(progress_grid);
+  displayed_progress = *progress;
 }
 
 static void cleanup_progress_indicators(void) {
-  SAFE_FREE_STATIC(progress_rectangles);
-  progress_rectangles_count = 0;
   progress_frame = NULL;
-  previously_parsed = -1;
+  progress_grid = NULL;
+  progress_label = NULL;
+  progress_canvas = (qr_progress_canvas_t){0};
+  displayed_progress = (qr_part_progress_t){0};
+  progress_layout = (qr_progress_grid_t){0};
 }
 
 static void create_ur_progress_bar(void) {
@@ -301,7 +342,7 @@ static void process_pending_progress_update(void) {
     return;
 
   qr_progress_update_t update;
-  while (xQueueReceive(qr_progress_queue, &update, 0) == pdTRUE) {
+  if (xQueueReceive(qr_progress_queue, &update, 0) == pdTRUE) {
     if (closing || destruction_in_progress || !qr_scanner_screen)
       return;
 
@@ -311,15 +352,12 @@ static void process_pending_progress_update(void) {
       if (!ur_progress_bar)
         create_ur_progress_bar();
       update_ur_progress_bar(update.percent_complete);
-      continue;
+      return;
     }
 
     if ((update.format == FORMAT_PMOFN || update.format == FORMAT_BBQR) &&
-        update.total > 1) {
-      if (!progress_frame)
-        create_progress_indicators(update.total);
-      if (update.part_index >= 0)
-        update_progress_indicator(update.part_index);
+        update.parts.total > 1) {
+      update_progress_indicators(&update.parts);
     }
   }
 }
@@ -656,6 +694,7 @@ static void qr_decode_task(void *pvParameters) {
   qr_frame_data_t frame_data;
   k_quirc_result_t qr_result;
   qr_decode_roi_t roi = {0};
+  qr_progress_update_t progress_update = {0};
 
   while (true) {
     if (closing || destruction_in_progress)
@@ -728,12 +767,7 @@ static void qr_decode_task(void *pvParameters) {
               qr_result.data.payload_len);
 
           if (part_index >= 0 || qr_parser->total == 1) {
-            qr_progress_update_t progress_update = {
-                .format = qr_parser->format,
-                .total = qr_parser->total,
-                .part_index = part_index,
-                .percent_complete = 0.0f,
-            };
+            progress_update.format = qr_parser->format;
             bool publish_progress = (qr_parser->format == FORMAT_PMOFN ||
                                      qr_parser->format == FORMAT_BBQR) &&
                                     qr_parser->total > 1;
@@ -743,14 +777,13 @@ static void qr_decode_task(void *pvParameters) {
                   ur_decoder_estimated_percent_complete(
                       (ur_decoder_t *)qr_parser->ur_decoder);
               publish_progress = true;
+            } else if (publish_progress) {
+              progress_update.parts.total = qr_parser->total;
+              qr_part_progress_record(&progress_update.parts, part_index);
             }
 
-            if (publish_progress && qr_progress_queue &&
-                xQueueSend(qr_progress_queue, &progress_update, 0) != pdTRUE) {
-              qr_progress_update_t stale_update;
-              xQueueReceive(qr_progress_queue, &stale_update, 0);
-              xQueueSend(qr_progress_queue, &progress_update, 0);
-            }
+            if (publish_progress && qr_progress_queue)
+              xQueueOverwrite(qr_progress_queue, &progress_update);
 
             if (qr_parser_is_complete(qr_parser)) {
               scan_completed = true;
@@ -835,7 +868,7 @@ static bool qr_decoder_init(uint32_t width, uint32_t height) {
     goto error;
   }
 
-  qr_progress_queue = xQueueCreate(2, sizeof(qr_progress_update_t));
+  qr_progress_queue = xQueueCreate(1, sizeof(qr_progress_update_t));
   if (!qr_progress_queue) {
     ESP_LOGE(TAG, "Failed to create QR progress queue");
     goto error;

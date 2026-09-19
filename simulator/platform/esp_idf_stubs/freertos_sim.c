@@ -269,6 +269,18 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t timeout)
     return pdPASS;
 }
 
+BaseType_t xQueueOverwrite(QueueHandle_t queue, const void *item) {
+    queue_impl_t *q = (queue_impl_t *)queue;
+    if (!q || !item || q->capacity != 1) return pdFAIL;
+
+    pthread_mutex_lock(&q->mutex);
+    memcpy(q->buffer, item, q->item_size);
+    q->count = 1;
+    pthread_cond_signal(&q->cond_not_empty);
+    pthread_mutex_unlock(&q->mutex);
+    return pdPASS;
+}
+
 BaseType_t xQueueReceive(QueueHandle_t queue, void *buffer, TickType_t timeout) {
     queue_impl_t *q = (queue_impl_t *)queue;
     if (!q || !buffer) return pdFAIL;
