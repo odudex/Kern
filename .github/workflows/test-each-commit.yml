@@ -73,7 +73,11 @@ jobs:
         run: git log -1 --oneline
 
       - name: Install check dependencies
-        run: apt-get update && apt-get install -y clang-format zlib1g-dev libmbedtls-dev
+        run: apt-get update && apt-get install -y zlib1g-dev libmbedtls-dev
+
+      # Into the IDF Python env, which export.sh puts on PATH for the checks.
+      - name: Install clang-format 21
+        run: . $IDF_PATH/export.sh && pip install 'clang-format==21.1.*'
 
       - name: Configure git identity (required by rebase)
         run: |

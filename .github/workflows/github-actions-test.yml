@@ -12,8 +12,8 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: 'recursive'
-    - name: Install clang-format
-      run: sudo apt-get update && sudo apt-get install -y clang-format
+    - name: Install clang-format 21
+      run: pipx install 'clang-format==21.1.*'
     - name: Check formatting
       run: ./scripts/format.sh --check
 

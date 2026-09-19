@@ -32,7 +32,7 @@ Do not introduce UI dependencies into core modules. If a core function needs use
   ```bash
   ./scripts/format.sh
   ```
-  This runs `clang-format` (provided by ESP-IDF) on all `.c` and `.h` files in `main/` and first-party components.
+  This runs `clang-format` on all `.c` and `.h` files in `main/` and first-party components. It requires clang-format 21, the major ESP-IDF v6.1 ships: install it with `$IDF_PATH/tools/idf_tools.py install esp-clang` and re-source `export.sh`, or with `pip install 'clang-format==21.1.*'`, or enter `nix develop`. Other majors format a few constructs differently, so the script refuses to run with them; set `CLANG_FORMAT=/path/to/clang-format` if the right one is not first on your PATH.
 
 ### Static Analysis
 

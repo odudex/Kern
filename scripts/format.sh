@@ -16,6 +16,25 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/.." && pwd))"
 
+# clang-format's defaults drift between majors, so every host and CI must run
+# the same one. 21 is the major ESP-IDF v6.1 ships as esp-clang.
+CLANG_FORMAT="${CLANG_FORMAT:-clang-format}"
+REQUIRED_MAJOR=21
+if ! command -v "$CLANG_FORMAT" >/dev/null 2>&1; then
+    echo "error: $CLANG_FORMAT not found" >&2
+    exit 1
+fi
+VERSION_LINE="$("$CLANG_FORMAT" --version)"
+MAJOR="$(sed -n 's/.*clang-format version \([0-9]*\).*/\1/p' <<< "$VERSION_LINE")"
+if [ "$MAJOR" != "$REQUIRED_MAJOR" ]; then
+    echo "error: clang-format $REQUIRED_MAJOR required, found: $VERSION_LINE" >&2
+    echo "  ESP-IDF: \$IDF_PATH/tools/idf_tools.py install esp-clang, then re-source export.sh" >&2
+    echo "  pip:     pip install 'clang-format==$REQUIRED_MAJOR.1.*'" >&2
+    echo "  Nix:     nix develop" >&2
+    echo "  or set CLANG_FORMAT=/path/to/clang-format" >&2
+    exit 1
+fi
+
 DIRS=(
     "$REPO_ROOT/main"
     "$REPO_ROOT/components/secure_memory"
@@ -51,7 +70,7 @@ for dir in "${DIRS[@]}"; do
         continue
     fi
     while IFS= read -r -d '' file; do
-        if ! clang-format $FORMAT_ARGS "$file"; then
+        if ! "$CLANG_FORMAT" $FORMAT_ARGS "$file"; then
             FAILED=true
         fi
     done < <(find "$dir" -type f \( -name "*.c" -o -name "*.h" \) -not -path "*/build/*" \
@@ -61,7 +80,7 @@ done
 
 for file in "$REPO_ROOT/components/libwally-core/kern_wally.c" \
             "$REPO_ROOT/components/libwally-core/kern_wally.h"; do
-    if ! clang-format $FORMAT_ARGS "$file"; then
+    if ! "$CLANG_FORMAT" $FORMAT_ARGS "$file"; then
         FAILED=true
     fi
 done

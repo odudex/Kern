@@ -21,15 +21,15 @@
         let
           pkgs = import nixpkgs { inherit system; };
 
-          clangFormat = pkgs.runCommand "clang-format-18" { } ''
-            mkdir -p $out/bin
-            ln -s ${pkgs.lib.getBin pkgs.llvmPackages_18.clang-unwrapped}/bin/clang-format $out/bin/clang-format
-          '';
+          # LLVM 21 is the major ESP-IDF 6.1 ships as esp-clang and the one
+          # scripts/format.sh requires: clang-format's defaults drift between
+          # majors, so every host has to run the same one.
+          llvm = pkgs.llvmPackages_21;
 
           # Build the shell with clang everywhere: it is the native toolchain
           # on Darwin, and it keeps the host compiler the same on both
           # platforms so .clang-tidy / .clangd see one set of builtin headers.
-          mkShell = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; };
+          mkShell = pkgs.mkShell.override { stdenv = llvm.stdenv; };
         in
         {
           default = mkShell {
@@ -38,10 +38,12 @@
             buildInputs = [
               # clang-format, clang-tidy and clangd, for scripts/format.sh
               # and the checked-in .clang-tidy / .clangd configs.
-              pkgs.clang-tools
+              llvm.clang-tools
               pkgs.cmake
               pkgs.gnumake
               pkgs.just
+              # The simulator fetches LVGL with FetchContent, which runs git.
+              pkgs.git
               # nproc, used by the simulator recipes, is GNU-only.
               pkgs.coreutils
               pkgs.zlib
@@ -51,7 +53,6 @@
             ];
 
             shellHook = ''
-              export PATH="${clangFormat}/bin:$PATH"
               echo "Kern host-tools shell ready"
               echo "  clang:      $(clang --version | head -1)"
               echo "  format:     $(clang-format --version)"
