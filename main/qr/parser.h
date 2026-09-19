@@ -52,7 +52,6 @@ typedef struct {
 typedef struct {
   char encoding;  /**< Encoding type */
   char file_type; /**< File type identifier */
-  char *payload;  /**< Decoded payload */
 } BBQrCode;
 
 /**
@@ -72,6 +71,7 @@ typedef struct {
   size_t stored_bytes; /**< Aggregate bytes held by parts */
   bool failed;         /**< A terminal parser failure occurred */
   bool alloc_failed;   /**< The failure was an allocation failure */
+  bool too_large;      /**< The failure was an exceeded resource limit */
 } QRPartParser;
 
 /**

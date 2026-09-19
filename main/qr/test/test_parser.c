@@ -1,4 +1,5 @@
 #include "../parser.h"
+#include "bbqr.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -145,6 +146,7 @@ static void test_pmofn_rejects_aggregate_budget_at_insertion(void) {
   CHECK(qr_parser_parse(parser, large) == 0);
   CHECK(qr_parser_parse(parser, "p2of2 B") == -1);
   CHECK(qr_parser_is_failed(parser));
+  CHECK(parser->too_large);
   CHECK(qr_parser_parsed_count(parser) == 1);
   free(large);
   qr_parser_destroy(parser);
@@ -214,8 +216,180 @@ static void test_bbqr_rejects_part_count_over_limit(void) {
   CHECK(parser != NULL);
   CHECK(qr_parser_parse(parser, "B$HUSH0041") == -1);
   CHECK(qr_parser_is_failed(parser));
+  CHECK(parser->too_large);
   CHECK(qr_parser_parsed_count(parser) == 0);
   qr_parser_destroy(parser);
+}
+
+static char *bbqr_frame(int index, int total, size_t payload_len) {
+  char *frame = malloc(BBQR_HEADER_LEN + payload_len + 1);
+  if (!frame)
+    return NULL;
+  memcpy(frame, "B$HP", 4);
+  bbqr_base36_encode(total, &frame[4], &frame[5]);
+  bbqr_base36_encode(index, &frame[6], &frame[7]);
+  memset(frame + BBQR_HEADER_LEN, 'A', payload_len);
+  frame[BBQR_HEADER_LEN + payload_len] = '\0';
+  return frame;
+}
+
+static void test_bbqr_rejects_oversized_sequence_on_first_frame(void) {
+  // Realistic QR payloads, even HEX lengths: 1023 * 1026 exceeds 1 MiB.
+  char *frame = bbqr_frame(0, 1024, 1026);
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  CHECK(frame != NULL);
+  CHECK(qr_parser_parse(parser, frame) == -1);
+  CHECK(qr_parser_is_failed(parser));
+  CHECK(parser->too_large);
+  CHECK(!parser->alloc_failed);
+  CHECK(qr_parser_parsed_count(parser) == 0);
+  free(frame);
+  qr_parser_destroy(parser);
+}
+
+static void test_bbqr_large_roundtrips(void) {
+  const int totals[] = {100, 101, 1024};
+  for (size_t t = 0; t < sizeof(totals) / sizeof(totals[0]); t++) {
+    int total = totals[t];
+    QRPartParser *parser = qr_parser_create();
+    CHECK(parser != NULL);
+    for (int i = total - 1; i >= 0; i--) {
+      // Reverse order, including last-frame-first and repeated frames.
+      char *frame = bbqr_frame(i, total, 1024);
+      CHECK(frame != NULL);
+      CHECK(qr_parser_parse(parser, frame) == i);
+      CHECK(qr_parser_parse(parser, frame) == i);
+      CHECK(qr_parser_parsed_count(parser) == total - i);
+      CHECK(qr_parser_is_complete(parser) == (i == 0));
+      free(frame);
+    }
+    CHECK(parser->stored_bytes == (size_t)total * 1024);
+    size_t len = 0;
+    char *result = qr_parser_result(parser, &len);
+    CHECK(result != NULL);
+    CHECK(len == (size_t)total * 512);
+    qr_parser_destroy(parser); // The result belongs entirely to the caller.
+    for (size_t i = 0; i < len; i++)
+      CHECK((unsigned char)result[i] == 0xAA);
+    CHECK(result[len] == '\0');
+    free(result);
+  }
+}
+
+static void test_bbqr_short_last_frame_arrives_first(void) {
+  for (size_t payload_len = 1024; payload_len <= 1026; payload_len += 2) {
+    QRPartParser *parser = qr_parser_create();
+    CHECK(parser != NULL);
+    char *last = bbqr_frame(1023, 1024, 2);
+    CHECK(last != NULL);
+    CHECK(qr_parser_parse(parser, last) == 1023);
+    CHECK(!qr_parser_is_failed(parser));
+    free(last);
+    for (int i = 0; i < 1023; i++) {
+      char *full = bbqr_frame(i, 1024, payload_len);
+      CHECK(full != NULL);
+      int rc = qr_parser_parse(parser, full);
+      free(full);
+      if (payload_len == 1026) {
+        CHECK(rc == -1);
+        CHECK(parser->too_large);
+        CHECK(parser->parts_count == 1);
+        break;
+      }
+      CHECK(rc == i);
+    }
+    if (payload_len == 1024) {
+      CHECK(qr_parser_is_complete(parser));
+      size_t len = 0;
+      char *result = qr_parser_result(parser, &len);
+      CHECK(result != NULL);
+      CHECK(len == 1023 * 512 + 1);
+      CHECK(result[len] == '\0');
+      free(result);
+    }
+    qr_parser_destroy(parser);
+  }
+}
+
+static void test_pmofn_variable_lengths_within_budget(void) {
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  for (int i = 1; i <= 1024; i++) {
+    char *frame = pmofn_frame(i, 1024, i == 1 ? 1028 : 1000, 'A');
+    CHECK(frame != NULL);
+    CHECK(qr_parser_parse(parser, frame) == i - 1);
+    free(frame);
+  }
+  CHECK(qr_parser_is_complete(parser));
+  CHECK(parser->stored_bytes == 1024028);
+  size_t len = 0;
+  char *result = qr_parser_result(parser, &len);
+  CHECK(result != NULL);
+  CHECK(len == 1024028);
+  free(result);
+  qr_parser_destroy(parser);
+}
+
+static void test_identical_duplicates_do_not_allocate(void) {
+  const char *frames[] = {"p1of2 AAAA", "B$HP0200AAAA"};
+  for (size_t i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {
+    QRPartParser *parser = qr_parser_create();
+    CHECK(parser != NULL);
+    CHECK(qr_parser_parse(parser, frames[i]) == 0);
+    malloc_fail_countdown = 1;
+    int rc = qr_parser_parse(parser, frames[i]);
+    int remaining = malloc_fail_countdown;
+    malloc_fail_countdown = 0;
+    CHECK(rc == 0);
+    CHECK(remaining == 1);
+    CHECK(!qr_parser_is_failed(parser));
+    CHECK(parser->parts_count == 1);
+    CHECK(parser->stored_bytes == 4);
+    qr_parser_destroy(parser);
+  }
+}
+
+static void test_bbqr_binary_result_encodings(void) {
+  // All three encodings must return caller-owned, terminated binary data.
+  const char *frames[] = {"B$HP010000FF", "B$2P0100AD7Q", "B$ZP0100MP4A6AA"};
+  for (size_t i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {
+    QRPartParser *parser = qr_parser_create();
+    CHECK(parser != NULL);
+    CHECK(qr_parser_parse(parser, frames[i]) == 0);
+    size_t len = 99;
+    // HEX/Base32 need just the assembled input and decoded output allocations;
+    // a third allocation for a retained result copy would fail this test.
+    if (i < 2)
+      malloc_fail_countdown = 3;
+    char *result = qr_parser_result(parser, &len);
+    int remaining = malloc_fail_countdown;
+    malloc_fail_countdown = 0;
+    CHECK(result != NULL);
+    CHECK(i >= 2 || remaining == 1);
+    CHECK(len == 2);
+    qr_parser_destroy(parser);
+    CHECK(result[0] == 0 && (unsigned char)result[1] == 0xFF);
+    CHECK(result[2] == 0);
+    free(result);
+  }
+}
+
+static void test_bbqr_result_failure_clears_length(void) {
+  const char *frames[] = {"B$HP0100AA", "B$HP0100A"};
+  for (size_t i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {
+    QRPartParser *parser = qr_parser_create();
+    CHECK(parser != NULL);
+    CHECK(qr_parser_parse(parser, frames[i]) == 0);
+    // Exercise both allocation failure and invalid encoded data.
+    malloc_fail_countdown = i == 0 ? 1 : 0;
+    size_t len = 99;
+    char *result = qr_parser_result(parser, &len);
+    malloc_fail_countdown = 0;
+    CHECK(result == NULL);
+    CHECK(len == 0);
+    qr_parser_destroy(parser);
+  }
 }
 
 static void test_valid_bbqr_still_assembles(void) {
@@ -261,6 +435,13 @@ int main(void) {
   test_metadata_failure_is_not_an_allocation_failure();
   test_bbqr_binds_total_encoding_and_file_type();
   test_bbqr_rejects_part_count_over_limit();
+  test_bbqr_rejects_oversized_sequence_on_first_frame();
+  test_bbqr_large_roundtrips();
+  test_bbqr_short_last_frame_arrives_first();
+  test_pmofn_variable_lengths_within_budget();
+  test_identical_duplicates_do_not_allocate();
+  test_bbqr_binary_result_encodings();
+  test_bbqr_result_failure_clears_length();
   test_valid_bbqr_still_assembles();
   test_valid_ur_still_processes();
 

@@ -45,6 +45,19 @@ static bool fail_alloc(QRPartParser *parser) {
   return false;
 }
 
+static bool fail_too_large(QRPartParser *parser) {
+  parser->too_large = true;
+  parser->failed = true;
+  return false;
+}
+
+// BBQr parts have equal lengths except for the shorter last part. This is a
+// lower bound even if the last part arrives first; PMOFN has no such guarantee.
+static bool sequence_exceeds_budget(int total, size_t part_len) {
+  return total > 1 &&
+         part_len > QR_PARSER_MAX_STORED_BYTES / (size_t)(total - 1);
+}
+
 QRPartParser *qr_parser_create(void) {
   QRPartParser *parser = (QRPartParser *)calloc(1, sizeof(QRPartParser));
   if (!parser)
@@ -77,7 +90,6 @@ void qr_parser_destroy(QRPartParser *parser) {
   }
 
   if (parser->bbqr) {
-    free(parser->bbqr->payload);
     free(parser->bbqr);
   }
 
@@ -119,11 +131,14 @@ static bool add_part(QRPartParser *parser, int index, const char *data,
   // Check if part already exists
   for (int i = 0; i < parser->parts_count; i++) {
     if (parser->parts[i]->index == index) {
+      if (parser->parts[i]->data_len == data_len &&
+          memcmp(parser->parts[i]->data, data, data_len) == 0) {
+        return true;
+      }
       // Update existing part
       size_t retained_bytes = parser->stored_bytes - parser->parts[i]->data_len;
       if (data_len > QR_PARSER_MAX_STORED_BYTES - retained_bytes) {
-        parser->failed = true;
-        return false;
+        return fail_too_large(parser);
       }
       char *replacement = (char *)malloc(data_len + 1);
       if (!replacement) {
@@ -141,8 +156,7 @@ static bool add_part(QRPartParser *parser, int index, const char *data,
 
   if (parser->parts_count >= QR_PARSER_MAX_MULTIPART_PARTS ||
       data_len > QR_PARSER_MAX_STORED_BYTES - parser->stored_bytes) {
-    parser->failed = true;
-    return false;
+    return fail_too_large(parser);
   }
 
   // Resize if needed
@@ -211,6 +225,10 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     if (parser->total != -1 && parser->total != total) {
       return fail_parser(parser);
     }
+    if (total > QR_PARSER_MAX_MULTIPART_PARTS) {
+      fail_too_large(parser);
+      return -1;
+    }
     if (!add_part(parser, index, part, part_len)) {
       return -1;
     }
@@ -239,11 +257,15 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     if (!parser->bbqr || !bbqr_parse_part(data, data_len, &part)) {
       return fail_parser(parser);
     }
-    if (part.total > QR_PARSER_MAX_MULTIPART_PARTS ||
-        (parser->total != -1 && parser->total != part.total) ||
+    if ((parser->total != -1 && parser->total != part.total) ||
         parser->bbqr->encoding != part.encoding ||
         parser->bbqr->file_type != part.file_type) {
       return fail_parser(parser);
+    }
+    if (part.total > QR_PARSER_MAX_MULTIPART_PARTS ||
+        sequence_exceeds_budget(part.total, part.payload_len)) {
+      fail_too_large(parser);
+      return -1;
     }
     // Store payload (payload_len may differ from strlen if binary)
     if (!add_part(parser, part.index, part.payload, part.payload_len)) {
@@ -308,6 +330,8 @@ static int compare_parts(const void *a, const void *b) {
 }
 
 char *qr_parser_result(QRPartParser *parser, size_t *result_len) {
+  if (result_len)
+    *result_len = 0;
   if (!parser || parser->failed) {
     return NULL;
   }
@@ -317,98 +341,47 @@ char *qr_parser_result(QRPartParser *parser, size_t *result_len) {
     // This is because UR results are binary CBOR data, not text strings
     const char *marker = "UR_RESULT";
     char *result = strdup(marker);
+    if (!result) {
+      fail_alloc(parser);
+      return NULL;
+    }
     if (result_len) {
       *result_len = strlen(marker);
     }
     return result;
   }
 
-  if (parser->format == FORMAT_BBQR) {
-    // Sort parts by index
-    qsort(parser->parts, parser->parts_count, sizeof(QRPart *), compare_parts);
-
-    // Calculate total payload length
-    size_t total_payload_len = 0;
-    for (int i = 0; i < parser->parts_count; i++) {
-      if (total_payload_len + parser->parts[i]->data_len < total_payload_len ||
-          total_payload_len + parser->parts[i]->data_len >
-              QR_PARSER_MAX_STORED_BYTES) {
-        return NULL;
-      }
-      total_payload_len += parser->parts[i]->data_len;
-    }
-
-    // Combine payloads
-    char *combined = (char *)malloc(total_payload_len + 1);
-    if (!combined) {
-      return NULL;
-    }
-
-    size_t offset = 0;
-    for (int i = 0; i < parser->parts_count; i++) {
-      memcpy(combined + offset, parser->parts[i]->data,
-             parser->parts[i]->data_len);
-      offset += parser->parts[i]->data_len;
-    }
-    combined[total_payload_len] = '\0';
-
-    // Decode payload (base32/hex decode + optional decompression)
-    size_t decoded_len = 0;
-    uint8_t *decoded = bbqr_decode_payload(parser->bbqr->encoding, combined,
-                                           total_payload_len, &decoded_len);
-    free(combined);
-
-    if (!decoded) {
-      return NULL;
-    }
-
-    // Store decoded payload in bbqr structure
-    if (parser->bbqr->payload) {
-      free(parser->bbqr->payload);
-    }
-    parser->bbqr->payload = (char *)decoded;
-
-    if (result_len) {
-      *result_len = decoded_len;
-    }
-
-    // Return a copy of the decoded data
-    char *result = (char *)malloc(decoded_len + 1);
-    if (!result) {
-      return NULL;
-    }
-    memcpy(result, decoded, decoded_len);
-    result[decoded_len] = '\0';
-    return result;
-  }
-
-  // Sort parts by index
+  // add_part maintains stored_bytes, including replacements and duplicates.
   qsort(parser->parts, parser->parts_count, sizeof(QRPart *), compare_parts);
-
-  // Calculate total length
-  size_t total_len = 0;
-  for (int i = 0; i < parser->parts_count; i++) {
-    if (total_len + parser->parts[i]->data_len < total_len ||
-        total_len + parser->parts[i]->data_len > QR_PARSER_MAX_STORED_BYTES) {
-      return NULL;
-    }
-    total_len += parser->parts[i]->data_len;
-  }
-
-  // Combine parts
-  char *result = (char *)malloc(total_len + 1);
-  if (!result)
+  char *result = malloc(parser->stored_bytes + 1);
+  if (!result) {
+    fail_alloc(parser);
     return NULL;
-
-  size_t offset = 0;
-  for (int i = 0; i < parser->parts_count; i++) {
-    memcpy(result + offset, parser->parts[i]->data, parser->parts[i]->data_len);
-    offset += parser->parts[i]->data_len;
   }
-  result[total_len] = '\0';
+
+  size_t len = 0;
+  for (int i = 0; i < parser->parts_count; i++) {
+    memcpy(result + len, parser->parts[i]->data, parser->parts[i]->data_len);
+    len += parser->parts[i]->data_len;
+  }
+  result[len] = '\0';
+
+  if (parser->format == FORMAT_BBQR) {
+    size_t decoded_len = 0;
+    uint8_t *decoded =
+        bbqr_decode_payload(parser->bbqr->encoding, result, len, &decoded_len);
+    free(result);
+    if (!decoded)
+      return NULL;
+
+    // The decoder reserves a terminator. Transfer its allocation directly:
+    // growing it here can copy the entire result under the secure allocator.
+    result = (char *)decoded;
+    len = decoded_len;
+  }
 
   if (result_len)
-    *result_len = total_len;
+    *result_len = len;
   return result;
 }
 
@@ -452,7 +425,6 @@ static int detect_format(const char *data, size_t data_len, BBQrCode **bbqr) {
       if (*bbqr) {
         (*bbqr)->encoding = encoding;
         (*bbqr)->file_type = file_type;
-        (*bbqr)->payload = NULL;
       }
       return FORMAT_BBQR;
     }
@@ -498,8 +470,7 @@ static bool parse_pmofn_qr_part(const char *data, size_t data_len,
   }
   cursor += 2;
   if (!parse_positive_decimal(&cursor, end, total) || cursor == end ||
-      *cursor++ != ' ' || *index > *total ||
-      *total > QR_PARSER_MAX_MULTIPART_PARTS) {
+      *cursor++ != ' ' || *index > *total) {
     return false;
   }
 

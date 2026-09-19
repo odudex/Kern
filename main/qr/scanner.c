@@ -629,6 +629,9 @@ static const char *scan_failure_message(QRPartParser *parser) {
     return "QR scan failed: out of memory";
   }
 
+  if (parser && parser->too_large)
+    return "QR sequence too large to decode";
+
   if (!parser || parser->format != FORMAT_UR || !parser->ur_decoder)
     return "Invalid QR sequence";
 
