@@ -1,4 +1,4 @@
-CC = gcc
+CC ?= cc
 CFLAGS = -Wall -Wextra -g
 
 ROOT = ../../..
