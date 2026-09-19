@@ -468,8 +468,10 @@ lv_obj_t *qr_create_optimal(lv_obj_t *parent, int32_t size, const char *text) {
     return NULL;
 
   lv_qrcode_set_size(qr, size);
-  if (text)
-    qr_update_optimal(qr, text, NULL);
+  if (text && qr_update_optimal(qr, text, NULL) != LV_RESULT_OK) {
+    lv_obj_delete(qr);
+    return NULL;
+  }
   lv_obj_center(qr);
   return qr;
 }
@@ -548,6 +550,10 @@ lv_result_t qr_update_optimal(lv_obj_t *qr_obj, const char *text,
   }
 
   int32_t scale = draw_buf->header.w / modules;
+  if (scale <= 0) {
+    free(qr_buf);
+    return LV_RESULT_INVALID;
+  }
   if (result) {
     result->modules = modules;
     result->scale = scale;
