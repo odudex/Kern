@@ -4,6 +4,7 @@
 #include "../../core/key.h"
 #include "../../core/miniscript_policy.h"
 #include "../../core/registry.h"
+#include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
@@ -225,6 +226,9 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
                               3000);
     return true;
 
+  case VALIDATION_PRIVATE_KEY:
+    dialog_show_error_timeout("Descriptor contains a private key", NULL, 2500);
+    return true;
   case VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE:
     dialog_show_error_timeout("Taproot internal key not provably unspendable",
                               NULL, 3000);
@@ -250,6 +254,7 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
 
 typedef struct {
   void (*proceed)(const char *id, storage_location_t loc, void *user_data);
+  storage_location_t loc;
   ui_text_input_t input;
   /* Wrapper screen owning the textarea + eye-btn so they cascade-delete
    * with the screen on teardown (ui_text_input_destroy only kills the
@@ -288,22 +293,23 @@ static void id_prompt_ready_cb(lv_event_t *e) {
 
   void (*proceed)(const char *, storage_location_t, void *) =
       g_id_prompt_ctx->proceed;
+  storage_location_t loc = g_id_prompt_ctx->loc;
   id_prompt_cleanup();
 
-  proceed(id_copy, STORAGE_FLASH, NULL);
+  proceed(id_copy, loc, NULL);
 }
 
-static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
-                                                      storage_location_t loc,
-                                                      void *user_data),
-                                      void *user_data) {
-  (void)user_data;
+static void prompt_descriptor_name(storage_location_t loc, const char *prefill,
+                                   void (*proceed)(const char *id,
+                                                   storage_location_t loc,
+                                                   void *user_data)) {
   id_prompt_ctx_t *ctx = malloc(sizeof(id_prompt_ctx_t));
   if (!ctx) {
-    proceed(NULL, STORAGE_FLASH, NULL);
+    proceed(NULL, loc, NULL);
     return;
   }
   ctx->proceed = proceed;
+  ctx->loc = loc;
   memset(&ctx->input, 0, sizeof(ctx->input));
   ctx->screen = lv_obj_create(lv_screen_active());
   lv_obj_set_size(ctx->screen, LV_PCT(100), LV_PCT(100));
@@ -313,6 +319,104 @@ static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
   session_cleanup_register(id_prompt_cleanup);
   ui_text_input_create(&ctx->input, ctx->screen, "Descriptor name", false,
                        id_prompt_ready_cb);
+  if (prefill && prefill[0])
+    lv_textarea_set_text(ctx->input.textarea, prefill);
+}
+
+static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
+                                                      storage_location_t loc,
+                                                      void *user_data),
+                                      void *user_data) {
+  (void)user_data;
+  prompt_descriptor_name(STORAGE_FLASH, NULL, proceed);
+}
+
+/* ---------- Post-load chooser: session only, or register ---------- */
+
+static ui_menu_t *loaded_menu = NULL;
+static void (*loaded_done_cb)(void) = NULL;
+static char loaded_session_id[REGISTRY_ID_MAX_LEN];
+
+static void loaded_finish(void) {
+  void (*done)(void) = loaded_done_cb;
+  loaded_done_cb = NULL;
+  if (done)
+    done();
+}
+
+static void loaded_finish_dialog_cb(void *user_data) {
+  (void)user_data;
+  loaded_finish();
+}
+
+static void loaded_destroy_menu(void) {
+  if (loaded_menu) {
+    ui_menu_destroy(loaded_menu);
+    loaded_menu = NULL;
+  }
+}
+
+static void loaded_session_only_cb(void) {
+  loaded_destroy_menu();
+  loaded_finish();
+}
+
+static void loaded_register(void);
+
+static void loaded_name_taken_cb(void) { loaded_register(); }
+
+static void loaded_register_named_cb(const char *name, storage_location_t loc,
+                                     void *user_data) {
+  (void)loc;
+  (void)user_data;
+  if (!name || name[0] == '\0') {
+    loaded_finish();
+    return;
+  }
+  if (storage_descriptor_exists(STORAGE_FLASH, name,
+                                STORAGE_DESCRIPTOR_BIP138)) {
+    dialog_show_error_timeout("A registered descriptor already uses this name",
+                              loaded_name_taken_cb, 0);
+    return;
+  }
+  if (!registry_persist(loaded_session_id, name)) {
+    dialog_show_error_timeout("Could not register the descriptor",
+                              loaded_finish, 0);
+    return;
+  }
+  char msg[160];
+  snprintf(msg, sizeof(msg),
+           "%s registered.\nIt loads automatically with this key.", name);
+  dialog_show_info("Registered", msg, loaded_finish_dialog_cb, NULL,
+                   DIALOG_STYLE_FULLSCREEN);
+}
+
+static void loaded_register(void) {
+  loaded_destroy_menu();
+  const registry_entry_t *entry = registry_find_by_id(loaded_session_id);
+  prompt_descriptor_name(STORAGE_FLASH, entry ? entry->label : NULL,
+                         loaded_register_named_cb);
+}
+
+void descriptor_loader_show_loaded_menu(void (*done_cb)(void)) {
+  loaded_destroy_menu();
+  loaded_done_cb = done_cb;
+  if (!descriptor_validator_get_loaded_id(loaded_session_id,
+                                          sizeof(loaded_session_id))) {
+    loaded_finish();
+    return;
+  }
+  loaded_menu = ui_menu_create(lv_screen_active(), "Descriptor Loaded",
+                               loaded_session_only_cb);
+  if (!loaded_menu) {
+    loaded_finish();
+    return;
+  }
+  ui_menu_add_entry(loaded_menu, "Keep for this session only",
+                    loaded_session_only_cb);
+  ui_menu_add_entry_with_icon(loaded_menu, LV_SYMBOL_DRIVE, "Register",
+                              loaded_register);
+  ui_menu_show(loaded_menu);
 }
 
 // UI confirmation wrapper: validator's confirm_cb fires on danger-style

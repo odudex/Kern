@@ -52,13 +52,13 @@ int wallet_descriptor_parse(const char *descriptor,
 
 esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
                                   const uint8_t *data, size_t len,
-                                  bool encrypted) {
+                                  storage_descriptor_format_t format) {
   storage_save_descriptor_call_count++;
   (void)loc;
   (void)id;
   (void)data;
   (void)len;
-  (void)encrypted;
+  (void)format;
   return ESP_OK;
 }
 
@@ -83,7 +83,7 @@ esp_err_t storage_list_descriptors(storage_location_t loc,
 
 esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
                                   uint8_t **data_out, size_t *len_out,
-                                  bool *encrypted_out) {
+                                  storage_descriptor_format_t *format_out) {
   storage_load_descriptor_call_count++;
   (void)loc;
   (void)filename;
@@ -91,8 +91,8 @@ esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
     *data_out = NULL;
   if (len_out)
     *len_out = 0;
-  if (encrypted_out)
-    *encrypted_out = false;
+  if (format_out)
+    *format_out = STORAGE_DESCRIPTOR_TXT;
   return -1;
 }
 

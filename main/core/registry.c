@@ -1,6 +1,9 @@
 #include "registry.h"
+#include "../utils/secure_mem.h"
+#include "bip138_backup.h"
 #include "bip32_path.h"
 #include "descriptor_checksum.h"
+#include "descriptor_validator.h"
 #include "key.h"
 #include "wallet.h"
 #include <esp_log.h>
@@ -14,12 +17,6 @@ static const char *TAG = "registry";
 
 static registry_entry_t registry_entries[REGISTRY_MAX_ENTRIES];
 static size_t registry_len = 0;
-
-/* Descriptor registration is intentionally disabled for now. Descriptor
- * storage stays available as explicit backup/import, but boot must not treat
- * stored descriptor files as the durable registry until backups are encrypted
- * to the descriptor's own public keys (bitcoin/bips#1951). */
-#define REGISTRY_AUTOLOAD_DESCRIPTORS 0
 
 size_t registry_count(void) { return registry_len; }
 
@@ -52,33 +49,24 @@ bool registry_set_label(const char *id, const char *label) {
 }
 
 bool registry_remove(const char *id) {
-  if (!id)
+  if (!id) {
     return false;
-  size_t idx = registry_len; // sentinel: "not found"
+  }
   for (size_t i = 0; i < registry_len; i++) {
-    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0) {
-      idx = i;
-      break;
-    }
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0)
+      return registry_remove_at(i);
   }
-  if (idx == registry_len) {
-    ESP_LOGE(TAG, "registry_remove: id '%s' not found", id);
+  ESP_LOGE(TAG, "registry_remove: id '%s' not found", id);
+  return false;
+}
+
+bool registry_remove_at(size_t idx) {
+  if (idx >= registry_len)
     return false;
-  }
 
   if (registry_entries[idx].desc != NULL) {
     wally_descriptor_free(registry_entries[idx].desc);
     registry_entries[idx].desc = NULL;
-  }
-
-  esp_err_t err = ESP_OK;
-  if (registry_entries[idx].persisted) {
-    err = storage_delete_descriptor(registry_entries[idx].loc,
-                                    registry_entries[idx].id);
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "registry_remove: storage_delete_descriptor failed (%d)",
-               err);
-    }
   }
 
   if (idx < registry_len - 1) {
@@ -89,7 +77,22 @@ bool registry_remove(const char *id) {
   memset(&registry_entries[registry_len - 1], 0, sizeof(registry_entry_t));
   registry_len--;
 
-  return (err == ESP_OK);
+  return true;
+}
+
+bool registry_deregister_at(size_t idx) {
+  if (idx >= registry_len || !registry_entries[idx].persisted)
+    return false;
+  registry_entry_t *entry = &registry_entries[idx];
+  char filename[64];
+  storage_descriptor_filename(entry->loc, entry->id, STORAGE_DESCRIPTOR_BIP138,
+                              filename, sizeof(filename));
+  esp_err_t err = storage_delete_descriptor(entry->loc, filename);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "De-registering '%s' failed (%d)", entry->id, err);
+    return false;
+  }
+  return registry_remove_at(idx);
 }
 
 void registry_clear(void) {
@@ -102,40 +105,66 @@ void registry_clear(void) {
   registry_len = 0;
 }
 
-static void registry_init_scan(storage_location_t loc) {
+static bool descriptor_id_from_filename(const char *fname, char *id,
+                                        size_t id_size) {
+  const char *start = fname;
+  size_t prefix_len = strlen(STORAGE_DESCRIPTOR_PREFIX);
+  if (strncmp(start, STORAGE_DESCRIPTOR_PREFIX, prefix_len) == 0)
+    start += prefix_len;
+  const char *ext = STORAGE_DESCRIPTOR_EXT_BIP138;
+  size_t slen = strlen(start);
+  size_t elen = strlen(ext);
+  if (slen <= elen || strcmp(start + slen - elen, ext) != 0)
+    return false;
+  size_t id_len = slen - elen;
+  if (id_len >= id_size)
+    id_len = id_size - 1;
+  memcpy(id, start, id_len);
+  id[id_len] = '\0';
+  return true;
+}
+
+/* Registers every flash backup that this device wrote for the loaded key
+ * (valid approval mark) and that still passes keyed validation. Backups
+ * without a mark, plaintext and KEF files stay explicit imports. */
+static void registry_init_scan(void) {
   char **files = NULL;
   int count = 0;
-  if (storage_list_descriptors(loc, &files, &count) != ESP_OK) {
+  if (storage_list_descriptors(STORAGE_FLASH, &files, &count) != ESP_OK)
     return;
-  }
-  for (int i = 0; i < count; i++) {
+  for (int i = 0; i < count && registry_len < REGISTRY_MAX_ENTRIES; i++) {
     const char *fname = files[i];
-    size_t flen = strlen(fname);
-    if (flen < 4 || strcmp(fname + flen - 4, ".txt") != 0) {
+    if (storage_descriptor_format(fname) != STORAGE_DESCRIPTOR_BIP138)
       continue;
-    }
     uint8_t *data = NULL;
     size_t data_len = 0;
-    bool encrypted = false;
-    if (storage_load_descriptor(loc, fname, &data, &data_len, &encrypted) !=
-        ESP_OK) {
+    if (storage_load_descriptor(STORAGE_FLASH, fname, &data, &data_len, NULL) !=
+        ESP_OK)
       continue;
+    char *desc_str = NULL;
+    char id[REGISTRY_ID_MAX_LEN];
+    char existing[REGISTRY_ID_MAX_LEN];
+    bool approved = false;
+    if (!bip138_backup_decrypt_any(data, data_len, &desc_str, &approved)) {
+      ESP_LOGI(TAG, "Skipping '%s': not addressed to the loaded key", fname);
+    } else if (!approved) {
+      ESP_LOGI(TAG, "Skipping '%s': not registered on this device", fname);
+    } else if (descriptor_validate_keyed(desc_str, NULL) !=
+               VALIDATION_SUCCESS) {
+      ESP_LOGW(TAG, "Skipping '%s': failed validation", fname);
+    } else if (!descriptor_id_from_filename(fname, id, sizeof(id))) {
+      ESP_LOGW(TAG, "Skipping '%s': unexpected filename", fname);
+    } else if (registry_session_has_duplicate(desc_str, existing,
+                                              sizeof(existing))) {
+      ESP_LOGI(TAG, "Skipping '%s': same descriptor as '%s'", fname, existing);
+    } else if (registry_find_by_id(id)) {
+      ESP_LOGW(TAG, "Skipping '%s': id '%s' already registered", fname, id);
+    } else if (!registry_add_from_string(id, desc_str, STORAGE_FLASH, false)) {
+      ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register", id);
+    } else {
+      registry_entries[registry_len - 1].persisted = true;
     }
-    char *desc_str = malloc(data_len + 1);
-    if (desc_str) {
-      memcpy(desc_str, data, data_len);
-      desc_str[data_len] = '\0';
-      char id[REGISTRY_ID_MAX_LEN];
-      size_t id_len = flen - 4;
-      if (id_len >= REGISTRY_ID_MAX_LEN)
-        id_len = REGISTRY_ID_MAX_LEN - 1;
-      memcpy(id, fname, id_len);
-      id[id_len] = '\0';
-      if (!registry_add_from_string(id, desc_str, loc, false))
-        ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register",
-                 id);
-      free(desc_str);
-    }
+    SECURE_FREE_STRING(desc_str);
     free(data);
   }
   storage_free_file_list(files, count);
@@ -144,15 +173,10 @@ static void registry_init_scan(storage_location_t loc) {
 void registry_init(bool is_testnet) {
   (void)is_testnet;
   registry_clear();
-  if (REGISTRY_AUTOLOAD_DESCRIPTORS) {
-    registry_init_scan(STORAGE_FLASH);
-    registry_init_scan(STORAGE_SD);
-  }
+  registry_init_scan();
   ESP_LOGI(TAG, "Registry: %zu entries loaded", registry_len);
 }
 
-/* Compute the h-normalized BIP-380 checksum of a descriptor string by parsing
- * it on either network. Caller frees via free. NULL on failure. */
 static char *descriptor_checksum_alloc(const char *descriptor_str) {
   if (!descriptor_str)
     return NULL;
@@ -353,11 +377,8 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   registry_len++;
 
   if (persist) {
-    esp_err_t err =
-        storage_save_descriptor(loc, id, (const uint8_t *)descriptor_str,
-                                strlen(descriptor_str), false);
-    if (err != ESP_OK) {
-      ESP_LOGE(TAG, "storage_save_descriptor failed (%d), rolling back", err);
+    if (!registry_persist(id, id)) {
+      ESP_LOGE(TAG, "persisting descriptor failed, rolling back");
       wally_descriptor_free(desc);
       memset(&registry_entries[registry_len - 1], 0, sizeof(registry_entry_t));
       registry_len--;
@@ -367,6 +388,46 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   }
 
   ESP_LOGI(TAG, "added '%s' (%zu entries total)", id, registry_len);
+  return true;
+}
+
+bool registry_persist(const char *id, const char *name) {
+  const storage_location_t loc = STORAGE_FLASH;
+  if (!id || !name || name[0] == '\0')
+    return false;
+  registry_entry_t *e = NULL;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0)
+      e = &registry_entries[i];
+  }
+  if (!e || e->persisted || !e->desc)
+    return false;
+  if (strncmp(id, name, REGISTRY_ID_MAX_LEN) != 0 && registry_find_by_id(name))
+    return false;
+  /* Another seed's backup may sit under this name without being loaded. */
+  if (storage_descriptor_exists(loc, name, STORAGE_DESCRIPTOR_BIP138))
+    return false;
+
+  char *descriptor_str = NULL;
+  if (wally_descriptor_canonicalize(e->desc, 0, &descriptor_str) != WALLY_OK)
+    return false;
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  bool ok = bip138_backup_encrypt(descriptor_str, &blob, &blob_len) &&
+            storage_save_descriptor(loc, name, blob, blob_len,
+                                    STORAGE_DESCRIPTOR_BIP138) == ESP_OK;
+  free(blob);
+  wally_free_string(descriptor_str);
+  if (!ok) {
+    ESP_LOGE(TAG, "registering '%s' failed", name);
+    return false;
+  }
+  strncpy(e->id, name, REGISTRY_ID_MAX_LEN - 1);
+  e->id[REGISTRY_ID_MAX_LEN - 1] = '\0';
+  strncpy(e->label, name, REGISTRY_LABEL_MAX_LEN - 1);
+  e->label[REGISTRY_LABEL_MAX_LEN - 1] = '\0';
+  e->loc = loc;
+  e->persisted = true;
   return true;
 }
 

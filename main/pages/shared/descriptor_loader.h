@@ -44,6 +44,13 @@ void descriptor_loader_process_string_watch_only(
     void *user_data);
 
 /**
+ * After a successful keyed load, offer to keep the descriptor for this session
+ * only or to register it as a BIP138 backup on flash or SD card (which asks
+ * for a name). done_cb runs once the user is through, whatever they chose.
+ */
+void descriptor_loader_show_loaded_menu(void (*done_cb)(void));
+
+/**
  * Show a source selection menu for loading descriptors.
  * Presents QR / Flash / SD Card options.
  *

@@ -418,23 +418,41 @@ static void test_sanitize(void) {
 
 static void test_descriptor_path(void) {
   char out[96];
-  storage_descriptor_path(STORAGE_FLASH, "My Wallet", true, out, sizeof(out));
+  storage_descriptor_path(STORAGE_FLASH, "My Wallet", STORAGE_DESCRIPTOR_KEF,
+                          out, sizeof(out));
   check("path: flash kef", strcmp(out, "/spiffs/d_My_Wallet.kef") == 0);
-  storage_descriptor_path(STORAGE_FLASH, "My Wallet", false, out, sizeof(out));
+  storage_descriptor_path(STORAGE_FLASH, "My Wallet", STORAGE_DESCRIPTOR_TXT,
+                          out, sizeof(out));
   check("path: flash txt", strcmp(out, "/spiffs/d_My_Wallet.txt") == 0);
-  storage_descriptor_path(STORAGE_SD, "My Wallet", true, out, sizeof(out));
+  storage_descriptor_path(STORAGE_SD, "My Wallet", STORAGE_DESCRIPTOR_KEF, out,
+                          sizeof(out));
   check("path: sd kef",
         strcmp(out, "/sdcard/kern/descriptors/My_Wallet.kef") == 0);
-  storage_descriptor_path(STORAGE_SD, "My Wallet", false, out, sizeof(out));
+  storage_descriptor_path(STORAGE_SD, "My Wallet", STORAGE_DESCRIPTOR_TXT, out,
+                          sizeof(out));
   check("path: sd txt",
         strcmp(out, "/sdcard/kern/descriptors/My_Wallet.txt") == 0);
   char shorty[12];
-  storage_descriptor_path(STORAGE_SD, "My Wallet", true, shorty,
-                          sizeof(shorty));
+  storage_descriptor_path(STORAGE_SD, "My Wallet", STORAGE_DESCRIPTOR_KEF,
+                          shorty, sizeof(shorty));
   check("path: short buffer is NUL-terminated and truncated",
         strlen(shorty) == 11 && strncmp(shorty, "/sdcard/ker", 11) == 0);
-  storage_descriptor_path(STORAGE_FLASH, "x", true, NULL, 0);
+  storage_descriptor_path(STORAGE_FLASH, "x", STORAGE_DESCRIPTOR_KEF, NULL, 0);
   check("path: NULL output tolerated", true);
+  storage_descriptor_path(STORAGE_FLASH, "My Wallet", STORAGE_DESCRIPTOR_BIP138,
+                          out, sizeof(out));
+  check("path: flash bip138", strcmp(out, "/spiffs/d_My_Wallet.bip138") == 0);
+  storage_descriptor_path(STORAGE_SD, "My Wallet", STORAGE_DESCRIPTOR_BIP138,
+                          out, sizeof(out));
+  check("path: sd bip138",
+        strcmp(out, "/sdcard/kern/descriptors/My_Wallet.bip138.txt") == 0);
+  check("format: by extension",
+        storage_descriptor_format("d_x.bip138") == STORAGE_DESCRIPTOR_BIP138 &&
+            storage_descriptor_format("x.bip138.txt") ==
+                STORAGE_DESCRIPTOR_BIP138 &&
+            storage_descriptor_format("x.kef") == STORAGE_DESCRIPTOR_KEF &&
+            storage_descriptor_format("x.txt") == STORAGE_DESCRIPTOR_TXT &&
+            storage_descriptor_format(NULL) == STORAGE_DESCRIPTOR_TXT);
 }
 
 static void test_init_and_wipe(void) {
@@ -573,24 +591,28 @@ static void test_flash_descriptors(void) {
 
   check("flash desc: save kef",
         storage_save_descriptor(STORAGE_FLASH, "Vault", BLOB, sizeof(BLOB),
-                                true) == ESP_OK);
+                                STORAGE_DESCRIPTOR_KEF) == ESP_OK);
   check("flash desc: save txt",
         storage_save_descriptor(STORAGE_FLASH, "Plain One",
                                 (const uint8_t *)txt, strlen(txt),
-                                false) == ESP_OK);
+                                STORAGE_DESCRIPTOR_TXT) == ESP_OK);
   check("flash desc: files land where descriptor_path says",
         host_file_equals("/spiffs/d_Vault.kef", BLOB, sizeof(BLOB)) &&
             host_file_equals("/spiffs/d_Plain_One.txt", txt, strlen(txt)));
   char path[96];
-  storage_descriptor_path(STORAGE_FLASH, "Plain One", false, path,
-                          sizeof(path));
+  storage_descriptor_path(STORAGE_FLASH, "Plain One", STORAGE_DESCRIPTOR_TXT,
+                          path, sizeof(path));
   check("flash desc: path helper matches the saved file", host_exists(path));
 
   check("flash desc: exists respects the extension",
-        storage_descriptor_exists(STORAGE_FLASH, "Vault", true) &&
-            !storage_descriptor_exists(STORAGE_FLASH, "Vault", false) &&
-            storage_descriptor_exists(STORAGE_FLASH, "Plain One", false) &&
-            !storage_descriptor_exists(STORAGE_FLASH, "Plain One", true));
+        storage_descriptor_exists(STORAGE_FLASH, "Vault",
+                                  STORAGE_DESCRIPTOR_KEF) &&
+            !storage_descriptor_exists(STORAGE_FLASH, "Vault",
+                                       STORAGE_DESCRIPTOR_TXT) &&
+            storage_descriptor_exists(STORAGE_FLASH, "Plain One",
+                                      STORAGE_DESCRIPTOR_TXT) &&
+            !storage_descriptor_exists(STORAGE_FLASH, "Plain One",
+                                       STORAGE_DESCRIPTOR_KEF));
 
   IGNORE(storage_save_mnemonic(STORAGE_FLASH, "Seed", BLOB, 2));
   host_write("/spiffs/d_stray.bak", "x", 1);
@@ -603,30 +625,60 @@ static void test_flash_descriptors(void) {
 
   uint8_t *data = NULL;
   size_t len = 0;
-  bool enc = false;
+  storage_descriptor_format_t fmt = STORAGE_DESCRIPTOR_TXT;
   check("flash desc: load kef flags encrypted",
         storage_load_descriptor(STORAGE_FLASH, "d_Vault.kef", &data, &len,
-                                &enc) == ESP_OK &&
-            enc && len == sizeof(BLOB) && memcmp(data, BLOB, len) == 0);
+                                &fmt) == ESP_OK &&
+            fmt == STORAGE_DESCRIPTOR_KEF && len == sizeof(BLOB) &&
+            memcmp(data, BLOB, len) == 0);
   free(data);
-  enc = true;
+  fmt = STORAGE_DESCRIPTOR_KEF;
   check("flash desc: load txt flags plaintext",
         storage_load_descriptor(STORAGE_FLASH, "d_Plain_One.txt", &data, &len,
-                                &enc) == ESP_OK &&
-            !enc && len == strlen(txt) && memcmp(data, txt, len) == 0);
+                                &fmt) == ESP_OK &&
+            fmt == STORAGE_DESCRIPTOR_TXT && len == strlen(txt) &&
+            memcmp(data, txt, len) == 0);
   free(data);
   check("flash desc: NULL encrypted_out accepted",
         storage_load_descriptor(STORAGE_FLASH, "d_Vault.kef", &data, &len,
                                 NULL) == ESP_OK);
   free(data);
   check("flash desc: load invalid args",
-        storage_load_descriptor(STORAGE_FLASH, NULL, &data, &len, &enc) ==
+        storage_load_descriptor(STORAGE_FLASH, NULL, &data, &len, &fmt) ==
                 ESP_ERR_INVALID_ARG &&
             storage_load_descriptor(STORAGE_FLASH, "d_Vault.kef", &data, NULL,
-                                    &enc) == ESP_ERR_INVALID_ARG);
+                                    &fmt) == ESP_ERR_INVALID_ARG);
+  check("flash desc: save bip138",
+        storage_save_descriptor(STORAGE_FLASH, "Vault", BLOB, sizeof(BLOB),
+                                STORAGE_DESCRIPTOR_BIP138) == ESP_OK &&
+            host_file_equals("/spiffs/d_Vault.bip138", BLOB, sizeof(BLOB)));
+  check("flash desc: bip138 exists per format",
+        storage_descriptor_exists(STORAGE_FLASH, "Vault",
+                                  STORAGE_DESCRIPTOR_BIP138) &&
+            storage_descriptor_exists(STORAGE_FLASH, "Vault",
+                                      STORAGE_DESCRIPTOR_KEF));
+  check("flash desc: load bip138 flags format",
+        storage_load_descriptor(STORAGE_FLASH, "d_Vault.bip138", &data, &len,
+                                &fmt) == ESP_OK &&
+            fmt == STORAGE_DESCRIPTOR_BIP138 && len == sizeof(BLOB) &&
+            memcmp(data, BLOB, len) == 0);
+  free(data);
+  check("flash desc: listing includes bip138",
+        storage_list_descriptors(STORAGE_FLASH, &files, &count) == ESP_OK &&
+            count == 3 && list_has(files, count, "d_Vault.bip138"));
+  storage_free_file_list(files, count);
+  char fname[64];
+  storage_descriptor_filename(STORAGE_FLASH, "Vault", STORAGE_DESCRIPTOR_BIP138,
+                              fname, sizeof(fname));
+  check("flash desc: filename helper", strcmp(fname, "d_Vault.bip138") == 0);
+  check("flash desc: delete bip138 by filename",
+        storage_delete_descriptor(STORAGE_FLASH, fname) == ESP_OK &&
+            !storage_descriptor_exists(STORAGE_FLASH, "Vault",
+                                       STORAGE_DESCRIPTOR_BIP138));
   check("flash desc: delete",
         storage_delete_descriptor(STORAGE_FLASH, "d_Vault.kef") == ESP_OK &&
-            !storage_descriptor_exists(STORAGE_FLASH, "Vault", true));
+            !storage_descriptor_exists(STORAGE_FLASH, "Vault",
+                                       STORAGE_DESCRIPTOR_KEF));
 }
 
 static void test_sd_mnemonics(void) {
@@ -705,10 +757,10 @@ static void test_sd_descriptors(void) {
 
   check("sd desc: save kef",
         storage_save_descriptor(STORAGE_SD, "Vault", BLOB, sizeof(BLOB),
-                                true) == ESP_OK);
+                                STORAGE_DESCRIPTOR_KEF) == ESP_OK);
   check("sd desc: save txt",
         storage_save_descriptor(STORAGE_SD, "Plain", (const uint8_t *)txt,
-                                strlen(txt), false) == ESP_OK);
+                                strlen(txt), STORAGE_DESCRIPTOR_TXT) == ESP_OK);
   unsigned char b64[64];
   size_t b64_len = 0;
   mbedtls_base64_encode(b64, sizeof(b64), &b64_len, BLOB, sizeof(BLOB));
@@ -719,30 +771,52 @@ static void test_sd_descriptors(void) {
 
   uint8_t *data = NULL;
   size_t len = 0;
-  bool enc = false;
+  storage_descriptor_format_t fmt = STORAGE_DESCRIPTOR_TXT;
   check("sd desc: load kef decodes",
-        storage_load_descriptor(STORAGE_SD, "Vault.kef", &data, &len, &enc) ==
+        storage_load_descriptor(STORAGE_SD, "Vault.kef", &data, &len, &fmt) ==
                 ESP_OK &&
-            enc && len == sizeof(BLOB) && memcmp(data, BLOB, len) == 0);
+            fmt == STORAGE_DESCRIPTOR_KEF && len == sizeof(BLOB) &&
+            memcmp(data, BLOB, len) == 0);
   free(data);
   check("sd desc: load txt is raw",
-        storage_load_descriptor(STORAGE_SD, "Plain.txt", &data, &len, &enc) ==
+        storage_load_descriptor(STORAGE_SD, "Plain.txt", &data, &len, &fmt) ==
                 ESP_OK &&
-            !enc && len == strlen(txt) && memcmp(data, txt, len) == 0);
+            fmt == STORAGE_DESCRIPTOR_TXT && len == strlen(txt) &&
+            memcmp(data, txt, len) == 0);
   free(data);
 
+  check("sd desc: save bip138 is base64 under .bip138.txt",
+        storage_save_descriptor(STORAGE_SD, "Vault", BLOB, sizeof(BLOB),
+                                STORAGE_DESCRIPTOR_BIP138) == ESP_OK &&
+            host_file_equals("/sdcard/kern/descriptors/Vault.bip138.txt", b64,
+                             b64_len));
+  check("sd desc: load bip138 decodes and flags format",
+        storage_load_descriptor(STORAGE_SD, "Vault.bip138.txt", &data, &len,
+                                &fmt) == ESP_OK &&
+            fmt == STORAGE_DESCRIPTOR_BIP138 && len == sizeof(BLOB) &&
+            memcmp(data, BLOB, len) == 0);
+  free(data);
+  char fname[64];
+  storage_descriptor_filename(STORAGE_SD, "Vault", STORAGE_DESCRIPTOR_BIP138,
+                              fname, sizeof(fname));
+  check("sd desc: filename helper", strcmp(fname, "Vault.bip138.txt") == 0);
+
   host_write("/sdcard/kern/descriptors/backup.bak", "x", 1);
-  check("sd desc: list has kef and txt",
+  check("sd desc: list has kef, txt and bip138",
         storage_list_descriptors(STORAGE_SD, &files, &count) == ESP_OK &&
-            count == 2 && list_has(files, count, "Vault.kef") &&
-            list_has(files, count, "Plain.txt"));
+            count == 3 && list_has(files, count, "Vault.kef") &&
+            list_has(files, count, "Plain.txt") &&
+            list_has(files, count, "Vault.bip138.txt"));
   storage_free_file_list(files, count);
-  check("sd desc: exists per extension",
-        storage_descriptor_exists(STORAGE_SD, "Vault", true) &&
-            !storage_descriptor_exists(STORAGE_SD, "Vault", false));
+  check(
+      "sd desc: exists per extension",
+      storage_descriptor_exists(STORAGE_SD, "Vault", STORAGE_DESCRIPTOR_KEF) &&
+          !storage_descriptor_exists(STORAGE_SD, "Vault",
+                                     STORAGE_DESCRIPTOR_TXT));
   check("sd desc: delete",
         storage_delete_descriptor(STORAGE_SD, "Plain.txt") == ESP_OK &&
-            !storage_descriptor_exists(STORAGE_SD, "Plain", false));
+            !storage_descriptor_exists(STORAGE_SD, "Plain",
+                                       STORAGE_DESCRIPTOR_TXT));
 }
 
 static void test_display_name(void) {
