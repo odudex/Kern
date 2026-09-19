@@ -282,8 +282,19 @@ pin_verify_result_t pin_verify(const char *pin, size_t len) {
   // Pre-increment failure count and commit before the slow PBKDF2 so that
   // a power-cut during verification cannot gift the attacker a free attempt.
   uint8_t pending_cnt = (fail_cnt < 255) ? fail_cnt + 1 : fail_cnt;
-  nvs_set_u8(pin_nvs, KEY_FAIL_CNT, pending_cnt);
-  nvs_commit(pin_nvs);
+  esp_err_t set_err = nvs_set_u8(pin_nvs, KEY_FAIL_CNT, pending_cnt);
+  esp_err_t commit_err = nvs_commit(pin_nvs);
+  if (set_err != ESP_OK || commit_err != ESP_OK) {
+    // Refuse to verify if the pre-increment didn't actually persist —
+    // proceeding here would reopen the free-attempt window this exists to
+    // close.
+    ESP_LOGE(TAG, "Failed to persist failure count, aborting PIN check");
+    if (pending_cnt >= max_fail) {
+      pin_wipe_all();
+      return PIN_VERIFY_WIPED; // unreachable
+    }
+    return PIN_VERIFY_WRONG;
+  }
 
   // Always run PBKDF2 to prevent timing oracle at wipe threshold
   uint8_t salt[PIN_HASH_SIZE];

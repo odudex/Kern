@@ -340,6 +340,7 @@ static void finish_mnemonic(void) {
   mnemonic_editor_page_create(lv_screen_active(), return_callback,
                               success_callback, mnemonic, checksum_filter_mode);
   mnemonic_editor_page_show();
+  secure_memzero(mnemonic, sizeof(mnemonic));
 }
 
 static bool create_page(lv_obj_t *parent, void (*return_cb)(void),
