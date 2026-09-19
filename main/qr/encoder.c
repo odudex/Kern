@@ -377,24 +377,21 @@ unsigned char *mnemonic_to_compact_seedqr(const char *mnemonic,
     return NULL;
   }
 
-  unsigned char entropy[32];
-  size_t entropy_len = 0;
-  if (bip39_mnemonic_to_bytes(NULL, mnemonic, entropy, sizeof(entropy),
-                              &entropy_len) != WALLY_OK) {
-    return NULL;
-  }
-
-  if (entropy_len != COMPACT_SEEDQR_12_WORDS_LEN &&
-      entropy_len != COMPACT_SEEDQR_24_WORDS_LEN) {
-    return NULL;
-  }
-
-  unsigned char *result = kern_secret_alloc(entropy_len);
+  unsigned char *result = kern_secret_alloc(COMPACT_SEEDQR_24_WORDS_LEN);
   if (!result) {
     return NULL;
   }
 
-  memcpy(result, entropy, entropy_len);
+  size_t entropy_len = 0;
+  if (bip39_mnemonic_to_bytes(NULL, mnemonic, result,
+                              COMPACT_SEEDQR_24_WORDS_LEN,
+                              &entropy_len) != WALLY_OK ||
+      (entropy_len != COMPACT_SEEDQR_12_WORDS_LEN &&
+       entropy_len != COMPACT_SEEDQR_24_WORDS_LEN)) {
+    free(result);
+    return NULL;
+  }
+
   *out_len = entropy_len;
   return result;
 }
