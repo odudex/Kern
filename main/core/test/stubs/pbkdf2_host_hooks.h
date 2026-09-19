@@ -21,10 +21,7 @@ typedef struct {
   uint8_t block[32];
 } host_kdf_t;
 
-#define HOST_KDF_INIT                                                          \
-  {                                                                            \
-    0, 0, {0}, 0, {0}, 0, 1, 32, { 0 }                                         \
-  }
+#define HOST_KDF_INIT ((host_kdf_t){.next_block = 1, .block_used = 32})
 
 psa_status_t host_kdf_setup(host_kdf_t *op, psa_algorithm_t alg);
 psa_status_t host_kdf_input_integer(host_kdf_t *op, int step, uint64_t value);
