@@ -8,12 +8,14 @@
 uint8_t *deflate_compress_raw_alloc(const uint8_t *source, size_t source_len,
                                     size_t *dest_len, int window_bits);
 
-/** Decompress raw deflate while enforcing an output-size limit. */
+/** Decompress raw deflate while enforcing an output-size limit.
+ * The result has an extra NUL terminator, excluded from dest_len/max_output. */
 uint8_t *deflate_decompress_raw_alloc(const uint8_t *source, size_t source_len,
                                       size_t *dest_len, int window_bits,
                                       size_t max_output);
 
-/** Decompress a zlib-wrapped stream while enforcing an output-size limit. */
+/** Decompress a zlib-wrapped stream while enforcing an output-size limit.
+ * The result has an extra NUL terminator, excluded from dest_len/max_output. */
 uint8_t *deflate_decompress_zlib_alloc(const uint8_t *source, size_t source_len,
                                        size_t *dest_len, size_t max_output);
 

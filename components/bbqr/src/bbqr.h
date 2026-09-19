@@ -89,7 +89,8 @@ bool bbqr_parse_part(const char *data, size_t data_len, BBQrPart *part);
  * @param data Concatenated payload data from all parts
  * @param data_len Length of payload data
  * @param out_len Pointer to store decoded output length
- * @return Allocated buffer with decoded data, or NULL on failure.
+ * @return Allocated buffer with decoded data and an extra NUL terminator
+ *         (not included in out_len), or NULL on failure.
  *         Caller must free the returned buffer.
  */
 uint8_t *bbqr_decode_payload(char encoding, const char *data, size_t data_len,

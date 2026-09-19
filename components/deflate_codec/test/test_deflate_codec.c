@@ -41,11 +41,12 @@ static void test_raw_roundtrip(void) {
 
   size_t decoded_len = 0;
   uint8_t *decoded = deflate_decompress_raw_alloc(
-      compressed, compressed_len, &decoded_len, TEST_WBITS, TEST_MAX_OUTPUT);
+      compressed, compressed_len, &decoded_len, TEST_WBITS, sizeof(original));
   free(compressed);
 
   if (!decoded || decoded_len != sizeof(original) ||
-      memcmp(decoded, original, sizeof(original)) != 0) {
+      memcmp(decoded, original, sizeof(original)) != 0 ||
+      decoded[decoded_len] != 0) {
     free(decoded);
     FAIL("round-trip mismatch");
     return;
@@ -76,7 +77,8 @@ static void test_wrapped_zlib_decode(void) {
   free(compressed);
 
   if (!decoded || decoded_len != sizeof(original) ||
-      memcmp(decoded, original, sizeof(original)) != 0) {
+      memcmp(decoded, original, sizeof(original)) != 0 ||
+      decoded[decoded_len] != 0) {
     free(decoded);
     FAIL("wrapped decode mismatch");
     return;
@@ -129,7 +131,7 @@ static void test_empty_roundtrip(void) {
       compressed, compressed_len, &decoded_len, TEST_WBITS, TEST_MAX_OUTPUT);
   free(compressed);
 
-  if (!decoded || decoded_len != 0) {
+  if (!decoded || decoded_len != 0 || decoded[0] != 0) {
     free(decoded);
     FAIL("empty round-trip mismatch");
     return;

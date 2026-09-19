@@ -165,7 +165,7 @@ static uint8_t *decode_hex(const char *hex, size_t hex_len, size_t *out_len) {
   }
 
   size_t bin_len = hex_len / 2;
-  uint8_t *output = (uint8_t *)malloc(bin_len);
+  uint8_t *output = (uint8_t *)malloc(bin_len + 1);
   if (!output) {
     return NULL;
   }
@@ -180,6 +180,7 @@ static uint8_t *decode_hex(const char *hex, size_t hex_len, size_t *out_len) {
     output[i] = (uint8_t)((v1 << 4) | v2);
   }
 
+  output[bin_len] = '\0';
   *out_len = bin_len;
   return output;
 }
@@ -198,7 +199,7 @@ uint8_t *bbqr_decode_payload(char encoding, const char *data, size_t data_len,
   } else if (encoding == BBQR_ENCODING_BASE32) {
     // Base32 decode only
     size_t max_decoded = base32_decoded_len(data_len);
-    uint8_t *decoded = (uint8_t *)malloc(max_decoded);
+    uint8_t *decoded = (uint8_t *)malloc(max_decoded + 1);
     if (!decoded) {
       return NULL;
     }
@@ -208,6 +209,7 @@ uint8_t *bbqr_decode_payload(char encoding, const char *data, size_t data_len,
       return NULL;
     }
 
+    decoded[*out_len] = '\0';
     return decoded;
   } else if (encoding == BBQR_ENCODING_ZLIB) {
     // Base32 decode, then zlib decompress
