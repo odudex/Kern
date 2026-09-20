@@ -37,6 +37,7 @@ components/bbqr/test/test_base32
 components/deflate_codec/test/test_deflate_codec
 main/qr/test/test_parser
 main/qr/test/test_progress
+main/qr/test/test_yuv420
 main/core/test/test_derivation_path
 main/core/test/test_ss_whitelist_parse
 main/core/test/test_ss_whitelist_is_whitelisted
