@@ -12,11 +12,12 @@ SOURCES := test_parser.c ../parser.c \
 TARGET := test_parser
 PROGRESS_TARGET := test_progress
 YUV420_TARGET := test_yuv420
+FRAME_POOL_TARGET := test_frame_pool
 SIM_STUBS := $(ROOT)/simulator/platform/esp_idf_stubs
 # Wrapped so the tests can force an allocation failure on demand.
 LDFLAGS := -Wl,--wrap=malloc
 
-all: $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET)
+all: $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET) $(FRAME_POOL_TARGET)
 
 $(UR_LIB):
 	$(MAKE) -C $(UR_DIR) all
@@ -30,12 +31,16 @@ $(PROGRESS_TARGET): test_progress.c ../progress.h ../parser.h $(SIM_STUBS)/freer
 $(YUV420_TARGET): test_yuv420.c ../yuv420.h
 	$(CC) $(CFLAGS) -o $@ test_yuv420.c
 
-run: $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET)
+$(FRAME_POOL_TARGET): test_frame_pool.c ../frame_pool.h
+	$(CC) $(CFLAGS) -o $@ test_frame_pool.c
+
+run: $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET) $(FRAME_POOL_TARGET)
 	./$(TARGET)
 	./$(PROGRESS_TARGET)
 	./$(YUV420_TARGET)
+	./$(FRAME_POOL_TARGET)
 
 clean:
-	rm -f $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET)
+	rm -f $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET) $(FRAME_POOL_TARGET)
 
 .PHONY: all run clean
