@@ -38,6 +38,12 @@ pbkdf2-check board="wave_4b": (_check_board board)
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_pbkdf2_{{board}} -D SDKCONFIG=build_pbkdf2_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}};sdkconfig.pbkdf2check' flash monitor
 
+# Build with QR scanner pipeline timing, then watch it run
+scan-prof board="wave_4b": (_check_board board)
+    #!/usr/bin/env sh
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    idf.py -B build_scanprof_{{board}} -D SDKCONFIG=build_scanprof_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}};sdkconfig.scanprof' flash monitor
+
 format:
     ./scripts/format.sh
 
@@ -47,6 +53,7 @@ test:
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b
     rm -fRd build_pbkdf2_*
+    rm -fRd build_scanprof_*
     rm -f sdkconfig
     rm -fRd compile_commands.json
     rm -fRd .cache/

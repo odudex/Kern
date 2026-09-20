@@ -182,6 +182,122 @@ static ppa_client_handle_t cam_ppa_client = NULL;
 static volatile int active_frame_operations = 0;
 static lv_timer_t *completion_timer = NULL;
 
+// Opt-in pipeline timing, summarised once a second. Each field has a single
+// writer; the reporter reads and clears without locking, so a sample can
+// occasionally be lost, which is fine for a development aid.
+#if CONFIG_KERN_SCAN_PROFILING
+#include <esp_timer.h>
+
+typedef struct {
+  uint32_t count;
+  uint32_t total_us;
+  uint32_t max_us;
+} scan_stat_t;
+
+// Edges sit between whole frame periods of a 45 fps (22 ms) and a 30 fps
+// (33 ms) sensor, so a dropped camera frame lands in its own bucket.
+static const uint32_t scan_gap_edges_us[] = {28000, 39000, 55000, 78000};
+#define SCAN_GAP_BUCKETS                                                       \
+  (sizeof(scan_gap_edges_us) / sizeof(scan_gap_edges_us[0]) + 1)
+
+static struct {
+  uint32_t camera_gaps[SCAN_GAP_BUCKETS]; // between camera callbacks
+  scan_stat_t ppa;
+  scan_stat_t wait; // decoder idle, waiting for a frame
+  scan_stat_t gray;
+  scan_stat_t identify;
+  scan_stat_t decode;
+  uint32_t camera_frames;
+  uint32_t no_buffer;   // camera frames skipped for want of a PPA target
+  uint32_t presented;   // preview frames handed to LVGL
+  uint32_t roi_frames;  // decoder passes restricted to the ROI
+  uint32_t roi_side_px; // side of the last ROI used
+  uint32_t no_code;     // nothing QR-like found
+  uint32_t undecodable; // found but unreadable: torn, blurred or clipped
+  uint32_t decoded;
+  uint32_t distinct; // decoded payload differs from the previous one
+  uint32_t skipped;  // sequential parts the animation showed and we missed
+  uint32_t errors[K_QUIRC_ERROR_INVALID_SYMBOL + 1]; // failed reads, by cause
+  uint16_t qr_version;                               // of the last code read
+  uint16_t qr_side_px;
+} scan_profile;
+
+static void scan_stat_add(scan_stat_t *stat, int64_t elapsed_us) {
+  stat->count++;
+  stat->total_us += (uint32_t)elapsed_us;
+  if ((uint32_t)elapsed_us > stat->max_us)
+    stat->max_us = (uint32_t)elapsed_us;
+}
+
+static uint32_t scan_stat_avg(const scan_stat_t *stat) {
+  return stat->count ? stat->total_us / stat->count : 0;
+}
+
+#define PROFILE_START(name) int64_t profile_##name = esp_timer_get_time()
+#define PROFILE_END(name)                                                      \
+  scan_stat_add(&scan_profile.name, esp_timer_get_time() - profile_##name)
+#define PROFILE_COUNT(field) scan_profile.field++
+
+// A line costs ~15 ms of UART time. Printing from an idle-priority task keeps
+// that off the camera, decoder and UI tasks, where it would itself be a
+// once-a-second stall of the kind being hunted.
+static void scan_profile_task(void *arg) {
+  int64_t window_start = esp_timer_get_time();
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    int64_t now = esp_timer_get_time();
+    uint32_t window_ms = (uint32_t)((now - window_start) / 1000);
+    window_start = now;
+
+    typeof(scan_profile) p = scan_profile;
+    memset(&scan_profile, 0, sizeof(scan_profile));
+    if (!p.camera_frames && !p.identify.count)
+      continue;
+
+    uint32_t other_errors = 0;
+    for (size_t i = K_QUIRC_ERROR_UNKNOWN_DATA_TYPE;
+         i < sizeof(p.errors) / sizeof(p.errors[0]); i++)
+      other_errors += p.errors[i];
+
+    ESP_LOGI(
+        TAG,
+        "PROF cam %" PRIu32 "/s gaps %" PRIu32 "/%" PRIu32 "/%" PRIu32
+        "/%" PRIu32 "/%" PRIu32 " ppa %" PRIu32 "/%" PRIu32 " nobuf %" PRIu32
+        " ui %" PRIu32 "/s | dec %" PRIu32 "/s wait %" PRIu32 "/%" PRIu32
+        " roi %" PRIu32 "@%" PRIu32 " gray %" PRIu32 "/%" PRIu32
+        " find %" PRIu32 "/%" PRIu32 " read %" PRIu32 "/%" PRIu32
+        " | ok %" PRIu32 " new %" PRIu32 " skip %" PRIu32 " none %" PRIu32
+        " bad %" PRIu32 " | err grid %" PRIu32 " ver %" PRIu32 " fmt %" PRIu32
+        " ecc %" PRIu32 " other %" PRIu32 " | qr v%u %upx",
+        p.camera_frames * 1000 / window_ms, p.camera_gaps[0], p.camera_gaps[1],
+        p.camera_gaps[2], p.camera_gaps[3], p.camera_gaps[4],
+        scan_stat_avg(&p.ppa), p.ppa.max_us, p.no_buffer,
+        p.presented * 1000 / window_ms, p.identify.count * 1000 / window_ms,
+        scan_stat_avg(&p.wait), p.wait.max_us, p.roi_frames, p.roi_side_px,
+        scan_stat_avg(&p.gray), p.gray.max_us, scan_stat_avg(&p.identify),
+        p.identify.max_us, scan_stat_avg(&p.decode), p.decode.max_us, p.decoded,
+        p.distinct, p.skipped, p.no_code, p.undecodable,
+        p.errors[K_QUIRC_ERROR_INVALID_GRID_SIZE],
+        p.errors[K_QUIRC_ERROR_INVALID_VERSION],
+        p.errors[K_QUIRC_ERROR_FORMAT_ECC], p.errors[K_QUIRC_ERROR_DATA_ECC],
+        other_errors, (unsigned)p.qr_version, (unsigned)p.qr_side_px);
+  }
+}
+
+// Left running once started: it only ever touches static storage, and
+// deleting a task that may be inside printf risks stranding the stdout lock.
+static void scan_profile_start(void) {
+  static bool started;
+  if (!started && xTaskCreate(scan_profile_task, "scan_prof", 4096, NULL, 1,
+                              NULL) == pdPASS)
+    started = true;
+}
+#else
+#define PROFILE_START(name) ((void)0)
+#define PROFILE_END(name) ((void)0)
+#define PROFILE_COUNT(field) ((void)0)
+#endif
+
 static void touch_event_cb(lv_event_t *e);
 static void camera_video_frame_operation(uint8_t *camera_buf,
                                          uint8_t camera_buf_index,
@@ -392,6 +508,7 @@ static void present_pending_preview(void) {
   __atomic_store_n(&displayed_buffer, frame, __ATOMIC_SEQ_CST);
   img_refresh_dsc.data = frame;
   lv_img_set_src(camera_img, &img_refresh_dsc);
+  PROFILE_COUNT(presented);
   // Active scanning counts as activity: hold off screensaver/session lock
   lv_display_trigger_activity(NULL);
 }
@@ -717,14 +834,20 @@ static void qr_decode_task(void *pvParameters) {
   qr_decode_roi_t roi = {0};
   qr_progress_update_t progress_update = {0};
   uint8_t passes_since_yield = 0;
+#if CONFIG_KERN_SCAN_PROFILING
+  uint32_t last_payload_hash = 0;
+  int last_part_index = -1;
+#endif
 
   while (true) {
     if (closing || destruction_in_progress)
       break;
 
+    PROFILE_START(wait);
     if (xQueueReceive(qr_frame_queue, &frame_data, pdMS_TO_TICKS(100)) !=
         pdTRUE)
       continue;
+    PROFILE_END(wait);
 
     if (closing || destruction_in_progress) {
       release_decode_frame(frame_data.frame_data);
@@ -762,13 +885,23 @@ static void qr_decode_task(void *pvParameters) {
 
     uint8_t *qr_buf = k_quirc_begin(qr_decoder, NULL, NULL);
     if (qr_buf) {
+      PROFILE_START(gray);
       rgb565_region_to_grayscale(frame_data.frame_data, qr_buf,
                                  frame_data.width, decode_x, decode_y,
                                  decode_width, decode_height);
+      PROFILE_END(gray);
       // The RGB frame is fully copied into the decoder's grayscale buffer;
       // hand it back so the camera can reuse it as a PPA target.
       release_decode_frame(frame_data.frame_data);
+      PROFILE_START(identify);
       k_quirc_end(qr_decoder, false);
+      PROFILE_END(identify);
+#if CONFIG_KERN_SCAN_PROFILING
+      if (roi.active) {
+        scan_profile.roi_frames++;
+        scan_profile.roi_side_px = decode_width;
+      }
+#endif
 
       int num_codes = k_quirc_count(qr_decoder);
       bool frame_decoded = false;
@@ -776,8 +909,33 @@ static void qr_decode_task(void *pvParameters) {
         if (closing || destruction_in_progress)
           break;
 
+        PROFILE_START(decode);
         k_quirc_error_t err = k_quirc_decode(qr_decoder, i, &qr_result);
+        PROFILE_END(decode);
+#if CONFIG_KERN_SCAN_PROFILING
+        if (err != K_QUIRC_SUCCESS &&
+            (size_t)err <
+                sizeof(scan_profile.errors) / sizeof(scan_profile.errors[0]))
+          scan_profile.errors[err]++;
+#endif
         if (err == K_QUIRC_SUCCESS && qr_result.valid && qr_parser) {
+#if CONFIG_KERN_SCAN_PROFILING
+          // Pixels per module tell a marginal resolution from a torn capture.
+          int side_x = abs(qr_result.corners[1].x - qr_result.corners[0].x);
+          int side_y = abs(qr_result.corners[1].y - qr_result.corners[0].y);
+          scan_profile.qr_version = (uint16_t)qr_result.data.version;
+          scan_profile.qr_side_px =
+              (uint16_t)(side_x > side_y ? side_x : side_y);
+          // FNV-1a: tells a newly captured animation frame from a re-read.
+          uint32_t payload_hash = 2166136261u;
+          for (int b = 0; b < qr_result.data.payload_len; b++)
+            payload_hash =
+                (payload_hash ^ qr_result.data.payload[b]) * 16777619u;
+          if (payload_hash != last_payload_hash)
+            PROFILE_COUNT(distinct);
+          last_payload_hash = payload_hash;
+          PROFILE_COUNT(decoded);
+#endif
           if (!frame_decoded) {
             update_decode_roi(&roi, &qr_result, decode_x, decode_y,
                               frame_data.width, frame_data.height);
@@ -787,6 +945,20 @@ static void qr_decode_task(void *pvParameters) {
           int part_index = qr_parser_parse_with_len(
               qr_parser, (const char *)qr_result.data.payload,
               qr_result.data.payload_len);
+#if CONFIG_KERN_SCAN_PROFILING
+          // Sequential animations only: a jump of more than one part is a
+          // frame that was on screen and never decoded.
+          if (part_index >= 0 && qr_parser->total > 1 &&
+              (qr_parser->format == FORMAT_PMOFN ||
+               qr_parser->format == FORMAT_BBQR)) {
+            if (last_part_index >= 0 && part_index != last_part_index) {
+              int step = (part_index - last_part_index + qr_parser->total) %
+                         qr_parser->total;
+              scan_profile.skipped += (uint32_t)(step - 1);
+            }
+            last_part_index = part_index;
+          }
+#endif
 
           if (part_index >= 0 || qr_parser->total == 1) {
             progress_update.format = qr_parser->format;
@@ -820,6 +992,13 @@ static void qr_decode_task(void *pvParameters) {
           }
         }
       }
+
+#if CONFIG_KERN_SCAN_PROFILING
+      if (num_codes == 0)
+        PROFILE_COUNT(no_code);
+      else if (!frame_decoded)
+        PROFILE_COUNT(undecodable);
+#endif
 
       // k_quirc clears its own copies on return; the decoded payload - a
       // mnemonic or PSBT fragment - now lives only here, on a task stack that
@@ -1060,6 +1239,21 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
+#if CONFIG_KERN_SCAN_PROFILING
+  static int64_t last_camera_frame;
+  int64_t camera_frame_time = esp_timer_get_time();
+  // A gap over a second is a new scan session, not a dropped frame.
+  if (last_camera_frame && camera_frame_time - last_camera_frame < 1000000) {
+    uint32_t gap_us = (uint32_t)(camera_frame_time - last_camera_frame);
+    size_t bucket = 0;
+    while (bucket < SCAN_GAP_BUCKETS - 1 && gap_us >= scan_gap_edges_us[bucket])
+      bucket++;
+    scan_profile.camera_gaps[bucket]++;
+  }
+  last_camera_frame = camera_frame_time;
+  PROFILE_COUNT(camera_frames);
+#endif
+
   // Sensor shot noise is real physical entropy and the frame is already here.
   // memcpy rather than a uint32_t cast: the callback contract hands over a
   // uint8_t *, so alignment is an assumption about today's allocator, not a
@@ -1112,6 +1306,7 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     }
   }
   if (!back_buffer) {
+    PROFILE_COUNT(no_buffer);
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
@@ -1151,7 +1346,10 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
         .scale_y = sim_scale,
         .mode = PPA_TRANS_MODE_BLOCKING,
     };
-    if (ppa_do_scale_rotate_mirror(cam_ppa_client, &srm) != ESP_OK) {
+    PROFILE_START(ppa);
+    esp_err_t ppa_err = ppa_do_scale_rotate_mirror(cam_ppa_client, &srm);
+    PROFILE_END(ppa);
+    if (ppa_err != ESP_OK) {
       __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
       return;
     }
@@ -1259,6 +1457,10 @@ static bool camera_run(void) {
 void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   session_cleanup_register(qr_scanner_page_destroy);
   (void)parent;
+
+#if CONFIG_KERN_SCAN_PROFILING
+  scan_profile_start();
+#endif
 
   return_callback = return_cb;
   closing = false;

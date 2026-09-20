@@ -66,4 +66,35 @@ menu "Kern Configuration"
             place the accelerated path is proven. Development only; it adds
             several seconds to boot.
 
+    config KERN_SCAN_PROFILING
+        bool "Log QR scanner pipeline timing once a second"
+        default n
+        help
+            While the scanner is open, prints one line a second prefixed PROF.
+            Times are average/maximum in microseconds.
+
+            cam: camera callbacks per second. gaps: callbacks by the time since
+            the previous one, in buckets <28/<39/<55/<78/>=78 ms; one frame
+            period of a 45 fps sensor lands in the first and a dropped frame in
+            the third. ppa: crop and scale time. nobuf: frames skipped for want
+            of a free buffer. ui: preview frames per second.
+
+            dec: decoder passes per second. wait: decoder idle before each
+            pass. roi: passes restricted to the tracked region, @ its side in
+            pixels. gray, find, read: grayscale conversion, code location, code
+            decoding.
+
+            ok: passes that decoded. new: decodes whose payload differs from
+            the previous one. skip: sequential BBQr or pMofN parts the
+            animation showed and no pass decoded. none: passes that found no
+            code. bad: passes that found a code they could not read.
+
+            err: failed reads by cause: grid size, version, format ECC, data
+            ECC, other. qr: version and side in pixels of the last code read;
+            a version v code has 17 + 4v modules a side.
+
+            Development only. The line is printed from an idle-priority task so
+            its UART time stays off the tasks being measured. Use
+            just scan-prof <board>.
+
 endmenu
