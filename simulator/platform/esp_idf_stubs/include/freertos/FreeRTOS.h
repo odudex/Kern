@@ -19,11 +19,19 @@
 
 #define configASSERT(x)    assert(x)
 
-/* Critical section no-ops for single-threaded LVGL main loop */
-#define portENTER_CRITICAL()     ((void)0)
-#define portEXIT_CRITICAL()      ((void)0)
-#define portENTER_CRITICAL_ISR() ((void)0)
-#define portEXIT_CRITICAL_ISR()  ((void)0)
+/* Critical sections. The simulated camera runs on its own thread, so these
+ * must really exclude: one process-wide recursive mutex stands in for every
+ * spinlock. */
+typedef int portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED 0
+void sim_critical_enter(void);
+void sim_critical_exit(void);
+#define portENTER_CRITICAL(mux)      sim_critical_enter()
+#define portEXIT_CRITICAL(mux)       sim_critical_exit()
+#define portENTER_CRITICAL_ISR(mux)  sim_critical_enter()
+#define portEXIT_CRITICAL_ISR(mux)   sim_critical_exit()
+#define portENTER_CRITICAL_SAFE(mux) sim_critical_enter()
+#define portEXIT_CRITICAL_SAFE(mux)  sim_critical_exit()
 
 typedef uint32_t     TickType_t;
 typedef int          BaseType_t;
