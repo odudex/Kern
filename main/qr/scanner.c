@@ -51,6 +51,10 @@
 #define QR_FRAME_QUEUE_SIZE 1
 #define QR_DECODE_TASK_STACK_SIZE 32768
 #define QR_DECODE_TASK_PRIORITY 5
+// With a frame always waiting, the decoder never blocks on its queue, and a
+// task that never blocks starves its core's idle task: the task watchdog fires
+// and deleted tasks are never reaped. One tick every few passes is enough.
+#define QR_DECODE_PASSES_PER_YIELD 8
 #define PROGRESS_BAR_HEIGHT 20
 #define PROGRESS_FRAME_INSET 6
 // One LVGL timer presents the newest preview frame, applies scan progress and
@@ -117,9 +121,11 @@ static void (*return_callback)(void) = NULL;
 static lv_img_dsc_t img_refresh_dsc;
 static EventGroupHandle_t camera_event_group = NULL;
 
-static uint8_t *display_buffer_a = NULL;
-static uint8_t *display_buffer_b = NULL;
-static uint8_t *display_buffer_c = NULL;
+// One on screen, one published and queued for the decoder, one the decoder
+// may still hold from before, and one for the PPA to write: with four the PPA
+// always has a target, so a queued frame never has to be withdrawn early.
+#define DISPLAY_BUFFER_COUNT 4
+static uint8_t *display_buffers[DISPLAY_BUFFER_COUNT];
 static size_t display_buffer_size = 0;
 
 // Preview handoff. The camera task never takes the LVGL lock: waiting out a
@@ -550,28 +556,13 @@ static bool allocate_display_buffers(uint32_t width, uint32_t height) {
       (display_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
       ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
 
-  display_buffer_a = allocate_buffer_with_fallback(display_buffer_size);
-  if (!display_buffer_a) {
-    ESP_LOGE(TAG, "Failed to allocate display buffer A");
-    display_buffer_size = 0;
-    return false;
-  }
-
-  display_buffer_b = allocate_buffer_with_fallback(display_buffer_size);
-  if (!display_buffer_b) {
-    ESP_LOGE(TAG, "Failed to allocate display buffer B");
-    SAFE_FREE_STATIC(display_buffer_a);
-    display_buffer_size = 0;
-    return false;
-  }
-
-  display_buffer_c = allocate_buffer_with_fallback(display_buffer_size);
-  if (!display_buffer_c) {
-    ESP_LOGE(TAG, "Failed to allocate display buffer C");
-    SAFE_FREE_STATIC(display_buffer_a);
-    SAFE_FREE_STATIC(display_buffer_b);
-    display_buffer_size = 0;
-    return false;
+  for (size_t i = 0; i < DISPLAY_BUFFER_COUNT; i++) {
+    display_buffers[i] = allocate_buffer_with_fallback(display_buffer_size);
+    if (!display_buffers[i]) {
+      ESP_LOGE(TAG, "Failed to allocate display buffer %u", (unsigned)i);
+      free_display_buffers();
+      return false;
+    }
   }
 
   return true;
@@ -583,9 +574,8 @@ static void free_display_buffers(void) {
   published_buffer = NULL;
   queued_decode_buffer = NULL;
   held_decode_buffer = NULL;
-  SAFE_FREE_STATIC(display_buffer_a);
-  SAFE_FREE_STATIC(display_buffer_b);
-  SAFE_FREE_STATIC(display_buffer_c);
+  for (size_t i = 0; i < DISPLAY_BUFFER_COUNT; i++)
+    SAFE_FREE_STATIC(display_buffers[i]);
   display_buffer_size = 0;
 }
 
@@ -726,6 +716,7 @@ static void qr_decode_task(void *pvParameters) {
   k_quirc_result_t qr_result;
   qr_decode_roi_t roi = {0};
   qr_progress_update_t progress_update = {0};
+  uint8_t passes_since_yield = 0;
 
   while (true) {
     if (closing || destruction_in_progress)
@@ -852,6 +843,11 @@ static void qr_decode_task(void *pvParameters) {
 
     } else {
       release_decode_frame(frame_data.frame_data);
+    }
+
+    if (++passes_since_yield >= QR_DECODE_PASSES_PER_YIELD) {
+      passes_since_yield = 0;
+      vTaskDelay(1);
     }
   }
 
@@ -1020,6 +1016,19 @@ static void qr_decoder_cleanup(void) {
   }
 }
 
+// Camera task only. The decoder returns a frame as soon as it has copied it to
+// grayscale, always before it takes the next one.
+static void reclaim_returned_decode_buffers(void) {
+  uint8_t *returned_buffer;
+  while (qr_buffer_return_queue &&
+         xQueueReceive(qr_buffer_return_queue, &returned_buffer, 0) == pdTRUE) {
+    if (returned_buffer == held_decode_buffer)
+      held_decode_buffer = NULL;
+    if (returned_buffer == queued_decode_buffer)
+      queued_decode_buffer = NULL;
+  }
+}
+
 static void camera_video_frame_operation(uint8_t *camera_buf,
                                          uint8_t camera_buf_index,
                                          uint32_t camera_buf_hes,
@@ -1040,7 +1049,8 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
-  if (!display_buffer_a || !display_buffer_b || !display_buffer_c) {
+  // Allocated all or none.
+  if (!display_buffers[DISPLAY_BUFFER_COUNT - 1]) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
@@ -1085,40 +1095,19 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     resolution_mismatch_logged = true;
   }
 
-  // Reclaim buffers the decoder has finished with, then account for a queued
-  // frame it may have taken, so neither is picked as the PPA target below.
-  if (qr_buffer_return_queue) {
-    uint8_t *returned_buffer;
-    while (xQueueReceive(qr_buffer_return_queue, &returned_buffer, 0) ==
-           pdTRUE) {
-      if (returned_buffer == held_decode_buffer)
-        held_decode_buffer = NULL;
-      if (returned_buffer == queued_decode_buffer)
-        queued_decode_buffer = NULL;
-    }
-  }
-  if (qr_frame_queue) {
-    qr_frame_data_t stale_frame;
-    if (xQueueReceive(qr_frame_queue, &stale_frame, 0) == pdTRUE) {
-      if (stale_frame.frame_data == queued_decode_buffer)
-        queued_decode_buffer = NULL;
-    } else if (queued_decode_buffer) {
-      held_decode_buffer = queued_decode_buffer;
-      queued_decode_buffer = NULL;
-    }
-  }
+  reclaim_returned_decode_buffers();
 
   // Readers may share a buffer; the PPA must not write one that LVGL or the
   // decoder could be reading. A frame the UI never claimed is simply
   // superseded.
   uint8_t *displayed = __atomic_load_n(&displayed_buffer, __ATOMIC_SEQ_CST);
   uint8_t *back_buffer = NULL;
-  uint8_t *const buffer_pool[] = {display_buffer_a, display_buffer_b,
-                                  display_buffer_c};
-  for (size_t i = 0; i < sizeof(buffer_pool) / sizeof(buffer_pool[0]); i++) {
-    if (buffer_pool[i] != displayed && buffer_pool[i] != published_buffer &&
-        buffer_pool[i] != held_decode_buffer) {
-      back_buffer = buffer_pool[i];
+  for (size_t i = 0; i < DISPLAY_BUFFER_COUNT; i++) {
+    if (display_buffers[i] != displayed &&
+        display_buffers[i] != published_buffer &&
+        display_buffers[i] != queued_decode_buffer &&
+        display_buffers[i] != held_decode_buffer) {
+      back_buffer = display_buffers[i];
       break;
     }
   }
@@ -1171,15 +1160,28 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
   // Decoder first: it gets the un-rotated frame (QR codes are
-  // orientation-invariant) the moment it exists. The frame queue was drained
-  // above, so the send cannot fail; the buffer stays leased until the decoder
-  // hands it back on the return queue.
-  if (qr_frame_queue && !settings_active) {
-    qr_frame_data_t frame_data = {.frame_data = back_buffer,
-                                  .width = CAMERA_SCREEN_WIDTH,
-                                  .height = CAMERA_SCREEN_HEIGHT};
-    if (xQueueSend(qr_frame_queue, &frame_data, 0) == pdTRUE)
-      queued_decode_buffer = back_buffer;
+  // orientation-invariant) the moment it exists. The frame it supersedes is
+  // withdrawn only now: taking it back before the PPA left the queue empty for
+  // the whole scale pass, and the decoder idle for a quarter of its time. An
+  // empty queue means the decoder took that frame and may still be reading it.
+  reclaim_returned_decode_buffers();
+  if (qr_frame_queue) {
+    qr_frame_data_t stale_frame;
+    if (xQueueReceive(qr_frame_queue, &stale_frame, 0) == pdTRUE) {
+      if (stale_frame.frame_data == queued_decode_buffer)
+        queued_decode_buffer = NULL;
+    } else if (queued_decode_buffer) {
+      held_decode_buffer = queued_decode_buffer;
+      queued_decode_buffer = NULL;
+    }
+
+    if (!settings_active) {
+      qr_frame_data_t frame_data = {.frame_data = back_buffer,
+                                    .width = CAMERA_SCREEN_WIDTH,
+                                    .height = CAMERA_SCREEN_HEIGHT};
+      if (xQueueSend(qr_frame_queue, &frame_data, 0) == pdTRUE)
+        queued_decode_buffer = back_buffer;
+    }
   }
 
   published_buffer = back_buffer;
