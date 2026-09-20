@@ -53,7 +53,10 @@
 #define QR_DECODE_TASK_PRIORITY 5
 #define PROGRESS_BAR_HEIGHT 20
 #define PROGRESS_FRAME_INSET 6
-#define PROGRESS_UPDATE_INTERVAL_MS 50
+// One LVGL timer presents the newest preview frame, applies scan progress and
+// notices completion. It also caps the preview rate below the sensor's, which
+// leaves PSRAM bandwidth to the decoder.
+#define UI_UPDATE_INTERVAL_MS 30
 #define QR_ROI_MARGIN_PERCENT 20
 #define QR_ROI_MIN_SIZE 64
 #define QR_ROI_SIZE_QUANTUM 16
@@ -117,9 +120,19 @@ static EventGroupHandle_t camera_event_group = NULL;
 static uint8_t *display_buffer_a = NULL;
 static uint8_t *display_buffer_b = NULL;
 static uint8_t *display_buffer_c = NULL;
-static uint8_t *current_display_buffer = NULL;
 static size_t display_buffer_size = 0;
-static volatile bool buffer_swap_needed = false;
+
+// Preview handoff. The camera task never takes the LVGL lock: waiting out a
+// render there held a capture buffer past the sensor's frame period, so the
+// driver dropped frames, and it delayed every frame's trip to the decoder.
+// Instead the camera publishes its newest frame and the UI timer claims it.
+// Both pointers are only touched atomically.
+static uint8_t *pending_preview = NULL;  // camera -> UI, newest unclaimed frame
+static uint8_t *displayed_buffer = NULL; // UI -> camera, LVGL may be reading it
+// Camera-task only: the last frame published, claimed yet or not. Excluding it
+// as a PPA target covers the instant between the UI claiming a frame and
+// recording it as displayed.
+static uint8_t *published_buffer = NULL;
 
 // Decode-lease bookkeeping, owned by the camera task: a buffer handed to the
 // decoder must not be reused as a PPA target until the decoder returns it.
@@ -362,7 +375,23 @@ static void process_pending_progress_update(void) {
   }
 }
 
+static void present_pending_preview(void) {
+  uint8_t *frame =
+      __atomic_exchange_n(&pending_preview, NULL, __ATOMIC_SEQ_CST);
+  if (!frame || !camera_img || closing || destruction_in_progress)
+    return;
+
+  // No render is in flight inside a timer callback, so the previous buffer is
+  // free for the camera from here on.
+  __atomic_store_n(&displayed_buffer, frame, __ATOMIC_SEQ_CST);
+  img_refresh_dsc.data = frame;
+  lv_img_set_src(camera_img, &img_refresh_dsc);
+  // Active scanning counts as activity: hold off screensaver/session lock
+  lv_display_trigger_activity(NULL);
+}
+
 static void completion_timer_cb(lv_timer_t *timer) {
+  present_pending_preview();
   process_pending_progress_update();
 
   if ((scan_completed || scan_failed) && return_callback && !closing &&
@@ -549,7 +578,9 @@ static bool allocate_display_buffers(uint32_t width, uint32_t height) {
 }
 
 static void free_display_buffers(void) {
-  current_display_buffer = NULL;
+  __atomic_store_n(&pending_preview, NULL, __ATOMIC_SEQ_CST);
+  __atomic_store_n(&displayed_buffer, NULL, __ATOMIC_SEQ_CST);
+  published_buffer = NULL;
   queued_decode_buffer = NULL;
   held_decode_buffer = NULL;
   SAFE_FREE_STATIC(display_buffer_a);
@@ -1009,8 +1040,7 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     return;
   }
 
-  if (!display_buffer_a || !display_buffer_b || !display_buffer_c ||
-      !current_display_buffer) {
+  if (!display_buffer_a || !display_buffer_b || !display_buffer_c) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
@@ -1078,11 +1108,15 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     }
   }
 
+  // Readers may share a buffer; the PPA must not write one that LVGL or the
+  // decoder could be reading. A frame the UI never claimed is simply
+  // superseded.
+  uint8_t *displayed = __atomic_load_n(&displayed_buffer, __ATOMIC_SEQ_CST);
   uint8_t *back_buffer = NULL;
   uint8_t *const buffer_pool[] = {display_buffer_a, display_buffer_b,
                                   display_buffer_c};
   for (size_t i = 0; i < sizeof(buffer_pool) / sizeof(buffer_pool[0]); i++) {
-    if (buffer_pool[i] != current_display_buffer &&
+    if (buffer_pool[i] != displayed && buffer_pool[i] != published_buffer &&
         buffer_pool[i] != held_decode_buffer) {
       back_buffer = buffer_pool[i];
       break;
@@ -1095,7 +1129,6 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
 
   // Single PPA pass: centered square crop -> screen-size scale +
   // counter-rotation
-  uint8_t *display_src = back_buffer;
   if (cam_ppa_client && !closing) {
     uint32_t in_w = camera_buf_hes;
     uint32_t in_h = camera_buf_ves;
@@ -1137,37 +1170,20 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
-  buffer_swap_needed = true;
-
-  if (buffer_swap_needed && !closing && !destruction_in_progress &&
-      bsp_display_lock(0)) {
-    // Re-check after taking lock — destroy may have run between the check
-    // above and acquiring the lock, nulling camera_img
-    if (!closing && !destruction_in_progress && camera_img) {
-      current_display_buffer = back_buffer;
-      img_refresh_dsc.data = display_src;
-      lv_img_set_src(camera_img, &img_refresh_dsc);
-      // Active scanning counts as activity: hold off screensaver/session lock
-      lv_display_trigger_activity(NULL);
-    }
-    buffer_swap_needed = false;
-    bsp_display_unlock();
-  }
-
-  // QR decoder gets un-rotated buffer (QR codes are orientation-invariant,
-  // but using original data avoids unnecessary processing). The frame queue
-  // was drained above, so the send cannot fail; the buffer stays leased until
-  // the decoder hands it back on the return queue. If the display swap was
-  // skipped (lock contention), current may still be the buffer the decoder
-  // holds — never queue that one, or a single pointer would carry two leases.
-  if (qr_frame_queue && !settings_active &&
-      current_display_buffer != held_decode_buffer) {
-    qr_frame_data_t frame_data = {.frame_data = current_display_buffer,
+  // Decoder first: it gets the un-rotated frame (QR codes are
+  // orientation-invariant) the moment it exists. The frame queue was drained
+  // above, so the send cannot fail; the buffer stays leased until the decoder
+  // hands it back on the return queue.
+  if (qr_frame_queue && !settings_active) {
+    qr_frame_data_t frame_data = {.frame_data = back_buffer,
                                   .width = CAMERA_SCREEN_WIDTH,
                                   .height = CAMERA_SCREEN_HEIGHT};
     if (xQueueSend(qr_frame_queue, &frame_data, 0) == pdTRUE)
-      queued_decode_buffer = current_display_buffer;
+      queued_decode_buffer = back_buffer;
   }
+
+  published_buffer = back_buffer;
+  __atomic_store_n(&pending_preview, back_buffer, __ATOMIC_SEQ_CST);
 
   __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
 }
@@ -1201,9 +1217,6 @@ static bool camera_init(void) {
     ESP_LOGE(TAG, "Failed to allocate display buffers");
     return false;
   }
-
-  current_display_buffer = display_buffer_a;
-  img_refresh_dsc.data = current_display_buffer;
 
   if (!qr_decoder_init(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
     ESP_LOGE(TAG, "Failed to initialize QR decoder");
@@ -1310,7 +1323,7 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   }
 
   completion_timer =
-      lv_timer_create(completion_timer_cb, PROGRESS_UPDATE_INTERVAL_MS, NULL);
+      lv_timer_create(completion_timer_cb, UI_UPDATE_INTERVAL_MS, NULL);
   is_fully_initialized = true;
 }
 
@@ -1395,7 +1408,6 @@ void qr_scanner_page_destroy(void) {
   }
 
   return_callback = NULL;
-  buffer_swap_needed = false;
   destruction_in_progress = false;
   closing = false;
   active_frame_operations = 0;
