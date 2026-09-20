@@ -10,8 +10,10 @@
 #include "../utils/memory_utils.h"
 #include "../utils/secure_mem.h"
 #include "../utils/session_cleanup.h"
+#include "frame_pool.h"
 #include "parser.h"
 #include "progress.h"
+#include "yuv420.h"
 #include <bsp/esp-bsp.h>
 #include <driver/ppa.h>
 #include <esp_log.h>
@@ -24,17 +26,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Camera preview is a square sized to the smaller display dimension, capped at
-// 640px.  Sensor outputs 1280x960 (binning mode); we take a centered square
-// crop and downscale with the PPA in a single pass.
+// The sensor outputs 1280x960 (binning mode). Every camera frame takes two PPA
+// passes:
+//   1. a centred square crop, scaled to the decode frame: up to 640 px whatever
+//      the screen, in packed YUV420, whose luma the decoder reads directly;
+//   2. the decode frame, scaled to the preview: RGB565, sized to the smaller
+//      display dimension.
+// The decoder used to read the preview, so a narrow screen also capped the
+// pixels per QR module. Measured on a version 18 code, 3.6 px per module read
+// 46% of captures and 4.8 px read 66%.
 //
 // The ESP32-P4 PPA uses Q4.4 fixed-point scaling (fractional scale quantized
 // to 1/16), so an arbitrary scale like 2/3 truncates to 10/16 = 0.625 and
-// leaves the last rows/cols unwritten. We therefore quantize the scale down
-// to the nearest 1/16 and derive the actual preview size from it, so the
-// PPA output exactly fills the widget — no black edges.
-//   wave_4b: crop 960, scale 10/16 -> 600x600 preview
-//   wave_35: crop 640, scale  8/16 -> 320x320 preview
+// leaves the last rows/cols unwritten. Both sizes are therefore derived from a
+// scale already quantized down - to 1/8 for the YUV420 pass, where the PPA
+// drops an odd fraction - so each output exactly fills its buffer.
+//   wave_4b: crop 960 -> 10/16 -> 600x600 decode -> 16/16 -> 600x600 preview
+//   wave_43: crop 960 -> 10/16 -> 600x600 decode -> 12/16 -> 450x450 preview
+//   wave_35: crop 640 -> 16/16 -> 640x640 decode ->  8/16 -> 320x320 preview
 #define CAMERA_SCREEN_DIM_MIN                                                  \
   ((BSP_LCD_H_RES) < (BSP_LCD_V_RES) ? (BSP_LCD_H_RES) : (BSP_LCD_V_RES))
 #define CAMERA_TARGET                                                          \
@@ -43,11 +52,18 @@
 #define CAMERA_INPUT_HEIGHT 960
 #define CAMERA_INPUT_CROP                                                      \
   ((CAMERA_TARGET * 2 <= 960) ? (CAMERA_TARGET * 2) : 960)
-// Largest Q4.4 scale <= target/crop, and the exact preview size it yields.
-#define CAMERA_PPA_FRAG ((CAMERA_TARGET * 16) / CAMERA_INPUT_CROP)
-#define CAMERA_SCREEN_SIZE ((CAMERA_INPUT_CROP * CAMERA_PPA_FRAG) / 16)
+#define DECODE_TARGET 640
+#define DECODE_PPA_FRAG_MAX ((DECODE_TARGET * 16) / CAMERA_INPUT_CROP)
+#define DECODE_PPA_FRAG                                                        \
+  ((DECODE_PPA_FRAG_MAX > 16 ? 16 : DECODE_PPA_FRAG_MAX) & ~1)
+#define DECODE_FRAME_SIZE ((CAMERA_INPUT_CROP * DECODE_PPA_FRAG) / 16)
+#define PREVIEW_PPA_FRAG_MAX ((CAMERA_TARGET * 16) / DECODE_FRAME_SIZE)
+#define PREVIEW_PPA_FRAG (PREVIEW_PPA_FRAG_MAX > 16 ? 16 : PREVIEW_PPA_FRAG_MAX)
+#define CAMERA_SCREEN_SIZE ((DECODE_FRAME_SIZE * PREVIEW_PPA_FRAG) / 16)
 #define CAMERA_SCREEN_WIDTH CAMERA_SCREEN_SIZE
 #define CAMERA_SCREEN_HEIGHT CAMERA_SCREEN_SIZE
+// YUV420 packs luma by pixel pair and the PPA takes only even sizes for it.
+_Static_assert(DECODE_FRAME_SIZE % 2 == 0, "decode frame size must be even");
 #define QR_FRAME_QUEUE_SIZE 1
 #define QR_DECODE_TASK_STACK_SIZE 32768
 #define QR_DECODE_TASK_PRIORITY 5
@@ -70,12 +86,6 @@
 // processed so PPA work and full-image LVGL invalidations don't starve
 // touch handling; the preview still updates enough to judge exposure.
 #define SETTINGS_PREVIEW_FRAME_DIVISOR 8
-#define RGB565_RED_BITS 5
-#define RGB565_GREEN_BITS 6
-#define RGB565_BLUE_BITS 5
-#define RGB565_RED_LEVELS (1 << RGB565_RED_BITS)
-#define RGB565_GREEN_LEVELS (1 << RGB565_GREEN_BITS)
-#define RGB565_BLUE_LEVELS (1 << RGB565_BLUE_BITS)
 
 typedef enum {
   CAMERA_EVENT_TASK_RUN = BIT(0),
@@ -121,24 +131,28 @@ static void (*return_callback)(void) = NULL;
 static lv_img_dsc_t img_refresh_dsc;
 static EventGroupHandle_t camera_event_group = NULL;
 
-// One on screen, one published and queued for the decoder, one the decoder
-// may still hold from before, and one for the PPA to write: with four the PPA
-// always has a target, so a queued frame never has to be withdrawn early.
-#define DISPLAY_BUFFER_COUNT 4
-static uint8_t *display_buffers[DISPLAY_BUFFER_COUNT];
-static size_t display_buffer_size = 0;
+// Decode frames (YUV420): one queued for the decoder, one it may still be
+// reading, one for the PPA to write. Preview frames (RGB565): one on screen,
+// one finished and unclaimed, one for the PPA to write. With three of each the
+// PPA always has a target, so a queued frame never has to be withdrawn early.
+#define DECODE_BUFFER_COUNT 3
+#define PREVIEW_BUFFER_COUNT FRAME_POOL_SIZE
+static uint8_t *decode_buffers[DECODE_BUFFER_COUNT];
+static uint8_t *preview_buffers[PREVIEW_BUFFER_COUNT];
+static size_t decode_buffer_size = 0;
+static size_t preview_buffer_size = 0;
 
 // Preview handoff. The camera task never takes the LVGL lock: waiting out a
 // render there held a capture buffer past the sensor's frame period, so the
 // driver dropped frames, and it delayed every frame's trip to the decoder.
-// Instead the camera publishes its newest frame and the UI timer claims it.
-// Both pointers are only touched atomically.
-static uint8_t *pending_preview = NULL;  // camera -> UI, newest unclaimed frame
-static uint8_t *displayed_buffer = NULL; // UI -> camera, LVGL may be reading it
-// Camera-task only: the last frame published, claimed yet or not. Excluding it
-// as a PPA target covers the instant between the UI claiming a frame and
-// recording it as displayed.
-static uint8_t *published_buffer = NULL;
+// Instead each preview buffer has one owner at a time, handed on under this
+// lock by the camera task, the PPA interrupt and the UI timer.
+static frame_pool_t preview_pool;
+static portMUX_TYPE preview_lock = portMUX_INITIALIZER_UNLOCKED;
+// The decode frame a preview pass is still reading, NULL when none is in
+// flight. That pass is not waited for: camera frames arrive on sensor frame
+// boundaries, so a callback a little over three periods long cost four.
+static uint8_t *preview_pass_source = NULL;
 
 // Decode-lease bookkeeping, owned by the camera task: a buffer handed to the
 // decoder must not be reused as a PPA target until the decoder returns it.
@@ -158,9 +172,6 @@ static QueueHandle_t qr_buffer_return_queue = NULL;
 static SemaphoreHandle_t qr_task_done_sem = NULL;
 static QRPartParser *qr_parser = NULL;
 
-// Direct RGB565-to-grayscale lookup table (64KB, initialized once)
-static uint8_t *rgb565_gray_lut = NULL;
-
 static volatile bool closing = false;
 static volatile bool scan_completed = false;
 static volatile bool scan_failed = false;
@@ -176,9 +187,10 @@ static bool has_focus_motor = false;
 static bool has_ae_control = false;
 static volatile bool settings_active = false;
 
-// PPA does centered crop + downscale (1280x960 -> 640x640) in a single pass.
 static ppa_client_handle_t cam_ppa_client = NULL;
 
+// Camera callbacks in progress. Balanced on every path and never forced to
+// zero: camera_pipeline_idle() must not lie about one that is still running.
 static volatile int active_frame_operations = 0;
 static lv_timer_t *completion_timer = NULL;
 
@@ -202,8 +214,9 @@ static const uint32_t scan_gap_edges_us[] = {28000, 39000, 55000, 78000};
 
 static struct {
   uint32_t camera_gaps[SCAN_GAP_BUCKETS]; // between camera callbacks
-  scan_stat_t ppa;
-  scan_stat_t wait; // decoder idle, waiting for a frame
+  scan_stat_t ppa;                        // sensor frame -> decode frame
+  scan_stat_t ppa_preview;                // decode frame -> preview
+  scan_stat_t wait;                       // decoder idle, waiting for a frame
   scan_stat_t gray;
   scan_stat_t identify;
   scan_stat_t decode;
@@ -221,6 +234,10 @@ static struct {
   uint16_t qr_version;                               // of the last code read
   uint16_t qr_side_px;
 } scan_profile;
+
+// Written by the camera task when it queues a preview pass, read by the PPA
+// interrupt that ends it; the pass is never waited for, so nothing brackets it.
+static int64_t preview_pass_start;
 
 static void scan_stat_add(scan_stat_t *stat, int64_t elapsed_us) {
   stat->count++;
@@ -262,21 +279,23 @@ static void scan_profile_task(void *arg) {
     ESP_LOGI(
         TAG,
         "PROF cam %" PRIu32 "/s gaps %" PRIu32 "/%" PRIu32 "/%" PRIu32
-        "/%" PRIu32 "/%" PRIu32 " ppa %" PRIu32 "/%" PRIu32 " nobuf %" PRIu32
-        " ui %" PRIu32 "/s | dec %" PRIu32 "/s wait %" PRIu32 "/%" PRIu32
-        " roi %" PRIu32 "@%" PRIu32 " gray %" PRIu32 "/%" PRIu32
-        " find %" PRIu32 "/%" PRIu32 " read %" PRIu32 "/%" PRIu32
-        " | ok %" PRIu32 " new %" PRIu32 " skip %" PRIu32 " none %" PRIu32
-        " bad %" PRIu32 " | err grid %" PRIu32 " ver %" PRIu32 " fmt %" PRIu32
-        " ecc %" PRIu32 " other %" PRIu32 " | qr v%u %upx",
+        "/%" PRIu32 "/%" PRIu32 " ppa %" PRIu32 "/%" PRIu32 " prev %" PRIu32
+        "/%" PRIu32 " nobuf %" PRIu32 " ui %" PRIu32 "/s | dec %" PRIu32
+        "/s wait %" PRIu32 "/%" PRIu32 " roi %" PRIu32 "@%" PRIu32
+        " gray %" PRIu32 "/%" PRIu32 " find %" PRIu32 "/%" PRIu32
+        " read %" PRIu32 "/%" PRIu32 " | ok %" PRIu32 " new %" PRIu32
+        " skip %" PRIu32 " none %" PRIu32 " bad %" PRIu32 " | err grid %" PRIu32
+        " ver %" PRIu32 " fmt %" PRIu32 " ecc %" PRIu32 " other %" PRIu32
+        " | qr v%u %upx",
         p.camera_frames * 1000 / window_ms, p.camera_gaps[0], p.camera_gaps[1],
         p.camera_gaps[2], p.camera_gaps[3], p.camera_gaps[4],
-        scan_stat_avg(&p.ppa), p.ppa.max_us, p.no_buffer,
-        p.presented * 1000 / window_ms, p.identify.count * 1000 / window_ms,
-        scan_stat_avg(&p.wait), p.wait.max_us, p.roi_frames, p.roi_side_px,
-        scan_stat_avg(&p.gray), p.gray.max_us, scan_stat_avg(&p.identify),
-        p.identify.max_us, scan_stat_avg(&p.decode), p.decode.max_us, p.decoded,
-        p.distinct, p.skipped, p.no_code, p.undecodable,
+        scan_stat_avg(&p.ppa), p.ppa.max_us, scan_stat_avg(&p.ppa_preview),
+        p.ppa_preview.max_us, p.no_buffer, p.presented * 1000 / window_ms,
+        p.identify.count * 1000 / window_ms, scan_stat_avg(&p.wait),
+        p.wait.max_us, p.roi_frames, p.roi_side_px, scan_stat_avg(&p.gray),
+        p.gray.max_us, scan_stat_avg(&p.identify), p.identify.max_us,
+        scan_stat_avg(&p.decode), p.decode.max_us, p.decoded, p.distinct,
+        p.skipped, p.no_code, p.undecodable,
         p.errors[K_QUIRC_ERROR_INVALID_GRID_SIZE],
         p.errors[K_QUIRC_ERROR_INVALID_VERSION],
         p.errors[K_QUIRC_ERROR_FORMAT_ECC], p.errors[K_QUIRC_ERROR_DATA_ECC],
@@ -304,13 +323,8 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
                                          uint32_t camera_buf_hes,
                                          uint32_t camera_buf_ves,
                                          size_t camera_buf_len);
-static bool allocate_display_buffers(uint32_t width, uint32_t height);
-static void free_display_buffers(void);
-static void rgb565_region_to_grayscale(const uint8_t *rgb565_data,
-                                       uint8_t *gray_data,
-                                       uint32_t source_width, uint32_t region_x,
-                                       uint32_t region_y, uint32_t region_width,
-                                       uint32_t region_height);
+static bool allocate_frame_buffers(void);
+static void free_frame_buffers(void);
 static void update_decode_roi(qr_decode_roi_t *roi,
                               const k_quirc_result_t *result,
                               uint32_t decode_origin_x,
@@ -498,15 +512,16 @@ static void process_pending_progress_update(void) {
 }
 
 static void present_pending_preview(void) {
-  uint8_t *frame =
-      __atomic_exchange_n(&pending_preview, NULL, __ATOMIC_SEQ_CST);
-  if (!frame || !camera_img || closing || destruction_in_progress)
+  if (!camera_img || closing || destruction_in_progress)
     return;
 
-  // No render is in flight inside a timer callback, so the previous buffer is
-  // free for the camera from here on.
-  __atomic_store_n(&displayed_buffer, frame, __ATOMIC_SEQ_CST);
-  img_refresh_dsc.data = frame;
+  portENTER_CRITICAL_SAFE(&preview_lock);
+  int index = frame_pool_claim(&preview_pool);
+  portEXIT_CRITICAL_SAFE(&preview_lock);
+  if (index < 0)
+    return;
+
+  img_refresh_dsc.data = preview_buffers[index];
   lv_img_set_src(camera_img, &img_refresh_dsc);
   PROFILE_COUNT(presented);
   // Active scanning counts as activity: hold off screensaver/session lock
@@ -667,67 +682,71 @@ static uint8_t *allocate_buffer_with_fallback(size_t size) {
   return buffer;
 }
 
-static bool allocate_display_buffers(uint32_t width, uint32_t height) {
-  display_buffer_size = width * height * 2;
-  display_buffer_size =
-      (display_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
-      ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
-
-  for (size_t i = 0; i < DISPLAY_BUFFER_COUNT; i++) {
-    display_buffers[i] = allocate_buffer_with_fallback(display_buffer_size);
-    if (!display_buffers[i]) {
-      ESP_LOGE(TAG, "Failed to allocate display buffer %u", (unsigned)i);
-      free_display_buffers();
-      return false;
-    }
-  }
-
-  return true;
+// True once neither the camera callback nor the PPA can touch a frame buffer:
+// the blocking decode pass ends inside the callback, the preview pass in its
+// interrupt.
+static bool camera_pipeline_idle(void) {
+  return __atomic_load_n(&active_frame_operations, __ATOMIC_SEQ_CST) == 0 &&
+         __atomic_load_n(&preview_pass_source, __ATOMIC_SEQ_CST) == NULL;
 }
 
-static void free_display_buffers(void) {
-  __atomic_store_n(&pending_preview, NULL, __ATOMIC_SEQ_CST);
-  __atomic_store_n(&displayed_buffer, NULL, __ATOMIC_SEQ_CST);
-  published_buffer = NULL;
+static void reset_frame_bookkeeping(void) {
+  portENTER_CRITICAL_SAFE(&preview_lock);
+  preview_pool = (frame_pool_t){0};
+  portEXIT_CRITICAL_SAFE(&preview_lock);
+  __atomic_store_n(&preview_pass_source, NULL, __ATOMIC_SEQ_CST);
   queued_decode_buffer = NULL;
   held_decode_buffer = NULL;
-  for (size_t i = 0; i < DISPLAY_BUFFER_COUNT; i++)
-    SAFE_FREE_STATIC(display_buffers[i]);
-  display_buffer_size = 0;
 }
 
-static void rgb565_region_to_grayscale(const uint8_t *rgb565_data,
-                                       uint8_t *gray_data,
-                                       uint32_t source_width, uint32_t region_x,
-                                       uint32_t region_y, uint32_t region_width,
-                                       uint32_t region_height) {
-  const uint16_t *pixels = (const uint16_t *)rgb565_data;
-
-  if (rgb565_gray_lut) {
-    for (uint32_t y = 0; y < region_height; y++) {
-      const uint16_t *source_row =
-          pixels + (region_y + y) * source_width + region_x;
-      uint8_t *gray_row = gray_data + y * region_width;
-      for (uint32_t x = 0; x < region_width; x++)
-        gray_row[x] = rgb565_gray_lut[source_row[x]];
+static bool allocate_frame_buffers(void) {
+  if (decode_buffers[0]) {
+    // Kept by a shutdown that could not confirm the PPA had let go of them.
+    if (!camera_pipeline_idle()) {
+      ESP_LOGE(TAG, "Camera frame buffers are still in use");
+      return false;
     }
-  } else {
-    for (uint32_t y = 0; y < region_height; y++) {
-      const uint16_t *source_row =
-          pixels + (region_y + y) * source_width + region_x;
-      uint8_t *gray_row = gray_data + y * region_width;
-      for (uint32_t x = 0; x < region_width; x++) {
-        uint16_t pixel = source_row[x];
-        uint8_t r5 = (pixel >> 11) & 0x1F;
-        uint8_t g6 = (pixel >> 5) & 0x3F;
-        uint8_t b5 = pixel & 0x1F;
-        uint8_t r8 = (r5 * 255 + 15) / 31;
-        uint8_t g8 = (g6 * 255 + 31) / 63;
-        uint8_t b8 = (b5 * 255 + 15) / 31;
-        gray_row[x] = (uint8_t)((77 * r8 + 150 * g8 + 29 * b8) >> 8);
-      }
-    }
+    reset_frame_bookkeeping();
+    return true;
   }
+
+  // The PPA checks the size it is handed, not just the allocation.
+  const size_t line = CONFIG_CACHE_L2_CACHE_LINE_SIZE;
+  decode_buffer_size =
+      (YUV420_FRAME_BYTES(DECODE_FRAME_SIZE, DECODE_FRAME_SIZE) + line - 1) &
+      ~(line - 1);
+  preview_buffer_size =
+      ((size_t)CAMERA_SCREEN_WIDTH * CAMERA_SCREEN_HEIGHT * 2 + line - 1) &
+      ~(line - 1);
+
+  for (size_t i = 0; i < DECODE_BUFFER_COUNT; i++) {
+    decode_buffers[i] = allocate_buffer_with_fallback(decode_buffer_size);
+    if (!decode_buffers[i])
+      goto error;
+  }
+  for (size_t i = 0; i < PREVIEW_BUFFER_COUNT; i++) {
+    preview_buffers[i] = allocate_buffer_with_fallback(preview_buffer_size);
+    if (!preview_buffers[i])
+      goto error;
+  }
+  reset_frame_bookkeeping();
+  return true;
+
+error:
+  ESP_LOGE(TAG, "Failed to allocate camera frame buffers");
+  free_frame_buffers();
+  return false;
+}
+
+// Only once camera_pipeline_idle(): the PPA writes these by DMA.
+static void free_frame_buffers(void) {
+  reset_frame_bookkeeping();
+  for (size_t i = 0; i < DECODE_BUFFER_COUNT; i++)
+    SAFE_FREE_STATIC(decode_buffers[i]);
+  for (size_t i = 0; i < PREVIEW_BUFFER_COUNT; i++)
+    SAFE_FREE_STATIC(preview_buffers[i]);
+  decode_buffer_size = 0;
+  preview_buffer_size = 0;
 }
 
 static void update_decode_roi(qr_decode_roi_t *roi,
@@ -793,7 +812,8 @@ static void update_decode_roi(qr_decode_roi_t *roi,
     origin_y = (int)(frame_height - target_side);
 
   roi->active = target_side < frame_width || target_side < frame_height;
-  roi->x = (uint32_t)origin_x;
+  // Luma is addressed by pixel pair.
+  roi->x = (uint32_t)origin_x & ~1u;
   roi->y = (uint32_t)origin_y;
   roi->width = target_side;
   roi->height = target_side;
@@ -886,12 +906,11 @@ static void qr_decode_task(void *pvParameters) {
     uint8_t *qr_buf = k_quirc_begin(qr_decoder, NULL, NULL);
     if (qr_buf) {
       PROFILE_START(gray);
-      rgb565_region_to_grayscale(frame_data.frame_data, qr_buf,
-                                 frame_data.width, decode_x, decode_y,
-                                 decode_width, decode_height);
+      yuv420_extract_luma(frame_data.frame_data, frame_data.width, decode_x,
+                          decode_y, decode_width, decode_height, qr_buf);
       PROFILE_END(gray);
-      // The RGB frame is fully copied into the decoder's grayscale buffer;
-      // hand it back so the camera can reuse it as a PPA target.
+      // The luma is fully copied into the decoder's grayscale buffer; hand the
+      // frame back so the camera can reuse it as a PPA target.
       release_decode_frame(frame_data.frame_data);
       PROFILE_START(identify);
       k_quirc_end(qr_decoder, false);
@@ -1036,27 +1055,6 @@ static void qr_decode_task(void *pvParameters) {
 }
 
 static bool qr_decoder_init(uint32_t width, uint32_t height) {
-
-  // Build direct RGB565->grayscale LUT (64KB) for single-lookup conversion
-  if (!rgb565_gray_lut) {
-    rgb565_gray_lut = heap_caps_malloc(65536, MALLOC_CAP_SPIRAM);
-    if (rgb565_gray_lut) {
-      for (uint32_t i = 0; i < 65536; i++) {
-        uint8_t r5 = (i >> 11) & 0x1F;
-        uint8_t g6 = (i >> 5) & 0x3F;
-        uint8_t b5 = i & 0x1F;
-        // BT.601 luma with full 8-bit precision:
-        // expand RGB565 to 8-bit, then Y = (77*R + 150*G + 29*B) >> 8
-        uint8_t r8 = (r5 * 255 + 15) / 31;
-        uint8_t g8 = (g6 * 255 + 31) / 63;
-        uint8_t b8 = (b5 * 255 + 15) / 31;
-        rgb565_gray_lut[i] = (uint8_t)((77 * r8 + 150 * g8 + 29 * b8) >> 8);
-      }
-    } else {
-      ESP_LOGW(TAG, "Failed to allocate RGB565 grayscale LUT");
-    }
-  }
-
   qr_decoder = k_quirc_new();
   if (!qr_decoder) {
     ESP_LOGE(TAG, "Failed to create QR decoder");
@@ -1188,11 +1186,40 @@ static void qr_decoder_cleanup(void) {
     qr_parser_destroy(qr_parser);
     qr_parser = NULL;
   }
+}
 
-  if (rgb565_gray_lut) {
-    heap_caps_free(rgb565_gray_lut);
-    rgb565_gray_lut = NULL;
+// PPA interrupt. Every transaction ends here, the blocking ones too; only the
+// preview pass carries user data: its preview buffer's index, plus one.
+static bool preview_pass_done_cb(ppa_client_handle_t client,
+                                 ppa_event_data_t *event_data,
+                                 void *user_data) {
+  (void)client;
+  (void)event_data;
+  if (user_data) {
+#if CONFIG_KERN_SCAN_PROFILING
+    scan_stat_add(&scan_profile.ppa_preview,
+                  esp_timer_get_time() - preview_pass_start);
+#endif
+    portENTER_CRITICAL_SAFE(&preview_lock);
+    frame_pool_finish(&preview_pool, (int)(uintptr_t)user_data - 1);
+    portEXIT_CRITICAL_SAFE(&preview_lock);
+    __atomic_store_n(&preview_pass_source, NULL, __ATOMIC_SEQ_CST);
   }
+  return false;
+}
+
+// Largest centred crop that a Q4.4 scale takes to exactly the decode frame.
+// Even fractions only: the PPA drops an odd one when it writes YUV420.
+static uint32_t snap_decode_crop(uint32_t crop_max) {
+  for (uint32_t n = 2; n <= 16; n += 2) {
+    if ((DECODE_FRAME_SIZE * 16u) % n != 0)
+      continue;
+    uint32_t crop = DECODE_FRAME_SIZE * 16u / n;
+    // YUV420 aside, an odd crop cannot be centred on whole pixels.
+    if (crop <= crop_max && crop % 2 == 0)
+      return crop;
+  }
+  return DECODE_FRAME_SIZE <= crop_max ? DECODE_FRAME_SIZE : crop_max;
 }
 
 // Camera task only. The decoder returns a frame as soon as it has copied it to
@@ -1229,7 +1256,7 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   }
 
   // Allocated all or none.
-  if (!display_buffers[DISPLAY_BUFFER_COUNT - 1]) {
+  if (!decode_buffers[0] || !preview_buffers[0]) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
@@ -1291,77 +1318,66 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
 
   reclaim_returned_decode_buffers();
 
-  // Readers may share a buffer; the PPA must not write one that LVGL or the
-  // decoder could be reading. A frame the UI never claimed is simply
-  // superseded.
-  uint8_t *displayed = __atomic_load_n(&displayed_buffer, __ATOMIC_SEQ_CST);
-  uint8_t *back_buffer = NULL;
-  for (size_t i = 0; i < DISPLAY_BUFFER_COUNT; i++) {
-    if (display_buffers[i] != displayed &&
-        display_buffers[i] != published_buffer &&
-        display_buffers[i] != queued_decode_buffer &&
-        display_buffers[i] != held_decode_buffer) {
-      back_buffer = display_buffers[i];
+  // Readers may share a decode frame; the PPA must not write one the decoder
+  // or a preview pass could be reading.
+  uint8_t *preview_source =
+      __atomic_load_n(&preview_pass_source, __ATOMIC_SEQ_CST);
+  uint8_t *decode_frame = NULL;
+  for (size_t i = 0; i < DECODE_BUFFER_COUNT; i++) {
+    if (decode_buffers[i] != queued_decode_buffer &&
+        decode_buffers[i] != held_decode_buffer &&
+        decode_buffers[i] != preview_source) {
+      decode_frame = decode_buffers[i];
       break;
     }
   }
-  if (!back_buffer) {
+  if (!decode_frame || !cam_ppa_client || closing) {
     PROFILE_COUNT(no_buffer);
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
 
-  // Single PPA pass: centered square crop -> screen-size scale +
-  // counter-rotation
-  if (cam_ppa_client && !closing) {
-    uint32_t in_w = camera_buf_hes;
-    uint32_t in_h = camera_buf_ves;
-    uint32_t crop_max = (in_w < in_h) ? in_w : in_h;
-    if (crop_max > CAMERA_INPUT_CROP)
-      crop_max = CAMERA_INPUT_CROP;
-    // Snap crop so PPA's Q4.4 scale produces exactly CAMERA_SCREEN_WIDTH;
-    // otherwise the truncated scale leaves a noisy column on the right edge.
-    uint32_t crop = app_video_ppa_snap_crop(crop_max, CAMERA_SCREEN_WIDTH);
-    uint32_t crop_ox = (in_w - crop) / 2;
-    uint32_t crop_oy = (in_h - crop) / 2;
-    float sim_scale = (float)CAMERA_SCREEN_WIDTH / (float)crop;
-    ppa_srm_oper_config_t srm = {
-        .in.buffer = camera_buf,
-        .in.pic_w = in_w,
-        .in.pic_h = in_h,
-        .in.block_w = crop,
-        .in.block_h = crop,
-        .in.block_offset_x = crop_ox,
-        .in.block_offset_y = crop_oy,
-        .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-        .out.buffer = back_buffer,
-        .out.buffer_size = display_buffer_size,
-        .out.pic_w = CAMERA_SCREEN_WIDTH,
-        .out.pic_h = CAMERA_SCREEN_HEIGHT,
-        .out.block_offset_x = 0,
-        .out.block_offset_y = 0,
-        .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-        .scale_x = sim_scale,
-        .scale_y = sim_scale,
-        .mode = PPA_TRANS_MODE_BLOCKING,
-    };
-    PROFILE_START(ppa);
-    esp_err_t ppa_err = ppa_do_scale_rotate_mirror(cam_ppa_client, &srm);
-    PROFILE_END(ppa);
-    if (ppa_err != ESP_OK) {
-      __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
-      return;
-    }
-  } else {
+  // Pass 1: centred square crop of the sensor frame -> decode frame.
+  uint32_t crop_max =
+      (camera_buf_hes < camera_buf_ves) ? camera_buf_hes : camera_buf_ves;
+  if (crop_max > CAMERA_INPUT_CROP)
+    crop_max = CAMERA_INPUT_CROP;
+  uint32_t crop = snap_decode_crop(crop_max);
+  ppa_srm_oper_config_t to_decode = {
+      .in.buffer = camera_buf,
+      .in.pic_w = camera_buf_hes,
+      .in.pic_h = camera_buf_ves,
+      .in.block_w = crop,
+      .in.block_h = crop,
+      .in.block_offset_x = (camera_buf_hes - crop) / 2,
+      .in.block_offset_y = (camera_buf_ves - crop) / 2,
+      .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+      .out.buffer = decode_frame,
+      .out.buffer_size = decode_buffer_size,
+      .out.pic_w = DECODE_FRAME_SIZE,
+      .out.pic_h = DECODE_FRAME_SIZE,
+      .out.srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+      .out.yuv_range = PPA_COLOR_RANGE_FULL,
+      .out.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+      .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+      .scale_x = (float)DECODE_FRAME_SIZE / (float)crop,
+      .scale_y = (float)DECODE_FRAME_SIZE / (float)crop,
+      .mode = PPA_TRANS_MODE_BLOCKING,
+  };
+  PROFILE_START(ppa);
+  esp_err_t ppa_err = ppa_do_scale_rotate_mirror(cam_ppa_client, &to_decode);
+  PROFILE_END(ppa);
+  if (ppa_err != ESP_OK) {
     __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
     return;
   }
+
   // Decoder first: it gets the un-rotated frame (QR codes are
-  // orientation-invariant) the moment it exists. The frame it supersedes is
-  // withdrawn only now: taking it back before the PPA left the queue empty for
-  // the whole scale pass, and the decoder idle for a quarter of its time. An
-  // empty queue means the decoder took that frame and may still be reading it.
+  // orientation-invariant) the moment it exists, before the preview pass. The
+  // frame it supersedes is withdrawn only now: taking it back before the PPA
+  // left the queue empty for the whole scale pass, and the decoder idle for a
+  // quarter of its time. An empty queue means the decoder took that frame and
+  // may still be reading it.
   reclaim_returned_decode_buffers();
   if (qr_frame_queue) {
     qr_frame_data_t stale_frame;
@@ -1374,16 +1390,59 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
     }
 
     if (!settings_active) {
-      qr_frame_data_t frame_data = {.frame_data = back_buffer,
-                                    .width = CAMERA_SCREEN_WIDTH,
-                                    .height = CAMERA_SCREEN_HEIGHT};
+      qr_frame_data_t frame_data = {.frame_data = decode_frame,
+                                    .width = DECODE_FRAME_SIZE,
+                                    .height = DECODE_FRAME_SIZE};
       if (xQueueSend(qr_frame_queue, &frame_data, 0) == pdTRUE)
-        queued_decode_buffer = back_buffer;
+        queued_decode_buffer = decode_frame;
     }
   }
 
-  published_buffer = back_buffer;
-  __atomic_store_n(&pending_preview, back_buffer, __ATOMIC_SEQ_CST);
+  // Pass 2: decode frame -> preview, not waited for. The PPA runs its
+  // transactions in order, so the next pass 1 queues behind this one and this
+  // point is only reached once the previous preview pass has ended. That is
+  // checked rather than assumed: the pass's source and target are tracked one
+  // at a time, and shutdown counts on it.
+  int preview_index = -1;
+  if (!__atomic_load_n(&preview_pass_source, __ATOMIC_SEQ_CST)) {
+    portENTER_CRITICAL_SAFE(&preview_lock);
+    preview_index = frame_pool_acquire(&preview_pool);
+    portEXIT_CRITICAL_SAFE(&preview_lock);
+  }
+  if (preview_index >= 0) {
+    // The sizes are exact by construction.
+    ppa_srm_oper_config_t to_preview = {
+        .in.buffer = decode_frame,
+        .in.pic_w = DECODE_FRAME_SIZE,
+        .in.pic_h = DECODE_FRAME_SIZE,
+        .in.block_w = DECODE_FRAME_SIZE,
+        .in.block_h = DECODE_FRAME_SIZE,
+        .in.srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+        .in.yuv_range = PPA_COLOR_RANGE_FULL,
+        .in.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        .out.buffer = preview_buffers[preview_index],
+        .out.buffer_size = preview_buffer_size,
+        .out.pic_w = CAMERA_SCREEN_WIDTH,
+        .out.pic_h = CAMERA_SCREEN_HEIGHT,
+        .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = (float)PREVIEW_PPA_FRAG / 16.0f,
+        .scale_y = (float)PREVIEW_PPA_FRAG / 16.0f,
+        .mode = PPA_TRANS_MODE_NON_BLOCKING,
+        .user_data = (void *)(uintptr_t)(preview_index + 1),
+    };
+    // The PPA owns both buffers from here until preview_pass_done_cb().
+    __atomic_store_n(&preview_pass_source, decode_frame, __ATOMIC_SEQ_CST);
+#if CONFIG_KERN_SCAN_PROFILING
+    preview_pass_start = esp_timer_get_time();
+#endif
+    if (ppa_do_scale_rotate_mirror(cam_ppa_client, &to_preview) != ESP_OK) {
+      portENTER_CRITICAL_SAFE(&preview_lock);
+      frame_pool_abandon(&preview_pool, preview_index);
+      portEXIT_CRITICAL_SAFE(&preview_lock);
+      __atomic_store_n(&preview_pass_source, NULL, __ATOMIC_SEQ_CST);
+    }
+  }
 
   __atomic_sub_fetch(&active_frame_operations, 1, __ATOMIC_SEQ_CST);
 }
@@ -1413,19 +1472,27 @@ static bool camera_init(void) {
       .data = NULL,
   };
 
-  if (!allocate_display_buffers(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
-    ESP_LOGE(TAG, "Failed to allocate display buffers");
+  if (!allocate_frame_buffers())
     return false;
-  }
 
-  if (!qr_decoder_init(CAMERA_SCREEN_WIDTH, CAMERA_SCREEN_HEIGHT)) {
+  if (!qr_decoder_init(DECODE_FRAME_SIZE, DECODE_FRAME_SIZE)) {
     ESP_LOGE(TAG, "Failed to initialize QR decoder");
   }
 
-  // PPA does centered crop + downscale on every frame.
-  ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
-  if (ppa_register_client(&ppa_cfg, &cam_ppa_client) != ESP_OK) {
+  // The PPA scales every frame twice: to the decode frame, then the preview.
+  // A preview pass can still be pending when the next decode pass is queued.
+  ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM,
+                                 .max_pending_trans_num = 2};
+  ppa_event_callbacks_t ppa_cbs = {.on_trans_done = preview_pass_done_cb};
+  if (cam_ppa_client) {
+    // Kept, with the buffers, by a shutdown that could not release it.
+  } else if (ppa_register_client(&ppa_cfg, &cam_ppa_client) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register PPA client for camera scaler");
+    cam_ppa_client = NULL;
+  } else if (ppa_client_register_event_callbacks(cam_ppa_client, &ppa_cbs) !=
+             ESP_OK) {
+    ESP_LOGE(TAG, "Failed to register PPA completion callback");
+    ppa_unregister_client(cam_ppa_client);
     cam_ppa_client = NULL;
   }
 
@@ -1468,7 +1535,6 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   scan_failed = false;
   scan_failure_msg = NULL;
   is_fully_initialized = false;
-  active_frame_operations = 0;
 
   if (!app_video_is_ready()) {
     dialog_show_error_timeout("Camera not available", return_callback, 0);
@@ -1582,6 +1648,13 @@ void qr_scanner_page_destroy(void) {
   if (stop_err != ESP_OK)
     ESP_LOGW(TAG, "Camera stop failed: %s", esp_err_to_name(stop_err));
 
+  // The last preview pass may still be running, and a camera task that would
+  // not stop may still be inside the decode pass. The PPA writes these buffers
+  // by DMA, so they are freed only on confirmed completion, never on a timeout.
+  for (int i = 0; i < 200 && !camera_pipeline_idle(); i++)
+    vTaskDelay(pdMS_TO_TICKS(5));
+  bool pipeline_idle = camera_pipeline_idle();
+
   qr_decoder_cleanup();
 
   bool display_locked = bsp_display_lock(1000);
@@ -1599,11 +1672,14 @@ void qr_scanner_page_destroy(void) {
   if (display_locked)
     bsp_display_unlock();
 
-  free_display_buffers();
-
-  if (cam_ppa_client) {
-    ppa_unregister_client(cam_ppa_client);
-    cam_ppa_client = NULL;
+  if (pipeline_idle) {
+    free_frame_buffers();
+    if (cam_ppa_client && ppa_unregister_client(cam_ppa_client) == ESP_OK)
+      cam_ppa_client = NULL;
+  } else {
+    // The driver refuses to unregister a client with a transaction outstanding
+    // too. Both stay for the next scan, which takes them over once idle.
+    ESP_LOGE(TAG, "PPA still owns camera frame buffers; keeping them");
   }
 
   if (camera_event_group) {
@@ -1614,7 +1690,6 @@ void qr_scanner_page_destroy(void) {
   return_callback = NULL;
   destruction_in_progress = false;
   closing = false;
-  active_frame_operations = 0;
 }
 
 char *qr_scanner_get_completed_content(void) {

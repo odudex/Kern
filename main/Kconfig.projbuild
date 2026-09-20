@@ -76,8 +76,9 @@ menu "Kern Configuration"
             cam: camera callbacks per second. gaps: callbacks by the time since
             the previous one, in buckets <28/<39/<55/<78/>=78 ms; one frame
             period of a 45 fps sensor lands in the first and a dropped frame in
-            the third. ppa: crop and scale time. nobuf: frames skipped for want
-            of a free buffer. ui: preview frames per second.
+            the third. ppa: sensor frame to decode frame. prev: decode frame to
+            preview. nobuf: frames skipped for want of a free buffer. ui:
+            preview frames per second.
 
             dec: decoder passes per second. wait: decoder idle before each
             pass. roi: passes restricted to the tracked region, @ its side in
