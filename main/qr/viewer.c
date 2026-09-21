@@ -341,7 +341,8 @@ static void jump_pressed_cb(lv_event_t *e) { set_paused(true); }
 static lv_obj_t *playback_button(lv_obj_t *parent, const char *text,
                                  lv_event_cb_t cb, void *data) {
   lv_obj_t *button = theme_create_button(parent, text, true);
-  lv_obj_set_size(button, 60, 40);
+  lv_obj_set_size(button, theme_corner_button_width(),
+                  theme_corner_button_height());
   lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, data);
   return button;
 }
@@ -354,19 +355,18 @@ static void create_playback_controls(void) {
   jump_slider = NULL;
   if (qr_export_part_count(view->source) <= 1)
     return;
+  int gap = theme_button_spacing();
   playback_panel = lv_obj_create(qr_viewer_screen);
   theme_apply_frame(playback_panel);
   lv_obj_set_style_bg_opa(playback_panel, LV_OPA_COVER, 0);
-  lv_obj_set_size(playback_panel, 240, LV_SIZE_CONTENT);
+  lv_obj_set_size(playback_panel, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(playback_panel, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(playback_panel, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(playback_panel, 10, 0);
-  lv_obj_t *row = lv_obj_create(playback_panel);
-  lv_obj_remove_style_all(row);
-  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(row, 8, 0);
+  lv_obj_set_style_pad_all(playback_panel, gap, 0);
+  lv_obj_set_style_pad_row(playback_panel, gap, 0);
+  lv_obj_t *row = theme_create_flex_row(playback_panel);
+  lv_obj_set_style_pad_column(row, gap, 0);
   bool fountain = qr_export_is_fountain(view->source);
   if (!fountain)
     playback_button(row, LV_SYMBOL_PREV, step_cb, (void *)(intptr_t)-1);
@@ -376,7 +376,9 @@ static void create_playback_controls(void) {
   if (!fountain) {
     playback_button(row, LV_SYMBOL_NEXT, step_cb, (void *)(intptr_t)1);
     jump_slider = lv_slider_create(playback_panel);
-    lv_obj_set_width(jump_slider, 190);
+    // As wide as the buttons, less the half knob that overhangs each end.
+    lv_obj_set_width(jump_slider, 3 * theme_corner_button_width() + 2 * gap -
+                                      theme_min_touch_size());
     lv_slider_set_range(jump_slider, 1, qr_export_part_count(view->source));
     lv_slider_set_value(jump_slider, view->index + 1, LV_ANIM_OFF);
     theme_apply_slider(jump_slider);
