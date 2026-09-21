@@ -1152,19 +1152,56 @@ cleanup:
   return signatures_added;
 }
 
+/* A v0 PSBT is trimmed by rebuilding it from its transaction, but that
+ * constructor only produces v0: a v2 one would either export downgraded or be
+ * upgraded back, and the upgrade rewrites the tx-modifiable flags to fully
+ * modifiable, undoing the signer rules applied above. A v2 PSBT also carries
+ * its transaction in its inputs and outputs, sequences and required locktimes
+ * included, where a rebuild could lose a field and with it the txid. So a copy
+ * is trimmed in place, of what weighs: previous transactions, key origins,
+ * scripts the coordinator has and unknown fields. The small fields the v0 path
+ * also drops (sighash type, taproot merkle root, preimages) stay. */
+static struct wally_psbt *psbt_trim_v2(const struct wally_psbt *psbt) {
+  struct wally_psbt *trimmed = NULL;
+  if (wally_psbt_clone_alloc(psbt, 0, &trimmed) != WALLY_OK)
+    return NULL;
+
+  wally_map_clear(&trimmed->global_xpubs);
+  wally_map_clear(&trimmed->unknowns);
+
+  for (size_t i = 0; i < trimmed->num_inputs; i++) {
+    struct wally_psbt_input *in = &trimmed->inputs[i];
+    wally_psbt_input_set_utxo(in, NULL);
+    wally_psbt_input_set_taproot_internal_key(in, NULL, 0);
+    wally_map_clear(&in->keypaths);
+    wally_map_clear(&in->taproot_leaf_hashes);
+    wally_map_clear(&in->taproot_leaf_paths);
+    wally_map_clear(&in->taproot_leaf_scripts);
+    wally_map_clear(&in->unknowns);
+  }
+
+  for (size_t i = 0; i < trimmed->num_outputs; i++) {
+    struct wally_psbt_output *out = &trimmed->outputs[i];
+    wally_psbt_output_set_redeem_script(out, NULL, 0);
+    wally_psbt_output_set_witness_script(out, NULL, 0);
+    wally_psbt_output_set_taproot_internal_key(out, NULL, 0);
+    wally_map_clear(&out->keypaths);
+    wally_map_clear(&out->taproot_leaf_hashes);
+    wally_map_clear(&out->taproot_leaf_paths);
+    wally_map_clear(&out->taproot_tree);
+    wally_map_clear(&out->unknowns);
+  }
+
+  return trimmed;
+}
+
 struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
   if (!psbt) {
     return NULL;
   }
 
-  /* The trimmed PSBT is rebuilt from a transaction, and that constructor only
-   * produces v0. Rebuilding a v2 one would mean either exporting it downgraded
-   * or upgrading it back -- and the upgrade path rewrites the tx-modifiable
-   * flags to fully-modifiable, undoing the signer rules applied above. Trim is
-   * only a payload-size optimisation, so decline it and let the caller export
-   * the PSBT as it arrived. */
   if (psbt_is_v2(psbt)) {
-    return NULL;
+    return psbt_trim_v2(psbt);
   }
 
   struct wally_tx *global_tx = psbt_tx_alloc(psbt);
