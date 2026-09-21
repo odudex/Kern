@@ -289,8 +289,11 @@ static bool display_frame(uint32_t index) {
     set_paused(true);
     show_controls();
     dialog_show_message("QR export paused",
-                        "Could not display the next frame. Try Play again or "
-                        "restart the export.");
+                        playback_panel
+                            ? "Could not display the next frame. Try Play "
+                              "again or restart the export."
+                            : "Could not display the next frame. Restart the "
+                              "export.");
     return false;
   }
   uint32_t previous = view->index;
@@ -353,7 +356,9 @@ static void create_playback_controls(void) {
   playback_panel = NULL;
   play_label = NULL;
   jump_slider = NULL;
-  if (qr_export_part_count(view->source) <= 1)
+  // Fountain frames never repeat: there is none to hold or to go back to.
+  if (qr_export_part_count(view->source) <= 1 ||
+      qr_export_is_fountain(view->source))
     return;
   int gap = theme_button_spacing();
   playback_panel = lv_obj_create(qr_viewer_screen);
@@ -367,25 +372,21 @@ static void create_playback_controls(void) {
   lv_obj_set_style_pad_row(playback_panel, gap, 0);
   lv_obj_t *row = theme_create_flex_row(playback_panel);
   lv_obj_set_style_pad_column(row, gap, 0);
-  bool fountain = qr_export_is_fountain(view->source);
-  if (!fountain)
-    playback_button(row, LV_SYMBOL_PREV, step_cb, (void *)(intptr_t)-1);
+  playback_button(row, LV_SYMBOL_PREV, step_cb, (void *)(intptr_t)-1);
   lv_obj_t *play = playback_button(
       row, paused ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE, play_cb, NULL);
   play_label = lv_obj_get_child(play, 0);
-  if (!fountain) {
-    playback_button(row, LV_SYMBOL_NEXT, step_cb, (void *)(intptr_t)1);
-    jump_slider = lv_slider_create(playback_panel);
-    // As wide as the buttons, less the half knob that overhangs each end.
-    lv_obj_set_width(jump_slider, 3 * theme_corner_button_width() + 2 * gap -
-                                      theme_min_touch_size());
-    lv_slider_set_range(jump_slider, 1, qr_export_part_count(view->source));
-    lv_slider_set_value(jump_slider, view->index + 1, LV_ANIM_OFF);
-    theme_apply_slider(jump_slider);
-    lv_obj_set_style_margin_ver(jump_slider, theme_slider_knob_pad(), 0);
-    lv_obj_add_event_cb(jump_slider, jump_pressed_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(jump_slider, jump_cb, LV_EVENT_RELEASED, NULL);
-  }
+  playback_button(row, LV_SYMBOL_NEXT, step_cb, (void *)(intptr_t)1);
+  jump_slider = lv_slider_create(playback_panel);
+  // As wide as the buttons, less the half knob that overhangs each end.
+  lv_obj_set_width(jump_slider, 3 * theme_corner_button_width() + 2 * gap -
+                                    theme_min_touch_size());
+  lv_slider_set_range(jump_slider, 1, qr_export_part_count(view->source));
+  lv_slider_set_value(jump_slider, view->index + 1, LV_ANIM_OFF);
+  theme_apply_slider(jump_slider);
+  lv_obj_set_style_margin_ver(jump_slider, theme_slider_knob_pad(), 0);
+  lv_obj_add_event_cb(jump_slider, jump_pressed_cb, LV_EVENT_PRESSED, NULL);
+  lv_obj_add_event_cb(jump_slider, jump_cb, LV_EVENT_RELEASED, NULL);
   lv_obj_add_flag(playback_panel, LV_OBJ_FLAG_HIDDEN);
   lv_obj_update_layout(playback_panel);
   position_controls();
@@ -400,7 +401,8 @@ static bool rebuild_qr(uint16_t density) {
   free_view(old);
   qr_density = density;
   create_playback_controls();
-  set_paused(paused);
+  // Without the controls there is no Play to resume with.
+  set_paused(paused && playback_panel);
   return true;
 }
 
