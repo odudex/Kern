@@ -4,8 +4,9 @@
 #include <stdbool.h>
 
 // Ownership of a set of frame buffers a producer fills and a consumer reads,
-// each at its own pace, only the newest finished frame mattering: the scanner's
-// preview frames, from the camera to LVGL. Exactly one party owns a buffer:
+// each at its own pace, only the newest finished frame mattering. The scanner
+// keeps two: decode frames, from the camera to the decoder, and preview frames,
+// from the camera to LVGL. Exactly one party owns a buffer:
 //   FREE     nobody; the producer may take it
 //   WRITING  the producer and the PPA, from acquire until the pass ends
 //   READY    a finished frame the consumer has not claimed: in nobody's hands,
