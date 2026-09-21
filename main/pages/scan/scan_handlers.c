@@ -5,6 +5,7 @@
 #include "../../core/key.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
+#include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme.h"
 #include "../../utils/secure_mem.h"
@@ -127,17 +128,15 @@ void scan_handle_mnemonic(const char *data, size_t len) {
   // Store mnemonic for confirmation callback
   scan_ctx.scanned_mnemonic = mnemonic;
 
+  lv_color32_t c = lv_color_to_32(highlight_color(), LV_OPA_COVER);
+  uint32_t highlight = (c.red << 16) | (c.green << 8) | c.blue;
+
   char msg[256];
-  snprintf(
-      msg, sizeof(msg),
-      "Replace current key?\n\n"
-      "  %s > #%06X %s#\n\n"
-      "Passphrase and descriptors will be discarded.",
-      current_fp,
-      (unsigned)((lv_color_to_32(highlight_color(), LV_OPA_COVER).red << 16) |
-                 (lv_color_to_32(highlight_color(), LV_OPA_COVER).green << 8) |
-                 lv_color_to_32(highlight_color(), LV_OPA_COVER).blue),
-      new_fp);
+  snprintf(msg, sizeof(msg),
+           "Replace current key?\n\n" ICON_FINGERPRINT " %s\n" LV_SYMBOL_DOWN
+           "\n#%06X " ICON_FINGERPRINT " %s#\n\n"
+           "Passphrase and descriptors will be discarded.",
+           current_fp, (unsigned)highlight, new_fp);
 
   dialog_show_confirm(msg, mnemonic_confirm_cb, NULL, DIALOG_STYLE_FULLSCREEN);
 }
