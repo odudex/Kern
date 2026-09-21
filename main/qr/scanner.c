@@ -41,17 +41,26 @@
 // leaves the last rows/cols unwritten. Both sizes are therefore derived from a
 // scale already quantized down - to 1/8 for the YUV420 pass, where the PPA
 // drops an odd fraction - so each output exactly fills its buffer.
-//   wave_4b: crop 960 -> 10/16 -> 600x600 decode -> 16/16 -> 600x600 preview
-//   wave_43: crop 960 -> 10/16 -> 600x600 decode -> 12/16 -> 450x450 preview
+//   wave_4b: crop 800 -> 12/16 -> 600x600 decode -> 16/16 -> 600x600 preview
+//   wave_43: crop 800 -> 12/16 -> 600x600 decode -> 12/16 -> 450x450 preview
 //   wave_35: crop 640 -> 16/16 -> 640x640 decode ->  8/16 -> 320x320 preview
+//
+// A PPA pass costs by the pixel it reads (~36 ns, measured; bytes per pixel and
+// output size barely matter), and the first one paces the whole scan: the
+// decoder waits on it. So the crop is no wider than the decode frame needs to
+// stay sharp. 960 px read 44% more pixels than 800 for the same 600 out, and
+// cost a sixth of the camera frames; the price is a field of view a sixth
+// narrower.
 #define CAMERA_SCREEN_DIM_MIN                                                  \
   ((BSP_LCD_H_RES) < (BSP_LCD_V_RES) ? (BSP_LCD_H_RES) : (BSP_LCD_V_RES))
 #define CAMERA_TARGET                                                          \
   ((CAMERA_SCREEN_DIM_MIN) < 640 ? (CAMERA_SCREEN_DIM_MIN) : 640)
 #define CAMERA_INPUT_WIDTH 1280
 #define CAMERA_INPUT_HEIGHT 960
+#define CAMERA_INPUT_CROP_MAX 800
 #define CAMERA_INPUT_CROP                                                      \
-  ((CAMERA_TARGET * 2 <= 960) ? (CAMERA_TARGET * 2) : 960)
+  ((CAMERA_TARGET * 2 <= CAMERA_INPUT_CROP_MAX) ? (CAMERA_TARGET * 2)          \
+                                                : CAMERA_INPUT_CROP_MAX)
 #define DECODE_TARGET 640
 #define DECODE_PPA_FRAG_MAX ((DECODE_TARGET * 16) / CAMERA_INPUT_CROP)
 #define DECODE_PPA_FRAG                                                        \
