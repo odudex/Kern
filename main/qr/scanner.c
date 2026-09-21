@@ -95,6 +95,12 @@ _Static_assert(DECODE_FRAME_SIZE % 2 == 0, "decode frame size must be even");
 // processed so PPA work and full-image LVGL invalidations don't starve
 // touch handling; the preview still updates enough to judge exposure.
 #define SETTINGS_PREVIEW_FRAME_DIVISOR 8
+// Once parts of a sequence are coming in, the code is framed and the user is
+// watching progress, while each preview pass holds the PPA from the next
+// decode frame for its whole length: a third of the camera's frame rate,
+// measured. So the preview then takes every Nth frame only. Aiming, and codes
+// read in a frame or two, keep the full rate.
+#define SEQUENCE_PREVIEW_FRAME_DIVISOR 2
 
 typedef enum {
   CAMERA_EVENT_TASK_RUN = BIT(0),
@@ -182,6 +188,7 @@ static SemaphoreHandle_t qr_task_done_sem = NULL;
 static QRPartParser *qr_parser = NULL;
 
 static volatile bool closing = false;
+static volatile bool sequence_in_progress = false;
 static volatile bool scan_completed = false;
 static volatile bool scan_failed = false;
 static const char *volatile scan_failure_msg = NULL;
@@ -1004,8 +1011,10 @@ static void qr_decode_task(void *pvParameters) {
               qr_part_progress_record(&progress_update.parts, part_index);
             }
 
-            if (publish_progress && qr_progress_queue)
+            if (publish_progress && qr_progress_queue) {
+              sequence_in_progress = true;
               xQueueOverwrite(qr_progress_queue, &progress_update);
+            }
 
             if (qr_parser_is_complete(qr_parser)) {
               scan_completed = true;
@@ -1412,13 +1421,17 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
   // point is only reached once the previous preview pass has ended. That is
   // checked rather than assumed: the pass's source and target are tracked one
   // at a time, and shutdown counts on it.
+  static uint8_t frames_since_preview = 0;
+  bool preview_due = !sequence_in_progress || settings_active ||
+                     ++frames_since_preview >= SEQUENCE_PREVIEW_FRAME_DIVISOR;
   int preview_index = -1;
-  if (!__atomic_load_n(&preview_pass_source, __ATOMIC_SEQ_CST)) {
+  if (preview_due && !__atomic_load_n(&preview_pass_source, __ATOMIC_SEQ_CST)) {
     portENTER_CRITICAL_SAFE(&preview_lock);
     preview_index = frame_pool_acquire(&preview_pool);
     portEXIT_CRITICAL_SAFE(&preview_lock);
   }
   if (preview_index >= 0) {
+    frames_since_preview = 0;
     // The sizes are exact by construction.
     ppa_srm_oper_config_t to_preview = {
         .in.buffer = decode_frame,
@@ -1540,6 +1553,7 @@ void qr_scanner_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   return_callback = return_cb;
   closing = false;
+  sequence_in_progress = false;
   scan_completed = false;
   scan_failed = false;
   scan_failure_msg = NULL;
