@@ -163,19 +163,18 @@ static void draw_frame_grid(lv_event_t *event) {
 static void update_status(export_view_t *v, uint32_t old_index) {
   if (!v->label)
     return;
-  if (qr_export_is_fountain(v->source)) {
-    lv_label_set_text_fmt(v->label, "UR frame %" PRIu32 "\n%zu source parts",
-                          v->index + 1, qr_export_part_count(v->source));
-  } else {
-    lv_label_set_text_fmt(v->label, "Frame %" PRIu32 " / %zu", v->index + 1,
-                          qr_export_part_count(v->source));
-    // Only the old and new cells change. No per-frame widget allocations or
-    // restyling every cell in a potentially thousand-frame sequence.
-    lv_area_t old = frame_cell(v, old_index);
-    lv_area_t current = frame_cell(v, v->index);
-    lv_obj_invalidate_area(v->grid, &old);
-    lv_obj_invalidate_area(v->grid, &current);
-  }
+  // "+": a fountain sequence runs on past its part count.
+  lv_label_set_text_fmt(v->label, "Frame %" PRIu32 " / %zu%s", v->index + 1,
+                        qr_export_part_count(v->source),
+                        qr_export_is_fountain(v->source) ? "+" : "");
+  if (!v->grid)
+    return;
+  // Only the old and new cells change. No per-frame widget allocations or
+  // restyling every cell in a potentially thousand-frame sequence.
+  lv_area_t old = frame_cell(v, old_index);
+  lv_area_t current = frame_cell(v, v->index);
+  lv_obj_invalidate_area(v->grid, &old);
+  lv_obj_invalidate_area(v->grid, &current);
 }
 
 static void free_view(export_view_t *v) {
@@ -185,6 +184,35 @@ static void free_view(export_view_t *v) {
     lv_obj_delete(v->layer);
   qr_export_free(v->source);
   free(v);
+}
+
+typedef struct {
+  int width;
+  int height;
+  int qr_size;
+  qr_progress_grid_t grid;
+} status_layout_t;
+
+// The status box beside the QR or below it, and the QR size that leaves.
+static status_layout_t status_layout(const qr_export_t *source, int w, int h,
+                                     bool sidebar) {
+  status_layout_t status = {0};
+  // The label wraps onto a second line in the narrow box beside the QR.
+  int lines = sidebar ? 2 : 1;
+  status.width = sidebar ? LV_MAX(160, w / 5) : w;
+  status.height =
+      lines * lv_font_get_line_height(theme_font_small()) + 2 * STATUS_INSET;
+  if (!qr_export_is_fountain(source)) {
+    status.grid = qr_progress_grid_layout(qr_export_part_count(source),
+                                          status.width - 2 * STATUS_INSET);
+    if (!status.grid.columns)
+      return (status_layout_t){0};
+    status.height += status.grid.height + 4;
+  }
+  int pad = theme_small_padding();
+  status.qr_size = sidebar ? LV_MIN(w - status.width - pad, h)
+                           : LV_MIN(w, h - status.height - pad);
+  return status;
 }
 
 static export_view_t *prepare_view(uint16_t density) {
@@ -206,27 +234,21 @@ static export_view_t *prepare_view(uint16_t density) {
   lv_obj_update_layout(v->layer);
   int w = lv_obj_get_width(v->layer), h = lv_obj_get_height(v->layer);
   int pad = theme_small_padding();
-  v->sidebar = w >= h;
   int qr_w = w, qr_h = h;
   if (qr_export_part_count(v->source) > 1) {
-    int status_width = v->sidebar ? LV_MAX(160, w / 5) : w;
-    int label_height = lv_font_get_line_height(theme_font_small());
-    if (v->sidebar || qr_export_is_fountain(v->source))
-      label_height *= 2;
-    int status_height = label_height + 2 * STATUS_INSET;
-    if (!qr_export_is_fountain(v->source)) {
-      v->layout = qr_progress_grid_layout(qr_export_part_count(v->source),
-                                          status_width - 2 * STATUS_INSET);
-      if (!v->layout.columns)
-        goto fail;
-      status_height += v->layout.height + 4;
-    }
-    if (status_height > h || status_width > w)
+    // Whichever leaves the larger QR: beside it on a wide display, below it on
+    // a portrait or square one.
+    status_layout_t beside = status_layout(v->source, w, h, true);
+    status_layout_t below = status_layout(v->source, w, h, false);
+    v->sidebar = beside.qr_size > below.qr_size;
+    status_layout_t status = v->sidebar ? beside : below;
+    if (status.qr_size <= 0)
       goto fail;
+    v->layout = status.grid;
     v->status = lv_obj_create(v->layer);
     theme_apply_frame(v->status);
     lv_obj_set_style_pad_all(v->status, STATUS_INSET - 2, 0);
-    lv_obj_set_size(v->status, status_width, status_height);
+    lv_obj_set_size(v->status, status.width, status.height);
     lv_obj_remove_flag(v->status, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(v->status, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_align(v->status,
@@ -234,8 +256,9 @@ static export_view_t *prepare_view(uint16_t density) {
     v->label = theme_create_label(v->status, "", false);
     lv_obj_set_width(v->label, LV_PCT(100));
     lv_obj_set_style_text_align(v->label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(v->label, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(v->label, LV_ALIGN_CENTER, 0, 0);
     if (!qr_export_is_fountain(v->source)) {
+      lv_obj_align(v->label, LV_ALIGN_TOP_MID, 0, 0);
       v->grid = lv_obj_create(v->status);
       lv_obj_remove_style_all(v->grid);
       lv_obj_remove_flag(v->grid,
@@ -245,9 +268,9 @@ static export_view_t *prepare_view(uint16_t density) {
       lv_obj_add_event_cb(v->grid, draw_frame_grid, LV_EVENT_DRAW_MAIN, v);
     }
     if (v->sidebar)
-      qr_w -= status_width + pad;
+      qr_w -= status.width + pad;
     else
-      qr_h -= status_height + pad;
+      qr_h -= status.height + pad;
   }
   int size = LV_MIN(qr_w, qr_h);
   if (size <= 0)
