@@ -255,6 +255,9 @@ KERN_WARN_UNUSED_RESULT size_t psbt_sign(struct wally_psbt *psbt,
 
 // Create a trimmed PSBT containing only signatures and minimal validation data
 // Returns new PSBT on success (caller must free), NULL on failure
+// Previous transactions are left out, though they are most of a PSBT's size:
+// they prove the amounts to the signer, and the coordinator that merges this
+// reply still holds the ones it sent.
 KERN_WARN_UNUSED_RESULT struct wally_psbt *
 psbt_trim(const struct wally_psbt *psbt);
 

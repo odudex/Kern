@@ -1848,6 +1848,51 @@ static void test_tx_alloc_rejects_bad_amount(void) {
   wally_psbt_free(psbt);
 }
 
+/* The previous transactions are what a PSBT weighs, and the coordinator that
+ * sent them needs none of them back. */
+static void test_trim_leaves_out_previous_transactions(void) {
+  TEST("psbt_trim: previous transactions are not sent back");
+
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt =
+      make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+  if (!psbt) {
+    FAIL("make_amount_psbt");
+    return;
+  }
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+  set_witness_value(psbt, 100000);
+
+  struct wally_psbt *trimmed = psbt_trim(psbt);
+  struct wally_tx *utxo = NULL;
+  struct wally_tx_output *witness_utxo = NULL;
+  size_t full_len = 0, trimmed_len = 0, prev_len = 0;
+  if (trimmed) {
+    wally_psbt_get_input_utxo_alloc(trimmed, 0, &utxo);
+    wally_psbt_get_input_witness_utxo_alloc(trimmed, 0, &witness_utxo);
+    wally_psbt_get_length(psbt, 0, &full_len);
+    wally_psbt_get_length(trimmed, 0, &trimmed_len);
+    wally_tx_get_length(prev, WALLY_TX_FLAG_USE_WITNESS, &prev_len);
+  }
+
+  if (!trimmed)
+    FAIL("psbt_trim");
+  else if (utxo)
+    FAIL("the previous transaction came back");
+  else if (!witness_utxo || witness_utxo->satoshi != 100000)
+    FAIL("the witness_utxo did not");
+  else if (prev_len == 0 || trimmed_len + prev_len > full_len)
+    FAIL("the payload did not shrink by the previous transaction");
+  else
+    PASS();
+
+  wally_tx_free(utxo);
+  wally_tx_output_free(witness_utxo);
+  wally_psbt_free(trimmed);
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+}
+
 /* Trim rebuilds from a transaction, which can only produce v0. Declining is
  * what keeps a v2 export from being silently downgraded or having its
  * signer-set flags rewritten by an upgrade. */
@@ -2694,6 +2739,7 @@ int main(void) {
   test_sign_clears_tx_modifiable();
   test_sign_counts_reused_address();
   test_tx_alloc_rejects_bad_amount();
+  test_trim_leaves_out_previous_transactions();
   test_trim_declines_psbt_v2();
 
   key_unload();

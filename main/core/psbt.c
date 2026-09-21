@@ -1233,13 +1233,6 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
       wally_tx_output_free(witness_utxo);
     }
 
-    // Copy non-witness UTXO if present (for legacy inputs)
-    struct wally_tx *utxo = NULL;
-    if (wally_psbt_get_input_utxo_alloc(psbt, i, &utxo) == WALLY_OK && utxo) {
-      wally_psbt_set_input_utxo(trimmed, i, utxo);
-      wally_tx_free(utxo);
-    }
-
     // Copy redeem script if present (P2SH)
     size_t redeem_len = 0;
     if (wally_psbt_get_input_redeem_script_len(psbt, i, &redeem_len) ==
