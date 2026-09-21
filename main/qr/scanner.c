@@ -86,11 +86,6 @@ _Static_assert(DECODE_FRAME_SIZE % 2 == 0, "decode frame size must be even");
 // notices completion. It also caps the preview rate below the sensor's, which
 // leaves PSRAM bandwidth to the decoder.
 #define UI_UPDATE_INTERVAL_MS 30
-#define QR_ROI_MARGIN_PERCENT 20
-#define QR_ROI_MIN_SIZE 64
-#define QR_ROI_SIZE_QUANTUM 16
-#define QR_ROI_SHRINK_HYSTERESIS (2 * QR_ROI_SIZE_QUANTUM)
-#define QR_ROI_FAILED_DECODE_LIMIT 10
 // While the settings overlay is open, only every Nth camera frame is
 // processed so PPA work and full-image LVGL invalidations don't starve
 // touch handling; the preview still updates enough to judge exposure.
@@ -118,15 +113,6 @@ typedef struct {
   float percent_complete;
   qr_part_progress_t parts;
 } qr_progress_update_t;
-
-typedef struct {
-  bool active;
-  uint32_t x;
-  uint32_t y;
-  uint32_t width;
-  uint32_t height;
-  uint8_t failed_decodes;
-} qr_decode_roi_t;
 
 static const char *TAG = "QR_SCANNER";
 
@@ -239,8 +225,6 @@ static struct {
   uint32_t camera_frames;
   uint32_t no_buffer;   // camera frames skipped for want of a PPA target
   uint32_t presented;   // preview frames handed to LVGL
-  uint32_t roi_frames;  // decoder passes restricted to the ROI
-  uint32_t roi_side_px; // side of the last ROI used
   uint32_t no_code;     // nothing QR-like found
   uint32_t undecodable; // found but unreadable: torn, blurred or clipped
   uint32_t decoded;
@@ -297,22 +281,20 @@ static void scan_profile_task(void *arg) {
         "PROF cam %" PRIu32 "/s gaps %" PRIu32 "/%" PRIu32 "/%" PRIu32
         "/%" PRIu32 "/%" PRIu32 " ppa %" PRIu32 "/%" PRIu32 " prev %" PRIu32
         "/%" PRIu32 " nobuf %" PRIu32 " ui %" PRIu32 "/s | dec %" PRIu32
-        "/s wait %" PRIu32 "/%" PRIu32 " roi %" PRIu32 "@%" PRIu32
-        " gray %" PRIu32 "/%" PRIu32 " find %" PRIu32 "/%" PRIu32
-        " read %" PRIu32 "/%" PRIu32 " | ok %" PRIu32 " new %" PRIu32
-        " skip %" PRIu32 " none %" PRIu32 " bad %" PRIu32 " | err grid %" PRIu32
-        " ver %" PRIu32 " fmt %" PRIu32 " ecc %" PRIu32 " other %" PRIu32
-        " | qr v%u %upx",
+        "/s wait %" PRIu32 "/%" PRIu32 " gray %" PRIu32 "/%" PRIu32
+        " find %" PRIu32 "/%" PRIu32 " read %" PRIu32 "/%" PRIu32
+        " | ok %" PRIu32 " new %" PRIu32 " skip %" PRIu32 " none %" PRIu32
+        " bad %" PRIu32 " | err grid %" PRIu32 " ver %" PRIu32 " fmt %" PRIu32
+        " ecc %" PRIu32 " other %" PRIu32 " | qr v%u %upx",
         p.camera_frames * 1000 / window_ms, p.camera_gaps[0], p.camera_gaps[1],
         p.camera_gaps[2], p.camera_gaps[3], p.camera_gaps[4],
         scan_stat_avg(&p.ppa), p.ppa.max_us, scan_stat_avg(&p.ppa_preview),
         p.ppa_preview.max_us, p.no_buffer, p.presented * 1000 / window_ms,
         p.identify.count * 1000 / window_ms, scan_stat_avg(&p.wait),
-        p.wait.max_us, p.roi_frames, p.roi_side_px, scan_stat_avg(&p.gray),
-        p.gray.max_us, scan_stat_avg(&p.identify), p.identify.max_us,
-        scan_stat_avg(&p.decode), p.decode.max_us, p.decoded, p.distinct,
-        p.skipped, p.no_code, p.undecodable,
-        p.errors[K_QUIRC_ERROR_INVALID_GRID_SIZE],
+        p.wait.max_us, scan_stat_avg(&p.gray), p.gray.max_us,
+        scan_stat_avg(&p.identify), p.identify.max_us, scan_stat_avg(&p.decode),
+        p.decode.max_us, p.decoded, p.distinct, p.skipped, p.no_code,
+        p.undecodable, p.errors[K_QUIRC_ERROR_INVALID_GRID_SIZE],
         p.errors[K_QUIRC_ERROR_INVALID_VERSION],
         p.errors[K_QUIRC_ERROR_FORMAT_ECC], p.errors[K_QUIRC_ERROR_DATA_ECC],
         other_errors, (unsigned)p.qr_version, (unsigned)p.qr_side_px);
@@ -341,11 +323,6 @@ static void camera_video_frame_operation(uint8_t *camera_buf,
                                          size_t camera_buf_len);
 static bool allocate_frame_buffers(void);
 static void free_frame_buffers(void);
-static void update_decode_roi(qr_decode_roi_t *roi,
-                              const k_quirc_result_t *result,
-                              uint32_t decode_origin_x,
-                              uint32_t decode_origin_y, uint32_t frame_width,
-                              uint32_t frame_height);
 static void qr_decode_task(void *pvParameters);
 static bool qr_decoder_init(uint32_t width, uint32_t height);
 static void qr_decoder_cleanup(void);
@@ -765,76 +742,6 @@ static void free_frame_buffers(void) {
   preview_buffer_size = 0;
 }
 
-static void update_decode_roi(qr_decode_roi_t *roi,
-                              const k_quirc_result_t *result,
-                              uint32_t decode_origin_x,
-                              uint32_t decode_origin_y, uint32_t frame_width,
-                              uint32_t frame_height) {
-  roi->failed_decodes = 0;
-
-  int min_x = result->corners[0].x;
-  int max_x = result->corners[0].x;
-  int min_y = result->corners[0].y;
-  int max_y = result->corners[0].y;
-  for (int i = 1; i < 4; i++) {
-    if (result->corners[i].x < min_x)
-      min_x = result->corners[i].x;
-    if (result->corners[i].x > max_x)
-      max_x = result->corners[i].x;
-    if (result->corners[i].y < min_y)
-      min_y = result->corners[i].y;
-    if (result->corners[i].y > max_y)
-      max_y = result->corners[i].y;
-  }
-
-  int qr_width = max_x - min_x + 1;
-  int qr_height = max_y - min_y + 1;
-  if (qr_width <= 0 || qr_height <= 0 || frame_width == 0 || frame_height == 0)
-    return;
-
-  uint32_t qr_side = (uint32_t)((qr_width > qr_height) ? qr_width : qr_height);
-  uint32_t margin = (qr_side * QR_ROI_MARGIN_PERCENT + 99) / 100; // Round up.
-  uint32_t target_side = qr_side + 2 * margin;
-  if (target_side < QR_ROI_MIN_SIZE)
-    target_side = QR_ROI_MIN_SIZE;
-  target_side =
-      ((target_side + QR_ROI_SIZE_QUANTUM - 1) / QR_ROI_SIZE_QUANTUM) *
-      QR_ROI_SIZE_QUANTUM;
-
-  uint32_t frame_min =
-      (frame_width < frame_height) ? frame_width : frame_height;
-  if (target_side > frame_min)
-    target_side = frame_min;
-
-  // Keep the ROI stable across small apparent-size changes. Position is still
-  // refreshed after every successful decode, growth is immediate, and shrinkage
-  // occurs once it crosses the hysteresis window.
-  if (roi->active && target_side < roi->width &&
-      target_side + QR_ROI_SHRINK_HYSTERESIS >= roi->width) {
-    target_side = roi->width;
-  }
-
-  int center_x = (int)decode_origin_x + min_x + qr_width / 2;
-  int center_y = (int)decode_origin_y + min_y + qr_height / 2;
-  int origin_x = center_x - (int)target_side / 2;
-  int origin_y = center_y - (int)target_side / 2;
-  if (origin_x < 0)
-    origin_x = 0;
-  if (origin_y < 0)
-    origin_y = 0;
-  if ((uint32_t)origin_x + target_side > frame_width)
-    origin_x = (int)(frame_width - target_side);
-  if ((uint32_t)origin_y + target_side > frame_height)
-    origin_y = (int)(frame_height - target_side);
-
-  roi->active = target_side < frame_width || target_side < frame_height;
-  // Luma is addressed by pixel pair.
-  roi->x = (uint32_t)origin_x & ~1u;
-  roi->y = (uint32_t)origin_y;
-  roi->width = target_side;
-  roi->height = target_side;
-}
-
 static const char *scan_failure_message(QRPartParser *parser) {
   if (parser && parser->alloc_failed) {
     ESP_LOGE(TAG, "QR scan aborted: allocation failure while storing parts");
@@ -867,7 +774,6 @@ static void release_decode_frame(uint8_t *frame_buffer) {
 static void qr_decode_task(void *pvParameters) {
   qr_frame_data_t frame_data;
   k_quirc_result_t qr_result;
-  qr_decode_roi_t roi = {0};
   qr_progress_update_t progress_update = {0};
   uint8_t passes_since_yield = 0;
 #if CONFIG_KERN_SCAN_PROFILING
@@ -896,34 +802,11 @@ static void qr_decode_task(void *pvParameters) {
       continue;
     }
 
-    uint32_t decode_x = roi.active ? roi.x : 0;
-    uint32_t decode_y = roi.active ? roi.y : 0;
-    uint32_t decode_width = roi.active ? roi.width : frame_data.width;
-    uint32_t decode_height = roi.active ? roi.height : frame_data.height;
-
-    if (decode_x + decode_width > frame_data.width ||
-        decode_y + decode_height > frame_data.height) {
-      roi = (qr_decode_roi_t){0};
-      decode_x = 0;
-      decode_y = 0;
-      decode_width = frame_data.width;
-      decode_height = frame_data.height;
-    }
-
-    // Initialization reserves the full frame, so all valid ROI transitions
-    // (including returning to the full frame) reuse that capacity.
-    if (k_quirc_resize(qr_decoder, decode_width, decode_height) < 0) {
-      ESP_LOGW(TAG, "Invalid QR decoder dimensions %" PRIu32 "x%" PRIu32,
-               decode_width, decode_height);
-      release_decode_frame(frame_data.frame_data);
-      continue;
-    }
-
     uint8_t *qr_buf = k_quirc_begin(qr_decoder, NULL, NULL);
     if (qr_buf) {
       PROFILE_START(gray);
-      yuv420_extract_luma(frame_data.frame_data, frame_data.width, decode_x,
-                          decode_y, decode_width, decode_height, qr_buf);
+      yuv420_extract_luma(frame_data.frame_data, frame_data.width,
+                          frame_data.height, qr_buf);
       PROFILE_END(gray);
       // The luma is fully copied into the decoder's grayscale buffer; hand the
       // frame back so the camera can reuse it as a PPA target.
@@ -931,15 +814,11 @@ static void qr_decode_task(void *pvParameters) {
       PROFILE_START(identify);
       k_quirc_end(qr_decoder, false);
       PROFILE_END(identify);
-#if CONFIG_KERN_SCAN_PROFILING
-      if (roi.active) {
-        scan_profile.roi_frames++;
-        scan_profile.roi_side_px = decode_width;
-      }
-#endif
 
       int num_codes = k_quirc_count(qr_decoder);
+#if CONFIG_KERN_SCAN_PROFILING
       bool frame_decoded = false;
+#endif
       for (int i = 0; i < num_codes; i++) {
         if (closing || destruction_in_progress)
           break;
@@ -970,12 +849,8 @@ static void qr_decode_task(void *pvParameters) {
             PROFILE_COUNT(distinct);
           last_payload_hash = payload_hash;
           PROFILE_COUNT(decoded);
+          frame_decoded = true;
 #endif
-          if (!frame_decoded) {
-            update_decode_roi(&roi, &qr_result, decode_x, decode_y,
-                              frame_data.width, frame_data.height);
-            frame_decoded = true;
-          }
 
           int part_index = qr_parser_parse_with_len(
               qr_parser, (const char *)qr_result.data.payload,
@@ -1041,22 +916,6 @@ static void qr_decode_task(void *pvParameters) {
       // mnemonic or PSBT fragment - now lives only here, on a task stack that
       // outlives the scan.
       secure_memzero(&qr_result, sizeof(qr_result));
-
-      if (!frame_decoded && roi.active) {
-        if (num_codes > 0) {
-          // A code was detected inside the ROI; decode failures (torn
-          // animation frames) shouldn't evict a well-placed ROI.
-          roi.failed_decodes = 0;
-        } else {
-          roi.failed_decodes++;
-          if (roi.failed_decodes >= QR_ROI_FAILED_DECODE_LIMIT) {
-            ESP_LOGD(TAG, "Discarding QR ROI after %d failed decodes",
-                     QR_ROI_FAILED_DECODE_LIMIT);
-            roi = (qr_decode_roi_t){0};
-          }
-        }
-      }
-
     } else {
       release_decode_frame(frame_data.frame_data);
     }

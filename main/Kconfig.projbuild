@@ -81,8 +81,7 @@ menu "Kern Configuration"
             preview frames per second.
 
             dec: decoder passes per second. wait: decoder idle before each
-            pass. roi: passes restricted to the tracked region, @ its side in
-            pixels. gray, find, read: grayscale conversion, code location, code
+            pass. gray, find, read: grayscale conversion, code location, code
             decoding.
 
             ok: passes that decoded. new: decodes whose payload differs from

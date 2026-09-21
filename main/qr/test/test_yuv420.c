@@ -28,51 +28,35 @@ static uint8_t *pack_frame(uint32_t width, uint32_t height) {
   return frame;
 }
 
-static void check_region(const uint8_t *frame, uint32_t frame_width, uint32_t x,
-                         uint32_t y, uint32_t width, uint32_t height) {
+static void check_frame(uint32_t width, uint32_t height) {
+  uint8_t *frame = pack_frame(width, height);
   size_t pixels = (size_t)width * height;
   uint8_t *gray = malloc(pixels + 2);
   assert(gray);
   gray[0] = CANARY;
   gray[pixels + 1] = CANARY;
 
-  yuv420_extract_luma(frame, frame_width, x, y, width, height, gray + 1);
+  yuv420_extract_luma(frame, width, height, gray + 1);
 
   assert(gray[0] == CANARY && gray[pixels + 1] == CANARY);
-  for (uint32_t row = 0; row < height; row++)
-    for (uint32_t col = 0; col < width; col++)
-      assert(gray[1 + (size_t)row * width + col] == luma_at(x + col, y + row));
+  for (uint32_t y = 0; y < height; y++)
+    for (uint32_t x = 0; x < width; x++)
+      assert(gray[1 + (size_t)y * width + x] == luma_at(x, y));
   free(gray);
-}
-
-static void test_extracts_full_frames_and_regions(void) {
-  // The decode frame sizes in use, plus a small one for odd-row coverage.
-  const uint32_t sizes[] = {8, 600, 640};
-  for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
-    uint32_t size = sizes[i];
-    uint8_t *frame = pack_frame(size, size);
-    check_region(frame, size, 0, 0, size, size);
-    check_region(frame, size, 0, 0, 2, 1);
-    check_region(frame, size, size - 2, size - 1, 2, 1);
-    check_region(frame, size, 2, 3, size - 4, size - 5);
-    if (size >= 600) {
-      check_region(frame, size, 96, 71, 416, 416); // a typical ROI
-      check_region(frame, size, size - 64, size - 64, 64, 64);
-    }
-    free(frame);
-  }
-}
-
-static void test_rectangular_frame(void) {
-  uint8_t *frame = pack_frame(16, 6);
-  check_region(frame, 16, 0, 0, 16, 6);
-  check_region(frame, 16, 4, 1, 8, 4);
   free(frame);
 }
 
+static void test_extracts_frames(void) {
+  // The decode frame sizes in use, plus small ones for odd-row coverage.
+  check_frame(600, 600);
+  check_frame(640, 640);
+  check_frame(8, 8);
+  check_frame(2, 1);
+  check_frame(16, 7);
+}
+
 int main(void) {
-  test_extracts_full_frames_and_regions();
-  test_rectangular_frame();
+  test_extracts_frames();
   puts("All YUV420 tests passed.");
   return 0;
 }
