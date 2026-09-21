@@ -230,7 +230,9 @@ void theme_apply_slider(lv_obj_t *slider) {
   lv_obj_set_height(slider, theme_slider_height());
   lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(slider, highlight_color(), LV_PART_KNOB);
-  lv_obj_set_style_bg_color(slider, panel_color(), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(slider, COLOR_SURFACE, LV_PART_MAIN);
+  // The default theme draws the track at a fifth of its opacity.
+  lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(slider, theme_slider_knob_pad(), LV_PART_KNOB);
 }
 
