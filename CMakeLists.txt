@@ -7,7 +7,6 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 add_compile_options(-Wno-format)
 add_compile_options(-Wno-ignored-qualifiers)
 add_compile_options(-Wno-attributes)
-add_compile_options(-Wno-unused-function)
 # Per-clone throwaway key so dev builds carry the signature block that
 # SECURE_SIGNED_ON_UPDATE requires at boot; releases are re-signed offline.
 # Must exist before project() — IDF checks the key during configure. Path
