@@ -18,7 +18,9 @@ typedef struct {
 
 /* BIP138 recipient key of one descriptor key expression: the x-only root key
  * of an xpub that carries a trailing derivation (fixed, wildcard or
- * multipath). Bare xpubs, private keys and literal pubkeys yield false. */
+ * multipath). Bare xpubs, private keys and literal pubkeys yield false.
+ * Exposed for the BIP's key-type vectors; the firmware extracts keys through
+ * bip138_keys_from_descriptor. */
 KERN_WARN_UNUSED_RESULT bool bip138_key_from_expression(const char *expr,
                                                         uint8_t xonly_out[32]);
 
