@@ -352,6 +352,7 @@ char *mnemonic_to_seedqr(const char *mnemonic) {
         break;
       }
     }
+    secure_memzero(word, sizeof(word));
 
     if (!found) {
       free(seedqr);
