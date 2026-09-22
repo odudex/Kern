@@ -62,7 +62,7 @@ static void address_not_found_cb(void) {
 }
 
 void scan_handle_address(const char *content) {
-  address_checker_check(content, address_found_cb, address_not_found_cb);
+  address_checker_check(content, address_found_cb, address_not_found_cb, NULL);
 }
 
 static void mnemonic_confirm_cb(bool confirmed, void *user_data) {

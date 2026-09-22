@@ -229,7 +229,8 @@ static void perform_sweep_deferred(lv_timer_t *timer) {
 }
 
 void address_checker_check(const char *raw_content, void (*found_cb)(void),
-                           void (*not_found_cb)(void)) {
+                           void (*not_found_cb)(void),
+                           const wallet_source_t *initial) {
   address_checker_destroy();
   session_cleanup_register(address_checker_destroy);
 
@@ -273,6 +274,8 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
   search_limit = SEARCH_BATCH;
   on_found = found_cb;
   on_not_found = not_found_cb;
+  if (initial)
+    ac_source = *initial;
   show_source_picker();
 }
 

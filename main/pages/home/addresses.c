@@ -386,7 +386,8 @@ static void return_from_scan_cb(void) {
     return;
   }
 
-  address_checker_check(content, scan_found_cb, scan_not_found_cb);
+  address_checker_check(content, scan_found_cb, scan_not_found_cb,
+                        &current_source);
   free(content);
 }
 
