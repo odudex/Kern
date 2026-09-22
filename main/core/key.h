@@ -15,6 +15,8 @@ KERN_WARN_UNUSED_RESULT bool key_load_from_mnemonic(const char *mnemonic,
                                                     const char *passphrase,
                                                     bool is_testnet);
 void key_unload(void);
+/* Switch the loaded key between mainnet and testnet. */
+KERN_WARN_UNUSED_RESULT bool key_set_network(bool is_testnet);
 
 /* Caller-provided buffer of BIP32_KEY_FINGERPRINT_LEN (4) bytes. */
 KERN_WARN_UNUSED_RESULT bool

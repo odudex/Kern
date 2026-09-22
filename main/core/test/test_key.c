@@ -130,7 +130,8 @@ static void test_unloaded(void) {
             !key_get_xpub("m/84'/0'/0'", &s) && !key_get_master_xpub(&s) &&
             !key_get_mnemonic(&s) && !key_get_mnemonic_words(&words, &n) &&
             !key_get_derived_key("m/0", &k) &&
-            !key_get_derived_key_components(NULL, 0, &k));
+            !key_get_derived_key_components(NULL, 0, &k) &&
+            !key_set_network(true));
   key_unload();
   check("unload when unloaded is harmless", !key_is_loaded());
 }
@@ -343,6 +344,55 @@ static void test_passphrase_and_network(void) {
   wally_bzero(&ref, sizeof(ref));
 }
 
+static bool account_xpub_matches(const struct ext_key *ref, uint32_t coin) {
+  uint32_t p[3] = {84 | BIP32_INITIAL_HARDENED_CHILD,
+                   coin | BIP32_INITIAL_HARDENED_CHILD,
+                   0 | BIP32_INITIAL_HARDENED_CHILD};
+  char path[16];
+  snprintf(path, sizeof(path), "m/84'/%u'/0'", (unsigned)coin);
+  struct ext_key d;
+  char *want = NULL, *got = NULL;
+  bool ok = bip32_key_from_parent_path(ref, p, 3, BIP32_FLAG_KEY_PRIVATE, &d) ==
+                WALLY_OK &&
+            bip32_key_to_base58(&d, BIP32_FLAG_KEY_PUBLIC, &want) == WALLY_OK &&
+            key_get_xpub(path, &got) && strcmp(want, got) == 0;
+  wally_free_string(want);
+  wally_free_string(got);
+  wally_bzero(&d, sizeof(d));
+  return ok;
+}
+
+static void test_set_network_keeps_passphrase(void) {
+  struct ext_key main_ref, test_ref;
+  char expect[9], got[9];
+
+  check("references with passphrase",
+        reference_master(TEST_MNEMONIC, "TREZOR", BIP32_VER_MAIN_PRIVATE,
+                         &main_ref) &&
+            reference_master(TEST_MNEMONIC, "TREZOR", BIP32_VER_TEST_PRIVATE,
+                             &test_ref));
+  check("load with passphrase on mainnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "TREZOR", false) &&
+            key_get_fingerprint_hex(expect));
+
+  check("switch to testnet", key_set_network(true));
+  check("testnet switch keeps the passphrase fingerprint",
+        key_get_fingerprint_hex(got) && strcmp(got, expect) == 0);
+  check("testnet switch derives the passphrase wallet",
+        account_xpub_matches(&test_ref, 1));
+
+  check("switch back to mainnet", key_set_network(false));
+  check("mainnet switch derives the passphrase wallet",
+        account_xpub_matches(&main_ref, 0));
+  char *m = NULL;
+  check("mnemonic survives the switch",
+        key_get_mnemonic(&m) && strcmp(m, TEST_MNEMONIC) == 0);
+  SECURE_FREE_STRING(m);
+
+  wally_bzero(&main_ref, sizeof(main_ref));
+  wally_bzero(&test_ref, sizeof(test_ref));
+}
+
 static void test_unload(void) {
   check("loaded before unload", key_is_loaded());
   key_unload();
@@ -406,6 +456,7 @@ int main(void) {
   test_derived_keys();
   test_mnemonic_access();
   test_passphrase_and_network();
+  test_set_network_keeps_passphrase();
   test_unload();
   test_internal_memory_exhaustion();
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,

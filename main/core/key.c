@@ -99,6 +99,18 @@ void key_unload(void) {
   key_loaded = false;
 }
 
+bool key_set_network(bool is_testnet) {
+  if (!key_loaded) {
+    return false;
+  }
+  /* The BIP32 version is the only network-dependent part of the master
+   * key and derived children inherit it, so switching it in place keeps
+   * the loaded key, passphrase included, instead of re-deriving. */
+  master_key->version =
+      is_testnet ? BIP32_VER_TEST_PRIVATE : BIP32_VER_MAIN_PRIVATE;
+  return true;
+}
+
 bool key_get_fingerprint(unsigned char *fingerprint_out) {
   if (!key_loaded || !fingerprint_out) {
     return false;
