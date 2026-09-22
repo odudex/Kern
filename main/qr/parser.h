@@ -16,26 +16,10 @@
 #define FORMAT_BBQR 3
 
 /**
- * @brief Prefix length constants for different QR formats
- */
-#define PMOFN_PREFIX_LENGTH_1D 6
-#define PMOFN_PREFIX_LENGTH_2D 8
-#define BBQR_PREFIX_LENGTH 8
-#define UR_GENERIC_PREFIX_LENGTH 22
-#define UR_CBOR_PREFIX_LEN 14
-#define UR_BYTEWORDS_CRC_LEN 4
-#define UR_MIN_FRAGMENT_LENGTH 10
-
-/**
  * @brief Resource limits for stored non-UR multipart QR data
  */
 #define QR_PARSER_MAX_MULTIPART_PARTS 1024
 #define QR_PARSER_MAX_STORED_BYTES (1024U * 1024U)
-
-/**
- * @brief Maximum QR code versions supported (limited to version 20)
- */
-#define QR_CAPACITY_SIZE 20
 
 /**
  * @brief Structure to hold a single QR part

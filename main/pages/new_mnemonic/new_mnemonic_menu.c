@@ -29,7 +29,6 @@ static void return_from_dice_rolls_cb(void);
 static void return_from_entropy_from_camera_cb(void);
 static void return_from_manual_input_cb(void);
 static void return_from_mnemonic_editor_cb(void);
-static void return_from_key_confirmation_cb(void);
 static void success_from_key_confirmation_cb(void);
 
 static void return_from_dice_rolls_cb(void) {
@@ -69,11 +68,6 @@ static void return_from_manual_input_cb(void) {
 
 static void return_from_mnemonic_editor_cb(void) {
   mnemonic_editor_page_destroy();
-  new_mnemonic_menu_page_show();
-}
-
-static void return_from_key_confirmation_cb(void) {
-  key_confirmation_page_destroy();
   new_mnemonic_menu_page_show();
 }
 
