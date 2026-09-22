@@ -285,6 +285,8 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(menu->container, theme_default_padding(), 0);
   lv_obj_set_style_pad_top(menu->container, theme_small_padding(), 0);
+  // The list owns the right gutter so its scrollbar lands there
+  lv_obj_set_style_pad_right(menu->container, 0, 0);
   lv_obj_set_style_pad_gap(menu->container, theme_default_padding(), 0);
   lv_obj_clear_flag(menu->container, LV_OBJ_FLAG_SCROLLABLE);
   theme_apply_screen(menu->container);
@@ -299,9 +301,12 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   lv_obj_set_flex_align(menu->nav_bar, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(menu->nav_bar, LV_OBJ_FLAG_SCROLLABLE);
-  // Keep the centered title clear of the corner buttons on narrow displays
-  lv_obj_set_style_pad_hor(
-      menu->nav_bar, theme_small_padding() + theme_corner_button_width(), 0);
+  // Keep the centered title clear of the corner buttons on narrow displays;
+  // the right side also absorbs the gutter the container hands to the list
+  int32_t nav_pad = theme_small_padding() + theme_corner_button_width();
+  lv_obj_set_style_pad_left(menu->nav_bar, nav_pad, 0);
+  lv_obj_set_style_pad_right(menu->nav_bar, nav_pad + theme_default_padding(),
+                             0);
 
   menu->title_label = lv_label_create(menu->nav_bar);
   lv_label_set_text(menu->title_label, title);
@@ -318,6 +323,7 @@ ui_menu_t *ui_menu_create(lv_obj_t *parent, const char *title,
   theme_apply_transparent_container(menu->list);
   apply_list_layout(menu);
   lv_obj_set_flex_grow(menu->list, 1);
+  lv_obj_set_style_pad_right(menu->list, theme_default_padding(), 0);
   lv_obj_set_style_pad_row(menu->list, theme_button_spacing(), 0);
   lv_obj_set_style_pad_column(menu->list, theme_button_spacing(), 0);
   lv_obj_set_style_outline_width(menu->list, 0, 0);

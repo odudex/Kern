@@ -79,8 +79,8 @@ void app_main(void) {
              esp_err_to_name(pmic_ret));
   }
 
-  theme_init();
   bsp_display_lock(0);
+  theme_init();
 
   // Set up screen theme background
   theme_apply_screen(screen);

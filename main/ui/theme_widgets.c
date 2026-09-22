@@ -18,6 +18,7 @@ typedef struct {
   lv_style_t btnmatrix_action;
   lv_style_t btnmatrix_action_pressed;
   lv_style_t btnmatrix_disabled;
+  lv_style_t scrollbar;
 } theme_widget_styles_t;
 
 static theme_widget_styles_t styles;
@@ -153,6 +154,28 @@ static void apply_variant(lv_obj_t *obj, const lv_style_t *primary,
   lv_obj_add_style(obj, selected, selector);
 }
 
+/* Scrollbars hug their container's right edge, so they sit in the container's
+   right padding instead of over its content. */
+static void widget_theme_apply_cb(lv_theme_t *theme, lv_obj_t *obj) {
+  LV_UNUSED(theme);
+  if (lv_obj_check_type(obj, &lv_obj_class))
+    lv_obj_add_style(obj, &styles.scrollbar, LV_PART_SCROLLBAR);
+}
+
+static void install_widget_theme(void) {
+  lv_style_init(&styles.scrollbar);
+  lv_style_set_pad_right(&styles.scrollbar, 0);
+
+  lv_theme_t *base = lv_display_get_theme(NULL);
+  lv_theme_t *theme = lv_theme_create();
+  if (!theme)
+    return;
+  lv_theme_copy(theme, base);
+  lv_theme_set_parent(theme, base);
+  lv_theme_set_apply_cb(theme, widget_theme_apply_cb);
+  lv_display_set_theme(NULL, theme);
+}
+
 void theme_widgets_init(void) {
   if (styles.initialized)
     return;
@@ -160,6 +183,7 @@ void theme_widgets_init(void) {
   init_container_styles();
   init_touch_styles();
   init_btnmatrix_styles();
+  install_widget_theme();
   styles.initialized = true;
 }
 
