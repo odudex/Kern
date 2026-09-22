@@ -3,7 +3,6 @@
 #include "store_descriptor.h"
 #include "../core/bip138_backup.h"
 #include "../core/descriptor_checksum.h"
-#include "../core/registry.h"
 #include "../core/storage.h"
 #include "../core/wallet.h"
 #include "../ui/dialog.h"
@@ -266,15 +265,6 @@ void store_descriptor_page_create_for_descriptor(
     lv_textarea_set_text(id_input.textarea, descriptor_default_id);
     id_input_created = true;
   }
-}
-
-void store_descriptor_page_create(lv_obj_t *parent, void (*return_cb)(void),
-                                  storage_location_t location,
-                                  storage_descriptor_format_t format) {
-  session_cleanup_register(store_descriptor_page_destroy);
-  const registry_entry_t *entry = registry_get(0);
-  store_descriptor_page_create_for_descriptor(
-      parent, return_cb, location, format, entry ? entry->desc : NULL);
 }
 
 void store_descriptor_page_show(void) {

@@ -15,9 +15,6 @@
 
 struct wally_descriptor;
 
-void store_descriptor_page_create(lv_obj_t *parent, void (*return_cb)(void),
-                                  storage_location_t location,
-                                  storage_descriptor_format_t format);
 void store_descriptor_page_create_for_descriptor(
     lv_obj_t *parent, void (*return_cb)(void), storage_location_t location,
     storage_descriptor_format_t format,
