@@ -3,7 +3,6 @@
 #include "../../components/cUR/src/ur_decoder.h"
 #include <ctype.h>
 #include <limits.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,31 +86,6 @@ void qr_parser_destroy(QRPartParser *parser) {
   free(parser);
 }
 
-int qr_parser_parsed_count(QRPartParser *parser) {
-  if (parser->format == FORMAT_UR && parser->ur_decoder) {
-    ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    return (int)ur_decoder_processed_parts_count(decoder);
-  }
-  return parser->parts_count;
-}
-
-int qr_parser_processed_parts_count(QRPartParser *parser) {
-  if (parser->format == FORMAT_UR && parser->ur_decoder) {
-    ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    return (int)ur_decoder_processed_parts_count(decoder);
-  }
-  return parser->parts_count;
-}
-
-int qr_parser_total_count(QRPartParser *parser) {
-  if (parser->format == FORMAT_UR && parser->ur_decoder) {
-    ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    size_t expected = ur_decoder_expected_part_count(decoder);
-    return expected > 0 ? (int)expected : 1;
-  }
-  return parser->total;
-}
-
 static bool add_part(QRPartParser *parser, int index, const char *data,
                      size_t data_len) {
   // Check if part already exists
@@ -179,10 +153,6 @@ static bool add_part(QRPartParser *parser, int index, const char *data,
   parser->parts[parser->parts_count++] = part;
   parser->stored_bytes += data_len;
   return true;
-}
-
-int qr_parser_parse(QRPartParser *parser, const char *data) {
-  return qr_parser_parse_with_len(parser, data, strlen(data));
 }
 
 int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
@@ -507,10 +477,4 @@ char qr_parser_get_bbqr_file_type(QRPartParser *parser) {
     return parser->bbqr->file_type;
   }
   return 0;
-}
-
-int get_qr_size(const char *qr_code) {
-  int len = strlen(qr_code);
-  int size = (int)sqrt(len * 8);
-  return size;
 }

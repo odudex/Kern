@@ -276,19 +276,6 @@ char *mnemonic_qr_to_mnemonic(const char *data, size_t len,
   }
 }
 
-const char *mnemonic_qr_format_name(mnemonic_qr_format_t format) {
-  switch (format) {
-  case MNEMONIC_QR_PLAINTEXT:
-    return "Plaintext";
-  case MNEMONIC_QR_COMPACT:
-    return "Compact SeedQR";
-  case MNEMONIC_QR_SEEDQR:
-    return "SeedQR";
-  default:
-    return "Unknown";
-  }
-}
-
 char *mnemonic_to_seedqr(const char *mnemonic) {
   if (!mnemonic) {
     return NULL;

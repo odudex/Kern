@@ -78,57 +78,11 @@ KERN_WARN_UNUSED_RESULT QRPartParser *qr_parser_create(void);
 void qr_parser_destroy(QRPartParser *parser);
 
 /**
- * @brief Get the number of successfully parsed parts
+ * @brief Parse one QR code's data
  *
- * Returns the count of unique QR parts that have been
- * successfully parsed and stored.
- *
- * @param parser Parser instance
- * @return Number of parsed parts
- */
-KERN_WARN_UNUSED_RESULT int qr_parser_parsed_count(QRPartParser *parser);
-
-/**
- * @brief Get the number of processed parts (including duplicates)
- *
- * Returns the total count of parts that have been processed,
- * including any duplicate parts that may have been received.
- *
- * @param parser Parser instance
- * @return Number of processed parts
- */
-KERN_WARN_UNUSED_RESULT int
-qr_parser_processed_parts_count(QRPartParser *parser);
-
-/**
- * @brief Get the total expected number of parts
- *
- * Returns the total number of parts expected for the complete
- * message, as determined from the QR format headers.
- *
- * @param parser Parser instance
- * @return Total expected parts, or -1 if not yet determined
- */
-KERN_WARN_UNUSED_RESULT int qr_parser_total_count(QRPartParser *parser);
-
-/**
- * @brief Parse a QR code data string
- *
- * Attempts to parse the provided QR data string, detecting the format
- * on the first call and extracting part information for multi-part formats.
- *
- * @param parser Parser instance
- * @param data QR code data string to parse
- * @return Part index on success, or -1 on failure
- */
-KERN_WARN_UNUSED_RESULT int qr_parser_parse(QRPartParser *parser,
-                                            const char *data);
-
-/**
- * @brief Parse QR code data with explicit length
- *
- * Like qr_parser_parse but accepts an explicit length, which is necessary
- * for binary data that may contain null bytes (e.g., Compact SeedQR).
+ * Detects the format on the first call and extracts part information for
+ * multi-part formats. The explicit length allows binary data that may contain
+ * null bytes (e.g., Compact SeedQR).
  *
  * @note UR parts are forwarded to the UR decoder, which reads them as C
  * strings, so data must still be null-terminated at data_len.
@@ -219,16 +173,5 @@ KERN_WARN_UNUSED_RESULT int qr_parser_get_format(QRPartParser *parser);
  *         or 0 if the format is not BBQr
  */
 char qr_parser_get_bbqr_file_type(QRPartParser *parser);
-
-/**
- * @brief Calculate QR code size from encoded data
- *
- * Estimates the QR code size (side length in modules) based
- * on the encoded data length.
- *
- * @param qr_code Encoded QR code data
- * @return Estimated QR code size in modules
- */
-KERN_WARN_UNUSED_RESULT int get_qr_size(const char *qr_code);
 
 #endif

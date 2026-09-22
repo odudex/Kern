@@ -217,15 +217,6 @@ KERN_WARN_UNUSED_RESULT char *mnemonic_qr_seedqr_to_mnemonic(const char *data,
                                                              size_t len);
 
 /**
- * @brief Get a human-readable name for a format
- *
- * @param format The format type
- * @return Static string with format name
- */
-KERN_WARN_UNUSED_RESULT const char *
-mnemonic_qr_format_name(mnemonic_qr_format_t format);
-
-/**
  * @brief Convert a BIP39 mnemonic phrase to SeedQR format
  *
  * SeedQR format uses 4 decimal digits per word, representing the

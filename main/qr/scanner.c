@@ -1517,8 +1517,6 @@ char *qr_scanner_get_completed_content_with_len(size_t *content_len) {
   return NULL;
 }
 
-bool qr_scanner_is_ready(void) { return is_fully_initialized && !closing; }
-
 bool qr_scanner_has_completed_result(void) {
   return qr_parser && qr_parser_is_complete(qr_parser);
 }

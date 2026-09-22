@@ -57,13 +57,6 @@ KERN_WARN_UNUSED_RESULT char *
 qr_scanner_get_completed_content_with_len(size_t *content_len);
 
 /**
- * @brief Check if QR scanner is fully initialized and ready
- *
- * @return true if scanner is ready, false otherwise
- */
-KERN_WARN_UNUSED_RESULT bool qr_scanner_is_ready(void);
-
-/**
  * @brief Check if the scanner has completed QR content
  *
  * @return true if a QR was fully scanned, false if the scanner was canceled or
