@@ -433,16 +433,6 @@ bool ui_menu_add_entry_with_action(ui_menu_t *menu, const char *name,
   return add_entry_internal(menu, NULL, name, callback, action_icon, action_cb);
 }
 
-bool ui_menu_add_entry_with_icon_and_action(
-    ui_menu_t *menu, const char *icon, const char *name,
-    ui_menu_callback_t callback, const char *action_icon,
-    ui_menu_action_callback_t action_cb) {
-  if (!icon || !action_icon || !action_cb)
-    return false;
-
-  return add_entry_internal(menu, icon, name, callback, action_icon, action_cb);
-}
-
 bool ui_menu_set_entry_secondary(ui_menu_t *menu, int index, bool secondary) {
   if (!menu || index < 0 || index >= menu->config.entry_count)
     return false;
@@ -521,10 +511,6 @@ void ui_menu_set_title_visible(ui_menu_t *menu, bool visible) {
 
 lv_obj_t *ui_menu_get_title_label(ui_menu_t *menu) {
   return menu ? menu->title_label : NULL;
-}
-
-lv_obj_t *ui_menu_get_container(ui_menu_t *menu) {
-  return menu ? menu->container : NULL;
 }
 
 lv_obj_t *ui_menu_get_nav_bar(ui_menu_t *menu) {

@@ -91,11 +91,9 @@ lv_color_t encourage_color(void) { return COLOR_GREEN; }
 
 lv_color_t discourage_color(void) { return COLOR_RED; }
 
-// State/value colors: green for a good value, red for a bad one (battery level,
-// password strength, change outputs, etc.).
+// State/value color: green for a good value (battery level, password strength,
+// change outputs, etc.).
 lv_color_t good_color(void) { return COLOR_GREEN; }
-
-lv_color_t bad_color(void) { return COLOR_RED; }
 
 lv_color_t accent_color(void) { return COLOR_CYAN; }
 

@@ -106,13 +106,6 @@ void ui_keyboard_set_key_enabled(ui_keyboard_t *kb, int key_index,
 void ui_keyboard_set_letters_enabled(ui_keyboard_t *kb, uint32_t letter_mask);
 
 /**
- * @brief Enable all keys
- *
- * @param kb Pointer to keyboard
- */
-void ui_keyboard_enable_all(ui_keyboard_t *kb);
-
-/**
  * @brief Set the OK button visibility/enabled state
  *
  * @param kb Pointer to keyboard

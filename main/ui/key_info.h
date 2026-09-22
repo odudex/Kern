@@ -1,6 +1,5 @@
 /**
- * Reusable UI component for displaying key fingerprint and derivation path
- * with icons.
+ * Reusable UI component for displaying the key fingerprint with an icon.
  */
 
 #ifndef KEY_INFO_H
@@ -32,22 +31,11 @@ lv_obj_t *ui_icon_text_row_create(lv_obj_t *parent, const char *icon,
 lv_obj_t *ui_fingerprint_create(lv_obj_t *parent, lv_color_t color);
 
 /**
- * Create a derivation path display row with icon and path string.
- * Uses the current wallet's derivation path.
+ * Create the key info header: the fingerprint in highlight_color(), followed
+ * by a "testnet" label when the wallet is on testnet.
  *
  * @param parent Parent LVGL object
- * @param color  Text and icon color
- * @return Container object with icon and label, or NULL on failure
- */
-lv_obj_t *ui_derivation_create(lv_obj_t *parent, lv_color_t color);
-
-/**
- * Create a combined key info header with fingerprint and derivation side by
- * side. Uses highlight_color() for fingerprint and secondary_color() for
- * derivation.
- *
- * @param parent Parent LVGL object
- * @return Container object with both elements, or NULL on failure
+ * @return Container object, or NULL on failure
  */
 lv_obj_t *ui_key_info_create(lv_obj_t *parent);
 

@@ -206,13 +206,6 @@ void ui_keyboard_set_letters_enabled(ui_keyboard_t *kb, uint32_t letter_mask) {
   }
 }
 
-void ui_keyboard_enable_all(ui_keyboard_t *kb) {
-  if (!kb)
-    return;
-  for (int i = 0; i < UI_KB_KEY_COUNT; i++)
-    ui_keyboard_set_key_enabled(kb, i, true);
-}
-
 void ui_keyboard_set_ok_enabled(ui_keyboard_t *kb, bool enabled) {
   ui_keyboard_set_key_enabled(kb, UI_KB_KEY_OK, enabled);
 }

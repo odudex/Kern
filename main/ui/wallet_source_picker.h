@@ -42,9 +42,6 @@ wallet_source_picker_t *wallet_source_picker_create(
     lv_obj_t *parent, wallet_picker_mode_t mode, const wallet_source_t *initial,
     wallet_source_changed_cb on_change, void *user_data);
 
-void wallet_source_picker_get(const wallet_source_picker_t *picker,
-                              wallet_source_t *out);
-
 // Maps source<4 to its ss_script_type (singlesig modes only).
 ss_script_type_t wallet_source_picker_script_type(uint16_t source);
 

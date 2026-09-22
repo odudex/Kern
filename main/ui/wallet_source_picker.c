@@ -190,13 +190,6 @@ wallet_source_picker_t *wallet_source_picker_create(
   return p;
 }
 
-void wallet_source_picker_get(const wallet_source_picker_t *picker,
-                              wallet_source_t *out) {
-  if (!picker || !out)
-    return;
-  *out = picker->state;
-}
-
 void wallet_source_picker_destroy(wallet_source_picker_t *picker) {
   if (!picker)
     return;

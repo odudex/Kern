@@ -16,10 +16,9 @@ lv_color_t error_color(void);
 // the button's "Yes"/"No" label.
 lv_color_t encourage_color(void);
 lv_color_t discourage_color(void);
-// State/value colors (good = green, bad = red) for indicators like battery
-// level or password strength.
+// State/value color (good = green) for indicators like battery level or
+// password strength.
 lv_color_t good_color(void);
-lv_color_t bad_color(void);
 lv_color_t accent_color(void);
 
 // Theme fonts

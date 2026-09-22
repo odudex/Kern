@@ -356,10 +356,6 @@ void sankey_diagram_render(sankey_diagram_t *diagram) {
   lv_obj_invalidate(diagram->canvas);
 }
 
-lv_obj_t *sankey_diagram_get_obj(sankey_diagram_t *diagram) {
-  return diagram ? diagram->canvas : NULL;
-}
-
 size_t sankey_diagram_get_input_overflow(sankey_diagram_t *diagram) {
   return diagram ? diagram->input_overflow : 0;
 }
