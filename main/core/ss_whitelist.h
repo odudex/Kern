@@ -60,17 +60,10 @@ KERN_WARN_UNUSED_RESULT bool
 ss_keypath_parse(const unsigned char *keypath_after_fp,
                  size_t keypath_len_after_fp, ss_keypath_t *out);
 
-/* Maximum buffer size for ss_keypath_format output ("m/86'/1'/100'/1/99\0" = 19
- * bytes). */
-#define SS_KEYPATH_FMT_MAX 32
-
 #define SS_P2SH_P2WPKH_REDEEM_LEN                                              \
   SCRIPT_TEMPLATE_P2SH_P2WPKH_REDEEM_LEN /* OP_0 <20-byte pkh> */
 #define SS_P2SH_P2WPKH_SPK_LEN                                                 \
   SCRIPT_TEMPLATE_P2SH_P2WPKH_SPK_LEN /* OP_HASH160 <20-byte hash> OP_EQUAL */
-
-KERN_WARN_UNUSED_RESULT bool ss_keypath_format(const ss_keypath_t *kp,
-                                               char *buf, size_t buf_size);
 
 KERN_WARN_UNUSED_RESULT bool ss_keypath_is_whitelisted(const ss_keypath_t *kp,
                                                        bool is_testnet,
@@ -102,20 +95,6 @@ KERN_WARN_UNUSED_RESULT bool ss_address(ss_script_type_t script,
                                         uint32_t index, bool is_testnet,
                                         char *address_out,
                                         size_t address_out_len);
-
-/*
- * Returns true iff (purpose, outer_script) matches the fixed BIP convention:
- *   44 ↔ SS_SCRIPT_P2PKH
- *   49 ↔ SS_SCRIPT_P2SH_P2WPKH
- *   84 ↔ SS_SCRIPT_P2WPKH
- *   86 ↔ SS_SCRIPT_P2TR
- * Any other combination returns false.
- * Used by whitelist claim matching (hard enforcement — mismatch means no
- * claim).
- */
-KERN_WARN_UNUSED_RESULT bool
-purpose_script_binding_check_strict(uint32_t purpose,
-                                    ss_script_type_t outer_script);
 
 /*
  * Inspects a parsed descriptor's outer script type (via canonicalisation)

@@ -32,19 +32,7 @@ static int tests_failed = 0;
   "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWc"                \
   "LteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
 
-/* ---- Group 1: purpose_script_binding_check_strict ---- */
-
-static void test_strict(const char *name, uint32_t purpose,
-                        ss_script_type_t script, bool expected) {
-  TEST(name);
-  bool got = purpose_script_binding_check_strict(purpose, script);
-  if (got != expected)
-    FAIL(expected ? "expected true, got false" : "expected false, got true");
-  else
-    PASS();
-}
-
-/* ---- Group 2: purpose_script_binding_check_soft ---- */
+/* ---- purpose_script_binding_check_soft ---- */
 
 static void test_soft(const char *name, const char *descriptor_str,
                       psb_result_t expected) {
@@ -69,23 +57,7 @@ static void test_soft(const char *name, const char *descriptor_str,
 int main(void) {
   printf("=== purpose_script_binding tests ===\n\n");
 
-  printf("--- Group 1: purpose_script_binding_check_strict ---\n");
-  /* Matching pairs → true */
-  test_strict("44 + P2PKH        → true", 44, SS_SCRIPT_P2PKH, true);
-  test_strict("49 + P2SH_P2WPKH  → true", 49, SS_SCRIPT_P2SH_P2WPKH, true);
-  test_strict("84 + P2WPKH       → true", 84, SS_SCRIPT_P2WPKH, true);
-  test_strict("86 + P2TR         → true", 86, SS_SCRIPT_P2TR, true);
-  /* Cross pairs → false */
-  test_strict("84 + P2TR  (mismatch) → false", 84, SS_SCRIPT_P2TR, false);
-  test_strict("86 + P2WPKH mismatch → false", 86, SS_SCRIPT_P2WPKH, false);
-  test_strict("44 + P2WPKH mismatch → false", 44, SS_SCRIPT_P2WPKH, false);
-  /* Unknown purpose → false */
-  test_strict("48 + P2WPKH (no whitelist entry) → false", 48, SS_SCRIPT_P2WPKH,
-              false);
-  test_strict("99 + P2PKH (unknown purpose)     → false", 99, SS_SCRIPT_P2PKH,
-              false);
-
-  printf("\n--- Group 2: purpose_script_binding_check_soft ---\n");
+  printf("--- purpose_script_binding_check_soft ---\n");
 
   /* WARN: wsh outer but purpose 86 (convention: tr) */
   test_soft("wsh/purpose-86 → WARN",

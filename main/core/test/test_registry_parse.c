@@ -591,7 +591,7 @@ int main(void) {
     registry_add_from_string("session", DESC_WPKH, STORAGE_FLASH, false);
 
     TEST("session remove: returns true");
-    if (registry_remove("session")) {
+    if (registry_remove_at(0)) {
       PASS();
     } else {
       FAIL("remove failed");

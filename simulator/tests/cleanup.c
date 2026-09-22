@@ -114,7 +114,7 @@ int main(void) {
   assert(lvgl_port_lock(0));
   theme_init();
   theme_apply_screen(lv_screen_active());
-  assert(key_init());
+  key_unload();
 
   ui_text_input_t input = {0};
   ui_text_input_create(&input, lv_screen_active(), "PIN", true, NULL);

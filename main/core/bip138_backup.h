@@ -33,17 +33,11 @@ KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt(const uint8_t *blob,
                                                    char **descriptor_out,
                                                    bool *approved_out);
 
-/* Base64 text form of bip138_backup_encrypt; *base64_out is malloc'd. */
-KERN_WARN_UNUSED_RESULT bool bip138_backup_encrypt_text(const char *descriptor,
-                                                        char **base64_out);
-
 /* Accepts either the binary container or its base64 text. */
 KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt_any(const uint8_t *data,
                                                        size_t len,
                                                        char **descriptor_out,
                                                        bool *approved_out);
-
-bool bip138_backup_is_container(const uint8_t *data, size_t len);
 
 /* True for a binary container or its base64 text form. */
 bool bip138_backup_detect(const uint8_t *data, size_t len);

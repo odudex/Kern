@@ -187,7 +187,7 @@ static void test_common_account(void) {
   check("descriptor builds",
         build_wpkh("m/84'/0'/0'", descriptor, sizeof(descriptor)));
   check("encrypt", bip138_backup_encrypt(descriptor, &blob, &blob_len));
-  check("is container", bip138_backup_is_container(blob, blob_len));
+  check("is container", bip138_is_container(blob, blob_len));
   check("parses", bip138_parse(blob, blob_len, &cont) == BIP138_OK);
   check("origin is stored as a recovery hint", cont.path_count == 1);
   check("one key padded to five secrets", cont.secret_count == 5);
@@ -258,24 +258,29 @@ static void test_foreign_key(void) {
 static void test_text_form(void) {
   char descriptor[256];
   char *text = NULL;
+  size_t text_len = 0;
   char *recovered = NULL;
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
   check("descriptor builds",
         build_wpkh("m/86'/0'/1'", descriptor, sizeof(descriptor)));
-  check("encrypt text", bip138_backup_encrypt_text(descriptor, &text));
+  check("encrypt binary", bip138_backup_encrypt(descriptor, &blob, &blob_len));
+  text = blob ? malloc(BIP138_BASE64_LEN(blob_len)) : NULL;
+  check("encode text", text && bip138_base64_encode(blob, blob_len, text,
+                                                    BIP138_BASE64_LEN(blob_len),
+                                                    &text_len) == BIP138_OK);
   check("base64 starts with the magic",
         text && strncmp(text, "QklQMTM4", 8) == 0);
   check("text is not a binary container",
-        !bip138_backup_is_container((const uint8_t *)text, strlen(text)));
+        text && !bip138_is_container((const uint8_t *)text, strlen(text)));
   check("decrypt_any accepts text",
-        bip138_backup_decrypt_any((const uint8_t *)text, strlen(text),
-                                  &recovered, NULL) &&
+        text &&
+            bip138_backup_decrypt_any((const uint8_t *)text, strlen(text),
+                                      &recovered, NULL) &&
             strcmp(recovered, descriptor) == 0);
   free(recovered);
   recovered = NULL;
 
-  uint8_t *blob = NULL;
-  size_t blob_len = 0;
-  check("encrypt binary", bip138_backup_encrypt(descriptor, &blob, &blob_len));
   check("decrypt_any accepts binary",
         bip138_backup_decrypt_any(blob, blob_len, &recovered, NULL) &&
             strcmp(recovered, descriptor) == 0);
@@ -314,7 +319,7 @@ static void test_registry_persistence(void) {
             stub_files[0].format == STORAGE_DESCRIPTOR_BIP138 &&
             strcmp(stub_files[0].filename, "d_ColdVault.bip138") == 0);
   check("stored bytes are a container",
-        bip138_backup_is_container(stub_files[0].data, stub_files[0].len));
+        bip138_is_container(stub_files[0].data, stub_files[0].len));
   check("stored container opens with the loaded key",
         bip138_backup_decrypt(stub_files[0].data, stub_files[0].len, &recovered,
                               NULL) &&
@@ -341,8 +346,8 @@ static void test_registry_persistence(void) {
   registry_init(false);
   check("boot scan finds it again", registry_count() == 1);
   check("session removal keeps the registered backup",
-        registry_remove("ColdVault") && stub_deletes == 0 &&
-            registry_count() == 0 && stub_files[0].present);
+        registry_remove_at(0) && stub_deletes == 0 && registry_count() == 0 &&
+            stub_files[0].present);
   registry_init(false);
   check("session removal does not prevent automatic recovery",
         registry_count() == 1);
@@ -673,7 +678,6 @@ static void test_many_origins(void) {
 }
 
 int main(void) {
-  check("key module initialises", key_init());
   check("test mnemonic loads",
         key_load_from_mnemonic(TEST_MNEMONIC, "", false));
   check("wallet initialises", wallet_init(WALLET_NETWORK_MAINNET));

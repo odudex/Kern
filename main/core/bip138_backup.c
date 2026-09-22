@@ -284,29 +284,6 @@ bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
   return ok;
 }
 
-bool bip138_backup_encrypt_text(const char *descriptor, char **base64_out) {
-  uint8_t *blob = NULL;
-  size_t blob_len = 0;
-  size_t text_len = 0;
-  if (!base64_out || !bip138_backup_encrypt(descriptor, &blob, &blob_len))
-    return false;
-  char *text = malloc(BIP138_BASE64_LEN(blob_len));
-  bool ok = text && bip138_base64_encode(blob, blob_len, text,
-                                         BIP138_BASE64_LEN(blob_len),
-                                         &text_len) == BIP138_OK;
-  free(blob);
-  if (!ok) {
-    free(text);
-    return false;
-  }
-  *base64_out = text;
-  return true;
-}
-
-bool bip138_backup_is_container(const uint8_t *data, size_t len) {
-  return bip138_is_container(data, len);
-}
-
 bool bip138_backup_detect(const uint8_t *data, size_t len) {
   static const char base64_magic[] = "QklQMTM4"; /* base64("BIP138") */
   return bip138_is_container(data, len) ||

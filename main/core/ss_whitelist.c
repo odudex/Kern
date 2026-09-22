@@ -53,12 +53,6 @@ bool ss_keypath_parse(const unsigned char *keypath_after_fp,
   return true;
 }
 
-bool ss_keypath_format(const ss_keypath_t *kp, char *buf, size_t buf_size) {
-  int n = snprintf(buf, buf_size, "m/%u'/%u'/%u'/%u/%u", kp->purpose, kp->coin,
-                   kp->account, kp->chain, kp->index);
-  return n >= 0 && (size_t)n < buf_size;
-}
-
 bool ss_keypath_is_whitelisted(const ss_keypath_t *kp, bool is_testnet,
                                uint32_t max_index) {
   if (kp->purpose != 44 && kp->purpose != 49 && kp->purpose != 84 &&
@@ -186,22 +180,6 @@ bool ss_address(ss_script_type_t script, uint32_t account, uint32_t chain,
   memcpy(address_out, alloc, len + 1);
   wally_free_string(alloc);
   return true;
-}
-
-bool purpose_script_binding_check_strict(uint32_t purpose,
-                                         ss_script_type_t outer_script) {
-  switch (purpose) {
-  case 44:
-    return outer_script == SS_SCRIPT_P2PKH;
-  case 49:
-    return outer_script == SS_SCRIPT_P2SH_P2WPKH;
-  case 84:
-    return outer_script == SS_SCRIPT_P2WPKH;
-  case 86:
-    return outer_script == SS_SCRIPT_P2TR;
-  default:
-    return false;
-  }
 }
 
 psb_result_t

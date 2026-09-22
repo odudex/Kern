@@ -116,8 +116,8 @@ static void fp_hex(const unsigned char fp[4], char out[9]) {
 }
 
 static void test_unloaded(void) {
-  check("init succeeds", key_init());
-  check("not loaded after init", !key_is_loaded());
+  key_unload();
+  check("not loaded after unload", !key_is_loaded());
 
   unsigned char fp[4];
   char hex[9];
@@ -354,8 +354,8 @@ static void test_unload(void) {
   check("reload after unload",
         key_load_from_mnemonic(TEST_MNEMONIC, "", false) &&
             key_get_fingerprint_hex(hex) && strcmp(hex, "73c5da0a") == 0);
-  key_cleanup();
-  check("cleanup unloads", !key_is_loaded());
+  key_unload();
+  check("unload after reload", !key_is_loaded());
 }
 
 static void test_internal_memory_exhaustion(void) {

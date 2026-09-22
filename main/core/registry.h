@@ -34,7 +34,6 @@ KERN_WARN_UNUSED_RESULT const registry_entry_t *
 registry_find_by_id(const char *id);
 KERN_WARN_UNUSED_RESULT bool registry_set_label(const char *id,
                                                 const char *label);
-KERN_WARN_UNUSED_RESULT bool registry_remove(const char *id);
 /* Removes only the session entry; a registered backup stays on flash. */
 KERN_WARN_UNUSED_RESULT bool registry_remove_at(size_t index);
 /* Deletes this entry's registered backup from flash and removes it from the

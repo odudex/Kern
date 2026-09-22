@@ -48,18 +48,6 @@ bool registry_set_label(const char *id, const char *label) {
   return false;
 }
 
-bool registry_remove(const char *id) {
-  if (!id) {
-    return false;
-  }
-  for (size_t i = 0; i < registry_len; i++) {
-    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0)
-      return registry_remove_at(i);
-  }
-  ESP_LOGE(TAG, "registry_remove: id '%s' not found", id);
-  return false;
-}
-
 bool registry_remove_at(size_t idx) {
   if (idx >= registry_len)
     return false;

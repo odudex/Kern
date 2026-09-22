@@ -24,12 +24,6 @@ static void fingerprint_to_hex(const unsigned char *fp, char *hex_out) {
   }
 }
 
-bool key_init(void) {
-  key_unload();
-  secure_memzero(fingerprint, sizeof(fingerprint));
-  return true;
-}
-
 bool key_is_loaded(void) { return key_loaded; }
 
 bool key_load_from_mnemonic(const char *mnemonic, const char *passphrase,
@@ -299,5 +293,3 @@ bool key_get_derived_key_components(const uint32_t *path, size_t path_depth,
       master_key, path, path_depth, BIP32_FLAG_KEY_PRIVATE, key_out);
   return (ret == WALLY_OK);
 }
-
-void key_cleanup(void) { key_unload(); }

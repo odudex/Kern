@@ -7,7 +7,6 @@
 #include <stdint.h>
 #include <wally_bip32.h>
 
-KERN_WARN_UNUSED_RESULT bool key_init(void);
 KERN_WARN_UNUSED_RESULT bool key_is_loaded(void);
 /* Owned mnemonic/private-key allocations require internal RAM on firmware.
  * False includes internal-memory exhaustion; no PSRAM fallback is attempted. */
@@ -51,7 +50,5 @@ KERN_WARN_UNUSED_RESULT bool key_get_derived_key(const char *path,
 KERN_WARN_UNUSED_RESULT bool
 key_get_derived_key_components(const uint32_t *path, size_t path_depth,
                                struct ext_key **key_out);
-
-void key_cleanup(void);
 
 #endif // KEY_H
