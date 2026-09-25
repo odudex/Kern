@@ -267,6 +267,7 @@ let currentMode  = 'ci';
 let transport    = null;
 let esploader    = null;
 let customFiles  = null; // [{name, offset, data:Uint8Array}]
+let chipRev      = null; // major * 100 + minor, read on connect
 
 // ── Browser compatibility ─────────────────────────────────────────────────────
 if (!('serial' in navigator)) {
@@ -306,6 +307,29 @@ window.setMode = function (m) {
   document.getElementById('customPanel').style.display = m === 'custom' ? '' : 'none';
 };
 
+// ── Chip revision ─────────────────────────────────────────────────────────────
+// ESP-IDF builds an image for either ESP32-P4 v0.x/v1.x or v3.x, never both;
+// CI publishes the v3.x build of each board as <board>_v3.
+function ciFirmwareDir(board) {
+  return chipRev !== null && chipRev >= 300 ? `${board}_v3` : board;
+}
+
+function fmtRev(rev) {
+  return `v${Math.floor(rev / 100)}.${rev % 100}`;
+}
+
+// Bootloader and app images carry the supported range in their header:
+// min_chip_rev_full at bytes 15-16, max_chip_rev_full at 17-18.
+function checkChipRev(name, data) {
+  if (chipRev === null || data.length < 24 || data[0] !== 0xE9) return;
+  const min = data[15] | (data[16] << 8);
+  const max = data[17] | (data[18] << 8);
+  if (chipRev < min || (max !== 0xFFFF && chipRev > max)) {
+    throw new Error(`${name} supports chip revision ${fmtRev(min)} to ${fmtRev(max)}, ` +
+                    `but this chip is ${fmtRev(chipRev)}`);
+  }
+}
+
 // ── CI file list ──────────────────────────────────────────────────────────────
 // Cache the parsed file list per board so flash time doesn't refetch.
 const ciFlashFilesByBoard = {};
@@ -326,7 +350,7 @@ async function fetchCIFlashFiles(board) {
 }
 
 window.updateCIFileList = async function () {
-  const board = document.getElementById('boardSelect').value;
+  const board = ciFirmwareDir(document.getElementById('boardSelect').value);
   const files = await fetchCIFlashFiles(board);
   document.getElementById('ciFileList').innerHTML = files.map(f =>
     `<div class="file-item">
@@ -423,6 +447,9 @@ async function doConnect() {
     esploader   = new ESPLoader({ transport, baudrate: BAUD, terminal });
     const chip  = await esploader.main();
     log(`Connected to: ${chip}`, 'l-ok');
+    chipRev = esploader.chip.getChipRevision
+      ? await esploader.chip.getChipRevision(esploader) : null;
+    window.updateCIFileList();
 
     connectBtn.textContent = '⏏ Disconnect';
     connectBtn.classList.add('connected');
@@ -443,6 +470,8 @@ async function doDisconnect() {
   } catch { /* ignore */ }
   transport = null;
   esploader = null;
+  chipRev   = null;
+  window.updateCIFileList();
   connectBtn.textContent = '🔌 Connect';
   connectBtn.classList.remove('connected');
   document.getElementById('flashBtn').disabled = true;
@@ -465,7 +494,7 @@ window.startFlash = async function () {
     let fileNames;
 
     if (currentMode === 'ci') {
-      const board = document.getElementById('boardSelect').value;
+      const board = ciFirmwareDir(document.getElementById('boardSelect').value);
       log(`Downloading firmware for ${board}…`);
       const fileList = await fetchCIFlashFiles(board);
       fileArray = [];
@@ -490,6 +519,8 @@ window.startFlash = async function () {
       fileArray = customFiles.map(f => ({ data: f.data, address: f.offset }));
       fileNames = customFiles.map(f => f.name);
     }
+
+    fileArray.forEach((f, i) => checkChipRev(fileNames[i], f.data));
 
     log(`Flashing ${fileArray.length} file(s)…`);
     setProgress(0, 'Preparing…');
