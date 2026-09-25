@@ -5,12 +5,17 @@ export IDF_PATH_FORCE := "1"
 # Usage: just build wave_35, just flash wave_4b, just build wave_5, just build wave_7b
 # Each board builds into its own build_<board>/ directory, so switching
 # boards is instant (no clean required) and per-board builds stay incremental.
+# Append _v3 to a board (just build wave_43_v3) for ESP32-P4 chip revision
+# v3.x: IDF cannot build one image for both v1.x and v3.x silicon.
 
 boards := "wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b"
 
 _check_board board:
     #!/usr/bin/env sh
-    case " {{boards}} " in *" {{board}} "*) ;; *) echo "error: unknown board '{{board}}' (valid: {{boards}})" >&2; exit 1;; esac
+    case " {{boards}} " in *" {{trim_end_match(board, "_v3")}} "*) ;; *) echo "error: unknown board '{{board}}' (valid: {{boards}}, each optionally suffixed _v3)" >&2; exit 1;; esac
+
+_defaults board:
+    @echo "sdkconfig.defaults;sdkconfig.defaults.{{trim_end_match(board, "_v3")}}{{ if board =~ '_v3$' { ";sdkconfig.rev3" } else { "" } }}"
 
 build board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
@@ -19,13 +24,13 @@ build board="wave_4b": (_check_board board)
     # configure time, and just reports the recipe's last exit status.
     set -e
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
-    idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}}' build
+    idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}})" build
     cp ./build_{{board}}/compile_commands.json ./compile_commands.json
 
 flash board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
-    idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}}' flash
+    idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}})" flash
 
 monitor board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
@@ -36,13 +41,13 @@ monitor board="wave_4b": (_check_board board)
 pbkdf2-check board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
-    idf.py -B build_pbkdf2_{{board}} -D SDKCONFIG=build_pbkdf2_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}};sdkconfig.pbkdf2check' flash monitor
+    idf.py -B build_pbkdf2_{{board}} -D SDKCONFIG=build_pbkdf2_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.pbkdf2check" flash monitor
 
 # Build with QR scanner pipeline timing, then watch it run
 scan-prof board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
-    idf.py -B build_scanprof_{{board}} -D SDKCONFIG=build_scanprof_{{board}}/sdkconfig -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.{{board}};sdkconfig.scanprof' flash monitor
+    idf.py -B build_scanprof_{{board}} -D SDKCONFIG=build_scanprof_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.scanprof" flash monitor
 
 format:
     ./scripts/format.sh
@@ -52,6 +57,7 @@ test:
 
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b
+    rm -fRd build_*_v3
     rm -fRd build_pbkdf2_*
     rm -fRd build_scanprof_*
     rm -f sdkconfig
@@ -77,7 +83,7 @@ site port="8000":
     set -e
     rm -rf site/branding site/flash/firmware
     cp -r branding site/branding
-    for b in {{boards}}; do
+    for b in {{boards}} $(printf '%s_v3 ' {{boards}}); do
         [ -f "build_$b/flasher_args.json" ] || continue
         stage="site/flash/firmware/$b"
         mkdir -p "$stage"

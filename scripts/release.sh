@@ -3,7 +3,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEVICES="wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b"
+BOARDS="wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b"
+# Each board twice: ESP32-P4 chip revision v1.x, then v3.x (<board>_v3)
+DEVICES="$BOARDS $(printf '%s_v3 ' $BOARDS)"
 VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/version.txt")
 
 if [ -z "$VERSION" ]; then
