@@ -335,7 +335,7 @@ char *mnemonic_to_seedqr(const char *mnemonic) {
     // Create null-terminated word for lookup
     char word[16];
     if (word_len >= sizeof(word)) {
-      free(seedqr);
+      SECURE_FREE_BUFFER(seedqr, output_len);
       return NULL;
     }
     memcpy(word, word_start, word_len);
@@ -355,7 +355,7 @@ char *mnemonic_to_seedqr(const char *mnemonic) {
     secure_memzero(word, sizeof(word));
 
     if (!found) {
-      free(seedqr);
+      SECURE_FREE_BUFFER(seedqr, output_len);
       return NULL;
     }
 
