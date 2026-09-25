@@ -10,6 +10,7 @@
  */
 
 #include "../fw_update.h"
+#include <bootloader_common.h>
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
 #include <esp_ota_ops.h>
@@ -37,6 +38,7 @@ static void check(const char *name, bool ok) {
 #define RUNNING_VERSION "0.0.18"
 
 static esp_app_desc_t running_desc;
+static unsigned fake_chip_rev;
 static bool fake_sb_enabled;
 static unsigned fake_sb_num_digests;
 static esp_err_t fake_sb_blocks_ret;
@@ -67,6 +69,7 @@ static void fakes_reset(void) {
   strcpy(running_desc.project_name, RUNNING_PROJECT);
   strcpy(running_desc.version, RUNNING_VERSION);
   running_desc.secure_version = 0;
+  fake_chip_rev = 101;
 
   fake_sb_enabled = false;
   fake_sb_num_digests = 1;
@@ -96,6 +99,16 @@ const char *esp_err_to_name(esp_err_t code) {
 }
 
 const esp_app_desc_t *esp_app_get_description(void) { return &running_desc; }
+
+/* Same rule as IDF's bootloader_common_loader.c, minus the eFuse that
+ * disables the maximum check. */
+bool bootloader_common_check_chip_revision_validity(
+    const esp_image_header_t *image_header, bool check_max_revision) {
+  if (fake_chip_rev < image_header->min_chip_rev_full)
+    return false;
+  return !check_max_revision || image_header->max_chip_rev_full == 0xFFFF ||
+         fake_chip_rev <= image_header->max_chip_rev_full;
+}
 
 bool esp_secure_boot_enabled(void) { return fake_sb_enabled; }
 
@@ -196,6 +209,8 @@ esp_err_t esp_ota_mark_app_valid_cancel_rollback(void) {
 typedef struct {
   uint8_t magic;
   uint16_t chip_id;
+  uint16_t min_chip_rev_full;
+  uint16_t max_chip_rev_full;
   uint8_t hash_appended;
   uint32_t desc_magic;
   const char *project;
@@ -209,6 +224,8 @@ typedef struct {
 static img_opts_t default_opts(void) {
   img_opts_t o = {.magic = ESP_IMAGE_HEADER_MAGIC,
                   .chip_id = ESP_CHIP_ID_ESP32P4,
+                  .min_chip_rev_full = 1,
+                  .max_chip_rev_full = 199,
                   .hash_appended = 1,
                   .desc_magic = ESP_APP_DESC_MAGIC_WORD,
                   .project = RUNNING_PROJECT,
@@ -251,6 +268,8 @@ static size_t build_image(const img_opts_t *o, uint8_t **out,
   hdr.magic = o->magic;
   hdr.segment_count = (uint8_t)(1 + o->extra_segments);
   hdr.chip_id = (esp_chip_id_t)o->chip_id;
+  hdr.min_chip_rev_full = o->min_chip_rev_full;
+  hdr.max_chip_rev_full = o->max_chip_rev_full;
   hdr.hash_appended = o->hash_appended;
   memcpy(img, &hdr, sizeof(hdr));
 
@@ -421,6 +440,16 @@ static void test_valid_variants(void) {
   free(img);
 
   running_desc.secure_version = 0;
+  o = default_opts();
+  o.min_chip_rev_full = 300;
+  o.max_chip_rev_full = 399;
+  fake_chip_rev = 302;
+  len = build_image(&o, &img, &sig_offset);
+  check("v3.x image accepted on v3.x chip",
+        validate_image(img, len, &info, &err) == 0);
+  free(img);
+  fake_chip_rev = 101;
+
   fake_sb_enabled = true;
   fake_sb_blocks_ret = ESP_ERR_NOT_FOUND;
   fake_sb_num_digests = 0;
@@ -463,6 +492,25 @@ static void test_reject_headers(void) {
   r = validate_image(img, len, &info, &err);
   check("other chip rejected", r != 0 && err_is(err, "Not an ESP32-P4 image"));
   free(img);
+
+  o = default_opts();
+  fake_chip_rev = 302;
+  len = build_image(&o, &img, &sig_offset);
+  r = validate_image(img, len, &info, &err);
+  check("v1.x image rejected on v3.x chip",
+        r != 0 && err_is(err, "Built for another chip revision"));
+  free(img);
+
+  o = default_opts();
+  o.min_chip_rev_full = 300;
+  o.max_chip_rev_full = 399;
+  fake_chip_rev = 101;
+  len = build_image(&o, &img, &sig_offset);
+  r = validate_image(img, len, &info, &err);
+  check("v3.x image rejected on v1.x chip",
+        r != 0 && err_is(err, "Built for another chip revision"));
+  free(img);
+  fake_chip_rev = 101;
 
   o = default_opts();
   o.desc_magic = 0xABCD5433;

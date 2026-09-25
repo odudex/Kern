@@ -1,4 +1,5 @@
 #include "fw_update.h"
+#include <bootloader_common.h>
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
 #include <esp_log.h>
@@ -106,6 +107,10 @@ int fw_update_validate(const char *path, fw_update_info_t *info,
     goto out;
   if (hdr.chip_id != ESP_CHIP_ID_ESP32P4) {
     err = "Not an ESP32-P4 image";
+    goto out;
+  }
+  if (!bootloader_common_check_chip_revision_validity(&hdr, true)) {
+    err = "Built for another chip revision";
     goto out;
   }
 
