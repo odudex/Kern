@@ -4,8 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/message_sign.h"
 #include <wally_core.h>
+#include <wally_crypto.h>
+#include <wally_map.h>
 #include <wally_psbt.h>
+#include <wally_transaction.h>
 
 #include "core/bip322.h"
 #include "core/psbt.h"
@@ -66,6 +70,122 @@ static size_t hex_decode(const char *hex, uint8_t *out, size_t out_size) {
     out[i] = (uint8_t)byte;
   }
   return len;
+}
+
+/* Give every character-policy case a valid commitment, so rejection cannot
+ * be caused by a mismatched to_spend hash. */
+static struct wally_psbt *request_for_message(const unsigned char *msg,
+                                              size_t len) {
+  uint8_t raw[512];
+  size_t raw_len = hex_decode(PSBT_HEX, raw, sizeof(raw));
+  struct wally_psbt *psbt = NULL;
+  struct wally_tx *to_spend = NULL;
+  unsigned char tag_hash[32], preimage[256], hash[32];
+  unsigned char scriptsig[34] = {0, 32}, null_hash[32] = {0};
+  const char *tag = "BIP0322-signed-message";
+  if (len > sizeof(preimage) - 64 ||
+      wally_psbt_from_bytes(raw, raw_len, 0, &psbt) != WALLY_OK ||
+      wally_sha256((const unsigned char *)tag, strlen(tag), tag_hash, 32) !=
+          WALLY_OK)
+    goto fail;
+  memcpy(preimage, tag_hash, 32);
+  memcpy(preimage + 32, tag_hash, 32);
+  memcpy(preimage + 64, msg, len);
+  if (wally_sha256(preimage, 64 + len, hash, 32) != WALLY_OK)
+    goto fail;
+  memcpy(scriptsig + 2, hash, 32);
+  const struct wally_tx_output *utxo = psbt->inputs[0].witness_utxo;
+  if (wally_tx_init_alloc(0, 0, 1, 1, &to_spend) != WALLY_OK ||
+      wally_tx_add_raw_input(to_spend, null_hash, 32, 0xffffffff, 0, scriptsig,
+                             sizeof(scriptsig), NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(to_spend, 0, utxo->script, utxo->script_len, 0) !=
+          WALLY_OK ||
+      wally_tx_get_txid(to_spend, psbt->tx->inputs[0].txhash, 32) != WALLY_OK)
+    goto fail;
+  wally_tx_free(to_spend);
+  /* The fixture's sole unknown global field is the signed message. */
+  struct wally_map_item *item = &psbt->unknowns.items[0];
+  unsigned char *value = malloc(len);
+  if (!value) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  memcpy(value, msg, len);
+  free(item->value);
+  item->value = value;
+  item->value_len = len;
+  return psbt;
+fail:
+  wally_tx_free(to_spend);
+  wally_psbt_free(psbt);
+  return NULL;
+}
+
+static void test_message_characters(void) {
+  static const struct {
+    const char *name, *message;
+    size_t len;
+    bool accepted;
+  } cases[] = {
+#define CASE(name, text, accepted) {name, text, sizeof(text) - 1, accepted}
+      CASE("embedded NUL", "shown\0hidden", false),
+      CASE("tab", "a\tb", false),
+      CASE("non-ASCII byte",
+           "a\x80"
+           "b",
+           false),
+      CASE("UTF-8 character", "caf\xc3\xa9", false),
+      CASE("bare CR", "a\rb", false),
+      CASE("trailing CR", "a\r", false),
+      CASE("double CR", "a\r\r\nb", false),
+      CASE("DEL",
+           "a\x7f"
+           "b",
+           false),
+      CASE("control byte",
+           "a\x01"
+           "b",
+           false),
+      CASE("printable boundaries", " ~", true),
+      CASE("LF", "first\nsecond\n", true),
+      CASE("multi-line CRLF", "first\r\nsecond\r\n", true),
+#undef CASE
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    printf("BIP322 %s: ", cases[i].name);
+    struct wally_psbt *psbt = request_for_message(
+        (const unsigned char *)cases[i].message, cases[i].len);
+    bip322_request_t req = {0};
+    if (psbt && bip322_parse(psbt, true, &req) == cases[i].accepted &&
+        (cases[i].accepted
+             ? req.message && strlen(req.message) == cases[i].len &&
+                   memcmp(req.message, cases[i].message, cases[i].len) == 0
+             : !req.message && !req.address))
+      PASS();
+    else
+      FAIL("unexpected parse result or changed message");
+    bip322_request_free(&req);
+    wally_psbt_free(psbt);
+
+    /* The legacy API receives a C string, so NUL terminates its message. */
+    if (strlen(cases[i].message) != cases[i].len)
+      continue;
+    printf("signmessage %s: ", cases[i].name);
+    char content[256];
+    snprintf(content, sizeof(content), "signmessage m/84h/0h/0h/0/0 ascii:%s",
+             cases[i].message);
+    parsed_sign_message_t parsed = {0};
+    if (message_sign_parse(content, &parsed) == cases[i].accepted &&
+        (cases[i].accepted
+             ? parsed.message &&
+                   strcmp(parsed.message, cases[i].message) == 0 &&
+                   strcmp(parsed.derivation_path, "m/84'/0'/0'/0/0") == 0
+             : !parsed.message && !parsed.derivation_path))
+      PASS();
+    else
+      FAIL("unexpected parse result or changed message");
+    message_sign_free_parsed(&parsed);
+  }
 }
 
 int main(void) {
@@ -154,6 +274,8 @@ int main(void) {
   } else {
     PASS(); /* rejected at parse time (current upstream behavior) */
   }
+
+  test_message_characters();
 
   printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
   return tests_failed == 0 ? 0 : 1;

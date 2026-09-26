@@ -1,4 +1,5 @@
 #include "bip322.h"
+#include "message_validation.h"
 #include "psbt.h"
 #include <esp_log.h>
 #include <stdlib.h>
@@ -98,6 +99,11 @@ bool bip322_parse(const struct wally_psbt *psbt, bool is_testnet,
     return false;
   if (msg_len == 0) {
     ESP_LOGW(TAG, "empty message");
+    return false;
+  }
+
+  if (!message_text_is_displayable(msg, msg_len)) {
+    ESP_LOGW(TAG, "message contains unsupported characters");
     return false;
   }
 

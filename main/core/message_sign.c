@@ -1,6 +1,7 @@
 #include "message_sign.h"
 #include "../utils/secure_mem.h"
 #include "key.h"
+#include "message_validation.h"
 #include <esp_log.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,11 @@ bool message_sign_parse(const char *content, parsed_sign_message_t *result) {
     return false;
   }
   msg_start += 6;
+  if (!message_text_is_displayable((const unsigned char *)msg_start,
+                                   strlen(msg_start))) {
+    free(converted_path);
+    return false;
+  }
 
   result->derivation_path = converted_path;
   result->message = strdup(msg_start);

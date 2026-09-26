@@ -92,7 +92,8 @@ MS_POLICY_SRC = ../miniscript_policy.c ../miniscript_policy.h
 
 SRCS_BIP322 = test_bip322.c
 TARGET_BIP322 = test_bip322
-BIP322_SRC = ../bip322.c ../bip322.h
+BIP322_SRC = ../bip322.c ../bip322.h ../message_sign.c ../message_sign.h \
+	../message_validation.h
 
 SRCS_ESTIMATED_ENTROPY = test_estimated_entropy.c
 TARGET_ESTIMATED_ENTROPY = test_estimated_entropy
@@ -196,8 +197,8 @@ $(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c ../psbt.h $(LIBWALLY)
 $(TARGET_MS_POLICY): $(SRCS_MS_POLICY) $(MS_POLICY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MS_POLICY) ../miniscript_policy.c $(LIBWALLY)
 
-$(TARGET_BIP322): $(SRCS_BIP322) $(BIP322_SRC) $(SCRIPT_TEMPLATE_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_BIP322) ../bip322.c ../script_templates.c $(LIBWALLY)
+$(TARGET_BIP322): $(SRCS_BIP322) $(BIP322_SRC) $(SCRIPT_TEMPLATE_SRC) $(KEY_STUB_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_BIP322) ../bip322.c ../message_sign.c ../script_templates.c $(KEY_STUB_SRC) $(LIBWALLY)
 
 $(TARGET_ESTIMATED_ENTROPY): $(SRCS_ESTIMATED_ENTROPY) $(ESTIMATED_ENTROPY_SRC) $(DICE_QUALITY_SRC)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_ESTIMATED_ENTROPY) ../../utils/estimated_entropy.c ../../utils/dice_quality.c -lm
