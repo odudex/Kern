@@ -389,7 +389,7 @@ unsigned char *mnemonic_to_compact_seedqr(const char *mnemonic,
                               &entropy_len) != WALLY_OK ||
       (entropy_len != COMPACT_SEEDQR_12_WORDS_LEN &&
        entropy_len != COMPACT_SEEDQR_24_WORDS_LEN)) {
-    free(result);
+    SECURE_FREE_BUFFER(result, COMPACT_SEEDQR_24_WORDS_LEN);
     return NULL;
   }
 
@@ -410,7 +410,7 @@ int qr_encode_binary(const uint8_t *data, size_t len, uint8_t *qr_buf) {
   bool ok = qrcodegen_encodeBinary(scratch, len, qr_buf, qrcodegen_Ecc_LOW,
                                    qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
                                    qrcodegen_Mask_AUTO, true);
-  free(scratch);
+  SECURE_FREE_BUFFER(scratch, qrcodegen_BUFFER_LEN_MAX);
   return ok ? qrcodegen_getSize(qr_buf) : 0;
 }
 
@@ -429,7 +429,7 @@ lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
 
   int modules = qr_encode_binary(data, len, qr_buf);
   if (modules <= 0) {
-    free(qr_buf);
+    SECURE_FREE_BUFFER(qr_buf, QR_CODE_BUF_LEN);
     return LV_RESULT_INVALID;
   }
 
@@ -440,7 +440,7 @@ lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
   }
 
   qr_blit_region(qr_obj, qr_buf, 0, 0, modules, modules, scale, modules, 0, 0);
-  free(qr_buf);
+  SECURE_FREE_BUFFER(qr_buf, QR_CODE_BUF_LEN);
   return LV_RESULT_OK;
 }
 
