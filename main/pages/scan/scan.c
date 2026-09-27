@@ -456,6 +456,7 @@ static void scan_kef_success_cb(const uint8_t *data, size_t len) {
 void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                        const char *save_dir, const char *source_name,
                        void (*return_cb)(void), void (*complete_cb)(void)) {
+  session_cleanup_register(scan_page_destroy);
   if (!parent || !data || len == 0)
     return;
 
