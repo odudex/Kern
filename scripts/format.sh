@@ -51,6 +51,7 @@ DIRS=(
     "$REPO_ROOT/components/wave_35"
     "$REPO_ROOT/components/wave_43"
     "$REPO_ROOT/components/wave_5"
+    "$REPO_ROOT/components/esp_lcd_hx8394"
     "$REPO_ROOT/components/crowpanel"
     "$REPO_ROOT/components/wave_7b"
 )
