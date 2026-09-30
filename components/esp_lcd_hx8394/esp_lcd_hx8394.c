@@ -1,11 +1,11 @@
 /*
- * HX8394 MIPI-DSI panel driver for wave_5 BSP.
+ * HX8394 MIPI-DSI panel driver for the Waveshare 720x1280 5" panel.
  *
  * Adapted from waveshare/esp_lcd_hx8394 v1.0.3:
  *   - renamed `color_space` field to `rgb_ele_order` for ESP-IDF >= 6.0
- *   - removed private legacy-API I2C bus creation (the TPS65132 power-rail
- *     chip is initialised separately in wave_5.c before this driver runs,
- *     using the same i2c_master bus as the rest of the board).
+ *   - removed private legacy-API I2C bus creation (any power-rail chip is
+ *     initialised by the BSP before this driver runs, using the same
+ *     i2c_master bus as the rest of the board).
  */
 
 #include "soc/soc_caps.h"
