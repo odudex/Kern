@@ -1,0 +1,13 @@
+dependencies:
+  idf:
+    version: '>=5.4'
+  esp_lcd_touch_gt911: ^1
+  espressif/esp_lvgl_adapter:
+    version: '>=0.5.1'
+    public: true
+  lvgl/lvgl: '>=8,<10'
+
+description: Minimal BSP for Waveshare ESP32-P4-Pico with a Waveshare 5-DSI-TOUCH-A display (720x1280, HX8394, GT911)
+targets:
+- esp32p4
+version: 1.0.0

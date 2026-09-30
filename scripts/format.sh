@@ -54,6 +54,7 @@ DIRS=(
     "$REPO_ROOT/components/esp_lcd_hx8394"
     "$REPO_ROOT/components/crowpanel"
     "$REPO_ROOT/components/wave_7b"
+    "$REPO_ROOT/components/p4_pico"
 )
 
 if $CHECK_MODE; then
