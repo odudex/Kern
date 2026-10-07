@@ -260,7 +260,8 @@ function parseFlashFiles(jsonText) {
 const FLASH_MODE = 'dio';
 const FLASH_FREQ = '80m';
 const FLASH_SIZE = '16MB';
-const BAUD       = 460800;
+// Changing baud means reopening the port, which resets the board into a session without the P4 v3.x flash power-on, so stay at the ROM rate.
+const BAUD       = 115200;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentMode  = 'ci';
