@@ -43,13 +43,6 @@ if(NOT MBEDTLS_INCLUDE_DIR AND MBEDTLS_LIB)
   set(MBEDTLS_INCLUDE_DIR "${_mbedtls_prefix}/include")
 endif()
 
-set(MBEDTLS_COMPAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/mbedtls_compat)
-set(MBEDTLS_INCLUDE_DIRS ${MBEDTLS_INCLUDE_DIR})
-if(EXISTS "${MBEDTLS_INCLUDE_DIR}/mbedtls/private/pkcs5.h"
-   AND NOT EXISTS "${MBEDTLS_INCLUDE_DIR}/mbedtls/pkcs5.h")
-  list(PREPEND MBEDTLS_INCLUDE_DIRS ${MBEDTLS_COMPAT_DIR})
-endif()
-
 # --- libwally-core (native desktop build) ---
 set(WALLY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/libwally-core)
 
@@ -403,7 +396,7 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/include
     ${CMAKE_CURRENT_SOURCE_DIR}/platform               # sdkconfig.h
     ${CMAKE_CURRENT_SOURCE_DIR}                         # lv_conf.h
-    ${MBEDTLS_INCLUDE_DIRS}
+    ${MBEDTLS_INCLUDE_DIR}
     # Application source tree
     ${CMAKE_CURRENT_SOURCE_DIR}/../main                 # ui/theme.h, core/, utils/, pages/
     # Component headers (for kef.c -> deflate_codec, cUR, k_quirc, video)
@@ -504,7 +497,7 @@ target_include_directories(kern_sim_storage_smoke PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/sd_card_sim/include
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${MBEDTLS_INCLUDE_DIRS}
+    ${MBEDTLS_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_SOURCE_DIR}/../components
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src

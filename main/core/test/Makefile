@@ -42,14 +42,10 @@ TEST_INCS = -I$(ROOT)/components/bip138/include -I$(WALLY_INC) -I$(WALLY_DIR) -I
 # the implementations they declare live in stubs/esp_hw_stub.c.
 SIM_STUBS_INC = $(ROOT)/simulator/platform/esp_idf_stubs/include
 DEFLATE_DIR = $(ROOT)/components/deflate_codec/src
-# Some distributions ship mbedTLS's pkcs5.h under mbedtls/private/; the shim in
-# components/mbedtls_compat re-exports it, exactly as the simulator build does.
-MBEDTLS_COMPAT_INC = $(shell test -e /usr/include/mbedtls/pkcs5.h || \
-	echo -I$(ROOT)/components/mbedtls_compat)
 # SIMULATOR routes PBKDF2 through mbedtls_pkcs5_pbkdf2_hmac_ext, since the host
 # mbedTLS predates the PSA key-derivation API the firmware uses.
 KEF_INCS = $(TEST_INCS) -I$(SIM_STUBS_INC) -I$(DEFLATE_DIR) \
-	$(MBEDTLS_COMPAT_INC) -DSIMULATOR -include mbedtls_compat.h
+	-DSIMULATOR -include mbedtls_compat.h
 
 LIBWALLY = libwally.a
 
