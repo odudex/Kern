@@ -64,7 +64,7 @@ encode:;
 }
 
 // Parse BlueWallet multisig setup file into a standard descriptor.
-// 15 keys is libwally's CHECKMULTISIG generation cap, enforced for all
+// 15 keys is the most a 520-byte inner script holds, enforced for all
 // descriptors by VALIDATION_UNSUPPORTED_SCRIPT.
 #define BLUEWALLET_MAX_KEYS 15
 static char *bluewallet_to_descriptor(const char *text) {
