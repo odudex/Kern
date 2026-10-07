@@ -26,8 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// The sensor outputs 1280x960 (binning mode). Every camera frame takes two PPA
-// passes:
+// The OV5647 outputs 800x800, the centre of its 1280x960 binning mode. Every
+// camera frame takes two PPA passes:
 //   1. a centred square crop, scaled to the decode frame: up to 640 px whatever
 //      the screen, in packed YUV420, whose luma the decoder reads directly;
 //   2. the decode frame, scaled to the preview: RGB565, sized to the smaller
@@ -50,13 +50,15 @@
 // decoder waits on it. So the crop is no wider than the decode frame needs to
 // stay sharp. 960 px read 44% more pixels than 800 for the same 600 out, and
 // cost a sixth of the camera frames; the price is a field of view a sixth
-// narrower.
+// narrower. The sensor windows that same 800 px itself, so the camera writes
+// half the bytes to PSRAM: with PSRAM at 80MHz (ESP32-P4 v3.x) camera frames
+// rose from 7.7 to 13 a second and decoder passes from 7.6 to 12.8.
 #define CAMERA_SCREEN_DIM_MIN                                                  \
   ((BSP_LCD_H_RES) < (BSP_LCD_V_RES) ? (BSP_LCD_H_RES) : (BSP_LCD_V_RES))
 #define CAMERA_TARGET                                                          \
   ((CAMERA_SCREEN_DIM_MIN) < 640 ? (CAMERA_SCREEN_DIM_MIN) : 640)
-#define CAMERA_INPUT_WIDTH 1280
-#define CAMERA_INPUT_HEIGHT 960
+#define CAMERA_INPUT_WIDTH 800
+#define CAMERA_INPUT_HEIGHT 800
 #define CAMERA_INPUT_CROP_MAX 800
 #define CAMERA_INPUT_CROP                                                      \
   ((CAMERA_TARGET * 2 <= CAMERA_INPUT_CROP_MAX) ? (CAMERA_TARGET * 2)          \

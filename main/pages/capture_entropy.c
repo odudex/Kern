@@ -24,21 +24,19 @@
 
 static const char *TAG = "capture_entropy";
 
-// Camera preview is a square sized to the smaller display dimension. Sensor
-// outputs 1280x960 (binning mode); we take the full 960x960 vertical area
-// (centered horizontally) and downscale with the PPA in a single pass.
-//
-// PPA uses Q4.4 fixed-point scaling (1/16 increments), so we quantize the
-// scale down to the nearest 1/16 and derive the actual preview size from it.
-//   wave_4b: crop 960, scale 12/16 -> 720x720 preview
-//   wave_35: crop 960, scale  5/16 -> 300x300 preview
-#define CAMERA_INPUT_WIDTH 1280
-#define CAMERA_INPUT_HEIGHT 960
-#define CAMERA_INPUT_CROP CAMERA_INPUT_HEIGHT
+// Camera preview is a square sized to the smaller display dimension, cut from
+// the centre of the sensor frame (OV5647: 800x800) and downscaled with the PPA
+// in a single pass. PPA uses Q4.4 fixed-point scaling (1/16 increments), so
+// app_video_ppa_snap_crop() picks the largest crop that scales exactly onto it.
+//   wave_4b: crop 768, scale 15/16 -> 720x720 preview
+//   wave_35: crop 640, scale  8/16 -> 320x320 preview
+#define CAMERA_INPUT_WIDTH 800
+#define CAMERA_INPUT_HEIGHT 800
 #define CAMERA_DIM_MIN                                                         \
   ((BSP_LCD_H_RES) < (BSP_LCD_V_RES) ? (BSP_LCD_H_RES) : (BSP_LCD_V_RES))
-#define CAMERA_PPA_FRAG ((CAMERA_DIM_MIN * 16) / CAMERA_INPUT_CROP)
-#define CAMERA_SIZE ((CAMERA_INPUT_CROP * CAMERA_PPA_FRAG) / 16)
+#define CAMERA_SIZE                                                            \
+  ((CAMERA_DIM_MIN) < (CAMERA_INPUT_HEIGHT) ? (CAMERA_DIM_MIN)                 \
+                                            : (CAMERA_INPUT_HEIGHT))
 #define CAMERA_WIDTH CAMERA_SIZE
 #define CAMERA_HEIGHT CAMERA_SIZE
 // Minimum acceptable bits per pixel. Not derived from the 128/256 bits the seed
