@@ -31,9 +31,8 @@ typedef enum {
    * '\'' and 'h' are accepted; coordinators emitting 'H' must be reconfigured.
    */
   VALIDATION_INVALID_HARDENED_NOTATION,
-  /* Descriptor contains miniscript that is not wrapped in a plain wsh().
-   * Only segwit v0 wsh(miniscript) is supported (no tapminiscript, no
-   * sh(wsh()) wrapping, no bare miniscript). */
+  /* Descriptor contains miniscript that is not wrapped in a plain wsh() or
+   * tr() (no sh(wsh()) wrapping, no bare miniscript). */
   VALIDATION_UNSUPPORTED_MINISCRIPT,
   /* Descriptor has an sh()/wsh() inner script over PSBT_MAX_INNER_SCRIPT_LEN
    * (520) bytes, e.g. more than 15 multi()/sortedmulti() keys. Without this
