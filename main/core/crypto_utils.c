@@ -8,12 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef SIMULATOR
-/* Host mbedTLS predates PSA PBKDF2 (added in 3.5); use the legacy pkcs5 API
- * there. The simulator's force-included mbedtls_compat.h wraps it for 2.x. */
-#include <mbedtls/pkcs5.h>
-#endif
-
 static bool ensure_psa_init(void) { return psa_crypto_init() == PSA_SUCCESS; }
 
 static psa_status_t aes_key_import(const uint8_t key[CRYPTO_AES_KEY_SIZE],
@@ -75,6 +69,8 @@ int crypto_pbkdf2_sha256(const uint8_t *password, size_t password_len,
   }
 
 #ifdef SIMULATOR
+  /* Host mbedTLS predates PSA PBKDF2 (added in 3.5); the legacy API comes
+   * from the force-included mbedtls_compat.h. */
   int ret = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256, password,
                                           password_len, salt, salt_len,
                                           iterations, key_len, key_out);

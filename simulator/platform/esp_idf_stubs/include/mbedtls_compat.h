@@ -18,15 +18,14 @@
 #endif
 
 #include <mbedtls/md.h>
-#include <mbedtls/pkcs5.h>
-#include <mbedtls/sha256.h>
 #include <mbedtls/version.h>
+#if __has_include(<mbedtls/private/pkcs5.h>)
+#include <mbedtls/private/pkcs5.h>
+#else
+#include <mbedtls/pkcs5.h>
+#endif
 
 #if MBEDTLS_VERSION_MAJOR < 3
-
-/* mbedtls_sha256() returns void in 2.x; use mbedtls_sha256_ret() instead */
-#define mbedtls_sha256(data, len, out, is224) \
-    mbedtls_sha256_ret((data), (len), (out), (is224))
 
 /* mbedtls_pkcs5_pbkdf2_hmac_ext() doesn't exist in 2.x; wrap the ctx-based API */
 static inline int mbedtls_pkcs5_pbkdf2_hmac_ext(mbedtls_md_type_t md_type,

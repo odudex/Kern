@@ -23,7 +23,7 @@ idf_component_register(SRCS
                        "upstream/src/secp256k1/src/modules/schnorrsig"
                        "upstream/src/secp256k1/src/modules/surjection"
                        "upstream/src/secp256k1/src/modules/whitelist"
-                       PRIV_REQUIRES mbedtls mbedtls_compat secure_memory)
+                       PRIV_REQUIRES mbedtls secure_memory)
 
 set_source_files_properties(
     upstream/src/amalgamation/combined.c
@@ -45,8 +45,7 @@ target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_ELEMENTS=0")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_MINIMAL=1")
 # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_STANDARD_SECP=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_MBEDTLS_SHA256_H")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_MBEDTLS_SHA512_H")
+target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_PSA_CRYPTO_H")
 
 # libsecp flags
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DECMULT_WINDOW_SIZE=8")
