@@ -35,10 +35,9 @@ typedef enum {
    * Only segwit v0 wsh(miniscript) is supported (no tapminiscript, no
    * sh(wsh()) wrapping, no bare miniscript). */
   VALIDATION_UNSUPPORTED_MINISCRIPT,
-  /* Descriptor parses but libwally cannot generate its scripts: more than
-   * 15 multi()/sortedmulti() keys, or an sh()/wsh() inner script over
-   * PSBT_MAX_INNER_SCRIPT_LEN (520) bytes. Without this check the descriptor
-   * would register but fail at address derivation and signing. */
+  /* Descriptor has an sh()/wsh() inner script over PSBT_MAX_INNER_SCRIPT_LEN
+   * (520) bytes, e.g. more than 15 multi()/sortedmulti() keys. Without this
+   * check the descriptor would register but fail at signing. */
   VALIDATION_UNSUPPORTED_SCRIPT,
   /* tr() script-tree descriptor whose internal (key-path) key is a bare key
    * with no origin that is not a known NUMS point: it is neither provably

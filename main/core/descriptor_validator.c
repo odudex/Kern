@@ -227,12 +227,12 @@ miniscript_wrapper_is_supported(const struct wally_descriptor *desc) {
   return supported;
 }
 
-// libwally accepts descriptors at parse time that its script generator later
-// rejects: multi()/sortedmulti() above 15 keys and sh()/wsh() inner scripts
-// over PSBT_MAX_INNER_SCRIPT_LEN (520) bytes. Trial-generate the scriptPubKey
-// so unusable descriptors fail at load time instead of at address derivation
-// or signing time. A too-small buffer is reported as WALLY_OK with written >
-// len, hence the explicit written check.
+// Signing regenerates sh()/wsh() inner scripts into PSBT_MAX_INNER_SCRIPT_LEN
+// (520) byte buffers, but libwally generates wsh() witness scripts up to 3600
+// bytes. Generating the scriptPubKey needs the inner script's length as
+// workspace, and libwally reports a too-small buffer as WALLY_OK with written >
+// len, so trial-generating into a 520-byte buffer rejects larger inner scripts
+// at load time instead of at signing time.
 static bool
 descriptor_scripts_are_generatable(const struct wally_descriptor *desc) {
   uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
