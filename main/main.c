@@ -1,3 +1,4 @@
+#include "bus_timeout.h"
 #include "core/entropy_pool.h"
 #include "core/fw_update.h"
 #include "core/nvs_secure.h"
@@ -25,6 +26,8 @@
 static const char *TAG = "KERN_MAIN";
 
 void app_main(void) {
+  bus_timeout_disable();
+
   // Seed before anything can ask for randomness
   entropy_pool_init();
 
