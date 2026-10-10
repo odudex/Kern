@@ -11,7 +11,7 @@
 
 Kern is a research and development project exploring what new hardware can do for Bitcoin self-custody. It takes the form of an air-gapped signing device on the ESP32-P4: the chip has no radio, so keys are generated and used on hardware that physically cannot reach a network. Transactions cross the air gap as QR codes or over an SD card.
 
-The goal is to explore ideas: new silicon, new interfaces, new backup and signing workflows. They get implemented, tested and documented in the open. Kern is a research platform and intends to stay one; it is not on a path to becoming a product.
+The goal is to raise the bar for what a self-custody signer can be: in reliability, security and user experience. Kern explores new silicon, new interfaces, and new backup and signing workflows, implements them, tests them and documents them in the open, so that what works here can be picked up by any project. Kern is a research platform and intends to stay one; it is not on a path to becoming a product.
 
 It signs PSBTs for single-sig, multisig and miniscript policies on both native segwit and taproot, built on [libwally](https://github.com/ElementsProject/libwally-core/), the same core library used by Blockstream Jade.
 
