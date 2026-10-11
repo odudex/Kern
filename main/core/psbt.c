@@ -3,6 +3,7 @@
 #include "key.h"
 #include "psbt_internal.h"
 #include "script_templates.h"
+#include "sp_psbt.h"
 #include "wallet.h"
 #include <esp_log.h>
 #include <stdlib.h>
@@ -1205,6 +1206,10 @@ static struct wally_psbt *psbt_trim_v2(const struct wally_psbt *psbt) {
     wally_map_clear(&out->unknowns);
   }
 
+  if (!sp_psbt_copy_fields(psbt, trimmed)) {
+    wally_psbt_free(trimmed);
+    return NULL;
+  }
   return trimmed;
 }
 

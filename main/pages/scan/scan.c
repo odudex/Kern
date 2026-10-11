@@ -220,7 +220,7 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
     } else {
       scan_ctx.qr_format = detected_format;
 
-      if (scan_psbt_check_mismatch()) {
+      if (scan_psbt_complete_silent_payments() || scan_psbt_check_mismatch()) {
         return;
       }
 

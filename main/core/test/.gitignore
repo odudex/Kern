@@ -28,3 +28,4 @@ test_pbkdf2_core.o
 test_silentpayments
 test_dleq
 test_sp_keys
+test_sp_psbt

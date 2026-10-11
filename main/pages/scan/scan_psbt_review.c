@@ -5,6 +5,7 @@
 
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
+#include "../../core/sp_psbt.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
@@ -255,15 +256,30 @@ static void mismatch_dialog_cb(void *user_data) {
   }
 }
 
+bool scan_psbt_complete_silent_payments(void) {
+  if (!scan_ctx.psbt || !sp_psbt_has_fields(scan_ctx.psbt))
+    return false;
+  sp_psbt_result_t result = sp_psbt_complete(
+      &scan_ctx.psbt, wallet_get_network() == WALLET_NETWORK_TESTNET);
+  if (result == SP_PSBT_OK)
+    return false;
+  dialog_show_error_timeout(sp_psbt_result_message(result), scan_ctx.return_cb,
+                            0);
+  return true;
+}
+
 bool scan_psbt_check_mismatch(void) {
   if (!scan_ctx.psbt) {
     return false;
   }
 
-  scan_ctx.is_testnet = psbt_detect_network(scan_ctx.psbt);
-
   wallet_network_t wallet_net = wallet_get_network();
   bool wallet_is_testnet = (wallet_net == WALLET_NETWORK_TESTNET);
+
+  // Silent payment fields carry no key origin, so the wallet network applies
+  scan_ctx.is_testnet = sp_psbt_has_fields(scan_ctx.psbt)
+                            ? wallet_is_testnet
+                            : psbt_detect_network(scan_ctx.psbt);
 
   bool network_mismatch = (scan_ctx.is_testnet != wallet_is_testnet);
 

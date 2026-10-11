@@ -206,6 +206,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/dleq.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/silent_payments.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/sp_psbt.c
     # Shared zlib adapter used by KEF and BBQr
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)

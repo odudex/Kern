@@ -77,6 +77,9 @@ void scan_create_review_note(lv_obj_t *parent, const char *text,
 /* scan_psbt_review.c */
 bool scan_psbt_parse_base64(const char *base64_data);
 void scan_psbt_cleanup(void);
+// Runs the BIP375 signer pass on a PSBT carrying silent payment fields.
+// True when it failed and an error dialog took over.
+bool scan_psbt_complete_silent_payments(void);
 bool scan_psbt_check_mismatch(void);
 void scan_psbt_resume_review(bool offer_descriptor);
 
