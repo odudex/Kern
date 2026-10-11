@@ -206,6 +206,8 @@ static void get_xpubs_confirm_cb(bool confirmed, void *user_data) {
     show_error_response(BWK_QR_RESPONSE_ERROR_INTERNAL, "Fingerprint failed");
     return;
   }
+  snprintf(response.body.xpubs.vendor, sizeof(response.body.xpubs.vendor),
+           "Kern");
   snprintf(response.body.xpubs.model, sizeof(response.body.xpubs.model),
            "Kern");
   const esp_app_desc_t *desc = esp_app_get_description();
