@@ -94,8 +94,8 @@ static void return_from_signing_response(void) {
   }
 }
 
-static void show_response_with_done(bwk_qr_response *response,
-                                    void (*done_cb)(void)) {
+static void show_response_sized(bwk_qr_response *response,
+                                void (*done_cb)(void), int max_chars) {
   debug_logf("bip_flow show_response is_error=%d", response->is_error);
   bwk_qr_buf encoded = {0};
   const char *err = NULL;
@@ -107,8 +107,8 @@ static void show_response_with_done(bwk_qr_response *response,
     return;
   }
 
-  BBQrParts *parts = bbqr_encode_hex(encoded.ptr, encoded.len, BBQR_TYPE_BINARY,
-                                     settings_get_qr_density());
+  BBQrParts *parts =
+      bbqr_encode_hex(encoded.ptr, encoded.len, BBQR_TYPE_BINARY, max_chars);
   bwk_qr_buf_free(encoded);
   if (!parts) {
     cleanup_request();
@@ -123,6 +123,11 @@ static void show_response_with_done(bwk_qr_response *response,
     return;
   }
   qr_viewer_page_show();
+}
+
+static void show_response_with_done(bwk_qr_response *response,
+                                    void (*done_cb)(void)) {
+  show_response_sized(response, done_cb, settings_get_qr_density());
 }
 
 static void show_response(bwk_qr_response *response) {
@@ -212,7 +217,10 @@ static void get_xpubs_confirm_cb(bool confirmed, void *user_data) {
   response.body.xpubs.version.patch = patch;
   response.body.xpubs.version.flag = BWK_QR_RELEASE_STABLE;
   response.body.xpubs.capabilities = 0x03;
-  show_response(&response);
+  // A quarter of the data per frame: half the modules per side, twice as big
+  int max_chars = settings_get_qr_density() / 4;
+  show_response_sized(&response, return_from_response,
+                      max_chars < QR_DENSITY_MIN ? QR_DENSITY_MIN : max_chars);
   free(xpubs);
 }
 
