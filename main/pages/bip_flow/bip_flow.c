@@ -955,7 +955,14 @@ static void handle_sign(void) {
   const bwk_qr_sign *req = &ctx.request->body.sign;
   for (size_t i = 0; i < req->descriptors.len; i++) {
     const bwk_qr_descriptor *descriptor = &req->descriptors.ptr[i];
-    char *descriptor_str = request_descriptor_alloc(&descriptor->body);
+    if (!descriptor->body) {
+      if (descriptor->alias && registry_find_by_id(descriptor->alias))
+        continue;
+      show_error_response(BWK_QR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS,
+                          "Unknown descriptor");
+      return;
+    }
+    char *descriptor_str = request_descriptor_alloc(descriptor->body);
     if (!descriptor_str) {
       show_error_response(BWK_QR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM,
                           "Unsupported descriptor");
