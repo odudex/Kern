@@ -7,12 +7,14 @@
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
 #include "../../core/settings.h"
+#include "../../core/silent_payments.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
 #include "../../qr/viewer.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme.h"
 #include "../../ui/theme_widgets.h"
+#include "../../utils/secure_mem.h"
 #include "../scan/scan.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
@@ -30,6 +32,10 @@
 #include <wally_map.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
+
+// Xpubs capability bits: miniscript segwit v0, miniscript taproot, silent
+// payments v0
+#define XPUBS_CAPABILITIES (0x01 | 0x02 | 0x04)
 
 typedef struct {
   lv_obj_t *parent;
@@ -219,7 +225,7 @@ static void get_xpubs_confirm_cb(bool confirmed, void *user_data) {
   response.body.xpubs.version.minor = (uint16_t)minor;
   response.body.xpubs.version.patch = patch;
   response.body.xpubs.version.flag = BWK_QR_RELEASE_STABLE;
-  response.body.xpubs.capabilities = 0x03;
+  response.body.xpubs.capabilities = XPUBS_CAPABILITIES;
   // A quarter of the data per frame: half the modules per side, twice as big
   int max_chars = settings_get_qr_density() / 4;
   show_response_sized(&response, return_from_response,
@@ -388,6 +394,46 @@ static void handle_get_xpubs(void) {
                         req->derivation_paths.len);
   append_xpub_request_paths(msg, sizeof(msg), off, &req->derivation_paths);
   dialog_show_confirm(msg, get_xpubs_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static bool wallet_is_testnet(void) {
+  return wallet_get_network() == WALLET_NETWORK_TESTNET;
+}
+
+static void get_sp_descriptor_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!confirmed) {
+    show_error_response(BWK_QR_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    return;
+  }
+
+  char *descriptor = NULL;
+  if (!sp_descriptor_alloc(wallet_is_testnet(), &descriptor)) {
+    show_error_response(BWK_QR_RESPONSE_ERROR_INTERNAL, "Descriptor failed");
+    return;
+  }
+  bwk_qr_response response;
+  fill_response_header(&response);
+  response.body.sp_descriptor.descriptor = descriptor;
+  show_response(&response);
+  SECURE_FREE_STRING(descriptor);
+}
+
+static void handle_get_sp_descriptor(void) {
+  char fingerprint[BIP32_KEY_FINGERPRINT_LEN * 2 + 1];
+  if (!key_get_fingerprint_hex(fingerprint)) {
+    show_error_response(BWK_QR_RESPONSE_ERROR_INTERNAL, "Fingerprint failed");
+    return;
+  }
+
+  char msg[256];
+  snprintf(msg, sizeof(msg),
+           "Export the %s Silent Payments account of %s?\n\n"
+           "It carries the scan private key: whoever holds it sees every "
+           "payment this account receives, but cannot spend them.",
+           wallet_is_testnet() ? "Testnet" : "Mainnet", fingerprint);
+  dialog_show_confirm(msg, get_sp_descriptor_confirm_cb, NULL,
+                      DIALOG_STYLE_OVERLAY);
 }
 
 static bool append_bip388_key(char *out, size_t out_size, size_t *off,
@@ -999,6 +1045,9 @@ static void dispatch_request(void) {
     break;
   case BWK_QR_MESSAGE_SIGNING:
     handle_sign();
+    break;
+  case BWK_QR_MESSAGE_GET_SP_DESCRIPTOR:
+    handle_get_sp_descriptor();
     break;
   default:
     show_error_response(BWK_QR_RESPONSE_ERROR_MALFORMED_REQUEST,

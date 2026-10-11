@@ -94,6 +94,10 @@ bool descriptor_text_has_uppercase_hardened(const char *s) {
   return false;
 }
 
+bool descriptor_checksum_from_string(const char *body, char out[9]) {
+  return body && out && desc_compute_checksum(body, strlen(body), out);
+}
+
 bool descriptor_checksum_from_descriptor(const struct wally_descriptor *desc,
                                          char out[9]) {
   if (!desc || !out)
