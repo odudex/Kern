@@ -28,6 +28,13 @@ void sp_keys_wipe(struct sp_keys *keys);
 // SECURE_FREE_STRING().
 KERN_WARN_UNUSED_RESULT bool sp_descriptor_alloc(bool is_testnet, char **out);
 
+// True for a BIP392 sp() descriptor.
+bool sp_descriptor_is_sp(const char *descriptor);
+
+// True when `descriptor` is the loaded seed's own sp() descriptor, the one
+// sp_descriptor_alloc() builds, its checksum aside.
+bool sp_descriptor_is_ours(const char *descriptor, bool is_testnet);
+
 // The sp1/tsp1 address of a scan and spend public key pair.
 // On success *out must be freed with free().
 KERN_WARN_UNUSED_RESULT bool sp_address_alloc(const unsigned char *scan_pubkey,

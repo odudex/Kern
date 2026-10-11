@@ -8,6 +8,7 @@
 #include "../../core/registry.h"
 #include "../../core/settings.h"
 #include "../../core/silent_payments.h"
+#include "../../core/sp_psbt.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
 #include "../../qr/viewer.h"
@@ -959,7 +960,9 @@ static void signed_psbt_cb(struct wally_psbt *psbt, void *user_data) {
   (void)user_data;
   bwk_qr_response response;
   fill_response_header(&response);
-  if (ctx.request->body.sign.want_kind == BWK_QR_SIGN_RESPONSE_SIGNATURES) {
+  // Silent payment scripts, shares and proofs only travel inside the PSBT
+  if (ctx.request->body.sign.want_kind == BWK_QR_SIGN_RESPONSE_SIGNATURES &&
+      !sp_psbt_has_outputs(psbt)) {
     bwk_qr_signature *signatures = NULL;
     size_t signatures_len = 0;
     if (!collect_signatures(psbt, &signatures, &signatures_len)) {
@@ -1016,6 +1019,17 @@ static void handle_sign(void) {
       show_error_response(BWK_QR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM,
                           "Unsupported descriptor");
       return;
+    }
+    // An sp() descriptor carries our scan secret and is never registered
+    if (sp_descriptor_is_sp(descriptor_str)) {
+      bool ours = sp_descriptor_is_ours(descriptor_str, wallet_is_testnet());
+      SECURE_FREE_STRING(descriptor_str);
+      if (!ours) {
+        show_error_response(BWK_QR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS,
+                            "Not this device's silent payment account");
+        return;
+      }
+      continue;
     }
     if (descriptor->alias && !registry_find_by_id(descriptor->alias) &&
         !registry_add_from_string(descriptor->alias, descriptor_str,

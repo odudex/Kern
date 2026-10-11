@@ -100,6 +100,38 @@ static void test_address(void) {
   free(address);
 }
 
+static void test_descriptor_ownership(void) {
+  char without_checksum[sizeof(MAINNET_DESCRIPTOR)];
+  size_t body_len = strchr(MAINNET_DESCRIPTOR, '#') - MAINNET_DESCRIPTOR;
+  memcpy(without_checksum, MAINNET_DESCRIPTOR, body_len);
+  without_checksum[body_len] = '\0';
+
+  TEST("sp_descriptor_is_sp tells sp() descriptors apart");
+  if (sp_descriptor_is_sp(MAINNET_DESCRIPTOR) &&
+      !sp_descriptor_is_sp("tr([73c5da0a/86'/0'/0']xpub)") &&
+      !sp_descriptor_is_sp(NULL))
+    PASS();
+  else
+    FAIL("sp() detection wrong");
+
+  TEST("sp_descriptor_is_ours accepts our descriptor, its checksum aside");
+  if (sp_descriptor_is_ours(MAINNET_DESCRIPTOR, false) &&
+      sp_descriptor_is_ours(without_checksum, false) &&
+      sp_descriptor_is_ours(TESTNET_DESCRIPTOR, true))
+    PASS();
+  else
+    FAIL("own descriptor rejected");
+
+  TEST("sp_descriptor_is_ours rejects another network or account");
+  without_checksum[body_len - 2] ^= 1;
+  if (!sp_descriptor_is_ours(MAINNET_DESCRIPTOR, true) &&
+      !sp_descriptor_is_ours(TESTNET_DESCRIPTOR, false) &&
+      !sp_descriptor_is_ours(without_checksum, false))
+    PASS();
+  else
+    FAIL("foreign descriptor accepted");
+}
+
 int main(void) {
   TEST("sp_descriptor_alloc fails without a loaded key");
   char *descriptor = NULL;
@@ -118,6 +150,7 @@ int main(void) {
   test_descriptor("sp_descriptor_alloc matches bwk on testnet", true,
                   TESTNET_DESCRIPTOR);
   test_address();
+  test_descriptor_ownership();
   key_unload();
 
   printf("\n%d passed, %d failed\n", tests_passed, tests_failed);

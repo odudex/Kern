@@ -15,6 +15,7 @@
 #define SP_SPEND_BRANCH 0
 #define SP_PATH_DEPTH 5
 #define SP_VERSION 0
+#define SP_DESCRIPTOR_PREFIX "sp("
 
 #define FINGERPRINT_HEX_LEN 9
 #define CHECKSUM_LEN 9
@@ -112,6 +113,29 @@ bool sp_descriptor_alloc(bool is_testnet, char **out) {
   secure_memzero(scan_key, sizeof(scan_key));
   secure_memzero(body, sizeof(body));
   return *out != NULL;
+}
+
+bool sp_descriptor_is_sp(const char *descriptor) {
+  return descriptor && strncmp(descriptor, SP_DESCRIPTOR_PREFIX,
+                               sizeof(SP_DESCRIPTOR_PREFIX) - 1) == 0;
+}
+
+// Length of a descriptor without its #checksum
+static size_t descriptor_body_len(const char *descriptor) {
+  const char *checksum = strchr(descriptor, '#');
+  return checksum ? (size_t)(checksum - descriptor) : strlen(descriptor);
+}
+
+bool sp_descriptor_is_ours(const char *descriptor, bool is_testnet) {
+  char *ours = NULL;
+  bool same;
+
+  if (!descriptor || !sp_descriptor_alloc(is_testnet, &ours))
+    return false;
+  same = descriptor_body_len(descriptor) == descriptor_body_len(ours) &&
+         secure_memcmp(descriptor, ours, descriptor_body_len(ours)) == 0;
+  SECURE_FREE_STRING(ours);
+  return same;
 }
 
 bool sp_address_alloc(const unsigned char *scan_pubkey,
