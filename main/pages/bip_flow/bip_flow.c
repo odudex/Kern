@@ -18,6 +18,7 @@
 #include "../shared/descriptor_loader.h"
 #include <bwk_qr_protocol.h>
 #include <esp_app_desc.h>
+#include <sdkconfig.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -209,7 +210,7 @@ static void get_xpubs_confirm_cb(bool confirmed, void *user_data) {
   snprintf(response.body.xpubs.vendor, sizeof(response.body.xpubs.vendor),
            "Kern");
   snprintf(response.body.xpubs.model, sizeof(response.body.xpubs.model),
-           "Kern");
+           "%s", CONFIG_KERN_BOARD_NAME);
   const esp_app_desc_t *desc = esp_app_get_description();
   unsigned major = 0, minor = 0, patch = 0;
   if (desc)

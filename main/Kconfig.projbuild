@@ -25,6 +25,15 @@ menu "Kern Configuration"
             bool "Waveshare ESP32-P4-WiFi6-Touch-LCD-7B (1024x600 MIPI DSI)"
     endchoice
 
+    config KERN_BOARD_NAME
+        string
+        default "wave_4b" if KERN_BOARD_WAVE_4B
+        default "wave_35" if KERN_BOARD_WAVE_35
+        default "wave_5" if KERN_BOARD_WAVE_5
+        default "wave_43" if KERN_BOARD_WAVE_43
+        default "crowpanel" if KERN_BOARD_CROWPANEL
+        default "wave_7b" if KERN_BOARD_WAVE_7B
+
     config KERN_PBKDF2_HW_SHA
         bool "Drive PBKDF2-HMAC-SHA256 on the P4 SHA accelerator"
         default y
