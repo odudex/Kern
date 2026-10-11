@@ -10,24 +10,19 @@ idf_component_register(
 
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 
-add_custom_command(
-    OUTPUT ${RUST_LIB}
+# Always runs: cargo tracks the bwk sources and only relinks on a change
+add_custom_target(bwk_codecs_rust
     COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${RUST_TARGET_DIR}
             ${CARGO_EXECUTABLE} build --manifest-path ${CMAKE_CURRENT_LIST_DIR}/Cargo.toml
             --release --target ${RUST_TARGET}
     # The prebuilt compiler_builtins C objects are soft-float; libgcc's are not
     COMMAND ${CMAKE_COMMAND} -DAR=${CMAKE_AR} -DLIB=${RUST_LIB}
             -P ${CMAKE_CURRENT_LIST_DIR}/strip_c_builtins.cmake
-    DEPENDS
-        ${CMAKE_CURRENT_LIST_DIR}/Cargo.toml
-        ${CMAKE_CURRENT_LIST_DIR}/src/lib.rs
-        ${CMAKE_CURRENT_LIST_DIR}/strip_c_builtins.cmake
+    BYPRODUCTS ${RUST_LIB}
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     COMMENT "Building bwk codec Rust staticlib"
     VERBATIM
 )
-
-add_custom_target(bwk_codecs_rust DEPENDS ${RUST_LIB})
 add_library(bwk_codecs_static STATIC IMPORTED GLOBAL)
 set_target_properties(bwk_codecs_static PROPERTIES IMPORTED_LOCATION ${RUST_LIB})
 add_dependencies(bwk_codecs_static bwk_codecs_rust)
