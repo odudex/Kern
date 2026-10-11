@@ -56,13 +56,15 @@ set(WALLY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/libwally-core)
 add_library(wally STATIC
     ${WALLY_DIR}/kern_wally.c
     ../components/secure_memory/secret_alloc.c
-    ${WALLY_DIR}/upstream/src/amalgamation/combined.c
+    ${WALLY_DIR}/kern_combined.c
 )
 set_target_properties(wally PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(wally PUBLIC
     ../components/secure_memory/include
     ${WALLY_DIR}
     ${WALLY_DIR}/upstream/include
+    ${WALLY_DIR}/upstream/src/secp256k1/include
+    ${WALLY_DIR}/silentpayments/include
 )
 
 target_include_directories(wally PRIVATE

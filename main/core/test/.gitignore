@@ -25,3 +25,4 @@ test_key
 test_crypto_utils
 test_pbkdf2
 test_pbkdf2_core.o
+test_silentpayments
