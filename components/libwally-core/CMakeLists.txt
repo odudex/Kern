@@ -1,9 +1,11 @@
 idf_component_register(SRCS
                        "kern_wally.c"
-                       "upstream/src/amalgamation/combined.c"
+                       "kern_combined.c"
                        INCLUDE_DIRS
                        "."
                        "upstream/include"
+                       "upstream/src/secp256k1/include"
+                       "silentpayments/include"
                        PRIV_INCLUDE_DIRS
                        "."
                        "upstream"
@@ -26,7 +28,7 @@ idf_component_register(SRCS
                        PRIV_REQUIRES mbedtls mbedtls_compat secure_memory)
 
 set_source_files_properties(
-    upstream/src/amalgamation/combined.c
+    kern_combined.c
     PROPERTIES COMPILE_FLAGS
     "-Wno-nonnull-compare -Wno-unused-function -Wno-error=maybe-uninitialized -Wno-type-limits -Wno-error=array-parameter -Wno-unterminated-string-initialization"
     )

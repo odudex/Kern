@@ -10,6 +10,7 @@
 #include "../../core/message_sign.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
+#include "scan.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -50,6 +51,11 @@ typedef struct {
   bool is_bip322;
 
   char *scanned_mnemonic;
+
+  /* Set by scan_review_psbt(): the signed PSBT goes back to the caller
+   * instead of the export menu. */
+  scan_psbt_signed_cb_t psbt_signed_cb;
+  void *psbt_signed_user_data;
 } scan_ctx_t;
 
 extern scan_ctx_t scan_ctx;
@@ -71,6 +77,9 @@ void scan_create_review_note(lv_obj_t *parent, const char *text,
 /* scan_psbt_review.c */
 bool scan_psbt_parse_base64(const char *base64_data);
 void scan_psbt_cleanup(void);
+// Runs the BIP375 signer pass on a PSBT carrying silent payment fields.
+// True when it failed and an error dialog took over.
+bool scan_psbt_complete_silent_payments(void);
 bool scan_psbt_check_mismatch(void);
 void scan_psbt_resume_review(bool offer_descriptor);
 

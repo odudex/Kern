@@ -43,6 +43,20 @@ static bool sequence_exceeds_budget(int total, size_t part_len) {
          part_len > QR_PARSER_MAX_STORED_BYTES / (size_t)(total - 1);
 }
 
+static void skip_leading_whitespace(const char **data, size_t *data_len) {
+  while (*data_len > 0 && isspace((unsigned char)(*data)[0])) {
+    (*data)++;
+    (*data_len)--;
+  }
+}
+
+static size_t trailing_trimmed_len(const char *data, size_t data_len) {
+  while (data_len > 0 && isspace((unsigned char)data[data_len - 1])) {
+    data_len--;
+  }
+  return data_len;
+}
+
 QRPartParser *qr_parser_create(void) {
   QRPartParser *parser = (QRPartParser *)calloc(1, sizeof(QRPartParser));
   if (!parser)
@@ -161,8 +175,17 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     return -1;
   }
 
+  /* A camera frame can carry stray whitespace around the payload. Skipping it
+   * up front lets a header be recognized; only the formats whose payload is
+   * self-delimiting (BBQr) may also drop it at the end. A pMofN part keeps its
+   * trailing whitespace, which belongs to the reassembled payload. */
+  const char *frame = data;
+  size_t frame_len = data_len;
+  skip_leading_whitespace(&frame, &frame_len);
+  size_t body_len = trailing_trimmed_len(frame, frame_len);
+
   if (parser->format == -1) {
-    parser->format = detect_format(data, data_len, &parser->bbqr);
+    parser->format = detect_format(frame, body_len, &parser->bbqr);
   }
 
   if (parser->format == FORMAT_NONE) {
@@ -174,7 +197,7 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     const char *part = NULL;
     size_t part_len = 0;
     int index, total;
-    if (!parse_pmofn_qr_part(data, data_len, &part, &part_len, &index,
+    if (!parse_pmofn_qr_part(frame, frame_len, &part, &part_len, &index,
                              &total)) {
       return fail_parser(parser);
     }
@@ -200,7 +223,7 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     }
 
     ur_decoder_t *decoder = (ur_decoder_t *)parser->ur_decoder;
-    ur_decoder_state_t state = ur_decoder_receive_part(decoder, data);
+    ur_decoder_state_t state = ur_decoder_receive_part(decoder, frame);
     if (state == UR_DECODER_OK) {
       return 0; // Single-part UR, complete immediately
     }
@@ -210,7 +233,7 @@ int qr_parser_parse_with_len(QRPartParser *parser, const char *data,
     }
   } else if (parser->format == FORMAT_BBQR) {
     BBQrPart part;
-    if (!parser->bbqr || !bbqr_parse_part(data, data_len, &part)) {
+    if (!parser->bbqr || !bbqr_parse_part(frame, body_len, &part)) {
       return fail_parser(parser);
     }
     if ((parser->total != -1 && parser->total != part.total) ||
@@ -370,7 +393,8 @@ static int detect_format(const char *data, size_t data_len, BBQrCode **bbqr) {
     }
   } else if (data_len >= 3 && starts_with_case_insensitive(data, "ur:")) {
     return FORMAT_UR;
-  } else if (data_len >= BBQR_HEADER_LEN && data[0] == 'B' && data[1] == '$') {
+  } else if (data_len >= BBQR_HEADER_LEN &&
+             toupper((unsigned char)data[0]) == 'B' && data[1] == '$') {
     // Validate BBQr header (convert to uppercase for validation)
     char encoding = toupper((unsigned char)data[2]);
     char file_type = toupper((unsigned char)data[3]);

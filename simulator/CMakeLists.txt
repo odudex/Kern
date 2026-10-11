@@ -56,13 +56,15 @@ set(WALLY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/libwally-core)
 add_library(wally STATIC
     ${WALLY_DIR}/kern_wally.c
     ../components/secure_memory/secret_alloc.c
-    ${WALLY_DIR}/upstream/src/amalgamation/combined.c
+    ${WALLY_DIR}/kern_combined.c
 )
 set_target_properties(wally PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(wally PUBLIC
     ../components/secure_memory/include
     ${WALLY_DIR}
     ${WALLY_DIR}/upstream/include
+    ${WALLY_DIR}/upstream/src/secp256k1/include
+    ${WALLY_DIR}/silentpayments/include
 )
 
 target_include_directories(wally PRIVATE
@@ -202,6 +204,9 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/dleq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/silent_payments.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/sp_psbt.c
     # Shared zlib adapter used by KEF and BBQr
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)

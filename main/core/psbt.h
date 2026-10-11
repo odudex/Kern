@@ -13,13 +13,18 @@
 /* Parse a serialized PSBT, requiring the parse to consume the whole payload so
  * a valid prefix followed by trailing bytes is rejected rather than silently
  * truncated. Trailing whitespace is container padding, not payload: a PSBT
- * ends on its 0x00 separator, so it is trimmed before the strict parse. */
+ * ends on its 0x00 separator, so it is trimmed before the strict parse.
+ * A BIP375 PSBT whose silent payment outputs still lack their scripts parses
+ * loosely; sp_psbt_complete derives them and runs the strict checks again. */
 KERN_WARN_UNUSED_RESULT bool psbt_parse_payload(const uint8_t *data, size_t len,
                                                 struct wally_psbt **psbt_out);
 
 typedef enum {
   CLAIM_WHITELIST,
   CLAIM_REGISTRY,
+  /* our silent payment input, or our silent payment change or self-transfer
+   * output */
+  CLAIM_SILENT_PAYMENT,
 } claim_kind_t;
 
 typedef struct {
@@ -38,6 +43,9 @@ typedef struct {
       uint32_t multi_index;
       uint32_t child_num;
     } registry;
+    struct {
+      bool is_change;
+    } silent_payment;
   };
   uint32_t derived_path[MAX_KEYPATH_TOTAL_DEPTH];
   size_t derived_path_len;

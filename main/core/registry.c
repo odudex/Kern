@@ -419,6 +419,38 @@ bool registry_persist(const char *id, const char *name) {
   return true;
 }
 
+bool registry_persist_or_add_from_string(const char *id,
+                                         const char *descriptor_str,
+                                         storage_location_t loc) {
+  if (!id || !descriptor_str)
+    return false;
+
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) != 0)
+      continue;
+    struct wally_descriptor *desc = NULL;
+    uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
+                                 ? WALLY_NETWORK_BITCOIN_MAINNET
+                                 : WALLY_NETWORK_BITCOIN_TESTNET;
+    if (wallet_descriptor_parse(descriptor_str, NULL, wally_network, &desc) !=
+        WALLY_OK)
+      return false;
+    char existing_checksum[9];
+    char new_checksum[9];
+    bool same = registry_entries[i].desc &&
+                descriptor_checksum_from_descriptor(registry_entries[i].desc,
+                                                    existing_checksum) &&
+                descriptor_checksum_from_descriptor(desc, new_checksum) &&
+                strcmp(existing_checksum, new_checksum) == 0;
+    wally_descriptor_free(desc);
+    if (!same)
+      return false;
+    return registry_entries[i].persisted || registry_persist(id, id);
+  }
+
+  return registry_add_from_string(id, descriptor_str, loc, true);
+}
+
 bool registry_add_watch_only(const char *id, const char *descriptor_str,
                              wallet_network_t network) {
   if (!id || !descriptor_str)

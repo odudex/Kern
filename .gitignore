@@ -14,6 +14,7 @@ sdkconfig
 sdkconfig.old
 managed_components/
 compile_commands.json
+**/target/
 
 # Release
 release/
@@ -58,6 +59,7 @@ main/core/test/test_bip138_keys
 main/core/test/test_bip138_backup
 main/core/test/combined.o
 main/core/test/libwally.a
+main/pages/bip_flow/test/test_bip_flow_register
 
 # IDE / tools
 .vscode/

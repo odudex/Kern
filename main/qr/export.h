@@ -1,6 +1,7 @@
 #ifndef QR_EXPORT_H
 #define QR_EXPORT_H
 
+#include "../../components/bbqr/src/bbqr.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -8,6 +9,8 @@
 // Content is borrowed and must remain valid until qr_export_free().
 typedef struct qr_export qr_export_t;
 qr_export_t *qr_export_create(int format, const char *content, size_t density);
+// Takes ownership of parts, on failure too.
+qr_export_t *qr_export_from_bbqr(BBQrParts *parts);
 void qr_export_free(qr_export_t *export);
 size_t qr_export_part_count(const qr_export_t *export);
 bool qr_export_is_fountain(const qr_export_t *export);

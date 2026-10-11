@@ -8,6 +8,10 @@ struct wally_descriptor;
 KERN_WARN_UNUSED_RESULT bool
 descriptor_string_from_descriptor(const struct wally_descriptor *desc,
                                   char **output);
+/* Checksum of `body` exactly as written, for descriptors libwally cannot
+ * parse (such as BIP392 sp()). */
+KERN_WARN_UNUSED_RESULT bool descriptor_checksum_from_string(const char *body,
+                                                             char out[9]);
 KERN_WARN_UNUSED_RESULT bool
 descriptor_checksum_from_descriptor(const struct wally_descriptor *desc,
                                     char out[9]);

@@ -1,6 +1,6 @@
 [submodule "components/libwally-core/upstream"]
 	path = components/libwally-core/upstream
-	url = https://github.com/odudex/libwally-core.git
+	url = https://github.com/ws-plaude/libwally-core.git
 [submodule "components/cUR"]
 	path = components/cUR
 	url = https://github.com/odudex/cUR.git
@@ -10,3 +10,6 @@
 [submodule "components/bip138"]
 	path = components/bip138
 	url = https://github.com/odudex/bip138.git
+[submodule "components/bwk"]
+	path = components/bwk
+	url = https://github.com/ws-plaude/bwk.git

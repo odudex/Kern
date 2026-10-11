@@ -152,6 +152,15 @@ static void warn_cb(const char *message, void (*proceed)(bool, void *)) {
     warn_proceed = proceed;
 }
 
+static int id_loc_calls;
+
+static void id_loc_cb(void (*proceed)(const char *id, storage_location_t loc,
+                                      void *user_data),
+                      void *user_data) {
+  id_loc_calls++;
+  proceed("persisted", STORAGE_FLASH, user_data);
+}
+
 static int marker;
 
 static descriptor_validation_result_t run(const char *desc) {
@@ -579,6 +588,25 @@ static void test_dedup(void) {
   registry_clear();
 }
 
+/* descriptor_validate_and_load_persistent() forces the registration path that
+ * DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED gates off, so a duplicate must
+ * still be caught before that path is entered. */
+static void test_persistent_registration(void) {
+  registry_clear();
+  check("seed descriptor loads", run(wpkh84()) == VALIDATION_SUCCESS);
+
+  capture_reset();
+  id_loc_calls = 0;
+  descriptor_validate_and_load_persistent(wpkh84(), done_cb, warn_cb, info_cb,
+                                          id_loc_cb, &marker);
+  check("persistent duplicate completes without descriptor review",
+        done_result == VALIDATION_DUPLICATE && info_calls == 0);
+  check("persistent duplicate does not request storage id", id_loc_calls == 0);
+  check("persistent duplicate does not append registry entry",
+        registry_count() == 1);
+  registry_clear();
+}
+
 static void test_generation_guard(void) {
   registry_clear();
   capture_reset();
@@ -712,6 +740,7 @@ int main(void) {
   test_taproot_keypath();
   test_network();
   test_dedup();
+  test_persistent_registration();
   test_generation_guard();
   test_watch_only();
 
