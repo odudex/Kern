@@ -145,4 +145,13 @@ static const char V0_SP_PSBT[] =
     "9bc9a16c96d4025cc9856d6f8375350e123978daac200c260cb5b5ae83106cab90484dcd"
     "8fcf3600";
 
+/* Our spend key, unlabeled and labeled with m = 0 and m = 3 (embit
+ * apply_label) */
+static const char OUR_SPEND[] =
+    "02fa210b3c4a60b80dd1616f48ae53bbdf0db744b3f9083385108f81be0acb58c6";
+static const char OUR_SPEND_LABEL_0[] =
+    "031ec096b3e9917a43e81c6d014acab0dfa32151ea7dcdfa56a1dc89f0aec04ef8";
+static const char OUR_SPEND_LABEL_3[] =
+    "023a6704f3dd61516e4dfebc2c2ebfb30c01b9790bed349c44ccdbeec514acfbbd";
+
 #endif // SP_FIXTURE_H

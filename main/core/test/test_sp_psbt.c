@@ -5,10 +5,13 @@
 #include <string.h>
 
 #include <secp256k1.h>
+#include <secp256k1_extrakeys.h>
+#include <secp256k1_schnorrsig.h>
 #include <wally_core.h>
 #include <wally_map.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
+#include <wally_transaction.h>
 
 #include "core/dleq.h"
 #include "core/key.h"
@@ -409,6 +412,131 @@ static void test_field_checks(void) {
       SP_PSBT_ERR_FIELD);
 }
 
+static void test_ownership(void) {
+  struct wally_psbt *psbt = parse_hex(UNSIGNED_PSBT);
+
+  TEST("sp_psbt_input_is_ours recognizes our tweaked spend key");
+  if (psbt && sp_psbt_input_is_ours(psbt, 0, false) &&
+      !sp_psbt_input_is_ours(psbt, 0, true))
+    PASS();
+  else
+    FAIL("input ownership wrong");
+
+  TEST("sp_psbt_output_ownership spots only our m=0 change output");
+  if (psbt && sp_psbt_output_ownership(psbt, 1, false) == SP_OUTPUT_CHANGE &&
+      sp_psbt_output_ownership(psbt, 0, false) == SP_OUTPUT_FOREIGN &&
+      sp_psbt_output_ownership(psbt, 1, true) == SP_OUTPUT_FOREIGN)
+    PASS();
+  else
+    FAIL("change detection wrong");
+  wally_psbt_free(psbt);
+}
+
+// Ownership of output 1 of UNSIGNED_PSBT once it pays `scan_hex` and
+// `spend_hex`, with PSBT_OUT_SP_V0_LABEL `label`, or none when it is NULL
+static sp_output_ownership_t ownership_of(const char *scan_hex,
+                                          const char *spend_hex,
+                                          const uint32_t *label) {
+  struct wally_psbt *psbt = parse_hex(UNSIGNED_PSBT);
+  unsigned char info_key = PSBT_OUT_SP_V0_INFO,
+                label_key = PSBT_OUT_SP_V0_LABEL;
+  unsigned char info[2 * SP_PUBKEY_LEN], label_bytes[sizeof(uint32_t)];
+  sp_output_ownership_t ownership = SP_OUTPUT_FOREIGN;
+  struct wally_map *unknowns;
+  bool ok;
+
+  if (!psbt)
+    return SP_OUTPUT_FOREIGN;
+  unknowns = &psbt->outputs[1].unknowns;
+  ok = hex_to(scan_hex, info, SP_PUBKEY_LEN) &&
+       hex_to(spend_hex, info + SP_PUBKEY_LEN, SP_PUBKEY_LEN) &&
+       wally_map_replace(unknowns, &info_key, 1, info, sizeof(info)) ==
+           WALLY_OK &&
+       wally_map_remove(unknowns, &label_key, 1) == WALLY_OK;
+  if (ok && label) {
+    for (size_t i = 0; i < sizeof(label_bytes); i++)
+      label_bytes[i] = (unsigned char)(*label >> (8 * i));
+    ok = wally_map_replace(unknowns, &label_key, 1, label_bytes,
+                           sizeof(label_bytes)) == WALLY_OK;
+  }
+  if (ok)
+    ownership = sp_psbt_output_ownership(psbt, 1, false);
+  wally_psbt_free(psbt);
+  return ownership;
+}
+
+static void expect_ownership(const char *name, const char *scan_hex,
+                             const char *spend_hex, const uint32_t *label,
+                             sp_output_ownership_t expected) {
+  TEST(name);
+  if (ownership_of(scan_hex, spend_hex, label) == expected)
+    PASS();
+  else
+    FAIL("output ownership wrong");
+}
+
+static void test_labels(void) {
+  const uint32_t change = 0, three = 3;
+
+  expect_ownership("label 0 on the m=0 key is change", OUR_SCAN,
+                   OUR_SPEND_LABEL_0, &change, SP_OUTPUT_CHANGE);
+  expect_ownership("label 3 on the m=3 key is a self-transfer", OUR_SCAN,
+                   OUR_SPEND_LABEL_3, &three, SP_OUTPUT_SELF);
+  expect_ownership("no label on the unlabeled key is a self-transfer", OUR_SCAN,
+                   OUR_SPEND, NULL, SP_OUTPUT_SELF);
+  expect_ownership("no label on the m=0 key is change", OUR_SCAN,
+                   OUR_SPEND_LABEL_0, NULL, SP_OUTPUT_CHANGE);
+  expect_ownership("label 3 on the m=0 key is not ours", OUR_SCAN,
+                   OUR_SPEND_LABEL_0, &three, SP_OUTPUT_FOREIGN);
+  expect_ownership("a foreign scan key with our m=0 key is not ours",
+                   RECIPIENT_SCAN, OUR_SPEND_LABEL_0, &change,
+                   SP_OUTPUT_FOREIGN);
+}
+
+static bool signature_verifies(struct wally_psbt *psbt, size_t i) {
+  unsigned char key_bytes[SP_PUBKEY_LEN], hash[32], sig[64];
+  struct wally_tx *tx = NULL;
+  secp256k1_xonly_pubkey key;
+  size_t written = 0;
+  bool ok =
+      hex_to(INPUT_KEY, key_bytes, sizeof(key_bytes)) &&
+      secp256k1_xonly_pubkey_parse(wally_get_secp_context(), &key,
+                                   key_bytes + 1) &&
+      wally_psbt_get_input_taproot_signature(psbt, i, sig, sizeof(sig),
+                                             &written) == WALLY_OK &&
+      written == sizeof(sig) &&
+      wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &tx) == WALLY_OK &&
+      wally_psbt_get_input_signature_hash(psbt, i, tx, NULL, 0, 0, hash,
+                                          sizeof(hash)) == WALLY_OK &&
+      secp256k1_schnorrsig_verify(wally_get_secp_context(), sig, hash,
+                                  sizeof(hash), &key);
+  wally_tx_free(tx);
+  return ok;
+}
+
+static void test_sign(void) {
+  struct wally_psbt *psbt = parse_hex(UNSIGNED_PSBT);
+  TEST("sp_psbt_sign_input makes a key path signature of the output key");
+  if (psbt && sp_psbt_complete(&psbt, false) == SP_PSBT_OK &&
+      sp_psbt_sign_input(psbt, 0, false) && signature_verifies(psbt, 0))
+    PASS();
+  else
+    FAIL("no valid signature");
+  wally_psbt_free(psbt);
+
+  psbt = parse_hex(FOREIGN_PSBT);
+  TEST("sp_psbt_sign_input refuses an input that is not ours");
+  size_t written = 0;
+  if (psbt && !sp_psbt_sign_input(psbt, 1, false) &&
+      wally_psbt_get_input_taproot_signature_len(psbt, 1, &written) ==
+          WALLY_OK &&
+      written == 0)
+    PASS();
+  else
+    FAIL("signed a foreign input");
+  wally_psbt_free(psbt);
+}
+
 int main(void) {
   if (!key_load_from_mnemonic(TEST_MNEMONIC, NULL, false)) {
     printf("FAIL: could not load the test mnemonic\n");
@@ -420,6 +548,9 @@ int main(void) {
   test_bip352_inputs();
   test_input_refusals();
   test_field_checks();
+  test_ownership();
+  test_labels();
+  test_sign();
   key_unload();
 
   printf("\n%d passed, %d failed\n", tests_passed, tests_failed);

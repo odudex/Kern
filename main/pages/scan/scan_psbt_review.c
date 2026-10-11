@@ -5,6 +5,7 @@
 
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
+#include "../../core/silent_payments.h"
 #include "../../core/sp_psbt.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
@@ -55,6 +56,7 @@ typedef struct {
   output_type_t type;
   uint64_t value;
   char *address;
+  char *sp_address; /* sp1 address of a silent payment output, else NULL */
   uint32_t address_index;
   bool is_dust;  /* below the relay dust threshold for its script type */
   char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
@@ -98,14 +100,41 @@ static void format_input_policy(const input_ownership_t *own, char *out,
   out[0] = '\0';
   if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE)
     return;
-  if (own->claim.kind == CLAIM_WHITELIST) {
+  switch (own->claim.kind) {
+  case CLAIM_WHITELIST:
     snprintf(out, out_size, "%s @ account %u",
              ss_script_label(own->claim.whitelist.script),
              (unsigned)own->claim.whitelist.account);
-  } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
-    const registry_entry_t *entry = own->claim.registry.entry;
-    snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
+    break;
+  case CLAIM_REGISTRY:
+    if (own->claim.registry.entry) {
+      const registry_entry_t *entry = own->claim.registry.entry;
+      snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
+    }
+    break;
+  case CLAIM_SILENT_PAYMENT:
+    snprintf(out, out_size, "Silent Payments");
+    break;
   }
+}
+
+// Change or self-transfer, from the claim that proved the output ours
+static output_type_t owned_output_type(const claim_t *source,
+                                       uint32_t *address_index_out) {
+  switch (source->kind) {
+  case CLAIM_WHITELIST:
+    *address_index_out = source->whitelist.index;
+    return source->whitelist.chain == 1 ? OUTPUT_TYPE_CHANGE
+                                        : OUTPUT_TYPE_SELF_TRANSFER;
+  case CLAIM_REGISTRY:
+    *address_index_out = source->registry.child_num;
+    return source->registry.multi_index == 1 ? OUTPUT_TYPE_CHANGE
+                                             : OUTPUT_TYPE_SELF_TRANSFER;
+  case CLAIM_SILENT_PAYMENT:
+    return source->silent_payment.is_change ? OUTPUT_TYPE_CHANGE
+                                            : OUTPUT_TYPE_SELF_TRANSFER;
+  }
+  return OUTPUT_TYPE_SPEND;
 }
 
 // Classify output as self-transfer, change, owned-unsafe, expected-owned,
@@ -114,23 +143,12 @@ static void format_input_policy(const input_ownership_t *own, char *out,
 static output_type_t classify_output(size_t output_index,
                                      uint32_t *address_index_out,
                                      char *path_out, size_t path_out_size) {
-  bool is_change = false;
-  uint32_t address_index = 0;
-
   output_ownership_t ownership =
       psbt_classify_output(scan_ctx.psbt, output_index, scan_ctx.is_testnet);
 
   switch (ownership.ownership) {
   case PSBT_OWNERSHIP_OWNED_SAFE:
-    if (ownership.source.kind == CLAIM_WHITELIST) {
-      is_change = (ownership.source.whitelist.chain == 1);
-      address_index = ownership.source.whitelist.index;
-    } else {
-      is_change = (ownership.source.registry.multi_index == 1);
-      address_index = ownership.source.registry.child_num;
-    }
-    *address_index_out = address_index;
-    return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
+    return owned_output_type(&ownership.source, address_index_out);
 
   case PSBT_OWNERSHIP_OWNED_UNSAFE:
   case PSBT_OWNERSHIP_EXPECTED_OWNED:
@@ -344,10 +362,21 @@ static void review_data_free(review_data_t *d) {
       free_address(d->inputs[i].address);
   free(d->inputs);
   if (d->outputs)
-    for (size_t i = 0; i < d->num_outputs; i++)
+    for (size_t i = 0; i < d->num_outputs; i++) {
       free_address(d->outputs[i].address);
+      free(d->outputs[i].sp_address);
+    }
   free(d->outputs);
   memset(d, 0, sizeof(*d));
+}
+
+// The sp1 address a silent payment output pays, left NULL for other outputs
+static bool output_sp_address(size_t output_index, char **out) {
+  unsigned char scan[SP_PUBKEY_LEN], spend[SP_PUBKEY_LEN];
+  *out = NULL;
+  if (!sp_output_keys(&scan_ctx.psbt->outputs[output_index], scan, spend))
+    return true;
+  return sp_address_alloc(scan, spend, scan_ctx.is_testnet, out);
 }
 
 static bool review_data_collect(review_data_t *d) {
@@ -410,6 +439,10 @@ static bool review_data_collect(review_data_t *d) {
     d->total_output += out->value;
     out->address = psbt_scriptpubkey_to_address(txo->script, txo->script_len,
                                                 scan_ctx.is_testnet);
+    if (!output_sp_address(i, &out->sp_address)) {
+      wally_tx_free(tx);
+      goto fail;
+    }
     out->type =
         classify_output(i, &out->address_index, out->path, sizeof(out->path));
     out->is_dust =
@@ -724,8 +757,14 @@ static void render_self_transfers(lv_obj_t *parent, const review_data_t *d) {
     if (out->type != OUTPUT_TYPE_SELF_TRANSFER)
       continue;
     char text[64];
-    snprintf(text, sizeof(text), "Receive #%u: ", out->address_index);
+    if (out->sp_address)
+      snprintf(text, sizeof(text), "Output %zu: ", out->index);
+    else
+      snprintf(text, sizeof(text), "Receive #%u: ", out->address_index);
     indented_amount_row(parent, text, out->value);
+    if (out->sp_address)
+      scan_create_address_label(parent, out->sp_address, accent_color(),
+                                ADDRESS_INDENT_PX);
     if (out->address)
       scan_create_address_label(parent, out->address, accent_color(),
                                 ADDRESS_INDENT_PX);
@@ -753,6 +792,23 @@ static void render_change(lv_obj_t *parent, const review_data_t *d) {
   lv_obj_set_style_margin_top(row, 15, 0);
 }
 
+/* The taproot address a silent payment lands on is derived for this
+ * transaction only, so the recipient can vouch for the sp1 address alone. */
+static void render_silent_payment_warning(lv_obj_t *parent,
+                                          const review_data_t *d) {
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    if (d->outputs[i].type != OUTPUT_TYPE_SPEND || !d->outputs[i].sp_address)
+      continue;
+    lv_obj_t *title = section_title(
+        parent,
+        "Verify each sp1 address with its recipient. The taproot address "
+        "under it cannot be checked.",
+        error_color(), true);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+    return;
+  }
+}
+
 /* A titled list of every output of one kind: amount row plus address, with
  * the derivation path in the row label when the kind carries one. */
 static void render_output_group(lv_obj_t *parent, const review_data_t *d,
@@ -775,6 +831,9 @@ static void render_output_group(lv_obj_t *parent, const review_data_t *d,
     else
       snprintf(text, sizeof(text), "Output %zu: ", out->index);
     indented_amount_row(parent, text, out->value);
+    if (out->sp_address)
+      scan_create_address_label(parent, out->sp_address, color,
+                                ADDRESS_INDENT_PX);
     if (out->address)
       scan_create_address_label(parent, out->address, color, ADDRESS_INDENT_PX);
   }
@@ -916,6 +975,7 @@ static bool create_psbt_info_display(void) {
                       "Owned (non-standard path): ", true);
   render_output_group(c, &data, OUTPUT_TYPE_EXPECTED_OWNED,
                       "Expected ownership (UNVERIFIED): ", true);
+  render_silent_payment_warning(c, &data);
   render_output_group(c, &data, OUTPUT_TYPE_SPEND, "Spending: ", false);
 
   render_fee_and_notes(c, &data);

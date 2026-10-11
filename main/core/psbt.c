@@ -558,6 +558,12 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
                                       bool is_testnet) {
   input_ownership_t result = {0};
 
+  if (sp_psbt_input_is_ours(psbt, i, is_testnet)) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    result.claim.kind = CLAIM_SILENT_PAYMENT;
+    return result;
+  }
+
   unsigned char utxo_script[34];
   size_t utxo_script_len = 0;
   if (!psbt_input_utxo_script(psbt, i, utxo_script, sizeof(utxo_script),
@@ -637,6 +643,15 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
+
+  sp_output_ownership_t sp_ownership =
+      sp_psbt_output_ownership(psbt, i, is_testnet);
+  if (sp_ownership != SP_OUTPUT_FOREIGN) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    result.source.kind = CLAIM_SILENT_PAYMENT;
+    result.source.silent_payment.is_change = sp_ownership == SP_OUTPUT_CHANGE;
+    return result;
+  }
 
   struct wally_tx *global_tx = psbt_tx_alloc(psbt);
   if (!global_tx)
@@ -1083,6 +1098,15 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
 
     if (plan[i].denied)
       continue;
+
+    if (ownership.claim.kind == CLAIM_SILENT_PAYMENT) {
+      plan[i].attempted = true;
+      if (sp_psbt_sign_input(psbt, i, is_testnet))
+        signatures_added++;
+      else
+        ESP_LOGE(TAG, "Failed to sign silent payment input %zu", i);
+      continue;
+    }
 
     signing_path_t paths[MAX_SIGNING_PATHS_PER_INPUT];
     size_t num_paths = 0;

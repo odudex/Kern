@@ -17,8 +17,10 @@
 #include "core/psbt.h"
 #include "core/psbt_internal.h"
 #include "core/registry.h"
+#include "core/sp_psbt.h"
 #include "core/storage.h"
 #include "core/wallet.h"
+#include "sp_fixture.h"
 
 /* --- Storage stubs (registry.c persist=false path never calls these) --- */
 esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
@@ -1898,6 +1900,83 @@ static void test_trim_leaves_out_previous_transactions(void) {
  * place. It must stay v2, keep the flags the signer set and every signature,
  * and still describe the same transaction, or the coordinator cannot merge it.
  */
+/* The bwk-built silent payment PSBT, with its output scripts derived */
+static struct wally_psbt *make_silent_payment_psbt(void) {
+  unsigned char bytes[1024];
+  size_t written = 0;
+  struct wally_psbt *psbt = NULL;
+  if (wally_hex_to_bytes(UNSIGNED_PSBT, bytes, sizeof(bytes), &written) !=
+          WALLY_OK ||
+      wally_psbt_from_bytes(bytes, written,
+                            WALLY_PSBT_PARSE_FLAG_LOOSE |
+                                WALLY_PSBT_PARSE_FLAG_COMPLETE,
+                            &psbt) != WALLY_OK)
+    return NULL;
+  if (sp_psbt_complete(&psbt, false) == SP_PSBT_OK)
+    return psbt;
+  wally_psbt_free(psbt);
+  return NULL;
+}
+
+static void test_silent_payment_classify(void) {
+  struct wally_psbt *psbt = make_silent_payment_psbt();
+
+  TEST("psbt_classify_input: our silent payment input is owned safe");
+  input_ownership_t in =
+      psbt ? psbt_classify_input(psbt, 0, false) : (input_ownership_t){0};
+  if (in.ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+      in.claim.kind == CLAIM_SILENT_PAYMENT)
+    PASS();
+  else
+    FAIL("silent payment input not owned");
+
+  TEST("psbt_classify_output: our silent payment change is owned safe, the "
+       "recipient external");
+  output_ownership_t change =
+      psbt ? psbt_classify_output(psbt, 1, false) : (output_ownership_t){0};
+  output_ownership_t recipient =
+      psbt ? psbt_classify_output(psbt, 0, false) : (output_ownership_t){0};
+  if (change.ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+      change.source.kind == CLAIM_SILENT_PAYMENT &&
+      change.source.silent_payment.is_change &&
+      recipient.ownership == PSBT_OWNERSHIP_EXTERNAL)
+    PASS();
+  else
+    FAIL("silent payment outputs misclassified");
+  wally_psbt_free(psbt);
+}
+
+static void test_sign_silent_payment_input(void) {
+  struct wally_psbt *psbt = make_silent_payment_psbt();
+  psbt_sign_policy_t policy = {0};
+  size_t sig_len = 0;
+
+  TEST("psbt_sign: signs our silent payment input with SIGHASH_DEFAULT");
+  if (psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
+      wally_psbt_get_input_taproot_signature_len(psbt, 0, &sig_len) ==
+          WALLY_OK &&
+      sig_len == 64)
+    PASS();
+  else
+    FAIL("silent payment input not signed");
+
+  struct wally_psbt *trimmed = psbt ? psbt_trim(psbt) : NULL;
+  unsigned char share_key[1 + 33];
+  size_t index = 0;
+  TEST("psbt_trim: keeps the ECDH shares of a silent payment PSBT");
+  share_key[0] = PSBT_GLOBAL_SP_ECDH_SHARE;
+  if (trimmed &&
+      wally_hex_to_bytes(OUR_SCAN, share_key + 1, 33, &index) == WALLY_OK &&
+      wally_map_find(&trimmed->unknowns, share_key, sizeof(share_key),
+                     &index) == WALLY_OK &&
+      index && sp_psbt_has_outputs(trimmed))
+    PASS();
+  else
+    FAIL("BIP375 fields trimmed away");
+  wally_psbt_free(trimmed);
+  wally_psbt_free(psbt);
+}
+
 static void test_trim_psbt_v2_in_place(void) {
   TEST("psbt_trim: a v2 PSBT is trimmed in place");
 
@@ -3088,6 +3167,11 @@ int main(void) {
   test_tx_alloc_rejects_bad_amount();
   test_trim_leaves_out_previous_transactions();
   test_trim_psbt_v2_in_place();
+
+  printf("\n=== silent payment tests ===\n\n");
+
+  test_silent_payment_classify();
+  test_sign_silent_payment_input();
 
   key_unload();
 

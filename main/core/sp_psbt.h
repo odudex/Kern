@@ -54,6 +54,28 @@ sp_output_keys(const struct wally_psbt_output *output, unsigned char *scan_out,
 KERN_WARN_UNUSED_RESULT sp_psbt_result_t
 sp_psbt_complete(struct wally_psbt **psbt, bool is_testnet);
 
+// True when input `i` spends one of our silent payment outputs: its
+// PSBT_IN_SP_TWEAK added to our spend key reproduces its P2TR output key.
+bool sp_psbt_input_is_ours(const struct wally_psbt *psbt, size_t i,
+                           bool is_testnet);
+
+typedef enum {
+  SP_OUTPUT_FOREIGN, // not ours, or not a silent payment output
+  SP_OUTPUT_CHANGE,  // our scan key, our spend key labeled m = 0
+  SP_OUTPUT_SELF,    // our scan key, our spend key unlabeled or labeled m > 0
+} sp_output_ownership_t;
+
+// Whose silent payment output `i` is. PSBT_OUT_SP_V0_LABEL, when present, must
+// label our spend key into the output's one; without it, the change label
+// and the unlabeled key are tried.
+sp_output_ownership_t sp_psbt_output_ownership(const struct wally_psbt *psbt,
+                                               size_t i, bool is_testnet);
+
+// Key path signature of our silent payment input `i`, made with the tweaked
+// spend key and no taproot tweak, since the output key already is BIP352's.
+KERN_WARN_UNUSED_RESULT bool sp_psbt_sign_input(struct wally_psbt *psbt,
+                                                size_t i, bool is_testnet);
+
 // Copies the BIP375 global and output fields of `from` into its trimmed copy
 // `to`, and writes TX_MODIFIABLE explicitly once frozen: bwk's verify_signed
 // wants the field present, while libwally leaves out a zero one.

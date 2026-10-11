@@ -43,6 +43,9 @@
 #define OP_1 0x51
 #define OP_16 0x60
 #define PUSH_32 0x20
+// BIP352 reserves label m = 0 for change
+#define SP_CHANGE_LABEL 0
+#define SCHNORR_SIG_LEN 64
 // Smallest and largest witness program, BIP141
 #define WITNESS_PROGRAM_MIN 2
 #define WITNESS_PROGRAM_MAX 40
@@ -965,6 +968,133 @@ sp_psbt_result_t sp_psbt_complete(struct wally_psbt **psbt, bool is_testnet) {
   wally_psbt_free(*psbt);
   *psbt = completed;
   return SP_PSBT_OK;
+}
+
+bool sp_psbt_input_is_ours(const struct wally_psbt *psbt, size_t i,
+                           bool is_testnet) {
+  const struct wally_tx_output *prevout = NULL;
+  struct sp_keys keys;
+  unsigned char key[SP_SECRET_LEN];
+  bool owned = false;
+
+  if (!psbt || i >= psbt->num_inputs ||
+      !find_unkeyed_field(&psbt->inputs[i].unknowns, PSBT_IN_SP_TWEAK) ||
+      input_prevout(&psbt->inputs[i], &prevout) != SP_PSBT_OK ||
+      !sp_keys_derive(is_testnet, &keys))
+    return false;
+  if (sp_tweak_signing_key(&psbt->inputs[i], prevout, keys.spend_secret, &owned,
+                           key) != SP_PSBT_OK)
+    owned = false;
+  sp_keys_wipe(&keys);
+  secure_memzero(key, sizeof(key));
+  return owned;
+}
+
+// Our spend key labeled with m (BIP352 labels)
+static bool labeled_spend_key(const struct sp_keys *keys, uint32_t m,
+                              unsigned char *out) {
+  secp256k1_silentpayments_label label;
+  secp256k1_pubkey spend, labeled;
+  unsigned char label_tweak[SP_SECRET_LEN];
+  bool ok = secp256k1_silentpayments_recipient_label_create(
+                secp_ctx(), &label, label_tweak, keys->scan_secret, m) &&
+            parse_point(keys->spend_pubkey, &spend) &&
+            secp256k1_silentpayments_recipient_create_labeled_spend_pubkey(
+                secp_ctx(), &labeled, &spend, &label) &&
+            serialize_point(&labeled, out);
+  secure_memzero(label_tweak, sizeof(label_tweak));
+  return ok;
+}
+
+static bool is_labeled_spend_key(const struct sp_keys *keys, uint32_t m,
+                                 const unsigned char *spend) {
+  unsigned char labeled[SP_PUBKEY_LEN];
+  return labeled_spend_key(keys, m, labeled) &&
+         memcmp(spend, labeled, SP_PUBKEY_LEN) == 0;
+}
+
+// Ownership of an output paying our scan key, from its spend key and the
+// label it declares. A declared label that does not give its spend key is
+// not trusted.
+static sp_output_ownership_t
+spend_key_ownership(const struct sp_keys *keys, const unsigned char *spend,
+                    const struct wally_map_item *label) {
+  uint32_t m;
+
+  if (label) {
+    m = bip32_path_u32_le(label->value);
+    if (!is_labeled_spend_key(keys, m, spend))
+      return SP_OUTPUT_FOREIGN;
+    return m == SP_CHANGE_LABEL ? SP_OUTPUT_CHANGE : SP_OUTPUT_SELF;
+  }
+  if (is_labeled_spend_key(keys, SP_CHANGE_LABEL, spend))
+    return SP_OUTPUT_CHANGE;
+  return memcmp(spend, keys->spend_pubkey, SP_PUBKEY_LEN) == 0
+             ? SP_OUTPUT_SELF
+             : SP_OUTPUT_FOREIGN;
+}
+
+sp_output_ownership_t sp_psbt_output_ownership(const struct wally_psbt *psbt,
+                                               size_t i, bool is_testnet) {
+  unsigned char scan[SP_PUBKEY_LEN], spend[SP_PUBKEY_LEN];
+  struct sp_keys keys;
+  sp_output_ownership_t ownership = SP_OUTPUT_FOREIGN;
+
+  if (!psbt || i >= psbt->num_outputs ||
+      !sp_output_keys(&psbt->outputs[i], scan, spend) ||
+      !sp_keys_derive(is_testnet, &keys))
+    return SP_OUTPUT_FOREIGN;
+  if (memcmp(scan, keys.scan_pubkey, SP_PUBKEY_LEN) == 0)
+    ownership = spend_key_ownership(
+        &keys, spend,
+        find_unkeyed_field(&psbt->outputs[i].unknowns, PSBT_OUT_SP_V0_LABEL));
+  sp_keys_wipe(&keys);
+  return ownership;
+}
+
+// BIP341 key path signature over the input's sighash, the sighash byte
+// appended unless it is SIGHASH_DEFAULT
+static bool sign_key_path(struct wally_psbt *psbt, size_t i,
+                          const unsigned char *key) {
+  struct wally_tx *tx = NULL;
+  unsigned char hash[SHA256_LEN], aux[SP_SECRET_LEN];
+  unsigned char sig[SCHNORR_SIG_LEN + 1];
+  size_t sig_len = SCHNORR_SIG_LEN;
+  uint32_t sighash = psbt->inputs[i].sighash;
+  bool ok =
+      wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &tx) == WALLY_OK &&
+      wally_psbt_get_input_signature_hash(psbt, i, tx, NULL, 0, 0, hash,
+                                          sizeof(hash)) == WALLY_OK &&
+      crypto_random_bytes(aux, sizeof(aux)) == CRYPTO_OK &&
+      wally_ec_sig_from_bytes_aux(key, SP_SECRET_LEN, hash, sizeof(hash), aux,
+                                  sizeof(aux), EC_FLAG_SCHNORR, sig,
+                                  SCHNORR_SIG_LEN) == WALLY_OK;
+
+  if (sighash != WALLY_SIGHASH_DEFAULT)
+    sig[sig_len++] = (unsigned char)sighash;
+  ok = ok && wally_psbt_set_input_taproot_signature(psbt, i, sig, sig_len) ==
+                 WALLY_OK;
+  wally_tx_free(tx);
+  secure_memzero(aux, sizeof(aux));
+  return ok;
+}
+
+bool sp_psbt_sign_input(struct wally_psbt *psbt, size_t i, bool is_testnet) {
+  const struct wally_tx_output *prevout = NULL;
+  struct sp_keys keys;
+  unsigned char key[SP_SECRET_LEN];
+  bool owned = false, ok;
+
+  if (!psbt || i >= psbt->num_inputs ||
+      input_prevout(&psbt->inputs[i], &prevout) != SP_PSBT_OK ||
+      !sp_keys_derive(is_testnet, &keys))
+    return false;
+  ok = sp_tweak_signing_key(&psbt->inputs[i], prevout, keys.spend_secret,
+                            &owned, key) == SP_PSBT_OK &&
+       owned && sign_key_path(psbt, i, key);
+  sp_keys_wipe(&keys);
+  secure_memzero(key, sizeof(key));
+  return ok;
 }
 
 static bool copy_fields(const struct wally_map *from, struct wally_map *to,
