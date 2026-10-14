@@ -1097,6 +1097,68 @@ static void test_psbt_classify_adv_taproot_foreign_fp(void) {
   PASS();
 }
 
+/* Nunchuk's taproot multisig PSBTs carry the unspendable internal key at a
+ * bare /0/0 ahead of the cosigners' 48'/1'/... leaf keys. */
+static void test_detect_network_skips_unhardened_internal_key(void) {
+  TEST("psbt_detect_network: taproot internal key at /0/0 is not a coin type");
+
+  struct ext_key *internal = NULL, *leaf = NULL;
+  if (!key_get_derived_key("m/0/0", &internal) ||
+      !key_get_derived_key("m/48'/1'/0'/3'/0/0", &leaf)) {
+    bip32_key_free(internal);
+    FAIL("key derivation failed");
+    return;
+  }
+
+  struct wally_tx *tx = NULL;
+  struct wally_psbt *psbt = NULL;
+  uint8_t txid[32] = {0};
+  uint8_t op_return[] = {0x6a};
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK ||
+      wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0,
+                             NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(tx, 0, op_return, sizeof(op_return), 0) !=
+          WALLY_OK ||
+      wally_psbt_from_tx(tx, 0, 0, &psbt) != WALLY_OK) {
+    wally_tx_free(tx);
+    bip32_key_free(internal);
+    bip32_key_free(leaf);
+    FAIL("psbt alloc");
+    return;
+  }
+  wally_tx_free(tx);
+
+  const uint8_t internal_path[] = {0x7c, 0x46, 0x1e, 0x5d, 0x00, 0x00,
+                                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  const uint8_t leaf_path[] = {
+      0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x80, 0x01, 0x00,
+      0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x03, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  struct wally_map *tp = &psbt->inputs[0].taproot_leaf_paths;
+  wally_map_add(tp, internal->pub_key + 1, EC_PUBLIC_KEY_LEN - 1, internal_path,
+                sizeof(internal_path));
+  wally_map_add(tp, leaf->pub_key + 1, EC_PUBLIC_KEY_LEN - 1, leaf_path,
+                sizeof(leaf_path));
+  bip32_key_free(internal);
+  bip32_key_free(leaf);
+
+  bool ok =
+      tp->num_items == 2 && tp->items[0].value_len == sizeof(internal_path);
+  bool is_testnet = psbt_detect_network(psbt);
+  wally_psbt_free(psbt);
+
+  if (!ok) {
+    FAIL("fixture: internal key entry is not first");
+    return;
+  }
+  if (!is_testnet) {
+    FAIL("expected testnet from the 48'/1' leaf key");
+    return;
+  }
+  PASS();
+}
+
 /* ================================================================
  * Input amount provenance tests
  *
@@ -2767,6 +2829,7 @@ int main(void) {
   test_psbt_classify_adv_mixed_script();
   test_psbt_classify_adv_registry_depth_mismatch();
   test_psbt_classify_adv_taproot_foreign_fp();
+  test_detect_network_skips_unhardened_internal_key();
   test_psbt_classify_adv_testnet_flag_mismatch();
 
   printf("\n=== input amount provenance tests ===\n\n");

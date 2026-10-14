@@ -718,16 +718,22 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
   return result;
 }
 
+// Only a hardened purpose'/coin' prefix names a coin type: a taproot internal
+// key derived from an unspendable xpub sits at a bare /0/0, which would read
+// as coin 0.
 static bool check_keypath_network(const unsigned char *keypath,
                                   size_t keypath_len, bool *is_testnet) {
   if (keypath_len < 12) {
     return false;
   }
 
-  uint32_t coin_type;
-  memcpy(&coin_type, keypath + 8, sizeof(uint32_t));
-  uint32_t coin_value = coin_type & 0x7FFFFFFF;
+  uint32_t purpose = bip32_path_u32_le(keypath + 4);
+  uint32_t coin_type = bip32_path_u32_le(keypath + 8);
+  if (!bip32_path_is_hardened(purpose) || !bip32_path_is_hardened(coin_type)) {
+    return false;
+  }
 
+  uint32_t coin_value = bip32_path_unharden(coin_type);
   if (coin_value == 0 || coin_value == 1) {
     *is_testnet = (coin_value == 1);
     return true;
@@ -736,55 +742,37 @@ static bool check_keypath_network(const unsigned char *keypath,
   return false;
 }
 
+// Keypaths and taproot_leaf_paths values share the fp(4) | path(4*depth) shape.
+static bool map_detect_network(const struct wally_map *keypaths,
+                               bool *is_testnet) {
+  for (size_t i = 0; i < keypaths->num_items; i++) {
+    if (check_keypath_network(keypaths->items[i].value,
+                              keypaths->items[i].value_len, is_testnet)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool psbt_detect_network(const struct wally_psbt *psbt) {
   if (!psbt) {
     return false;
   }
 
-  unsigned char keypath[100];
-  size_t keypath_len, keypaths_size;
   bool is_testnet;
 
   // Check outputs first
-  size_t num_outputs = 0;
-  wally_psbt_get_num_outputs(psbt, &num_outputs);
-
-  for (size_t i = 0; i < num_outputs; i++) {
-    if (wally_psbt_get_output_keypaths_size(psbt, i, &keypaths_size) ==
-            WALLY_OK &&
-        keypaths_size > 0 &&
-        wally_psbt_get_output_keypath(psbt, i, 0, keypath, sizeof(keypath),
-                                      &keypath_len) == WALLY_OK &&
-        check_keypath_network(keypath, keypath_len, &is_testnet)) {
-      return is_testnet;
-    }
-    // Taproot outputs store derivation in a separate map (PSBT_OUT_TAP_BIP32),
-    // whose value has the same fp(4)|path shape as the segwit keypaths.
-    const struct wally_map *tp = &psbt->outputs[i].taproot_leaf_paths;
-    if (tp->num_items > 0 &&
-        check_keypath_network(tp->items[0].value, tp->items[0].value_len,
-                              &is_testnet)) {
+  for (size_t i = 0; i < psbt->num_outputs; i++) {
+    if (map_detect_network(&psbt->outputs[i].keypaths, &is_testnet) ||
+        map_detect_network(&psbt->outputs[i].taproot_leaf_paths, &is_testnet)) {
       return is_testnet;
     }
   }
 
   // Check inputs as fallback
-  size_t num_inputs = 0;
-  wally_psbt_get_num_inputs(psbt, &num_inputs);
-
-  for (size_t i = 0; i < num_inputs; i++) {
-    if (wally_psbt_get_input_keypaths_size(psbt, i, &keypaths_size) ==
-            WALLY_OK &&
-        keypaths_size > 0 &&
-        wally_psbt_get_input_keypath(psbt, i, 0, keypath, sizeof(keypath),
-                                     &keypath_len) == WALLY_OK &&
-        check_keypath_network(keypath, keypath_len, &is_testnet)) {
-      return is_testnet;
-    }
-    const struct wally_map *tp = &psbt->inputs[i].taproot_leaf_paths;
-    if (tp->num_items > 0 &&
-        check_keypath_network(tp->items[0].value, tp->items[0].value_len,
-                              &is_testnet)) {
+  for (size_t i = 0; i < psbt->num_inputs; i++) {
+    if (map_detect_network(&psbt->inputs[i].keypaths, &is_testnet) ||
+        map_detect_network(&psbt->inputs[i].taproot_leaf_paths, &is_testnet)) {
       return is_testnet;
     }
   }
