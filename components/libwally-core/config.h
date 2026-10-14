@@ -20,7 +20,9 @@
 /* #undef HAVE_DLFCN_H */
 
 /* Define to 1 if you have the `explicit_bzero' function. */
+#ifndef __APPLE__
 #define HAVE_EXPLICIT_BZERO 1
+#endif
 
 /* Define to 1 if you have the `explicit_memset' function. */
 /* #undef HAVE_EXPLICIT_MEMSET */
@@ -35,7 +37,10 @@
 #define HAVE_MEMORY_H 1
 
 /* Define to 1 if you have the `memset_s' function. */
-/* #undef HAVE_MEMSET_S */
+/* macOS has no explicit_bzero; memset_s is its non-elidable wipe. */
+#ifdef __APPLE__
+#define HAVE_MEMSET_S 1
+#endif
 
 /* Define if we have mmap */
 /* #undef HAVE_MMAP */
