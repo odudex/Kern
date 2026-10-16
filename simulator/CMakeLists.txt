@@ -80,7 +80,6 @@ target_include_directories(wally PRIVATE
 )
 
 target_compile_definitions(wally PRIVATE
-    BUILD_ELEMENTS=0
     BUILD_MINIMAL=1
     # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
     BUILD_STANDARD_SECP=1
@@ -89,12 +88,8 @@ target_compile_definitions(wally PRIVATE
     ENABLE_MODULE_ECDSA_S2C=1
     ENABLE_MODULE_EXTRAKEYS=1
     ENABLE_MODULE_GENERATOR=1
-    ENABLE_MODULE_RANGEPROOF=1
     ENABLE_MODULE_RECOVERY=1
     ENABLE_MODULE_SCHNORRSIG=1
-    ENABLE_MODULE_SURJECTIONPROOF=1
-    ENABLE_MODULE_WHITELIST=1
-    HAVE_BUILTIN_POPCOUNT=1
     NDEBUG=1
 )
 

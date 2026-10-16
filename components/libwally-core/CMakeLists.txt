@@ -41,7 +41,7 @@ target_compile_options(${COMPONENT_TARGET} PRIVATE "-fstack-protector-strong")
 target_link_options(${COMPONENT_TARGET} PRIVATE -Wl,-z,relro -Wl,-z,now)
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE _FORTIFY_SOURCE=2)
 
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_ELEMENTS=0")
+# libwally tests BUILD_ELEMENTS with #ifdef: defining it, even as 0, enables Elements.
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_MINIMAL=1")
 # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_STANDARD_SECP=1")
@@ -53,9 +53,5 @@ target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_ECDH=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_ECDSA_S2C=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_EXTRAKEYS=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_GENERATOR=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_RANGEPROOF=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_RECOVERY=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_SCHNORRSIG=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_SURJECTIONPROOF=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_WHITELIST=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_BUILTIN_POPCOUNT=1")
