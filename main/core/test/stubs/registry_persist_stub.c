@@ -37,6 +37,8 @@ bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
   return true;
 }
 
+void bip138_backup_forget_keys(void) {}
+
 bool storage_descriptor_exists(storage_location_t loc, const char *id,
                                storage_descriptor_format_t format) {
   (void)loc;

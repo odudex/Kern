@@ -43,4 +43,12 @@ KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt_any(const uint8_t *data,
 /* True for a binary container or its base64 text form. */
 bool bip138_backup_detect(const uint8_t *data, size_t len);
 
+/* Wipes the loaded key's cached common-path public keys. Called when the
+ * wallet is unloaded, since they describe the seed that was loaded. */
+void bip138_backup_forget_keys(void);
+
+#ifdef BIP138_BACKUP_TESTING
+bool bip138_backup_cache_is_empty(void);
+#endif
+
 #endif // BIP138_BACKUP_H

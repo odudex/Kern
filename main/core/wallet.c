@@ -1,4 +1,5 @@
 #include "wallet.h"
+#include "bip138_backup.h"
 #include "key.h"
 #include "registry.h"
 #include <wally_descriptor.h>
@@ -29,6 +30,7 @@ void wallet_cleanup(void) {
 void wallet_unload(void) {
   key_unload();
   wallet_cleanup();
+  bip138_backup_forget_keys();
   wallet_watch_only = false;
 }
 

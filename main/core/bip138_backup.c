@@ -119,19 +119,12 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
 
 static bool candidate_key(const uint32_t *child, size_t depth,
                           uint8_t xonly[32]) {
-  char path[BIP138_KEYS_MAX_DEPTH * 12 + 2];
-  char *xpub = NULL;
-  if (!bip32_path_format(child, depth, path, sizeof(path)) ||
-      !key_get_xpub(path, &xpub))
-    return false;
   struct ext_key *key = NULL;
-  bool ok = bip32_key_from_base58_alloc(xpub, &key) == WALLY_OK;
-  if (ok) {
-    memcpy(xonly, key->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN);
-    bip32_key_free(key);
-  }
-  wally_free_string(xpub);
-  return ok;
+  if (!key_get_derived_key_components(child, depth, &key))
+    return false;
+  memcpy(xonly, key->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN);
+  bip32_key_free(key);
+  return true;
 }
 
 /* Common-path xpubs, derived once per loaded key rather than once per file. */
@@ -143,6 +136,20 @@ typedef struct {
 } common_cache_t;
 
 static common_cache_t common_cache;
+
+void bip138_backup_forget_keys(void) {
+  secure_memzero(&common_cache, sizeof(common_cache));
+}
+
+#ifdef BIP138_BACKUP_TESTING
+bool bip138_backup_cache_is_empty(void) {
+  const uint8_t *p = (const uint8_t *)&common_cache;
+  for (size_t i = 0; i < sizeof(common_cache); i++)
+    if (p[i])
+      return false;
+  return true;
+}
+#endif
 
 static bool common_candidate(size_t index, uint8_t xonly[32]) {
   uint8_t fingerprint[BIP32_KEY_FINGERPRINT_LEN];

@@ -271,6 +271,26 @@ static void test_repeated_key_hint(void) {
   free(blob);
 }
 
+/* The common-path keys describe the loaded seed; unloading the wallet wipes
+ * them like the rest of the session. */
+static void test_unload_forgets_common_keys(void) {
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  char *recovered = NULL;
+  check("forget: foreign backup fills the cache",
+        bip138_backup_encrypt("wpkh(" FOREIGN_KEY "/<0;1>/*)", &blob,
+                              &blob_len) &&
+            !bip138_backup_decrypt(blob, blob_len, &recovered, NULL) &&
+            !bip138_backup_cache_is_empty());
+  free(blob);
+  wallet_unload();
+  check("forget: wallet_unload wipes the cache",
+        bip138_backup_cache_is_empty());
+  if (!key_load_from_mnemonic(TEST_MNEMONIC, "", false) ||
+      !wallet_init(WALLET_NETWORK_MAINNET))
+    abort();
+}
+
 static void test_foreign_key(void) {
   const char *descriptor = "wpkh(" FOREIGN_KEY "/<0;1>/*)";
   uint8_t *blob = NULL;
@@ -771,6 +791,7 @@ int main(void) {
   test_common_account();
   test_uncommon_account();
   test_repeated_key_hint();
+  test_unload_forgets_common_keys();
   test_foreign_key();
   test_text_form();
   test_rejections();
