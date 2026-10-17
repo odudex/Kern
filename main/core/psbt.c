@@ -535,6 +535,28 @@ static void remember_raw_keypath(unsigned char *dst, size_t dst_cap,
   *dst_len = src_len;
 }
 
+/* Whether a keypath map item's key is our key at the path it gives (compressed
+ * for BIP32 derivations, x-only for taproot ones). libwally signs by public
+ * key, so a keypath naming any other key can never be signed for: trying
+ * claims for it would only spend derivations and script generations, which a
+ * PSBT padded with bogus keypaths would multiply. */
+static bool keypath_names_our_key(const struct wally_map_item *item) {
+  uint32_t path[MAX_KEYPATH_TOTAL_DEPTH];
+  size_t depth = 0;
+  struct ext_key *derived = NULL;
+  if (!bip32_path_from_keypath(item->value, item->value_len, path, &depth,
+                               MAX_KEYPATH_TOTAL_DEPTH) ||
+      !key_get_derived_key_components(path, depth, &derived))
+    return false;
+  bool match =
+      (item->key_len == EC_PUBLIC_KEY_LEN &&
+       memcmp(item->key, derived->pub_key, EC_PUBLIC_KEY_LEN) == 0) ||
+      (item->key_len == EC_XONLY_PUBLIC_KEY_LEN &&
+       memcmp(item->key, derived->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN) == 0);
+  bip32_key_free(derived);
+  return match;
+}
+
 /* A keypath map value (fingerprint, then path) that names our seed and is
  * short enough to be a path Kern derives. A longer one cannot be ours. */
 static bool keypath_is_candidate(const struct wally_map_item *item,
@@ -602,7 +624,8 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
       remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
                            &result.raw_keypath_len, item->value,
                            item->value_len);
-      if (try_match_claim(item->value, item->value_len, is_testnet,
+      if (keypath_names_our_key(item) &&
+          try_match_claim(item->value, item->value_len, is_testnet,
                           SS_ADDR_INDEX_UNCAPPED, utxo_script, utxo_script_len,
                           m == 0 ? psbt : NULL, i, &claim)) {
         result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
@@ -695,7 +718,8 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
       remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
                            &result.raw_keypath_len, item->value,
                            item->value_len);
-      if (try_match_claim(item->value, item->value_len, is_testnet,
+      if (keypath_names_our_key(item) &&
+          try_match_claim(item->value, item->value_len, is_testnet,
                           SS_MAX_OUT_ADDR_INDEX, out_script, out_script_len,
                           NULL, 0, &claim)) {
         set_output_claim(&result, &claim, item->value, item->value_len);

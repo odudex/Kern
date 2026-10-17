@@ -1907,8 +1907,7 @@ static void test_classify_output_psbt_v2(void) {
   "))"
 
 /* One output paying entry `e` at (multi_index, child_num), with our keypath
- * 48'/0'/0'/2'/<chain>/<child_num> on it. Classification never compares the
- * map's pubkey, so any valid point will do. */
+ * 48'/0'/0'/2'/<chain>/<child_num> and our key at that path on it. */
 static struct wally_psbt *
 make_registry_output_psbt_at(const registry_entry_t *e, uint32_t multi_index,
                              uint32_t chain, uint32_t child_num) {
@@ -1942,7 +1941,7 @@ make_registry_output_psbt_at(const registry_entry_t *e, uint32_t multi_index,
       kp_val[4 + i * 4 + b] = (uint8_t)(path[i] >> (8 * b));
 
   struct ext_key *derived = NULL;
-  if (!key_get_derived_key("m/48'/0'/0'/2'/0/0", &derived)) {
+  if (!key_get_derived_key_components(path, 6, &derived)) {
     wally_psbt_free(psbt);
     return NULL;
   }
@@ -4336,6 +4335,88 @@ static void test_claim_shape_prefilter(void) {
   registry_clear();
 }
 
+/* Keypaths that claim our fingerprint but list another key cannot be signed
+ * for, so they cost no claim attempt: a PSBT padded with them must not
+ * multiply derivations and script generations. */
+static void test_bogus_keypaths_cost_nothing(void) {
+  registry_clear();
+  if (!registry_add_from_string("t", WSH_REGISTRY_DESC, STORAGE_FLASH, false) ||
+      !registry_add_from_string("tr",
+                                "tr([00000000/87'/0'/0']" XPUB_86 "/<0;1>/*)",
+                                STORAGE_FLASH, false)) {
+    TEST("bogus keypaths: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (int with_genuine = 0; with_genuine <= 1; with_genuine++) {
+    TEST(with_genuine ? "bogus keypaths next to the genuine one: OWNED_SAFE"
+                      : "40 bogus keypaths: no script generated");
+    struct wally_psbt *psbt =
+        make_wsh_registry_psbt(REF_WSH_SPK, sizeof(REF_WSH_SPK),
+                               REF_WSH_WITNESS, sizeof(REF_WSH_WITNESS));
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    if (!with_genuine)
+      wally_map_clear(&psbt->inputs[0].keypaths);
+    for (uint32_t k = 0; k < 40; k++) {
+      /* Path .../0/k, but the key at .../1/k. */
+      const uint32_t listed[] = {0x80000030, 0x80000000, 0x80000000,
+                                 0x80000002, 0,          k};
+      const uint32_t real[] = {0x80000030, 0x80000000, 0x80000000,
+                               0x80000002, 1,          k};
+      const unsigned char fp[4] = {0};
+      struct ext_key *other = NULL;
+      if (key_get_derived_key_components(real, 6, &other)) {
+        wally_psbt_add_input_keypath(psbt, 0, other->pub_key, EC_PUBLIC_KEY_LEN,
+                                     fp, sizeof(fp), listed, 6);
+        bip32_key_free(other);
+      }
+    }
+    to_script_calls = 0;
+    input_ownership_t r = psbt_classify_input(psbt, 0, false);
+    if (with_genuine ? r.ownership != PSBT_OWNERSHIP_OWNED_SAFE
+                     : (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED ||
+                        to_script_calls != 0))
+      FAIL(with_genuine ? "the genuine keypath no longer claims"
+                        : "bogus keypaths were tried as claims");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  TEST("bogus taproot keypaths: no script generated");
+  const char *descs[] = {"tr([00000000/87'/0'/0']" XPUB_86 "/<0;1>/*)"};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (!psbt) {
+    FAIL("fixture");
+  } else {
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_paths);
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
+    for (uint32_t k = 0; k < 40; k++) {
+      const uint32_t listed[] = {0x80000057, 0x80000000, 0x80000000, 0, k};
+      const uint32_t real[] = {0x80000057, 0x80000000, 0x80000000, 1, k};
+      const unsigned char fp[4] = {0};
+      struct ext_key *other = NULL;
+      if (key_get_derived_key_components(real, 5, &other)) {
+        wally_psbt_add_input_taproot_keypath(psbt, 0, 0, other->pub_key + 1,
+                                             EC_XONLY_PUBLIC_KEY_LEN, NULL, 0,
+                                             fp, sizeof(fp), listed, 5);
+        bip32_key_free(other);
+      }
+    }
+    to_script_calls = 0;
+    input_ownership_t r = psbt_classify_input(psbt, 0, false);
+    if (r.ownership == PSBT_OWNERSHIP_OWNED_SAFE || to_script_calls != 0)
+      FAIL("bogus taproot keypaths were tried as claims");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+  registry_clear();
+}
+
 /* Golden scriptPubKeys computed independently of libwally (BIP341 by hand),
  * not captured from a libwally run: they catch a wrong tweak or leaf hash in
  * the code that builds receive addresses. Origins do not affect scripts. */
@@ -4619,6 +4700,7 @@ int main(void) {
   test_tr_script_path_denied_input();
   test_tr_key_path_verified();
   test_claim_shape_prefilter();
+  test_bogus_keypaths_cost_nothing();
   test_restore_without_memory();
   test_known_answer_signatures();
   test_trim_keeps_taproot_signatures();
