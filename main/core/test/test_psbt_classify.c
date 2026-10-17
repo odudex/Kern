@@ -2570,9 +2570,12 @@ static void test_restore_without_memory(void) {
   wally_psbt_free(psbt);
 }
 
-/* Known-answer signatures. libwally signs deterministically (no nonce
- * hardening is installed in host tests), so these pin BIP143 and BIP341
- * sighashes and signing end to end, whichever hashing backend is built. */
+/* Known-answer signatures. libwally signs deterministically, as on the device
+ * (RFC6979, and BIP340 with no aux randomness), so these pin BIP143 and BIP341
+ * sighashes and signing end to end, whichever hashing backend is built. The
+ * two taproot ones were checked once against an independent pure-Python
+ * BIP340/341/342 implementation: valid, and the leaf commits to the output
+ * key. */
 static void hex_of(const unsigned char *b, size_t n, char *out) {
   for (size_t i = 0; i < n; i++)
     sprintf(out + 2 * i, "%02x", b[i]);
@@ -2637,6 +2640,54 @@ static void test_known_answer_signatures(void) {
       "b374394027acae385967663d3c47e6d2b5fc34ba0820b7a2cd4bfebb9dd11fb12e6afb"
       "0fb45ae35556e4b0e8e73ad11aabd513f416099beee95e1de860208f27");
   wally_psbt_free(psbt);
+  registry_clear();
+}
+
+/* What the coordinator needs back from a taproot spend survives the trim, in
+ * both PSBT versions: key-path and script-path signatures alike. */
+static void test_trim_keeps_taproot_signatures(void) {
+  psbt_sign_policy_t policy = {0};
+  registry_clear();
+  if (!registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false)) {
+    TEST("trim taproot: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    const char *bip86[] = {TR_BIP86_OURS};
+    const char *leaf[] = {TR_LEAF_OURS};
+    struct wally_psbt *kp = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
+    struct wally_psbt *sp = make_tr_psbt(leaf, 1, 0, 0, PSBT_VERSIONS[v]);
+    struct wally_psbt *kp_trim = NULL, *sp_trim = NULL;
+    if (kp && psbt_sign(kp, false, policy, NULL) == 1)
+      kp_trim = psbt_trim(kp);
+    if (sp && psbt_sign(sp, false, policy, NULL) == 1)
+      sp_trim = psbt_trim(sp);
+
+    snprintf(name, sizeof(name), "trim v%u: TAP_KEY_SIG survives",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    if (kp_trim && tap_key_sig_len(kp_trim, 0) == 64 &&
+        kp_trim->inputs[0].taproot_leaf_paths.num_items == 0)
+      PASS();
+    else
+      FAIL("key-path signature lost, or derivations kept");
+
+    snprintf(name, sizeof(name), "trim v%u: TAP_SCRIPT_SIG survives",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    if (sp_trim && sp_trim->inputs[0].taproot_leaf_signatures.num_items == 1 &&
+        sp_trim->inputs[0].taproot_leaf_scripts.num_items == 0)
+      PASS();
+    else
+      FAIL("script-path signature lost, or leaf scripts kept");
+
+    wally_psbt_free(kp_trim);
+    wally_psbt_free(sp_trim);
+    wally_psbt_free(kp);
+    wally_psbt_free(sp);
+  }
   registry_clear();
 }
 
@@ -4474,6 +4525,7 @@ int main(void) {
   test_tr_key_path_verified();
   test_restore_without_memory();
   test_known_answer_signatures();
+  test_trim_keeps_taproot_signatures();
 
   printf("\n=== multi-key signing tests ===\n\n");
 
