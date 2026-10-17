@@ -3,6 +3,7 @@
  */
 
 #include "../../core/psbt.h"
+#include "../../core/secp_hardening.h"
 #include "../../core/settings.h"
 #include "../../qr/parser.h"
 #include "../../qr/viewer.h"
@@ -46,6 +47,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
       .allow_expected_owned = settings_get_expected_owned_signing(),
   };
   psbt_sign_result_t sign_result;
+  secp_blind_refresh();
   size_t signatures_added =
       psbt_sign(scan_ctx.psbt, scan_ctx.is_testnet, sign_policy, &sign_result);
 

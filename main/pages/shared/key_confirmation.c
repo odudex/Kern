@@ -1,6 +1,7 @@
 #include "key_confirmation.h"
 #include "../../core/key.h"
 #include "../../core/registry.h"
+#include "../../core/secp_hardening.h"
 #include "../../core/settings.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -32,6 +33,7 @@ static void loading_timer_cb(lv_timer_t *timer) {
                                 0);
       return;
     }
+    secp_blind_refresh();
     registry_init(net == WALLET_NETWORK_TESTNET);
     if (success_callback)
       success_callback();

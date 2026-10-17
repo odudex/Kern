@@ -4,6 +4,7 @@
 #include "core/nvs_secure.h"
 #include "core/pbkdf2.h"
 #include "core/pin.h"
+#include "core/secp_hardening.h"
 #include "core/settings.h"
 #include "pages/session_lock.h"
 #include "ui/assets/kern_logo_lvgl.h"
@@ -109,6 +110,7 @@ void app_main(void) {
   if (wally_res != WALLY_OK) {
     abort();
   }
+  secp_blind_refresh();
 
   // Initialize BIP39 wordlist (needed for anti-phishing words)
   if (!bip39_filter_init())

@@ -8,6 +8,7 @@
 
 #include "core/key.h"
 #include "core/message_sign.h"
+#include "core/secp_hardening.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -84,6 +85,35 @@ static void test_signature_recovers_key(void) {
   bip32_key_free(key);
 }
 
+static char *sign_hello(void) {
+  char *b64 = NULL;
+  if (!message_sign_sign("m/84'/0'/0'/0/0", "Hello Kern", &b64))
+    return NULL;
+  return b64;
+}
+
+/* Blinding changes how the computation runs, never its result: signatures stay
+ * RFC6979's, so anyone holding the seed can reproduce them. */
+static void test_signing_is_deterministic(void) {
+  char *a = sign_hello(), *b = sign_hello();
+  TEST("signing the same message twice gives the same signature");
+  if (a && b && strcmp(a, b) == 0)
+    PASS();
+  else
+    FAIL("expected identical signatures");
+  wally_free_string(b);
+
+  TEST("refreshing the blinding leaves RFC6979 signatures unchanged");
+  bool refreshed = secp_blind_refresh();
+  b = sign_hello();
+  if (refreshed && a && b && strcmp(a, b) == 0)
+    PASS();
+  else
+    FAIL("expected the same signature after a refresh");
+  wally_free_string(a);
+  wally_free_string(b);
+}
+
 int main(void) {
   printf("=== message_sign tests ===\n\n");
   if (!key_load_from_mnemonic(TEST_MNEMONIC, "", false)) {
@@ -110,6 +140,7 @@ int main(void) {
   expect_address("BIP84 shows a P2WPKH address", "m/84'/0'/0'/0/0",
                  "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu");
   test_signature_recovers_key();
+  test_signing_is_deterministic();
 
   key_unload();
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,

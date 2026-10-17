@@ -14,6 +14,7 @@
 #include "core/nvs_secure.h"
 #include "core/settings.h"
 #include "core/pin.h"
+#include "core/secp_hardening.h"
 #include "pages/session_lock.h"
 #include "esp_lvgl_port.h"
 #include "utils/bip39_filter.h"
@@ -160,6 +161,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "wally_init failed\n");
         return 1;
     }
+    secp_blind_refresh();
 
     /* Initialize LVGL */
     lv_init();

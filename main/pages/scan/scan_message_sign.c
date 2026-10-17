@@ -3,6 +3,7 @@
  */
 
 #include "../../core/message_sign.h"
+#include "../../core/secp_hardening.h"
 #include "../../core/wallet.h"
 #include "../../qr/viewer.h"
 #include "../../ui/dialog.h"
@@ -107,6 +108,7 @@ void scan_bip322_create_display(void) {
 
 static void message_sign_button_cb(lv_event_t *e) {
   char *sig_b64 = NULL;
+  secp_blind_refresh();
   if (!message_sign_sign(scan_ctx.message.derivation_path,
                          scan_ctx.message.message, &sig_b64)) {
     dialog_show_error_timeout("Failed to sign message", NULL, 2000);

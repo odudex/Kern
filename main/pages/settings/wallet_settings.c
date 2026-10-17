@@ -4,6 +4,7 @@
 #include "wallet_settings.h"
 #include "../../core/key.h"
 #include "../../core/registry.h"
+#include "../../core/secp_hardening.h"
 #include "../../core/wallet.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
@@ -75,6 +76,7 @@ static bool reinit_wallet(void) {
                               0);
     return false;
   }
+  secp_blind_refresh();
   registry_init(selected_network == WALLET_NETWORK_TESTNET);
   g_settings_applied = true;
   descriptor_loader_show_rejected_notice();

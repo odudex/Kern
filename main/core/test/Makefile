@@ -302,8 +302,9 @@ $(TARGET_ADDRESS_MATCH): $(SRCS_ADDRESS_MATCH) $(ADDRESS_MATCH_SRC) $(SS_SRC) $(
 $(TARGET_DESCRIPTOR_TEXT): $(SRCS_DESCRIPTOR_TEXT) $(DESCRIPTOR_TEXT_SRC) $(DESCRIPTOR_CHECKSUM_SRC) ../../utils/text_file.c ../../utils/text_file.h $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DESCRIPTOR_TEXT) ../descriptor_text.c ../descriptor_checksum.c ../../utils/text_file.c $(LIBWALLY)
 
-$(TARGET_MESSAGE_SIGN): $(SRCS_MESSAGE_SIGN) ../message_sign.c ../message_sign.h ../message_validation.h $(KEY_SRC) $(SCRIPT_TEMPLATE_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MESSAGE_SIGN) ../message_sign.c ../key.c ../bip32_path.c ../script_templates.c $(LIBWALLY)
+$(TARGET_MESSAGE_SIGN): $(SRCS_MESSAGE_SIGN) ../message_sign.c ../message_sign.h ../message_validation.h ../secp_hardening.c ../secp_hardening.h $(KEY_SRC) $(SCRIPT_TEMPLATE_SRC) $(CRYPTO_UTILS_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_MESSAGE_SIGN) ../message_sign.c ../secp_hardening.c ../key.c ../bip32_path.c ../script_templates.c \
+		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_MULTISIG_SETUP): $(SRCS_MULTISIG_SETUP) $(MULTISIG_SETUP_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MULTISIG_SETUP) ../multisig_setup.c $(LIBWALLY)
