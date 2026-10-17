@@ -405,6 +405,43 @@ static void test_non_sane_miniscript(void) {
   registry_clear();
 }
 
+/* The pinned fork derives keys to find a repeated one however it is written,
+ * and still parses a key reused on disjoint paths. */
+static void check_duplicate_key(const char *name, const char *desc,
+                                bool duplicate) {
+  struct wally_descriptor *d = NULL;
+  bool parses = wallet_descriptor_parse(
+                    desc, NULL, WALLY_NETWORK_BITCOIN_MAINNET, &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  check(name, parses != duplicate);
+}
+
+static void test_duplicate_keys(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *b_child = xpub_at("m/48'/0'/1'/2'/1");
+  const char *b_hex = pub_at("m/48'/0'/1'/2'", false);
+
+  check_duplicate_key(
+      "duplicate key: B/0/* then B/<0;1>/*",
+      descf("wsh(multi(2,%s/<0;1>/*,%s/0/*,%s/<0;1>/*))", a, b, b), true);
+  check_duplicate_key("duplicate key: B/0/* and B/00/*",
+                      descf("wsh(multi(2,%s/0/*,%s/0/*,%s/00/*))", a, b, b),
+                      true);
+  check_duplicate_key("duplicate key: B and its public key in hex",
+                      descf("wsh(multi(2,%s,%s,%s))", a, b, b_hex), true);
+  check_duplicate_key("duplicate key: B/1/* and B's child xpub at 1",
+                      descf("wsh(multi(2,%s/1/*,%s/1/*,%s/*))", a, b, b_child),
+                      true);
+  check_duplicate_key(
+      "disjoint reuse: B/<0;1>/* and B/<2;3>/*",
+      descf("wsh(multi(2,%s/<0;1>/*,%s/<0;1>/*,%s/<2;3>/*))", a, b, b), false);
+  check_duplicate_key(
+      "disjoint reuse: B/7/<0;1>/* and B/8/<0;1>/*",
+      descf("wsh(multi(2,%s/<0;1>/*,%s/7/<0;1>/*,%s/8/<0;1>/*))", a, b, b),
+      false);
+}
+
 /* Every parse is depth-capped; libwally alone would take a deeper nesting. */
 static void test_depth_cap(void) {
   const char *a = xpub_at("m/48'/0'/0'/2'");
@@ -1212,6 +1249,7 @@ int main(void) {
   test_preconditions();
   test_static_gates();
   test_non_sane_miniscript();
+  test_duplicate_keys();
   test_depth_cap();
   test_bare_top_level();
   test_key_matching();
