@@ -271,6 +271,18 @@ static void test_policy_case(void) {
   check_key_tokens("view: tr keys only", tr_upper, "AB");
 }
 
+/* A flattened thresh() must carry each child whole, not just its first line. */
+static void test_thresh_combinator_child(void) {
+  check_key_tokens("view: thresh keeps the keys under an or_b child",
+                   "wsh(thresh(2,pk(" XPUB_84 "/0/*),a:pk(" XPUB_84 "/1/*),"
+                   "a:or_b(pk(" XPUB_84 "/2/*),a:pk(" XPUB_84 "/3/*))))",
+                   "ABCD");
+  check_key_tokens("view: thresh keeps the keys under an and_b child",
+                   "wsh(thresh(1,pk(" XPUB_84 "/0/*),a:and_b(pk(" XPUB_84
+                   "/1/*),a:pk(" XPUB_84 "/2/*))))",
+                   "ABC");
+}
+
 static void test_is_miniscript(void) {
   TEST("is_miniscript: wsh(or_d) true, wsh(sortedmulti) false");
   struct wally_descriptor *ms =
@@ -455,6 +467,7 @@ int main(void) {
   test_indenter();
   test_policy_string();
   test_policy_case();
+  test_thresh_combinator_child();
   test_is_miniscript();
   test_view();
   test_timelock_notes();

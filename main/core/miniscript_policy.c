@@ -281,19 +281,21 @@ static void join_closing_parens(lines_t *l) {
   }
 }
 
-static bool node_to_lines(const ms_node_t *node, size_t max_width,
-                          lines_t *out);
-
-// First rendered line of a node, stripped of indentation.
-static char *node_first_line(const ms_node_t *node, size_t max_width) {
-  lines_t tmp = {0};
-  if (!node_to_lines(node, max_width, &tmp)) {
-    lines_free(&tmp);
-    return NULL;
+// A node and all its children on one line.
+static char *node_flat_text(const ms_node_t *node) {
+  if (node->num_children == 0)
+    return str_printf("%s", node->text);
+  char *line = str_printf("%s(", node->text);
+  for (size_t i = 0; line && i < node->num_children; i++) {
+    char *child = node_flat_text(node->children[i]);
+    char *next = child ? str_printf("%s%s%s", line, i ? "," : "", child) : NULL;
+    free(child);
+    free(line);
+    line = next;
   }
-  char *first = dup_trim(tmp.items[0], strlen(tmp.items[0]));
-  lines_free(&tmp);
-  return first;
+  char *flat = line ? str_printf("%s)", line) : NULL;
+  free(line);
+  return flat;
 }
 
 static bool node_to_lines(const ms_node_t *node, size_t max_width,
@@ -307,19 +309,9 @@ static bool node_to_lines(const ms_node_t *node, size_t max_width,
     if (node->children[i]->num_children == 0)
       any_leaf = true;
   if (any_leaf && node->level > 0) {
-    char *line = str_printf("%*s%s(", node->level, "", node->text);
-    for (size_t i = 0; line && i < node->num_children; i++) {
-      char *child = node_first_line(node->children[i], max_width);
-      char *next =
-          child ? str_printf("%s%s%s", line, i ? "," : "", child) : NULL;
-      free(child);
-      free(line);
-      line = next;
-    }
-    if (!line)
-      return false;
-    char *flat = str_printf("%s)", line);
-    free(line);
+    char *text = node_flat_text(node);
+    char *flat = text ? str_printf("%*s%s", node->level, "", text) : NULL;
+    free(text);
     if (!flat)
       return false;
     if (strlen(flat) <= max_width)
