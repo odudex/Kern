@@ -158,7 +158,7 @@ KEF_SRC = ../kef.c ../kef.h ../base43.c ../base43.h $(CRYPTO_UTILS_SRC) \
 	$(DEFLATE_DIR)/deflate_codec.c
 KEF_LIBS = -lmbedcrypto -lz
 
-SS_SRC = ../ss_whitelist.c $(SS_H) ../key.h $(SCRIPT_TEMPLATE_SRC)
+SS_SRC = ../ss_whitelist.c $(SS_H) ../key.h ../miniscript_policy.h $(SCRIPT_TEMPLATE_SRC)
 KEY_SRC = ../key.c ../key.h $(BIP32_PATH_SRC) ../../utils/secure_mem.h
 
 BIP138_DIR = $(ROOT)/components/bip138

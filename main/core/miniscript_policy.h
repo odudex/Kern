@@ -4,8 +4,9 @@
 #include "../utils/attributes.h"
 #include <stdbool.h>
 #include <stddef.h>
-
-struct wally_descriptor;
+#include <stdint.h>
+#include <wally_core.h>
+#include <wally_descriptor.h>
 
 /* Keys are labeled with one letter ID each, 'A'..'Z'. Shared by the policy
  * letter substitution and every screen that lists descriptor keys. */
@@ -15,8 +16,14 @@ struct wally_descriptor;
  * fragments, or any tr() script tree. libwally clears WALLY_MS_IS_DESCRIPTOR
  * when it meets a miniscript fragment, but a taproot tree whose leaves are all
  * pk() or pkh() keeps it, and is no multisig. */
-KERN_WARN_UNUSED_RESULT bool
-miniscript_policy_is_miniscript(const struct wally_descriptor *desc);
+static inline bool
+miniscript_policy_is_miniscript(const struct wally_descriptor *desc) {
+  uint32_t features = 0;
+  if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
+    return false;
+  return (features & WALLY_MS_IS_DESCRIPTOR) == 0 ||
+         (features & WALLY_MS_IS_TAPSCRIPT) != 0;
+}
 
 /* Canonical descriptor with each key expression (origin, xpub and child
  * path) replaced by its letter ID ('A' + key index, matching the order keys

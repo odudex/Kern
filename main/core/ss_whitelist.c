@@ -1,5 +1,6 @@
 #include "ss_whitelist.h"
 #include "key.h"
+#include "miniscript_policy.h"
 #include <stdio.h>
 #include <stdlib.h> /* strtoul */
 #include <string.h>
@@ -197,28 +198,13 @@ purpose_script_binding_check_soft(const struct wally_descriptor *desc) {
   bool is_wsh = (strncmp(canon, "wsh(", 4) == 0);
   bool is_sh_wsh = (strncmp(canon, "sh(wsh(", 7) == 0);
 
-  /* tr(KEY,<tree>) carries a taproot script tree; a key expression has no
-   * top-level comma, so the first ',' before ')' marks one. */
-  bool tr_with_tree = false;
-  if (is_tr) {
-    const char *p = canon + 3;
-    while (*p && *p != ',' && *p != ')')
-      p++;
-    tr_with_tree = (*p == ',');
-  }
   wally_free_string(canon);
 
   /* The purpose↔script convention applies to single-sig and plain multisig.
    * A miniscript or taproot script-path policy binds the script to the policy
    * rather than the BIP purpose, so the convention does not apply — skip
-   * rather than warn. get_features reliably flags wsh miniscript (and leaves
-   * multi()/sortedmulti() unset); a taproot tree of pure-descriptor leaves
-   * keeps WALLY_MS_IS_DESCRIPTOR set, so the tr_with_tree scan covers it. */
-  uint32_t features = 0;
-  bool is_miniscript =
-      wally_descriptor_get_features(desc, &features) == WALLY_OK &&
-      (features & WALLY_MS_IS_DESCRIPTOR) == 0;
-  if (tr_with_tree || is_miniscript)
+   * rather than warn. */
+  if (miniscript_policy_is_miniscript(desc))
     return PSB_NA;
 
   /* Step 2: Parse purpose from key[0]'s origin path */
