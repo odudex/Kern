@@ -320,8 +320,8 @@ $(TARGET_WALLY_DESCRIPTOR): $(SRCS_WALLY_DESCRIPTOR) $(LIBWALLY)
 $(TARGET_SEEDQR): $(SRCS_SEEDQR) ../../qr/seedqr.c ../../qr/seedqr.h $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_SEEDQR) ../../qr/seedqr.c $(LIBWALLY) -lmbedcrypto
 
-$(TARGET_MNEMONIC_WORDS): $(SRCS_MNEMONIC_WORDS) ../../utils/bip39_filter.c ../../utils/bip39_filter.h $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MNEMONIC_WORDS) ../../utils/bip39_filter.c $(LIBWALLY) -lmbedcrypto
+$(TARGET_MNEMONIC_WORDS): $(SRCS_MNEMONIC_WORDS) ../../utils/bip39_filter.c ../../utils/bip39_filter.h ../dice_mnemonic.c ../dice_mnemonic.h $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MNEMONIC_WORDS) ../../utils/bip39_filter.c ../dice_mnemonic.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_MULTISIG_SETUP): $(SRCS_MULTISIG_SETUP) $(MULTISIG_SETUP_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MULTISIG_SETUP) ../multisig_setup.c $(LIBWALLY) -lmbedcrypto

@@ -5,7 +5,9 @@
 
 #include <wally_core.h>
 
+#include "core/dice_mnemonic.h"
 #include "utils/bip39_filter.h"
+#include "utils/secure_mem.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -160,6 +162,51 @@ static void test_valid_last_words_agree(void) {
   PASS();
 }
 
+/* Expected mnemonics from Python's hashlib and an independent BIP39 encoder. */
+static void test_dice_mnemonic(void) {
+  TEST("dice_mnemonic_from_rolls: SHA-256 of the digits as BIP39 entropy");
+
+  static const struct {
+    const char *rolls;
+    int words;
+    const char *want;
+  } vectors[] = {
+      {"12345612345612345612345612345612345612345612345612345612", 12,
+       "chest spatial into brick once toast dog gallery battle flee stem "
+       "miracle"},
+      {"66666666666666666666666666666666666666666666666666666666666666666666"
+       "6666666666666666666666666666666",
+       24,
+       "leave symbol nuclear chase dentist letter tape program illegal vague "
+       "suggest wife copy source soup jacket fee eager loyal zoo keep brisk "
+       "dynamic cradle"},
+      {"31415326535231332324626433232135622241311633333151652263143445323612"
+       "1646622626233262263422534211166",
+       24,
+       "goat lyrics ripple sunset gasp pair nothing advance shadow follow cave "
+       "chief fade useful park manual whisper brick face medal cannon fragile "
+       "feature unknown"},
+  };
+  for (size_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
+    char *mnemonic = NULL;
+    bool ok =
+        dice_mnemonic_from_rolls(vectors[i].rolls, strlen(vectors[i].rolls),
+                                 vectors[i].words, &mnemonic) &&
+        strcmp(mnemonic, vectors[i].want) == 0;
+    SECURE_FREE_STRING(mnemonic);
+    if (!ok) {
+      FAIL(vectors[i].want);
+      return;
+    }
+  }
+  char *mnemonic = NULL;
+  if (dice_mnemonic_from_rolls("123", 3, 18, &mnemonic) || mnemonic ||
+      dice_mnemonic_from_rolls("", 0, 12, &mnemonic) || mnemonic)
+    FAIL("an unsupported word count or no rolls should refuse");
+  else
+    PASS();
+}
+
 int main(void) {
   if (wally_init(0) != WALLY_OK || !bip39_filter_init()) {
     printf("ABORT: wally_init or bip39_filter_init failed\n");
@@ -170,6 +217,7 @@ int main(void) {
   test_complete_last_word();
   test_complete_last_word_refuses();
   test_valid_last_words_agree();
+  test_dice_mnemonic();
 
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,
          tests_failed);
