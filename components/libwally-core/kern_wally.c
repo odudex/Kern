@@ -1,16 +1,29 @@
 #include "kern_wally.h"
 #include "secure_memory.h"
+#include <stdbool.h>
 #include <stdlib.h>
 #include <wally_core.h>
+#ifdef ESP_PLATFORM
+#include <esp_heap_caps.h>
+#endif
 
 /* Install once, before tasks start. Only the calling thread's allocation
  * policy changes during a secret operation; no global callback swapping. */
 static _Thread_local unsigned secret_depth;
+static _Thread_local unsigned bulk_depth;
 static void *(*default_malloc)(size_t);
 static void (*default_free)(void *);
 
 static void *policy_malloc(size_t size) {
-  return secret_depth ? kern_secret_alloc(size) : default_malloc(size);
+  if (secret_depth)
+    return kern_secret_alloc(size);
+#ifdef ESP_PLATFORM
+  /* Bulk public data: PSRAM first, internal RAM only when PSRAM is full. */
+  if (bulk_depth)
+    return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT,
+                                   MALLOC_CAP_DEFAULT);
+#endif
+  return default_malloc(size);
 }
 
 static void __attribute__((constructor)) init_secret_policy(void) {
@@ -28,10 +41,14 @@ static void __attribute__((constructor)) init_secret_policy(void) {
  * override must fail closed instead of silently changing placement, and a
  * different free_fn would no longer release the kern_secret_alloc blocks
  * policy_malloc hands out (see kern_wally.h). */
-static int enter_secret_operation(void) {
+static bool hooks_in_place(void) {
   struct wally_operations ops = {.struct_size = sizeof(ops)};
-  if (wally_get_operations(&ops) != WALLY_OK ||
-      ops.malloc_fn != policy_malloc || ops.free_fn != default_free)
+  return wally_get_operations(&ops) == WALLY_OK &&
+         ops.malloc_fn == policy_malloc && ops.free_fn == default_free;
+}
+
+static int enter_secret_operation(void) {
+  if (!hooks_in_place())
     return WALLY_ERROR;
   ++secret_depth;
   return WALLY_OK;
@@ -46,6 +63,37 @@ static int enter_secret_operation(void) {
     --secret_depth;                                                            \
     return status;                                                             \
   } while (0)
+
+#define BULK_CALL(call)                                                        \
+  do {                                                                         \
+    if (!hooks_in_place())                                                     \
+      return WALLY_ERROR;                                                      \
+    ++bulk_depth;                                                              \
+    int status = (call);                                                       \
+    --bulk_depth;                                                              \
+    return status;                                                             \
+  } while (0)
+
+int kern_psbt_from_bytes(const unsigned char *bytes, size_t len, uint32_t flags,
+                         struct wally_psbt **out) {
+  if (out)
+    *out = NULL;
+  BULK_CALL(wally_psbt_from_bytes(bytes, len, flags, out));
+}
+
+int kern_psbt_from_base64(const char *base64, uint32_t flags,
+                          struct wally_psbt **out) {
+  if (out)
+    *out = NULL;
+  BULK_CALL(wally_psbt_from_base64(base64, flags, out));
+}
+
+int kern_psbt_clone_alloc(const struct wally_psbt *psbt, uint32_t flags,
+                          struct wally_psbt **out) {
+  if (out)
+    *out = NULL;
+  BULK_CALL(wally_psbt_clone_alloc(psbt, flags, out));
+}
 
 int kern_bip32_key_from_seed_alloc(const unsigned char *seed, size_t len,
                                    uint32_t version, uint32_t flags,

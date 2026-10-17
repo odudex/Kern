@@ -13,6 +13,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
+#include "kern_wally.h"
 #include "psbt_sign_policy.h"
 #include "scan_internal.h"
 #include <inttypes.h>
@@ -250,7 +251,7 @@ bool scan_psbt_parse_base64(const char *base64_data) {
 
   scan_psbt_cleanup();
 
-  int ret = wally_psbt_from_base64(base64_data, 0, &scan_ctx.psbt);
+  int ret = kern_psbt_from_base64(base64_data, 0, &scan_ctx.psbt);
   if (ret != WALLY_OK) {
     scan_psbt_cleanup();
     return false;

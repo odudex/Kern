@@ -1,5 +1,6 @@
 #include "psbt.h"
 #include "bip32_path.h"
+#include "kern_wally.h"
 #include "key.h"
 #include "psbt_internal.h"
 #include "script_templates.h"
@@ -1252,7 +1253,7 @@ cleanup:
  * rules left them. The only failure is the copy itself. */
 struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
   struct wally_psbt *trimmed = NULL;
-  if (!psbt || wally_psbt_clone_alloc(psbt, 0, &trimmed) != WALLY_OK)
+  if (!psbt || kern_psbt_clone_alloc(psbt, 0, &trimmed) != WALLY_OK)
     return NULL;
 
   wally_map_clear(&trimmed->global_xpubs);

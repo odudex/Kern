@@ -1,6 +1,16 @@
 #pragma once
 #include <wally_bip32.h>
 #include <wally_bip39.h>
+#include <wally_psbt.h>
+
+/* Parsed and cloned PSBTs are thousands of small blocks, which the default
+ * heap would place in internal RAM; these prefer PSRAM for them. */
+int kern_psbt_from_bytes(const unsigned char *bytes, size_t len, uint32_t flags,
+                         struct wally_psbt **out);
+int kern_psbt_from_base64(const char *base64, uint32_t flags,
+                          struct wally_psbt **out);
+int kern_psbt_clone_alloc(const struct wally_psbt *psbt, uint32_t flags,
+                          struct wally_psbt **out);
 
 /* These operations require internal RAM for ALL their libwally allocations,
  * including temporary salt/word/key storage. Ordinary public-data operations
