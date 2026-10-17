@@ -15,7 +15,8 @@ bool miniscript_policy_is_miniscript(const struct wally_descriptor *desc) {
   uint32_t features = 0;
   if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
     return false;
-  return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
+  return (features & WALLY_MS_IS_DESCRIPTOR) == 0 ||
+         (features & WALLY_MS_IS_TAPSCRIPT) != 0;
 }
 
 // libwally returns raw keys as lowercase hex but keeps them as written in the

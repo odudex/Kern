@@ -306,6 +306,28 @@ static void test_is_miniscript(void) {
     wally_descriptor_free(ms);
   if (sm)
     wally_descriptor_free(sm);
+
+  /* A taptree of pk() leaves keeps WALLY_MS_IS_DESCRIPTOR set but is a
+   * 1-of-N spend set, not a multisig; key-path-only tr() is single-sig. */
+  TEST("is_miniscript: tr() pk-only tree true, tr(KEY) false");
+  struct wally_descriptor *tree =
+      parse_desc("tr([00000000/86'/0'/0']" XPUB_86 "/0/*,"
+                 "{pk([11111111/86'/0'/0']" XPUB_84 "/0/*),"
+                 "pkh([22222222/86'/0'/0']" XPUB_84 "/1/*)})");
+  struct wally_descriptor *keypath =
+      parse_desc("tr([00000000/86'/0'/0']" XPUB_86 "/0/*)");
+  if (!tree || !keypath)
+    FAIL("descriptor parse failed");
+  else if (!miniscript_policy_is_miniscript(tree))
+    FAIL("pk-only taptree not detected as miniscript");
+  else if (miniscript_policy_is_miniscript(keypath))
+    FAIL("key-path tr() detected as miniscript");
+  else
+    PASS();
+  if (tree)
+    wally_descriptor_free(tree);
+  if (keypath)
+    wally_descriptor_free(keypath);
 }
 
 typedef struct {

@@ -11,6 +11,10 @@ struct wally_descriptor;
  * letter substitution and every screen that lists descriptor keys. */
 #define MINISCRIPT_POLICY_MAX_KEYS 26
 
+/* True for a policy shown as a tree rather than a key list: miniscript
+ * fragments, or any tr() script tree. libwally clears WALLY_MS_IS_DESCRIPTOR
+ * when it meets a miniscript fragment, but a taproot tree whose leaves are all
+ * pk() or pkh() keeps it, and is no multisig. */
 KERN_WARN_UNUSED_RESULT bool
 miniscript_policy_is_miniscript(const struct wally_descriptor *desc);
 

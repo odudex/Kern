@@ -197,16 +197,6 @@ static bool descriptor_has_private_key(const struct wally_descriptor *desc) {
          (features & WALLY_MS_IS_PRIVATE);
 }
 
-// True if the parsed descriptor contains miniscript-only fragments.
-// libwally sets WALLY_MS_IS_DESCRIPTOR at parse start and clears it when a
-// non-descriptor (miniscript) fragment is found; multi()/sortedmulti() keep it.
-static bool descriptor_is_miniscript(const struct wally_descriptor *desc) {
-  uint32_t features = 0;
-  if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
-    return false;
-  return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
-}
-
 // Miniscript is supported wrapped in a plain wsh() (segwit v0) or tr()
 // (taproot script-path). Bare miniscript and other wrappers are rejected.
 static bool
@@ -318,9 +308,9 @@ static bool descriptor_is_tr(const struct wally_descriptor *descriptor) {
 }
 
 /* True if the descriptor is tr() carrying a script tree, i.e. tr(KEY,<tree>)
- * rather than plain key-path tr(KEY) (BIP86).
- * Note: descriptor_is_miniscript() is unreliable here — a taptree of pure
- * descriptor leaves (pk/multi_a) keeps WALLY_MS_IS_DESCRIPTOR set. */
+ * rather than plain key-path tr(KEY) (BIP86). WALLY_MS_IS_DESCRIPTOR cannot
+ * tell: a tree whose leaves are all pk() or pkh() keeps it set (multi_a
+ * clears it). */
 static bool tr_has_script_tree(const struct wally_descriptor *descriptor) {
   uint32_t features = 0;
   if (wally_descriptor_get_features(descriptor, &features) != WALLY_OK)
@@ -387,7 +377,7 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
     return false;
   }
 
-  info->is_miniscript = descriptor_is_miniscript(descriptor);
+  info->is_miniscript = miniscript_policy_is_miniscript(descriptor);
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
   info->tr_keypath = classify_tr_keypath(descriptor, our_key_index);
 
@@ -590,7 +580,7 @@ static_checks(struct wally_descriptor *descriptor) {
   uint32_t num_keys = 0;
   if (descriptor_has_private_key(descriptor))
     return VALIDATION_PRIVATE_KEY;
-  if (descriptor_is_miniscript(descriptor) &&
+  if (miniscript_policy_is_miniscript(descriptor) &&
       !miniscript_wrapper_is_supported(descriptor))
     return VALIDATION_UNSUPPORTED_MINISCRIPT;
   if (!descriptor_scripts_are_generatable(descriptor))

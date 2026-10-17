@@ -709,6 +709,24 @@ static void test_taproot_keypath(void) {
         run(nums_internal) == VALIDATION_SUCCESS);
   check("info: key-path classified NUMS",
         info_seen.tr_keypath == TR_KEYPATH_NUMS);
+  check("info: pk() leaf is a policy, not a multisig",
+        info_seen.is_miniscript && !info_seen.is_multisig &&
+            strcmp(info_seen.policy, "tr(A,pk(B))") == 0);
+  check("session label Miniscript (2 keys)",
+        registry_has_label("Miniscript (2 keys)"));
+  registry_clear();
+
+  const char *pk_tree = descf("tr(" NUMS_H ",{pk([" FP "/86'/0'/0']%s/0/*),"
+                              "pk([deadbeef/86'/0'/1']%s/0/*)})",
+                              ours, other);
+  check("NUMS tree of two pk() leaves accepted",
+        run(pk_tree) == VALIDATION_SUCCESS);
+  check("info: pk() tree is a policy, not a multisig",
+        info_seen.is_miniscript && !info_seen.is_multisig &&
+            info_seen.threshold == 0 &&
+            strcmp(info_seen.policy, "tr(A,{pk(B),pk(C)})") == 0);
+  check("pk() tree session label Miniscript (3 keys)",
+        registry_has_label("Miniscript (3 keys)"));
 
   const char *nums_compressed =
       descf("tr(02" NUMS_H ",pk([" FP "/86'/0'/0']%s/0/*))", ours);
@@ -730,6 +748,9 @@ static void test_taproot_keypath(void) {
   check("our key as internal with a tree accepted",
         run(ours_internal) == VALIDATION_SUCCESS &&
             info_seen.tr_keypath == TR_KEYPATH_OURS);
+  check("info: our internal key with a pk() leaf is a policy",
+        info_seen.is_miniscript && !info_seen.is_multisig &&
+            strcmp(info_seen.policy, "tr(A,pk(B))") == 0);
 
   const char *multi_a =
       descf("tr(" NUMS_H ",multi_a(2,[" FP "/86'/0'/0']%s/0/*,"
