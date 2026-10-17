@@ -1242,8 +1242,10 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
             memcmp(keys[p]->pub_key + 1, internal, sizeof(internal)) == 0;
         if (is_internal != (last == 1))
           continue;
-        int ret = wally_psbt_sign(psbt, keys[p]->priv_key + 1,
-                                  EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
+        /* With no chain code libwally matches the key by its public key, as
+         * wally_psbt_sign does, without recomputing that public key. */
+        memset(keys[p]->chain_code, 0, sizeof(keys[p]->chain_code));
+        int ret = wally_psbt_sign_bip32(psbt, keys[p], EC_FLAG_GRIND_R);
         if (ret == WALLY_OK)
           signatures_added++;
         else
