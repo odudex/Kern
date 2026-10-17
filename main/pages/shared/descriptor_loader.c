@@ -762,7 +762,7 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   }
 
   // Indented miniscript policy with key letters, our keys highlighted
-  if (info->is_miniscript && info->policy[0]) {
+  if (info->is_miniscript && info->policy) {
     char ours[DESCRIPTOR_INFO_MAX_KEYS + 1];
     size_t n_ours = 0;
     for (uint32_t i = 0; my_fp[0] != '\0' && i < info->num_keys; i++)

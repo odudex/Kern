@@ -85,8 +85,9 @@ typedef struct {
     char derivation[64];
   } keys[DESCRIPTOR_INFO_MAX_KEYS];
   /* Miniscript only: descriptor with key expressions replaced by their
-   * letter IDs (A, B, ...). Empty if unavailable. */
-  char policy[512];
+   * letter IDs (A, B, ...), freed by the validator when the flow ends. NULL
+   * if unavailable. */
+  char *policy;
   /* tr() only: classification of the taproot internal (key-path) key. */
   tr_keypath_class_t tr_keypath;
 } descriptor_info_t;

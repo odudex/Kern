@@ -111,6 +111,7 @@ static void cleanup_context(void) {
     if (current_ctx->descriptor_str) {
       free(current_ctx->descriptor_str);
     }
+    free(current_ctx->info.policy);
     free(current_ctx);
     current_ctx = NULL;
   }
@@ -390,13 +391,8 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
   info->tr_keypath = classify_tr_keypath(descriptor, our_key_index);
 
-  if (info->is_miniscript) {
-    char *policy = miniscript_policy_string(descriptor);
-    if (policy) {
-      snprintf(info->policy, sizeof(info->policy), "%s", policy);
-      free(policy);
-    }
-  }
+  if (info->is_miniscript)
+    info->policy = miniscript_policy_string(descriptor);
   info->num_keys = num_keys;
 
   if (info->is_multisig) {

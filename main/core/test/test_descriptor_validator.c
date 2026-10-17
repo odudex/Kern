@@ -101,6 +101,7 @@ static void *done_user_data;
 
 static int info_calls;
 static descriptor_info_t info_seen;
+static char policy_seen[4096];
 static void (*info_proceed)(bool, void *);
 static bool info_auto;
 static bool info_answer;
@@ -117,6 +118,8 @@ static void capture_reset(void) {
   done_user_data = NULL;
   info_calls = 0;
   memset(&info_seen, 0, sizeof(info_seen));
+  policy_seen[0] = '\0';
+  info_seen.policy = policy_seen;
   info_proceed = NULL;
   info_auto = true;
   info_answer = true;
@@ -137,6 +140,10 @@ static void info_cb(const descriptor_info_t *info,
                     void (*proceed)(bool, void *)) {
   info_calls++;
   info_seen = *info;
+  /* The validator frees its policy when the flow completes. */
+  snprintf(policy_seen, sizeof(policy_seen), "%s",
+           info->policy ? info->policy : "");
+  info_seen.policy = policy_seen;
   if (info_auto)
     proceed(info_answer, NULL);
   else
@@ -760,6 +767,28 @@ static void test_key_cap(void) {
   registry_clear();
 }
 
+/* The load dialog gets the whole policy, however long. */
+static void test_long_policy(void) {
+  registry_clear();
+  char tail[1024], expected[1024];
+  size_t n = 0;
+  for (int i = 1; i <= 7; i++) {
+    char hash[65];
+    memset(hash, '0' + i, 64);
+    hash[64] = '\0';
+    n += snprintf(tail + n, sizeof(tail) - n,
+                  i < 7 ? "and_v(v:sha256(%s)," : "sha256(%s)))))))))", hash);
+  }
+  snprintf(expected, sizeof(expected), "tr(A,and_v(v:pk(B),%s", tail);
+  const char *desc = descf(
+      "tr(" NUMS_H ",and_v(v:pk([" FP "/86'/0'/0']%s/0/*),%s", X86_0, tail);
+  check("long tr() policy accepted", run(desc) == VALIDATION_SUCCESS);
+  check("info: policy longer than 511 characters kept whole",
+        strlen(info_seen.policy) > 511 &&
+            strcmp(info_seen.policy, expected) == 0);
+  registry_clear();
+}
+
 static void test_network(void) {
   registry_clear();
   key_unload();
@@ -977,6 +1006,7 @@ int main(void) {
   test_multisig_and_miniscript();
   test_taproot_keypath();
   test_key_cap();
+  test_long_policy();
   test_network();
   test_dedup();
   test_generation_guard();
