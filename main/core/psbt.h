@@ -127,6 +127,7 @@ typedef struct {
    * that category is empty. Used to name a concrete input in the warning. */
   size_t first_unproven;
   size_t first_invalid;
+  size_t first_missing;
 } psbt_amount_audit_t;
 
 // Resolve an input's amount and how well it is backed. Prefers the value from
@@ -145,11 +146,11 @@ static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
 }
 
 // True when the displayed fee cannot be manipulated by lying about an
-// asserted amount. A signature commits to its own input's amount (BIP143) or
-// to every input's (BIP341), so a lie about a single-input transaction yields
-// only an invalid signature. Stealing fee needs two inputs signed in two
-// rounds with the lie moved between them, and needs ALL/DEFAULT sighash, which
-// psbt_sighash_is_supported() enforces. Counts every input, not only owned
+// asserted amount, whatever is signed. A BIP143 signature commits to its own
+// input's amount only, so a lie about a single-input transaction yields only
+// an invalid signature, but stealing fee works with two inputs signed in two
+// rounds with the lie moved between them (under ALL/DEFAULT sighash, which
+// psbt_sighash_is_supported() enforces). Counts every input, not only owned
 // ones: the two-round attack can hide ownership of the other input per round.
 // Contradictory or absent data is never trusted, whatever the count.
 static inline bool psbt_fee_is_trusted(const psbt_amount_audit_t *audit) {
@@ -157,6 +158,19 @@ static inline bool psbt_fee_is_trusted(const psbt_amount_audit_t *audit) {
     return false;
   return audit->num_inputs == 1 || psbt_amounts_are_proven(audit);
 }
+
+// Same, knowing which inputs will be signed (`signing[i]`, one per input).
+// When every one of them is taproot under SIGHASH_DEFAULT or ALL, each
+// signature commits to every input's amount (BIP341): a lie about any amount
+// only makes the signatures invalid, so asserted amounts can be trusted.
+KERN_WARN_UNUSED_RESULT bool
+psbt_fee_is_trusted_for_signing(const struct wally_psbt *psbt,
+                                const psbt_amount_audit_t *audit,
+                                const bool *signing);
+
+// True when input i is spent with a taproot (BIP341) signature.
+KERN_WARN_UNUSED_RESULT bool
+psbt_input_is_taproot(const struct wally_psbt *psbt, size_t i);
 
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);

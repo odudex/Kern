@@ -109,6 +109,7 @@ void psbt_audit_input_amounts(const struct wally_psbt *psbt,
 
   out->first_unproven = out->num_inputs;
   out->first_invalid = out->num_inputs;
+  out->first_missing = out->num_inputs;
 
   for (size_t i = 0; i < out->num_inputs; i++) {
     psbt_input_amount_t amount = psbt_get_input_amount(psbt, i);
@@ -127,11 +128,43 @@ void psbt_audit_input_amounts(const struct wally_psbt *psbt,
       break;
     case PSBT_AMOUNT_MISSING:
       out->missing++;
+      if (out->first_missing == out->num_inputs)
+        out->first_missing = i;
       break;
     }
     if (out->first_unproven == out->num_inputs)
       out->first_unproven = i;
   }
+}
+
+bool psbt_input_is_taproot(const struct wally_psbt *psbt, size_t i) {
+  uint32_t type = 0;
+  return psbt &&
+         wally_psbt_get_input_signature_type(psbt, i, &type) == WALLY_OK &&
+         type == WALLY_SIGTYPE_SW_V1;
+}
+
+bool psbt_fee_is_trusted_for_signing(const struct wally_psbt *psbt,
+                                     const psbt_amount_audit_t *audit,
+                                     const bool *signing) {
+  if (psbt_fee_is_trusted(audit))
+    return true;
+  if (!psbt || !signing || audit->num_inputs == 0 || audit->invalid ||
+      audit->missing)
+    return false;
+  bool any = false;
+  for (size_t i = 0; i < audit->num_inputs; i++) {
+    if (!signing[i])
+      continue;
+    size_t sighash = 0;
+    if (wally_psbt_get_input_sighash(psbt, i, &sighash) != WALLY_OK)
+      sighash = 0;
+    if (!psbt_input_is_taproot(psbt, i) ||
+        !psbt_sighash_is_supported((uint32_t)sighash))
+      return false;
+    any = true;
+  }
+  return any;
 }
 
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index) {

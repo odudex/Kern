@@ -1481,6 +1481,65 @@ done:
   wally_tx_free(prev);
 }
 
+static struct wally_psbt *
+make_two_input_psbt(const uint8_t *spk1, size_t spk1_len, const uint8_t *pk1,
+                    size_t pk1_len, const uint8_t *kp1, size_t kp1_len,
+                    const uint8_t *spk2, size_t spk2_len, const uint8_t *pk2,
+                    size_t pk2_len, const uint8_t *kp2, size_t kp2_len);
+
+/* BIP341: a taproot signature commits to every input's amount, so when only
+ * taproot inputs are signed a lied amount can only invalidate them. */
+static void test_fee_trust_taproot_signing(void) {
+  const uint8_t pk[EC_PUBLIC_KEY_LEN] = {0x02, 0x01};
+  const uint8_t kp[4] = {0};
+  const bool both[2] = {true, true};
+  const bool first[2] = {true, false};
+  psbt_amount_audit_t audit;
+
+  TEST("fee trust: two asserted taproot inputs, both signed");
+  struct wally_psbt *psbt = make_two_input_psbt(
+      REF_SPK_P2TR, sizeof(REF_SPK_P2TR), pk, sizeof(pk), kp, sizeof(kp),
+      REF_SPK_P2TR, sizeof(REF_SPK_P2TR), pk, sizeof(pk), kp, sizeof(kp));
+  if (!psbt) {
+    FAIL("fixture");
+    return;
+  }
+  psbt_audit_input_amounts(psbt, &audit);
+  if (psbt_fee_is_trusted(&audit))
+    FAIL("count-based trust should still refuse two asserted inputs");
+  else if (!psbt_fee_is_trusted_for_signing(psbt, &audit, both))
+    FAIL("expected trust when every signed input is taproot");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("fee trust: a signed P2WPKH input next to a taproot one");
+  psbt = make_two_input_psbt(
+      REF_SPK_P2TR, sizeof(REF_SPK_P2TR), pk, sizeof(pk), kp, sizeof(kp),
+      REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), pk, sizeof(pk), kp, sizeof(kp));
+  if (!psbt) {
+    FAIL("fixture");
+    return;
+  }
+  psbt_audit_input_amounts(psbt, &audit);
+  if (psbt_fee_is_trusted_for_signing(psbt, &audit, both))
+    FAIL("a BIP143 signature commits to its own amount only");
+  else if (!psbt_fee_is_trusted_for_signing(psbt, &audit, first))
+    FAIL("signing only the taproot input should be trusted");
+  else
+    PASS();
+
+  TEST("fee trust: a taproot input next to a missing amount");
+  wally_psbt_input_set_witness_utxo(&psbt->inputs[1], NULL);
+  psbt_audit_input_amounts(psbt, &audit);
+  if (audit.missing != 1 || audit.first_missing != 1 ||
+      psbt_fee_is_trusted_for_signing(psbt, &audit, first))
+    FAIL("a missing amount is never trusted");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+}
+
 /* ================================================================
  * Sighash and fee-percentage tests
  * ================================================================ */
@@ -3812,6 +3871,7 @@ int main(void) {
   test_amount_understated_witness_loses();
   test_amount_audit_mixed();
   test_fee_trust_by_input_count();
+  test_fee_trust_taproot_signing();
 
   printf("\n=== sighash and fee tests ===\n\n");
 

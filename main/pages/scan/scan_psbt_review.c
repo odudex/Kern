@@ -326,6 +326,7 @@ typedef struct {
   size_t first_dust;
   uint64_t first_dust_value;
   psbt_amount_audit_t amount_audit;
+  bool fee_trusted;
 } review_data_t;
 
 /* psbt_scriptpubkey_to_address returns a wally string, except the literal
@@ -397,6 +398,15 @@ static bool review_data_collect(review_data_t *d) {
       }
     }
   }
+
+  bool *signing = calloc(d->num_inputs, sizeof(*signing));
+  if (!signing)
+    goto fail;
+  for (size_t i = 0; i < d->num_inputs; i++)
+    signing[i] = d->inputs[i].ownership != PSBT_OWNERSHIP_EXTERNAL;
+  d->fee_trusted =
+      psbt_fee_is_trusted_for_signing(scan_ctx.psbt, &d->amount_audit, signing);
+  free(signing);
 
   struct wally_tx *tx = psbt_tx_alloc(scan_ctx.psbt);
   if (!tx)
@@ -859,8 +869,10 @@ static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
   /* The fee is inputs minus outputs, and the outputs are committed to by the
    * sighash. The inputs are only as good as their proof, so say so here rather
    * than let the number read as verified. A single input is exempt: its
-   * signature commits to the amount, so a lie there cannot confirm. */
-  if (!psbt_fee_is_trusted(&d->amount_audit)) {
+   * signature commits to the amount, so a lie there cannot confirm. So is a
+   * transaction whose every signed input is taproot, each signature
+   * committing to every input's amount. */
+  if (!d->fee_trusted) {
     char note[160];
     snprintf(note, sizeof(note),
              LV_SYMBOL_WARNING " Unproven fee: %zu of %zu input amounts are "

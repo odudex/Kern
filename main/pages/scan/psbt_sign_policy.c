@@ -14,6 +14,7 @@
 typedef struct {
   bool any_signable;
   bool any_input_external;
+  bool signs_taproot;
   bool need_permissive;
   bool need_expected_owned;
   bool flagged_is_input;
@@ -49,6 +50,9 @@ static void scan_inputs(struct wally_psbt *psbt, bool is_testnet,
 
   for (size_t i = 0; i < num_inputs; i++) {
     input_ownership_t own = psbt_classify_input(psbt, i, is_testnet);
+    if (own.ownership != PSBT_OWNERSHIP_EXTERNAL &&
+        psbt_input_is_taproot(psbt, i))
+      review->signs_taproot = true;
     switch (own.ownership) {
     case PSBT_OWNERSHIP_OWNED_SAFE:
       review->any_signable = true;
@@ -236,6 +240,26 @@ static bool reject_unbuildable_tx(struct wally_psbt *psbt,
   return true;
 }
 
+/* A taproot signature commits to every input's amount, so with any amount
+ * missing libwally cannot compute it and signing would fail only after the
+ * user approved the transaction. */
+static bool reject_taproot_missing_amount(const sign_policy_review_t *review,
+                                          const psbt_amount_audit_t *audit,
+                                          dialog_callback_t dismissed_cb) {
+  if (!review->signs_taproot || !audit->missing)
+    return false;
+
+  char body[320];
+  snprintf(body, sizeof(body),
+           "Input %zu supplies no amount.\n\n"
+           "A taproot signature commits to the amount of every input, so "
+           "this PSBT cannot be signed until the coordinator includes them "
+           "all.",
+           audit->first_missing);
+  show_cannot_sign(body, dismissed_cb);
+  return true;
+}
+
 /* An output with no address form is shown as its script's hex, which only
  * reviews it while the whole script fits on the screen. */
 static bool reject_unshowable_output(struct wally_psbt *psbt,
@@ -360,6 +384,8 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
   if (reject_invalid_amount(&audit, dismissed_cb))
     return false;
   if (reject_impossible_fee(psbt, &audit, dismissed_cb))
+    return false;
+  if (reject_taproot_missing_amount(&review, &audit, dismissed_cb))
     return false;
   if (reject_expected_owned(&review, dismissed_cb, load_descriptor_cb))
     return false;
