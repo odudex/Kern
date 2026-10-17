@@ -91,7 +91,7 @@ static bool is_checksum_valid(void) {
             sizeof(mnemonic) - strlen(mnemonic) - 1);
   }
 
-  bool valid = bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK;
+  bool valid = kern_bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK;
   secure_memzero(mnemonic, sizeof(mnemonic));
   return valid;
 }
@@ -538,7 +538,7 @@ static void load_btn_cb(lv_event_t *e) {
             sizeof(mnemonic) - strlen(mnemonic) - 1);
   }
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
+  if (kern_bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     secure_memzero(mnemonic, sizeof(mnemonic));
     return;
   }

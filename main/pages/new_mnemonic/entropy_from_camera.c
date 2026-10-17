@@ -154,12 +154,6 @@ static void proceed_cb(lv_event_t *e) {
     return;
   }
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    wally_free_string(mnemonic);
-    dialog_show_error_timeout("Invalid mnemonic generated", NULL, 0);
-    return;
-  }
-
   SECURE_FREE_STRING(completed_mnemonic);
   completed_mnemonic = mnemonic;
 

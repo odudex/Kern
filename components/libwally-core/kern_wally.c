@@ -72,6 +72,19 @@ int kern_bip39_mnemonic_from_bytes(const struct words *words,
   SECRET_CALL(bip39_mnemonic_from_bytes(words, entropy, len, out));
 }
 
+int kern_bip39_mnemonic_validate(const struct words *words,
+                                 const char *mnemonic) {
+  SECRET_CALL(bip39_mnemonic_validate(words, mnemonic));
+}
+
+int kern_bip39_mnemonic_to_bytes(const struct words *words,
+                                 const char *mnemonic, unsigned char *out,
+                                 size_t len, size_t *written) {
+  if (written)
+    *written = 0;
+  SECRET_CALL(bip39_mnemonic_to_bytes(words, mnemonic, out, len, written));
+}
+
 int kern_bip39_mnemonic_to_seed512(const char *mnemonic, const char *passphrase,
                                    unsigned char *out, size_t len) {
   SECRET_CALL(bip39_mnemonic_to_seed512(mnemonic, passphrase, out, len));

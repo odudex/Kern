@@ -174,11 +174,6 @@ char *mnemonic_qr_compact_to_mnemonic(const unsigned char *data, size_t len) {
     return NULL;
   }
 
-  if (bip39_mnemonic_validate(NULL, wally_mnemonic) != WALLY_OK) {
-    wally_free_string(wally_mnemonic);
-    return NULL;
-  }
-
   return wally_mnemonic;
 }
 
@@ -233,7 +228,7 @@ char *mnemonic_qr_seedqr_to_mnemonic(const char *data, size_t len) {
   }
   mnemonic[offset] = '\0';
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
+  if (kern_bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     SECURE_FREE_BUFFER(mnemonic, max_len);
     return NULL;
   }
@@ -264,7 +259,7 @@ char *mnemonic_qr_to_mnemonic(const char *data, size_t len,
 
   case MNEMONIC_QR_PLAINTEXT: {
     char *mnemonic = kern_secret_strndup(data, len);
-    if (mnemonic && bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
+    if (mnemonic && kern_bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
       SECURE_FREE_STRING(mnemonic);
       return NULL;
     }
@@ -282,7 +277,7 @@ char *mnemonic_to_seedqr(const char *mnemonic) {
   }
 
   // Validate mnemonic first
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
+  if (kern_bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     return NULL;
   }
 
@@ -374,19 +369,15 @@ unsigned char *mnemonic_to_compact_seedqr(const char *mnemonic,
     return NULL;
   }
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    return NULL;
-  }
-
   unsigned char *result = kern_secret_alloc(COMPACT_SEEDQR_24_WORDS_LEN);
   if (!result) {
     return NULL;
   }
 
   size_t entropy_len = 0;
-  if (bip39_mnemonic_to_bytes(NULL, mnemonic, result,
-                              COMPACT_SEEDQR_24_WORDS_LEN,
-                              &entropy_len) != WALLY_OK ||
+  if (kern_bip39_mnemonic_to_bytes(NULL, mnemonic, result,
+                                   COMPACT_SEEDQR_24_WORDS_LEN,
+                                   &entropy_len) != WALLY_OK ||
       (entropy_len != COMPACT_SEEDQR_12_WORDS_LEN &&
        entropy_len != COMPACT_SEEDQR_24_WORDS_LEN)) {
     SECURE_FREE_BUFFER(result, COMPACT_SEEDQR_24_WORDS_LEN);

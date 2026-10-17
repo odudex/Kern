@@ -20,5 +20,13 @@ int kern_bip32_key_from_parent_path_alloc(const struct ext_key *parent,
 int kern_bip39_mnemonic_from_bytes(const struct words *words,
                                    const unsigned char *entropy, size_t len,
                                    char **out);
+/* Both copy the mnemonic internally. From _to_bytes, WALLY_ENOMEM means no
+ * internal RAM, not an invalid mnemonic; _validate returns WALLY_EINVAL for
+ * both. */
+int kern_bip39_mnemonic_validate(const struct words *words,
+                                 const char *mnemonic);
+int kern_bip39_mnemonic_to_bytes(const struct words *words,
+                                 const char *mnemonic, unsigned char *out,
+                                 size_t len, size_t *written);
 int kern_bip39_mnemonic_to_seed512(const char *mnemonic, const char *passphrase,
                                    unsigned char *out, size_t len);

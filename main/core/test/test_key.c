@@ -435,6 +435,28 @@ static void test_internal_memory_exhaustion(void) {
             !phrase);
   check("secret scope does not constrain a concurrent public-data thread",
         other_thread_allocated);
+  /* Both copy the mnemonic; with secret memory denied they must fail, not
+   * fall back to the default heap. Validation reports every failure as
+   * WALLY_EINVAL, running out of memory included. */
+  fail_after = 0;
+  check("mnemonic validation copies only into secret memory",
+        kern_bip39_mnemonic_validate(NULL, TEST_MNEMONIC) == WALLY_EINVAL);
+  fail_after = 0;
+  unsigned char decoded[32];
+  size_t decoded_len = 1;
+  check("mnemonic decoding copies only into secret memory",
+        kern_bip39_mnemonic_to_bytes(NULL, TEST_MNEMONIC, decoded,
+                                     sizeof(decoded),
+                                     &decoded_len) == WALLY_ENOMEM &&
+            decoded_len == 0);
+  fail_after = -1;
+  check("mnemonic validation and decoding work with memory",
+        kern_bip39_mnemonic_validate(NULL, TEST_MNEMONIC) == WALLY_OK &&
+            kern_bip39_mnemonic_to_bytes(NULL, TEST_MNEMONIC, decoded,
+                                         sizeof(decoded),
+                                         &decoded_len) == WALLY_OK &&
+            decoded_len == 16);
+  fail_after = 0;
   void *public_data = wally_malloc(4096);
   check("public libwally allocation is unaffected and secret scope restored",
         public_data != NULL);

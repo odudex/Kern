@@ -222,6 +222,8 @@ Rules for any code that touches mnemonics, private keys, passphrases, PINs or KE
 
 Accepted until Phase 5: a live secret can be observed while in use, and compression state, cUR buffers, camera and display pixels (SeedQR display and scan moments) and NVS cipher contexts keep default placement, which may be PSRAM. Cleanup shortens retention; it does not protect live data.
 
+Accepted until libwally signs from a caller's key: `wally_psbt_sign` copies each input's signing key into a default-heap `ext_key` (wiped on release). Wrapping the call in the secret allocator would place the whole PSBT in internal RAM and make large PSBTs fail.
+
 Open: validate PSRAM write-back and power-off remanence on hardware; move zlib, cUR and NVS cipher state to internal RAM if capacity allows. The release policy's time cost is settled (wipes run at 99 MiB/s in PSRAM and 270 MiB/s internally; a scanner close or session lock spends under 100 ms in it); the constraint is internal heap headroom, which copy-on-realloc lowers by about 60 KiB, so check the internal heap low-water mark on device before adding internal-only allocations.
 
 ### Phase 1: KEF Encryption ✅

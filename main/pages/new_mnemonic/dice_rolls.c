@@ -297,11 +297,6 @@ static bool generate_mnemonic_from_rolls(void) {
   if (result != WALLY_OK || !mnemonic)
     return false;
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    wally_free_string(mnemonic);
-    return false;
-  }
-
   SECURE_FREE_STRING(completed_mnemonic);
   completed_mnemonic = mnemonic;
 

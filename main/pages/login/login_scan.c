@@ -140,10 +140,11 @@ static bool try_mnemonic(const char *content, size_t len) {
     return true;
   }
 
-  // Plaintext / SeedQR: only treat as a mnemonic if it actually validates, so
-  // descriptors fall through to the watch-only path.
+  // Plaintext / SeedQR: only treat as a mnemonic if it actually validates
+  // (mnemonic_qr_to_mnemonic checks), so descriptors fall through to the
+  // watch-only path.
   char *mnemonic = mnemonic_qr_to_mnemonic(content, len, NULL);
-  bool valid = mnemonic && bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK;
+  bool valid = mnemonic != NULL;
   SECURE_FREE_STRING(mnemonic);
   if (!valid)
     return false;

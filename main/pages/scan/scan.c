@@ -174,7 +174,7 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
     if (!parse_success) {
       char *mnemonic =
           mnemonic_qr_to_mnemonic(qr_content, qr_content_len, NULL);
-      if (mnemonic && bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK) {
+      if (mnemonic) {
         SECURE_FREE_STRING(mnemonic);
         scan_handle_mnemonic(qr_content, qr_content_len);
         SECURE_FREE_STRING(qr_content);

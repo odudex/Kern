@@ -37,7 +37,7 @@ bool key_load_from_mnemonic(const char *mnemonic, const char *passphrase,
   int ret;
   unsigned char seed[BIP39_SEED_LEN_512];
 
-  ret = bip39_mnemonic_validate(NULL, mnemonic);
+  ret = kern_bip39_mnemonic_validate(NULL, mnemonic);
   if (ret != WALLY_OK) {
     return false;
   }
@@ -125,7 +125,7 @@ bool key_mnemonic_passphrase_fingerprint_hex(const char *mnemonic,
   if (!mnemonic || !hex_out)
     return false;
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK)
+  if (kern_bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK)
     return false;
 
   unsigned char seed[BIP39_SEED_LEN_512];

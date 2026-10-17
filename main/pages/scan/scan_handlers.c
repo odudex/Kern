@@ -110,8 +110,7 @@ static void mnemonic_confirm_cb(bool confirmed, void *user_data) {
 
 void scan_handle_mnemonic(const char *data, size_t len) {
   char *mnemonic = mnemonic_qr_to_mnemonic(data, len, NULL);
-  if (!mnemonic || bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    SECURE_FREE_STRING(mnemonic);
+  if (!mnemonic) {
     dialog_show_error_timeout("Invalid mnemonic", scan_ctx.return_cb, 0);
     return;
   }
