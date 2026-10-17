@@ -1,5 +1,7 @@
 CC ?= cc
-CFLAGS = -Wall -Wextra -g
+# WALLY_ABI_NO_ELEMENTS changes libwally's struct layouts, so libwally and
+# every test must agree on it, as on the device.
+CFLAGS = -Wall -Wextra -g -DWALLY_ABI_NO_ELEMENTS
 
 # SANITIZE=1 builds every test, libwally included, with ASan and UBSan (see
 # `just test-asan`); `make clean` when toggling. libwally then avoids the

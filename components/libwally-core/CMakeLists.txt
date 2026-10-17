@@ -22,6 +22,9 @@ target_compile_definitions(${COMPONENT_TARGET} PRIVATE _FORTIFY_SOURCE=2)
 
 # libwally tests BUILD_ELEMENTS with #ifdef: defining it, even as 0, enables Elements.
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_MINIMAL=1")
+# Drops the Elements fields from the public structs. It changes their layout,
+# so it is PUBLIC: every user of the headers must see it.
+target_compile_definitions(${COMPONENT_TARGET} PUBLIC "-DWALLY_ABI_NO_ELEMENTS")
 # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_STANDARD_SECP=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_PSA_CRYPTO_H")

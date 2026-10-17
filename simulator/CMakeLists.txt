@@ -73,6 +73,9 @@ target_compile_definitions(wally PRIVATE
     ECMULT_WINDOW_SIZE=8
 )
 
+# Changes the public struct layouts, so every user of the headers needs it.
+target_compile_definitions(wally PUBLIC WALLY_ABI_NO_ELEMENTS)
+
 target_compile_options(wally PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -fstack-protector-strong
