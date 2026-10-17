@@ -59,8 +59,8 @@ static bool approval_mac(const uint8_t *descriptor, size_t len,
 bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
                            size_t *blob_len) {
   uint8_t keys[BIP138_KEYS_MAX * BIP138_KEY_LEN];
-  bip138_key_origin origins[BIP138_KEYS_MAX];
-  bip138_path paths[BIP138_KEYS_MAX];
+  bip138_key_origin origins[BIP138_BACKUP_MAX_PATHS];
+  bip138_path paths[BIP138_BACKUP_MAX_PATHS];
   uint8_t mac[HMAC_SHA256_LEN];
   size_t count = 0;
   size_t n_paths = 0;
@@ -68,17 +68,17 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
   if (!descriptor || !blob_out || !blob_len)
     return false;
   uint32_t network = wallet_wally_network();
-  if (!bip138_keys_from_descriptor(descriptor, network, keys, origins,
-                                   BIP138_KEYS_MAX, &count) &&
-      !bip138_keys_from_descriptor(descriptor, other_network(network), keys,
-                                   origins, BIP138_KEYS_MAX, &count))
+  if (!bip138_keys_from_descriptor(descriptor, network, keys, NULL,
+                                   BIP138_KEYS_MAX, &count))
+    network = other_network(network);
+  if (!bip138_keys_from_descriptor(descriptor, network, keys, NULL,
+                                   BIP138_KEYS_MAX, &count) ||
+      !bip138_origins_from_descriptor(descriptor, network, origins,
+                                      BIP138_BACKUP_MAX_PATHS, &n_paths))
     return false;
-  for (size_t i = 0; i < count; i++) {
-    if (origins[i].depth > 0) {
-      paths[n_paths].child = origins[i].child;
-      paths[n_paths].depth = origins[i].depth;
-      n_paths++;
-    }
+  for (size_t i = 0; i < n_paths; i++) {
+    paths[i].child = origins[i].child;
+    paths[i].depth = origins[i].depth;
   }
   size_t descriptor_len = strlen(descriptor);
   if (!approval_mac((const uint8_t *)descriptor, descriptor_len, mac))

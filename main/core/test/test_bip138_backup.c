@@ -242,6 +242,35 @@ static void test_uncommon_account(void) {
   free(blob);
 }
 
+/* Our xpub twice: first with no origin, then under our real origin, which is
+ * not a common path. Only the second occurrence's origin can reopen the
+ * backup, so it has to be stored as a hint too. */
+static void test_repeated_key_hint(void) {
+  char fp[9], descriptor[512];
+  char *xpub = NULL;
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  char *recovered = NULL;
+  bip138_container cont;
+  if (!key_get_fingerprint_hex(fp) || !key_get_xpub("m/84'/0'/26'", &xpub))
+    abort();
+  snprintf(descriptor, sizeof(descriptor),
+           "wsh(or_d(pk(%s/<0;1>/*),and_v(v:pk([%s/84'/0'/26']%s/<2;3>/*),"
+           "older(10))))",
+           xpub, fp, xpub);
+  wally_free_string(xpub);
+  check("repeated key: encrypts",
+        bip138_backup_encrypt(descriptor, &blob, &blob_len));
+  check("repeated key: the later occurrence's origin is a hint",
+        blob && bip138_parse(blob, blob_len, &cont) == BIP138_OK &&
+            cont.path_count == 1);
+  check("repeated key: reopens through that hint",
+        blob && bip138_backup_decrypt(blob, blob_len, &recovered, NULL) &&
+            strcmp(recovered, descriptor) == 0);
+  free(recovered);
+  free(blob);
+}
+
 static void test_foreign_key(void) {
   const char *descriptor = "wpkh(" FOREIGN_KEY "/<0;1>/*)";
   uint8_t *blob = NULL;
@@ -741,6 +770,7 @@ int main(void) {
   check("wallet initialises", wallet_init(WALLET_NETWORK_MAINNET));
   test_common_account();
   test_uncommon_account();
+  test_repeated_key_hint();
   test_foreign_key();
   test_text_form();
   test_rejections();

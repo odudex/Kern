@@ -9,8 +9,9 @@
 
 /* Largest backup the recovery path will read. */
 #define BIP138_BACKUP_MAX_LEN (32 * 1024)
-/* Distinct container derivation paths tried during recovery. */
-#define BIP138_BACKUP_MAX_PATHS BIP138_KEYS_MAX
+/* Distinct container derivation paths tried during recovery: one per key
+ * expression of a descriptor, which is capped at 26 keys. */
+#define BIP138_BACKUP_MAX_PATHS 32
 
 /* BIP138 container holding the descriptor, addressed to the descriptor's own
  * root keys, with every key's origin path stored as a recovery hint and this

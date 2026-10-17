@@ -32,4 +32,13 @@ bip138_keys_from_descriptor(const char *descriptor, uint32_t wally_network,
                             uint8_t *keys_out, bip138_key_origin *origins_out,
                             size_t max_keys, size_t *count_out);
 
+/* The origin path of every recipient key expression that has one, each
+ * distinct path once. A key used twice can sit under two origins, and only
+ * one of them may be this wallet's; recovery needs that one. Fails when there
+ * are more than max_origins. */
+KERN_WARN_UNUSED_RESULT bool
+bip138_origins_from_descriptor(const char *descriptor, uint32_t wally_network,
+                               bip138_key_origin *origins_out,
+                               size_t max_origins, size_t *count_out);
+
 #endif // BIP138_KEYS_H
