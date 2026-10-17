@@ -1749,11 +1749,11 @@ static void test_classify_output_psbt_v2(void) {
   "))"
 
 /* One output paying entry `e` at (multi_index, child_num), with our keypath
- * 48'/0'/0'/2'/<multi_index>/<child_num> on it. Classification never compares
- * the map's pubkey, so any valid point will do. */
-static struct wally_psbt *make_registry_output_psbt(const registry_entry_t *e,
-                                                    uint32_t multi_index,
-                                                    uint32_t child_num) {
+ * 48'/0'/0'/2'/<chain>/<child_num> on it. Classification never compares the
+ * map's pubkey, so any valid point will do. */
+static struct wally_psbt *
+make_registry_output_psbt_at(const registry_entry_t *e, uint32_t multi_index,
+                             uint32_t chain, uint32_t child_num) {
   uint8_t spk[34];
   uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
   size_t written = 0;
@@ -1777,8 +1777,8 @@ static struct wally_psbt *make_registry_output_psbt(const registry_entry_t *e,
     return NULL;
 
   uint8_t kp_val[4 + 6 * 4] = {0};
-  const uint32_t path[] = {0x80000030, 0x80000000,  0x80000000,
-                           0x80000002, multi_index, child_num};
+  const uint32_t path[] = {0x80000030, 0x80000000, 0x80000000,
+                           0x80000002, chain,      child_num};
   for (size_t i = 0; i < 6; i++)
     for (size_t b = 0; b < 4; b++)
       kp_val[4 + i * 4 + b] = (uint8_t)(path[i] >> (8 * b));
@@ -1792,6 +1792,12 @@ static struct wally_psbt *make_registry_output_psbt(const registry_entry_t *e,
                 kp_val, sizeof(kp_val));
   bip32_key_free(derived);
   return psbt;
+}
+
+static struct wally_psbt *make_registry_output_psbt(const registry_entry_t *e,
+                                                    uint32_t multi_index,
+                                                    uint32_t child_num) {
+  return make_registry_output_psbt_at(e, multi_index, multi_index, child_num);
 }
 
 static output_ownership_t classify_registry_output(const registry_entry_t *e,
@@ -2244,6 +2250,50 @@ done:
   wally_tx_free(tx);
   wally_tx_free(prev);
   bip32_key_free(derived);
+}
+
+/* The group a keypath belongs to is a position in the <a;b> tuple, not the
+ * path value: with <1;0> receive sits at /1, with <2;3> change at /3. */
+static void test_registry_claim_tuple_position(void) {
+  static const struct {
+    const char *name;
+    const char *tuple;
+    uint32_t multi_index;
+    uint32_t chain;
+  } cases[] = {
+      {"registry claim: <1;0> receive at /1 regenerates group 0", "<1;0>", 0,
+       1},
+      {"registry claim: <2;3> change at /3 regenerates group 1", "<2;3>", 1, 3},
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+    char desc[512];
+    snprintf(desc, sizeof(desc),
+             "wsh(sortedmulti(2,[00000000/48'/0'/0'/2']" XPUB_84 "/%s/*,"
+             "[11111111/48'/0'/0'/2']" XPUB_86 "/%s/*))",
+             cases[i].tuple, cases[i].tuple);
+    TEST(cases[i].name);
+    registry_clear();
+    if (!registry_add_from_string("t", desc, STORAGE_FLASH, false)) {
+      FAIL("registry_add_from_string");
+      continue;
+    }
+    const registry_entry_t *e = registry_find_by_id("t");
+    struct wally_psbt *psbt = make_registry_output_psbt_at(
+        e, cases[i].multi_index, cases[i].chain, 12);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    output_ownership_t r = psbt_classify_output(psbt, 0, false);
+    wally_psbt_free(psbt);
+    if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+        r.source.registry.multi_index != cases[i].multi_index ||
+        r.source.registry.child_num != 12)
+      FAIL("expected an OWNED_SAFE claim at the tuple position");
+    else
+      PASS();
+  }
+  registry_clear();
 }
 
 /* Change is only change when it returns to the wallet the inputs spend from:
@@ -3453,6 +3503,7 @@ int main(void) {
   test_psbt_classify_registry_miniscript_tampered();
   test_registry_change_index_cap();
   test_claims_share_policy();
+  test_registry_claim_tuple_position();
   test_sign_non_witness_utxo_only_segwit();
 
   printf("\n=== taproot parse/sign tests ===\n\n");

@@ -336,20 +336,18 @@ static bool try_match_whitelist(const unsigned char *keypath,
 }
 
 static bool try_match_registry(const unsigned char *keypath, size_t keypath_len,
-                               size_t *cursor, claim_t *claim_out) {
-  const registry_entry_t *entry =
-      registry_match_keypath(keypath, keypath_len, cursor);
+                               registry_match_cursor_t *cursor,
+                               claim_t *claim_out) {
+  uint32_t multi_index = 0, child_num = 0;
+  const registry_entry_t *entry = registry_match_keypath(
+      keypath, keypath_len, cursor, &multi_index, &child_num);
   if (!entry)
     return false;
 
-  size_t origin_len = entry->origin_path_len;
-  uint32_t mp = ss_u32_le(keypath + 4 + origin_len * 4);
-  uint32_t ix = ss_u32_le(keypath + 4 + (origin_len + 1) * 4);
-
   claim_out->kind = CLAIM_REGISTRY;
   claim_out->registry.entry = entry;
-  claim_out->registry.multi_index = mp;
-  claim_out->registry.child_num = ix;
+  claim_out->registry.multi_index = multi_index;
+  claim_out->registry.child_num = child_num;
 
   size_t total_depth = (keypath_len - 4) / 4;
   claim_out->derived_path_len = total_depth;
@@ -492,7 +490,7 @@ static bool try_match_claim(const unsigned char *keypath, size_t keypath_len,
     return true;
   }
 
-  size_t cursor = 0;
+  registry_match_cursor_t cursor = {0};
   while (true) {
     memset(&claim, 0, sizeof(claim));
     if (!try_match_registry(keypath, keypath_len, &cursor, &claim))

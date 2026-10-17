@@ -243,50 +243,123 @@ bool registry_session_has_duplicate_checksum(const char checksum[9],
   return found;
 }
 
+/* Whether `tail` is `key`'s child path expanded at `multi_index`, taking the
+ * wildcard's value from `tail` itself. */
+static bool own_key_matches_tail(const registry_own_key_t *key,
+                                 uint32_t multi_index, const uint32_t *tail,
+                                 size_t tail_len, uint32_t *child_num) {
+  size_t len = strlen(key->child_path);
+  if (len == 0) {
+    *child_num = 0;
+    return tail_len == 0;
+  }
+
+  uint32_t features = 0;
+  if (bip32_path_str_n_get_features(key->child_path, len, &features) !=
+          WALLY_OK ||
+      (features & BIP32_PATH_LEN_MASK) >> BIP32_PATH_LEN_SHIFT != tail_len)
+    return false;
+
+  uint32_t cn = 0;
+  if (features & BIP32_PATH_IS_WILDCARD) {
+    size_t pos =
+        (features & BIP32_PATH_WILDCARD_MASK) >> BIP32_PATH_WILDCARD_SHIFT;
+    if (pos >= tail_len || bip32_path_is_hardened(tail[pos]))
+      return false;
+    cn = tail[pos];
+  }
+
+  uint32_t expanded[MAX_KEYPATH_TOTAL_DEPTH];
+  size_t written = 0;
+  if (bip32_path_from_str_n(key->child_path, len, cn, multi_index,
+                            BIP32_FLAG_STR_WILDCARD | BIP32_FLAG_STR_BARE |
+                                BIP32_FLAG_STR_MULTIPATH,
+                            expanded, MAX_KEYPATH_TOTAL_DEPTH,
+                            &written) != WALLY_OK ||
+      written != tail_len ||
+      memcmp(expanded, tail, tail_len * sizeof(uint32_t)) != 0)
+    return false;
+  *child_num = cn;
+  return true;
+}
+
+static bool own_key_matches(const registry_own_key_t *key, uint32_t multi_index,
+                            const uint32_t *path, size_t depth,
+                            uint32_t *child_num) {
+  if (key->origin_path_len > depth ||
+      memcmp(key->origin_path, path, key->origin_path_len * sizeof(uint32_t)))
+    return false;
+  return own_key_matches_tail(key, multi_index, path + key->origin_path_len,
+                              depth - key->origin_path_len, child_num);
+}
+
 registry_entry_t *registry_match_keypath(const uint8_t *keypath,
-                                         size_t keypath_len, size_t *cursor) {
-  if (!keypath || !cursor)
+                                         size_t keypath_len,
+                                         registry_match_cursor_t *cursor,
+                                         uint32_t *multi_index,
+                                         uint32_t *child_num) {
+  if (!keypath || !cursor || !multi_index || !child_num)
     return NULL;
-  if (keypath_len < 4)
-    return NULL;
-  size_t payload = keypath_len - 4;
-  if (payload % 4 != 0)
-    return NULL;
-  size_t total_depth = payload / 4;
-  if (total_depth > MAX_KEYPATH_TOTAL_DEPTH)
+  uint32_t path[MAX_KEYPATH_TOTAL_DEPTH];
+  size_t depth = 0;
+  if (!bip32_path_from_keypath(keypath, keypath_len, path, &depth,
+                               MAX_KEYPATH_TOTAL_DEPTH))
     return NULL;
 
-  for (size_t i = *cursor; i < registry_len; i++) {
-    registry_entry_t *e = &registry_entries[i];
-    if (e->origin_path_len > total_depth)
-      continue;
-    bool origin_matches = true;
-    for (size_t j = 0; j < e->origin_path_len; j++) {
-      if (bip32_path_u32_le(keypath + 4 + j * 4) != e->origin_path[j]) {
-        origin_matches = false;
-        break;
+  for (; cursor->entry < registry_len;
+       cursor->entry++, cursor->multi_index = 0) {
+    registry_entry_t *e = &registry_entries[cursor->entry];
+    uint32_t groups = e->num_paths > 1 ? (uint32_t)e->num_paths : 1;
+    for (; cursor->multi_index < groups; cursor->multi_index++) {
+      for (size_t k = 0; k < e->num_own_keys; k++) {
+        if (own_key_matches(&e->own_keys[k], cursor->multi_index, path, depth,
+                            child_num)) {
+          *multi_index = cursor->multi_index++;
+          return e;
+        }
       }
     }
-    if (!origin_matches)
-      continue;
-    size_t tail_depth = total_depth - e->origin_path_len;
-    if (tail_depth != MAX_KEYPATH_TAIL_DEPTH)
-      continue;
-    const uint8_t *tail = keypath + 4 + e->origin_path_len * 4;
-    uint32_t mp = bip32_path_u32_le(tail);
-    uint32_t ix = bip32_path_u32_le(tail + 4);
-    if (bip32_path_is_hardened(mp))
-      continue;
-    if (bip32_path_is_hardened(ix))
-      continue;
-    if (mp > 1)
-      continue;
-    if (e->num_paths == 1 && mp != 0)
-      continue;
-    *cursor = i + 1;
-    return e;
   }
   return NULL;
+}
+
+/* Every key carrying `wallet_fp`, in key order. Keys past
+ * REGISTRY_MAX_OWN_KEYS, or whose path does not fit, cannot be matched to a
+ * PSBT keypath; that fails closed. */
+static void collect_own_keys(registry_entry_t *e,
+                             const unsigned char *wallet_fp,
+                             uint32_t num_keys) {
+  for (uint32_t i = 0; i < num_keys && e->num_own_keys < REGISTRY_MAX_OWN_KEYS;
+       i++) {
+    unsigned char kfp[BIP32_KEY_FINGERPRINT_LEN];
+    if (wally_descriptor_get_key_origin_fingerprint(e->desc, i, kfp,
+                                                    sizeof(kfp)) != WALLY_OK ||
+        memcmp(kfp, wallet_fp, sizeof(kfp)) != 0)
+      continue;
+
+    registry_own_key_t *k = &e->own_keys[e->num_own_keys];
+    char *origin = NULL;
+    char *child = NULL;
+    bool ok = wally_descriptor_get_key_origin_path_str(e->desc, i, &origin) ==
+                  WALLY_OK &&
+              origin &&
+              (origin[0] == '\0' ||
+               bip32_path_parse(origin, k->origin_path, &k->origin_path_len,
+                                MAX_KEYPATH_TOTAL_DEPTH)) &&
+              wally_descriptor_get_key_child_path_str(e->desc, i, &child) ==
+                  WALLY_OK &&
+              child && strlen(child) < sizeof(k->child_path);
+    if (ok) {
+      k->key_index = i;
+      strcpy(k->child_path, child);
+      e->num_own_keys++;
+    } else {
+      ESP_LOGW(TAG, "own key %u of '%s' cannot be matched", (unsigned)i, e->id);
+      memset(k, 0, sizeof(*k));
+    }
+    wally_free_string(origin);
+    wally_free_string(child);
+  }
 }
 
 bool registry_add_from_string(const char *id, const char *descriptor_str,
@@ -375,6 +448,7 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   e->num_paths = (size_t)num_paths;
   e->origin_path_len = origin_path_len;
   memcpy(e->origin_path, origin_path, origin_path_len * sizeof(uint32_t));
+  collect_own_keys(e, wallet_fp, num_keys);
   registry_len++;
 
   if (persist) {
