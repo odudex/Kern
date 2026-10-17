@@ -182,17 +182,13 @@ void registry_init(bool is_testnet) {
 static char *descriptor_checksum_alloc(const char *descriptor_str) {
   if (!descriptor_str)
     return NULL;
-  uint32_t net = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                     ? WALLY_NETWORK_BITCOIN_MAINNET
-                     : WALLY_NETWORK_BITCOIN_TESTNET;
+  uint32_t net = wallet_wally_network();
   struct wally_descriptor *desc = NULL;
-  if (wallet_descriptor_parse(descriptor_str, NULL, net, &desc) != WALLY_OK) {
-    net = (net == WALLY_NETWORK_BITCOIN_MAINNET)
-              ? WALLY_NETWORK_BITCOIN_TESTNET
-              : WALLY_NETWORK_BITCOIN_MAINNET;
-    if (wallet_descriptor_parse(descriptor_str, NULL, net, &desc) != WALLY_OK)
-      return NULL;
-  }
+  if (wallet_descriptor_parse(descriptor_str, NULL, net, &desc) != WALLY_OK &&
+      wallet_descriptor_parse(descriptor_str, NULL,
+                              wallet_wally_other_network(net),
+                              &desc) != WALLY_OK)
+    return NULL;
   char checksum[9];
   bool ok = descriptor_checksum_from_descriptor(desc, checksum);
   wally_descriptor_free(desc);
@@ -401,11 +397,9 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
 
   /* Wallet's network only. Wrong-network descriptors are skipped on
    * boot scan; the validator blocks them on the user load path. */
-  uint32_t wally_network = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                               ? WALLY_NETWORK_BITCOIN_MAINNET
-                               : WALLY_NETWORK_BITCOIN_TESTNET;
   struct wally_descriptor *desc = NULL;
-  int ret = wallet_descriptor_parse(descriptor_str, NULL, wally_network, &desc);
+  int ret = wallet_descriptor_parse(descriptor_str, NULL,
+                                    wallet_wally_network(), &desc);
   if (ret != WALLY_OK) {
     ESP_LOGE(TAG, "failed to parse descriptor: %d", ret);
     return false;
@@ -543,12 +537,10 @@ bool registry_add_watch_only(const char *id, const char *descriptor_str,
     return false;
   }
 
-  uint32_t wally_network = (network == WALLET_NETWORK_MAINNET)
-                               ? WALLY_NETWORK_BITCOIN_MAINNET
-                               : WALLY_NETWORK_BITCOIN_TESTNET;
   struct wally_descriptor *desc = NULL;
-  if (wallet_descriptor_parse(descriptor_str, NULL, wally_network, &desc) !=
-      WALLY_OK) {
+  if (wallet_descriptor_parse(descriptor_str, NULL,
+                              wallet_wally_network_of(network),
+                              &desc) != WALLY_OK) {
     ESP_LOGE(TAG, "failed to parse watch-only descriptor");
     return false;
   }

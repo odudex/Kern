@@ -21,18 +21,6 @@ static const uint8_t approval_tag[] = "kern-approval";
 static const uint32_t approval_path[] = {0x4B45524Eu | BIP32_PATH_HARDENED,
                                          138u | BIP32_PATH_HARDENED};
 
-static uint32_t wallet_wally_network(void) {
-  return wallet_get_network() == WALLET_NETWORK_MAINNET
-             ? WALLY_NETWORK_BITCOIN_MAINNET
-             : WALLY_NETWORK_BITCOIN_TESTNET;
-}
-
-static uint32_t other_network(uint32_t network) {
-  return network == WALLY_NETWORK_BITCOIN_MAINNET
-             ? WALLY_NETWORK_BITCOIN_TESTNET
-             : WALLY_NETWORK_BITCOIN_MAINNET;
-}
-
 static bool approval_key(uint8_t out[32]) {
   struct ext_key *key = NULL;
   if (!key_get_derived_key_components(
@@ -70,7 +58,7 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
   uint32_t network = wallet_wally_network();
   if (!bip138_keys_from_descriptor(descriptor, network, keys, NULL,
                                    BIP138_KEYS_MAX, &count))
-    network = other_network(network);
+    network = wallet_wally_other_network(network);
   if (!bip138_keys_from_descriptor(descriptor, network, keys, NULL,
                                    BIP138_KEYS_MAX, &count) ||
       !bip138_origins_from_descriptor(descriptor, network, origins,

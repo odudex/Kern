@@ -64,18 +64,6 @@ static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
 /* Session id of the descriptor registered by the last successful load. */
 static char last_loaded_id[REGISTRY_ID_MAX_LEN];
 
-static uint32_t wallet_descriptor_network(void) {
-  return (wallet_get_network() == WALLET_NETWORK_MAINNET)
-             ? WALLY_NETWORK_BITCOIN_MAINNET
-             : WALLY_NETWORK_BITCOIN_TESTNET;
-}
-
-static uint32_t alternate_descriptor_network(uint32_t network) {
-  return (network == WALLY_NETWORK_BITCOIN_MAINNET)
-             ? WALLY_NETWORK_BITCOIN_TESTNET
-             : WALLY_NETWORK_BITCOIN_MAINNET;
-}
-
 static descriptor_validation_result_t
 parse_descriptor_for_wallet(const char *descriptor_str,
                             struct wally_descriptor **descriptor_out) {
@@ -83,7 +71,7 @@ parse_descriptor_for_wallet(const char *descriptor_str,
     return VALIDATION_INTERNAL_ERROR;
 
   *descriptor_out = NULL;
-  uint32_t wally_network = wallet_descriptor_network();
+  uint32_t wally_network = wallet_wally_network();
   int ret = wallet_descriptor_parse(descriptor_str, NULL, wally_network,
                                     descriptor_out);
   if (ret == WALLY_OK)
@@ -91,7 +79,7 @@ parse_descriptor_for_wallet(const char *descriptor_str,
 
   struct wally_descriptor *other_desc = NULL;
   if (wallet_descriptor_parse(descriptor_str, NULL,
-                              alternate_descriptor_network(wally_network),
+                              wallet_wally_other_network(wally_network),
                               &other_desc) == WALLY_OK) {
     wally_descriptor_free(other_desc);
     return VALIDATION_NETWORK_MISMATCH;
