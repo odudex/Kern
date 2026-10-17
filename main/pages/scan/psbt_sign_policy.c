@@ -301,13 +301,24 @@ static bool reject_unshowable_output(struct wally_psbt *psbt,
  * fee and it is never negative. Either an input amount is understated or an
  * output amount is inflated, and both make every number on the review screen
  * a lie. Only decidable when each input actually supplied an amount -- a
- * MISSING one contributes 0, which produces the same shape honestly. */
+ * MISSING one contributes 0, which produces the same shape honestly. When the
+ * outputs cannot even be summed nothing about the fee is knowable, so that is
+ * refused too. */
 static bool reject_impossible_fee(struct wally_psbt *psbt,
                                   const psbt_amount_audit_t *audit,
                                   dialog_callback_t dismissed_cb) {
+  if (audit->missing)
+    return false;
   uint64_t total_output = 0;
-  if (audit->missing || !psbt_total_output_value(psbt, &total_output) ||
-      total_output <= audit->total)
+  if (!psbt_total_output_value(psbt, &total_output)) {
+    show_cannot_sign("The outputs of this PSBT cannot be added up: an amount "
+                     "is out of range.\n\n"
+                     "The fee cannot be computed, so nothing it claims can be "
+                     "reviewed honestly.",
+                     dismissed_cb);
+    return true;
+  }
+  if (total_output <= audit->total)
     return false;
 
   char body[384];
