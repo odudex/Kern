@@ -103,6 +103,7 @@ static void mnemonic_confirm_cb(bool confirmed, void *user_data) {
   // Return to home — it will recreate with new key info
   if (scan_ctx.return_cb)
     scan_ctx.return_cb();
+  descriptor_loader_show_rejected_notice();
 }
 
 void scan_handle_mnemonic(const char *data, size_t len) {

@@ -101,6 +101,17 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   }
 }
 
+void descriptor_loader_show_rejected_notice(void) {
+  size_t rejected = registry_rejected_count();
+  if (rejected == 0)
+    return;
+  char msg[96];
+  snprintf(msg, sizeof(msg),
+           "%zu registered descriptor%s failed verification and %s not loaded",
+           rejected, rejected == 1 ? "" : "s", rejected == 1 ? "was" : "were");
+  dialog_show_info("Warning", msg, NULL, NULL, DIALOG_STYLE_OVERLAY);
+}
+
 typedef struct {
   void (*proceed)(const char *id, storage_location_t loc, void *user_data);
   storage_location_t loc;

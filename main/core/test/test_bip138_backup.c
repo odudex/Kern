@@ -496,6 +496,65 @@ static void test_approval_and_forgery(void) {
   free(blob);
 }
 
+/* A registered backup that no longer validates is skipped and counted. */
+static void test_rejected_count(void) {
+  char fp[9];
+  char descriptor[512];
+  char *ours = NULL;
+  char *other = NULL;
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+
+  stub_storage_reset();
+  registry_clear();
+  check("forged own key fixture builds",
+        key_get_fingerprint_hex(fp) && key_get_xpub("m/48'/0'/0'/2'", &ours) &&
+            key_get_xpub("m/48'/0'/2'/2'", &other));
+  snprintf(descriptor, sizeof(descriptor),
+           "wsh(sortedmulti(1,[%s/48'/0'/0'/2']%s/<0;1>/*,"
+           "[%s/48'/0'/1'/2']%s/<0;1>/*))",
+           fp, ours, fp, other);
+  wally_free_string(ours);
+  wally_free_string(other);
+  check("unapproved backup of it is staged",
+        forge_backup(descriptor, &blob, &blob_len) &&
+            storage_save_descriptor(STORAGE_FLASH, "Forged", blob, blob_len,
+                                    STORAGE_DESCRIPTOR_BIP138) == ESP_OK);
+  free(blob);
+  registry_init(false);
+  check("an unapproved backup is not counted",
+        registry_count() == 0 && registry_rejected_count() == 0);
+
+  check("approved backup of it is staged",
+        bip138_backup_encrypt(descriptor, &blob, &blob_len) &&
+            storage_save_descriptor(STORAGE_FLASH, "Forged", blob, blob_len,
+                                    STORAGE_DESCRIPTOR_BIP138) == ESP_OK);
+  free(blob);
+  registry_init(false);
+  check("boot scan skips and counts a registration that fails validation",
+        registry_count() == 0 && registry_rejected_count() == 1 &&
+            stub_files[0].present);
+  stub_storage_reset();
+  registry_init(false);
+  check("the count resets on the next scan", registry_rejected_count() == 0);
+
+  check("mainnet registration",
+        build_wpkh("m/84'/0'/2'", descriptor, sizeof(descriptor)) &&
+            registry_add_from_string("Main", descriptor, STORAGE_FLASH, true));
+  check("switch to testnet",
+        key_set_network(true) && wallet_init(WALLET_NETWORK_TESTNET));
+  registry_init(true);
+  check("another network's registration is skipped but not counted",
+        registry_count() == 0 && registry_rejected_count() == 0);
+  check("switch back to mainnet",
+        key_set_network(false) && wallet_init(WALLET_NETWORK_MAINNET));
+  registry_init(false);
+  check("it loads again on its own network",
+        registry_count() == 1 && registry_rejected_count() == 0);
+  registry_clear();
+  stub_storage_reset();
+}
+
 static void test_private_key_rejected(void) {
   struct ext_key *key = NULL;
   char *xprv = NULL;
@@ -687,6 +746,7 @@ int main(void) {
   test_rejections();
   test_registry_persistence();
   test_approval_and_forgery();
+  test_rejected_count();
   test_private_key_rejected();
   test_overwrite_and_duplicates();
   test_deregister();

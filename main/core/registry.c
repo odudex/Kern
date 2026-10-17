@@ -17,8 +17,11 @@ static const char *TAG = "registry";
 
 static registry_entry_t registry_entries[REGISTRY_MAX_ENTRIES];
 static size_t registry_len = 0;
+static size_t registry_rejected = 0;
 
 size_t registry_count(void) { return registry_len; }
+
+size_t registry_rejected_count(void) { return registry_rejected; }
 
 const registry_entry_t *registry_get(size_t i) {
   if (i >= registry_len)
@@ -112,6 +115,16 @@ static bool descriptor_id_from_filename(const char *fname, char *id,
   return true;
 }
 
+/* Counts failures for the user, except a registration for the other network,
+ * which a network switch makes expected. */
+static bool scan_validate(const char *descriptor_str) {
+  descriptor_validation_result_t result =
+      descriptor_validate_keyed(descriptor_str, NULL);
+  if (result != VALIDATION_SUCCESS && result != VALIDATION_NETWORK_MISMATCH)
+    registry_rejected++;
+  return result == VALIDATION_SUCCESS;
+}
+
 /* Registers every flash backup that this device wrote for the loaded key
  * (valid approval mark) and that still passes keyed validation. Backups
  * without a mark, plaintext and KEF files stay explicit imports. */
@@ -137,8 +150,7 @@ static void registry_init_scan(void) {
       ESP_LOGI(TAG, "Skipping '%s': not addressed to the loaded key", fname);
     } else if (!approved) {
       ESP_LOGI(TAG, "Skipping '%s': not registered on this device", fname);
-    } else if (descriptor_validate_keyed(desc_str, NULL) !=
-               VALIDATION_SUCCESS) {
+    } else if (!scan_validate(desc_str)) {
       ESP_LOGW(TAG, "Skipping '%s': failed validation", fname);
     } else if (!descriptor_id_from_filename(fname, id, sizeof(id))) {
       ESP_LOGW(TAG, "Skipping '%s': unexpected filename", fname);
@@ -161,6 +173,7 @@ static void registry_init_scan(void) {
 void registry_init(bool is_testnet) {
   (void)is_testnet;
   registry_clear();
+  registry_rejected = 0;
   registry_init_scan();
   ESP_LOGI(TAG, "Registry: %zu entries loaded", registry_len);
 }

@@ -10,6 +10,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
+#include "descriptor_loader.h"
 #include <lvgl.h>
 #include <string.h>
 
@@ -34,6 +35,7 @@ static void loading_timer_cb(lv_timer_t *timer) {
     registry_init(net == WALLET_NETWORK_TESTNET);
     if (success_callback)
       success_callback();
+    descriptor_loader_show_rejected_notice();
   } else {
     dialog_show_error_timeout("Failed to load key", return_callback, 0);
   }

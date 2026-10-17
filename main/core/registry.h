@@ -71,6 +71,9 @@ registry_session_has_duplicate_checksum(const char checksum[9], char *out_id,
 void registry_clear(void);
 /* Clears the session and registers every flash backup the loaded key opens. */
 void registry_init(bool is_testnet);
+/* Backups registered on this device that the last registry_init skipped
+ * because they no longer pass keyed validation (other-network ones aside). */
+KERN_WARN_UNUSED_RESULT size_t registry_rejected_count(void);
 KERN_WARN_UNUSED_RESULT registry_entry_t *
 registry_match_keypath(const uint8_t *keypath, size_t keypath_len,
                        size_t *cursor);

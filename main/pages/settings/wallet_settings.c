@@ -12,6 +12,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session_cleanup.h"
 #include "../passphrase.h"
+#include "../shared/descriptor_loader.h"
 #include "descriptor_manager.h"
 #include "secure_memory.h"
 #include <lvgl.h>
@@ -76,6 +77,7 @@ static bool reinit_wallet(void) {
   }
   registry_init(selected_network == WALLET_NETWORK_TESTNET);
   g_settings_applied = true;
+  descriptor_loader_show_rejected_notice();
   return true;
 }
 
