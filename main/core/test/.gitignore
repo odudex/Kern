@@ -30,3 +30,4 @@ test_address_match
 test_descriptor_text
 test_message_sign
 test_wally_descriptor
+test_seedqr
