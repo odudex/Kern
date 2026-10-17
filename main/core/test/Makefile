@@ -83,6 +83,8 @@ TARGET_REG_MATCH = test_registry_match
 REGISTRY_SRC = ../registry.c $(REGISTRY_H) ../descriptor_validator.h ../miniscript_policy.h \
 	../bip138_backup.h ../bip138_keys.h ../descriptor_checksum.h ../key.h ../../utils/secure_mem.h
 DESCRIPTOR_CHECKSUM_SRC = ../descriptor_checksum.c ../descriptor_checksum.h
+# Kern's libwally descriptor parse flags, linked by every test that parses.
+DESCRIPTOR_PARSE_SRC = ../descriptor_parse.c ../wallet.h
 BIP32_PATH_SRC = ../bip32_path.c $(SS_H)
 SCRIPT_TEMPLATE_SRC = ../script_templates.c ../script_templates.h
 REGISTRY_STUB_SRC = stubs/registry_stub.c
@@ -201,17 +203,17 @@ $(TARGET_SS_REGEN): $(SRCS_SS_REGEN) $(SS_SRC) $(KEY_SRC) $(LIBWALLY)
 $(TARGET_PSB): $(SRCS_PSB) $(SS_SRC) $(KEY_STUB_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PSB) ../ss_whitelist.c ../script_templates.c $(KEY_STUB_SRC) $(LIBWALLY)
 
-$(TARGET_REG_MATCH): $(SRCS_REG_MATCH) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(BIP32_PATH_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(REGISTRY_STUB_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_MATCH) ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
+$(TARGET_REG_MATCH): $(SRCS_REG_MATCH) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(BIP32_PATH_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(REGISTRY_STUB_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_MATCH) ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
 
-$(TARGET_REG_PARSE): $(SRCS_REG_PARSE) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(BIP32_PATH_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(REGISTRY_STUB_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_PARSE) ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
+$(TARGET_REG_PARSE): $(SRCS_REG_PARSE) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(BIP32_PATH_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(REGISTRY_STUB_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_PARSE) ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
 
 $(PSBT_KEY_OBJ): $(KEY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Dkey_get_fingerprint=key_get_fingerprint_raw -c -o $@ ../key.c
 
-$(TARGET_PSBT_CLASSIFY): $(SRCS_PSBT_CLASSIFY) ../settings.h $(PSBT_SRC) $(SS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(LIBWALLY) $(PSBT_KEY_OBJ)
-	$(CC) $(CFLAGS) $(TEST_INCS) -DPSBT_TESTING -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c $(LIBWALLY)
+$(TARGET_PSBT_CLASSIFY): $(SRCS_PSBT_CLASSIFY) ../settings.h $(PSBT_SRC) $(SS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(LIBWALLY) $(PSBT_KEY_OBJ)
+	$(CC) $(CFLAGS) $(TEST_INCS) -DPSBT_TESTING -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c ../descriptor_parse.c $(LIBWALLY)
 
 $(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c $(PSBT_H) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PSBT_PARSE) ../psbt_parse.c $(LIBWALLY)
@@ -243,9 +245,9 @@ $(TARGET_FW_UPDATE): $(SRCS_FW_UPDATE) $(FW_UPDATE_SRC) $(wildcard stubs/*.h)
 
 # The host compiler flags the %zu session-id suffix as truncatable; the
 # firmware build carries -Wno-format for the same reason.
-$(TARGET_DESC_VALIDATOR): $(SRCS_DESC_VALIDATOR) $(DESC_VALIDATOR_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(SS_SRC) $(LIBWALLY)
+$(TARGET_DESC_VALIDATOR): $(SRCS_DESC_VALIDATOR) $(DESC_VALIDATOR_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(SRCS_DESC_VALIDATOR) \
-		../descriptor_validator.c ../wallet.c ../key.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) \
+		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../key.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) \
 		../descriptor_checksum.c ../bip32_path.c ../script_templates.c \
 		../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY)
 
@@ -276,14 +278,14 @@ $(TARGET_PBKDF2): $(SRCS_PBKDF2) $(PBKDF2_OBJ) $(CRYPTO_UTILS_SRC)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_PBKDF2) $(PBKDF2_OBJ) ../crypto_utils.c \
 		../entropy_pool.c stubs/esp_hw_stub.c -lmbedcrypto
 
-$(TARGET_BIP138_KEYS): $(SRCS_BIP138_KEYS) ../bip138_keys.c ../bip138_keys.h ../bip32_path.h ../storage.h ../wallet.h $(REGISTRY_STUB_SRC) $(BIP138_DIR)/test/vectors.h $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) $(BIP138_INCS) -o $@ $(SRCS_BIP138_KEYS) ../bip138_keys.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
+$(TARGET_BIP138_KEYS): $(SRCS_BIP138_KEYS) ../bip138_keys.c ../bip138_keys.h ../bip32_path.h ../storage.h ../wallet.h $(DESCRIPTOR_PARSE_SRC) $(REGISTRY_STUB_SRC) $(BIP138_DIR)/test/vectors.h $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) $(BIP138_INCS) -o $@ $(SRCS_BIP138_KEYS) ../bip138_keys.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
 
-$(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_backup.h ../bip138_keys.c ../bip138_keys.h ../bip138_crypto.c ../bip138_crypto.h $(CRYPTO_UTILS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(SS_SRC) $(DESC_VALIDATOR_SRC) $(BIP138_SRCS) $(LIBWALLY)
+$(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_backup.h ../bip138_keys.c ../bip138_keys.h ../bip138_crypto.c ../bip138_crypto.h $(CRYPTO_UTILS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(DESC_VALIDATOR_SRC) $(BIP138_SRCS) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) $(BIP138_INCS) -DBIP138_BACKUP_TESTING -Wno-format-truncation -o $@ $(SRCS_BIP138_BACKUP) \
 		../bip138_backup.c ../bip138_keys.c ../bip138_crypto.c \
 		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c \
-		../wallet.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
+		../wallet.c ../descriptor_parse.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
 		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c \
 		$(BIP138_SRCS) $(LIBWALLY) $(KEF_LIBS)
 

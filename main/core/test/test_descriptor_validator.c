@@ -398,6 +398,41 @@ static void test_non_sane_miniscript(void) {
   registry_clear();
 }
 
+/* Every parse is depth-capped; libwally alone would take a deeper nesting. */
+static void test_depth_cap(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  char deep[8192], shallow[8192];
+  size_t levels[2] = {KERN_DESCRIPTOR_MAX_DEPTH + 8,
+                      KERN_DESCRIPTOR_MAX_DEPTH / 2};
+  char *out[2] = {deep, shallow};
+  for (int k = 0; k < 2; k++) {
+    size_t n = snprintf(out[k], sizeof(deep), "wsh(");
+    for (size_t i = 0; i < levels[k]; i++)
+      n += snprintf(out[k] + n, sizeof(deep) - n, "and_v(v:older(%zu),", i + 1);
+    n += snprintf(out[k] + n, sizeof(deep) - n,
+                  "pk([" FP "/48'/0'/0'/2']%s/0/*)", a);
+    for (size_t i = 0; i < levels[k]; i++)
+      n += snprintf(out[k] + n, sizeof(deep) - n, ")");
+    snprintf(out[k] + n, sizeof(deep) - n, ")");
+  }
+  struct wally_descriptor *d = NULL;
+  bool raw_ok =
+      wally_descriptor_parse(deep, NULL, WALLY_NETWORK_BITCOIN_MAINNET, 0,
+                             &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  d = NULL;
+  bool capped = wallet_descriptor_parse(
+                    deep, NULL, WALLY_NETWORK_BITCOIN_MAINNET, &d) != WALLY_OK;
+  wally_descriptor_free(d);
+  d = NULL;
+  bool shallow_ok =
+      wallet_descriptor_parse(shallow, NULL, WALLY_NETWORK_BITCOIN_MAINNET,
+                              &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  check("nesting past KERN_DESCRIPTOR_MAX_DEPTH is refused",
+        raw_ok && capped && shallow_ok);
+}
+
 static void test_key_matching(void) {
   registry_clear();
   const char *foreign =
@@ -1087,6 +1122,7 @@ int main(void) {
   test_preconditions();
   test_static_gates();
   test_non_sane_miniscript();
+  test_depth_cap();
   test_key_matching();
   test_own_keys();
   test_own_key_material();
