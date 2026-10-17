@@ -1,6 +1,15 @@
 CC ?= cc
 CFLAGS = -Wall -Wextra -g
 
+# SANITIZE=1 builds every test, libwally included, with ASan and UBSan (see
+# `just test-asan`); `make clean` when toggling. libwally then avoids the
+# unaligned loads UBSan reports, which the device does by design.
+ifeq ($(SANITIZE),1)
+  CFLAGS += -O1 -fno-omit-frame-pointer -fsanitize=address,undefined \
+	-fno-sanitize-recover=undefined
+  SANITIZE_WALLY_DEFS = -DAVOID_UNALIGNED_ACCESS
+endif
+
 ROOT = ../../..
 WALLY_DIR = $(ROOT)/components/libwally-core
 WALLY_SRC = $(WALLY_DIR)/upstream/src/amalgamation/combined.c
@@ -31,7 +40,7 @@ WALLY_PRIV_INCS = \
 # HAVE_PSA_CRYPTO_H: hash through PSA like the device build, so its glue and
 # the uncached BIP341 path are what the tests run. Every libwally link line
 # then needs -lmbedcrypto.
-WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_STANDARD_SECP=1 -DHAVE_PSA_CRYPTO_H
+WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_STANDARD_SECP=1 -DHAVE_PSA_CRYPTO_H $(SANITIZE_WALLY_DEFS)
 WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS) \
 	-Wno-nonnull-compare -Wno-unused-function -Wno-type-limits \
 	-Wno-unterminated-string-initialization
@@ -326,6 +335,42 @@ $(TARGET_SEEDQR): $(SRCS_SEEDQR) ../../qr/seedqr.c ../../qr/seedqr.h $(LIBWALLY)
 $(TARGET_MULTISIG_SETUP): $(SRCS_MULTISIG_SETUP) $(MULTISIG_SETUP_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MULTISIG_SETUP) ../multisig_setup.c $(LIBWALLY) -lmbedcrypto
 
+# Fuzz targets for the glue around libwally that handles untrusted QR and SD
+# payloads (`just fuzz`). gcc builds link fuzz/fuzz_driver.c, a coverage-blind
+# mutation driver; with clang, LIBFUZZER=1 links libFuzzer instead.
+FUZZ_DIR = fuzz
+ifeq ($(LIBFUZZER),1)
+  FUZZ_MAIN = -fsanitize=fuzzer
+else
+  FUZZ_MAIN = $(FUZZ_DIR)/fuzz_driver.c
+endif
+FUZZ_DEPS = $(FUZZ_DIR)/fuzz.h $(FUZZ_DIR)/fuzz_driver.c $(LIBWALLY)
+FUZZ_TARGETS = fuzz_psbt fuzz_descriptor fuzz_text
+FUZZ_ITERATIONS ?= 20000
+
+fuzz_psbt: $(FUZZ_DIR)/fuzz_psbt.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_DEPS) $(PSBT_SRC) $(REGISTRY_SRC) $(SS_SRC) $(KEY_SRC) $(BIP322_SRC) ../psbt_parse.c
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(FUZZ_DIR)/fuzz_psbt.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_MAIN) \
+		../psbt.c ../psbt_parse.c ../bip322.c ../message_sign.c ../key.c ../registry.c \
+		../ss_whitelist.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c \
+		../descriptor_parse.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) \
+		$(LIBWALLY) -lmbedcrypto
+
+fuzz_descriptor: $(FUZZ_DIR)/fuzz_descriptor.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_DEPS) $(DESC_VALIDATOR_SRC) $(REGISTRY_SRC) $(SS_SRC) $(KEY_SRC)
+	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(FUZZ_DIR)/fuzz_descriptor.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_MAIN) \
+		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../key.c ../registry.c \
+		$(REGISTRY_PERSIST_STUB_SRC) ../descriptor_checksum.c ../bip32_path.c \
+		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
+
+fuzz_text: $(FUZZ_DIR)/fuzz_text.c $(FUZZ_DEPS) ../message_sign.c $(KEY_SRC) $(MULTISIG_SETUP_SRC) $(DESCRIPTOR_TEXT_SRC) ../../utils/text_file.c
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(FUZZ_DIR)/fuzz_text.c $(FUZZ_MAIN) ../message_sign.c ../key.c \
+		../bip32_path.c ../script_templates.c ../multisig_setup.c ../descriptor_text.c \
+		../descriptor_checksum.c ../../utils/text_file.c $(LIBWALLY) -lmbedcrypto
+
+fuzz: $(FUZZ_TARGETS)
+	./fuzz_psbt -n $(FUZZ_ITERATIONS) @json:$(WALLY_DIR)/upstream/src/data/psbt.json
+	./fuzz_descriptor -n $(FUZZ_ITERATIONS) $(FUZZ_DIR)/corpus/text
+	./fuzz_text -n $(FUZZ_ITERATIONS) $(FUZZ_DIR)/corpus/text
+
 run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR)
 	./$(TARGET_DERIV)
 	./$(TARGET_SS_PARSE)
@@ -358,6 +403,6 @@ run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REG
 	./$(TARGET_SEEDQR)
 
 clean:
-	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(LIBWALLY) combined.o kern_wally.o secret_alloc.o $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ)
+	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(FUZZ_TARGETS) $(LIBWALLY) combined.o kern_wally.o secret_alloc.o $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ)
 
-.PHONY: all run clean
+.PHONY: all run clean fuzz
