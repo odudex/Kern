@@ -198,6 +198,27 @@ static const char *xpub_without_parent(const char *path) {
   return slot;
 }
 
+static char pub_buf[4][67];
+static int pub_next;
+
+/* Our public key at `path` as raw hex, x-only when `xonly`. */
+static const char *pub_at(const char *path, bool xonly) {
+  char *slot = pub_buf[pub_next++ % 4];
+  struct ext_key *k = NULL;
+  char *hex = NULL;
+  slot[0] = '\0';
+  if (!key_get_derived_key(path, &k))
+    return slot;
+  size_t skip = xonly ? 1 : 0;
+  if (wally_hex_from_bytes(k->pub_key + skip, sizeof(k->pub_key) - skip,
+                           &hex) == WALLY_OK) {
+    snprintf(slot, sizeof(pub_buf[0]), "%s", hex);
+    wally_free_string(hex);
+  }
+  bip32_key_free(k);
+  return slot;
+}
+
 /* Captured while a key is loaded, for the keyless watch-only stage. */
 static char X84_0[120], X84_1[120], X86_0[120], X86_1[120];
 
@@ -374,7 +395,7 @@ static void test_own_keys(void) {
                                "[" FP "/48'/0'/1'/2']02" XONLY_G "))",
                                a);
   check("raw key claiming our fingerprint rejected",
-        run(raw_ours) == VALIDATION_PARSE_ERROR);
+        run(raw_ours) == VALIDATION_XPUB_MISMATCH);
 
   const char *two_ours = descf("wsh(sortedmulti(2,[" FP "/48'/0'/0'/2']%s/0/*,"
                                "[" FP "/48'/0'/1'/2']%s/0/*,"
@@ -436,6 +457,77 @@ static void test_own_key_material(void) {
             descriptor_validate_keyed(too_deep, NULL) ==
                 VALIDATION_PARSE_ERROR);
   check("four descriptors registered", registry_count() == 4);
+  registry_clear();
+}
+
+/* A raw own key is checked against our public key at its full origin path. The
+ * first own key is the registry's, so it must be an xpub with an origin of one
+ * to six steps. */
+static void test_raw_and_registry_keys(void) {
+  registry_clear();
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *t = xpub_at("m/86'/0'/0'");
+  const char *raw = pub_at("m/48'/0'/1'/2'/0/0", false);
+
+  const char *raw_later = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                                "[" FP "/48'/0'/1'/2'/0/0]%s))",
+                                a, raw);
+  check("genuine raw own key accepted",
+        run(raw_later) == VALIDATION_SUCCESS &&
+            descriptor_validate_keyed(raw_later, NULL) == VALIDATION_SUCCESS);
+  const char *raw_moved = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                                "[" FP "/48'/0'/1'/2'/0/1]%s))",
+                                a, raw);
+  check("raw own key at another path rejected",
+        run(raw_moved) == VALIDATION_XPUB_MISMATCH);
+
+  const char *leaf = descf("tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*,"
+                           "[" FP "/86'/0'/1'/0/0]%s))",
+                           t, pub_at("m/86'/0'/1'/0/0", true));
+  check("genuine x-only own leaf key accepted",
+        run(leaf) == VALIDATION_SUCCESS);
+  const char *leaf_compressed =
+      descf("tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*,"
+            "[" FP "/86'/0'/1'/0/1]%s))",
+            t, pub_at("m/86'/0'/1'/0/1", false));
+  check("compressed own leaf key compared as x-only",
+        run(leaf_compressed) == VALIDATION_SUCCESS);
+  const char *leaf_moved = descf("tr(" NUMS_H ",multi_a(1,[" FP
+                                 "/86'/0'/0']%s/0/*,[" FP "/86'/0'/1'/0/0]%s))",
+                                 t, pub_at("m/86'/0'/1'/0/2", true));
+  check("x-only own leaf key at another path rejected",
+        run(leaf_moved) == VALIDATION_XPUB_MISMATCH);
+  const char *internal_and_leaf =
+      descf("tr([" FP "/86'/0'/0']%s/0/*,pk([" FP "/86'/0'/1']%s/0/*))", t,
+            xpub_at("m/86'/0'/1'"));
+  check("own internal and leaf keys accepted",
+        run(internal_and_leaf) == VALIDATION_SUCCESS &&
+            info_seen.tr_keypath == TR_KEYPATH_OURS);
+
+  const char *raw_first = descf("wsh(multi(1,[" FP "/48'/0'/1'/2'/0/0]%s,"
+                                "[" FP "/48'/0'/0'/2']%s/0/*))",
+                                raw, a);
+  check("raw first own key rejected before any dialog",
+        run(raw_first) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+            descriptor_validate_keyed(raw_first, NULL) ==
+                VALIDATION_PARSE_ERROR);
+  const char *master_first = descf("wsh(multi(1,[" FP "]%s/0/*,"
+                                   "[deadbeef/48'/0'/1'/2']%s/0/*))",
+                                   xpub_at("m"), b);
+  check("master first own key rejected before any dialog",
+        run(master_first) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+            descriptor_validate_keyed(master_first, NULL) ==
+                VALIDATION_PARSE_ERROR);
+  const char *deep_first =
+      descf("wsh(multi(1,[" FP "/48'/0'/0'/2'/0'/0'/0']%s/0/*,"
+            "[deadbeef/48'/0'/1'/2']%s/0/*))",
+            xpub_at("m/48'/0'/0'/2'/0'/0'/0'"), b);
+  check("first own key origin over six steps rejected before any dialog",
+        run(deep_first) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+            descriptor_validate_keyed(deep_first, NULL) ==
+                VALIDATION_PARSE_ERROR);
+  check("only the accepted descriptors registered", registry_count() == 4);
   registry_clear();
 }
 
@@ -838,6 +930,7 @@ int main(void) {
   test_key_matching();
   test_own_keys();
   test_own_key_material();
+  test_raw_and_registry_keys();
   test_single_sig_success();
   test_purpose_binding_warning();
   test_multisig_and_miniscript();

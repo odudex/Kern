@@ -10,6 +10,7 @@
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 
 #include "bip32_path.h"
@@ -619,10 +620,23 @@ static bool xpub_matches(const char *xpub, const struct ext_key *ours) {
   return match;
 }
 
-/* Our key at key_index's origin path must be the descriptor's key. A matching
- * fingerprint alone is attacker-controllable text. */
+/* A raw key is compressed, or x-only in tr(). */
+static bool raw_key_matches(const char *hex, const struct ext_key *ours) {
+  unsigned char pub[EC_PUBLIC_KEY_UNCOMPRESSED_LEN];
+  size_t len = 0;
+  if (wally_hex_to_bytes(hex, pub, sizeof(pub), &len) != WALLY_OK)
+    return false;
+  if (len == EC_XONLY_PUBLIC_KEY_LEN)
+    return memcmp(pub, ours->pub_key + 1, len) == 0;
+  return len == EC_PUBLIC_KEY_LEN && memcmp(pub, ours->pub_key, len) == 0;
+}
+
+/* Our key at key_index's origin path must be the descriptor's key; a raw key's
+ * origin is its full path. A matching fingerprint alone is
+ * attacker-controllable text. */
 static descriptor_validation_result_t
-verify_own_key(const struct wally_descriptor *descriptor, int key_index) {
+verify_own_key(const struct wally_descriptor *descriptor, int key_index,
+               bool registry_key) {
   uint32_t features = 0;
   char *path_str = NULL;
   if (wally_descriptor_get_key_features(descriptor, key_index, &features) !=
@@ -637,7 +651,12 @@ verify_own_key(const struct wally_descriptor *descriptor, int key_index) {
       path_str[0] == '\0' ||
       bip32_path_parse(path_str, path, &depth, KEY_MAX_DERIVATION_DEPTH);
   wally_free_string(path_str);
-  if (!path_ok || (features & WALLY_MS_IS_RAW))
+  bool raw = (features & WALLY_MS_IS_RAW) != 0;
+  /* registry_add_from_string() tracks the first own key by its origin, which
+   * must parse within MAX_KEYPATH_ORIGIN_DEPTH; registry_match_keypath() needs
+   * a child path after it, which a raw key lacks. Refuse before any dialog. */
+  if (!path_ok ||
+      (registry_key && (raw || depth == 0 || depth > MAX_KEYPATH_ORIGIN_DEPTH)))
     return VALIDATION_PARSE_ERROR;
 
   char *key_str = NULL;
@@ -647,7 +666,8 @@ verify_own_key(const struct wally_descriptor *descriptor, int key_index) {
     wally_free_string(key_str);
     return VALIDATION_INTERNAL_ERROR;
   }
-  bool match = xpub_matches(key_str, ours);
+  bool match =
+      raw ? raw_key_matches(key_str, ours) : xpub_matches(key_str, ours);
   bip32_key_free(ours);
   wally_free_string(key_str);
   if (!match)
@@ -659,9 +679,11 @@ verify_own_key(const struct wally_descriptor *descriptor, int key_index) {
  * each of them as the wallet's. */
 static descriptor_validation_result_t
 verify_own_keys(const struct wally_descriptor *descriptor) {
-  for (int i = find_matching_key_index(descriptor, 0); i >= 0;
+  int first = find_matching_key_index(descriptor, 0);
+  for (int i = first; i >= 0;
        i = find_matching_key_index(descriptor, (uint32_t)i + 1)) {
-    descriptor_validation_result_t result = verify_own_key(descriptor, i);
+    descriptor_validation_result_t result =
+        verify_own_key(descriptor, i, i == first);
     if (result != VALIDATION_SUCCESS)
       return result;
   }
