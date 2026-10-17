@@ -16,6 +16,10 @@
 #include "screensaver.h"
 #include <bsp/pmic.h>
 #include <esp_log.h>
+#ifdef ESP_PLATFORM
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
 
 static const char *TAG = "SESSION_LOCK";
 
@@ -99,6 +103,31 @@ static void lock_dismissed_cb(void) {
   }
 }
 
+#ifdef ESP_PLATFORM
+/* Left alone below the scrub's own frame: an interrupt saves the interrupted
+ * context on this stack before switching to the ISR stack. */
+#define STACK_SCRUB_MARGIN 1024
+/* FreeRTOS's tskSTACK_FILL_BYTE: the overflow canary at the stack's end and
+ * the high-water mark both expect it. */
+#define STACK_SCRUB_FILL 0xa5
+
+/* Below the live frames, the calling task's stack still holds what deeper
+ * calls left there: words, entropy and keys from mnemonic entry, signing or
+ * key derivation. Nothing else ever overwrites it. */
+static void __attribute__((noinline)) scrub_unused_stack(void) {
+  uint8_t here;
+  uintptr_t end = (uintptr_t)&here;
+  volatile uint8_t *p = (volatile uint8_t *)xTaskGetStackStart(NULL);
+  if (!p || end <= (uintptr_t)p + STACK_SCRUB_MARGIN)
+    return;
+  end -= STACK_SCRUB_MARGIN;
+  while ((uintptr_t)p < end)
+    *p++ = STACK_SCRUB_FILL;
+}
+#else
+static void scrub_unused_stack(void) {}
+#endif
+
 void session_lock_now(void) {
   // A locked device may still have a partially entered PIN to discard.
   device_locked = true;
@@ -117,6 +146,7 @@ void session_lock_now(void) {
   // Finish the clean frame before attempting power-off (USB can keep us on).
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(NULL);
+  scrub_unused_stack();
 }
 
 void session_lock_dismiss(void) {
