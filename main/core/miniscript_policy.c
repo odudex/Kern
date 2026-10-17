@@ -11,14 +11,54 @@
 #include <wally_core.h>
 #include <wally_descriptor.h>
 
-// libwally returns raw keys as lowercase hex but keeps them as written in the
-// canonical text. Extended keys are base58, so they must match exactly.
-static const char *find_key(const char *s, const char *key) {
+static bool is_hash_fragment(const char *base, const char *open_paren) {
+  static const char *const names[] = {"sha256", "hash256", "ripemd160",
+                                      "hash160"};
+  const char *name = open_paren;
+  while (name > base && (isalnum((unsigned char)name[-1]) || name[-1] == '_'))
+    name--;
+  size_t len = (size_t)(open_paren - name);
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+    if (strlen(names[i]) == len && strncmp(name, names[i], len) == 0)
+      return true;
+  return false;
+}
+
+// Where key `key` (as libwally lists it) is written in `s` as a key expression,
+// not inside a hash argument that happens to have the same hex. *start_out is
+// the start of the expression, origin and an 02/03 prefix included; the return
+// value is the end of the key text, before any derivation suffix. libwally
+// returns raw keys as lowercase hex, x-only in tr(), but keeps them as written
+// in the canonical text. Extended keys are base58, so they must match exactly.
+static const char *find_key(const char *s, const char *key,
+                            const char **start_out) {
   size_t len = strlen(key);
   bool hex = strspn(key, "0123456789abcdef") == len;
-  for (; *s; s++)
-    if ((hex ? strncasecmp(s, key, len) : strncmp(s, key, len)) == 0)
-      return s;
+  for (const char *p = s; *p; p++) {
+    if ((hex ? strncasecmp(p, key, len) : strncmp(p, key, len)) != 0)
+      continue;
+    const char *after = p + len;
+    if (*after && !strchr("),/}", *after))
+      continue;
+    const char *start = p;
+    if (hex && len == 64 && p - s >= 2 && p[-2] == '0' &&
+        (p[-1] == '2' || p[-1] == '3'))
+      start = p - 2;
+    if (start > s && start[-1] == ']') {
+      const char *lb = start - 1;
+      while (lb > s && *lb != '[')
+        lb--;
+      if (*lb != '[')
+        continue;
+      start = lb;
+    }
+    char before = start > s ? start[-1] : '\0';
+    if (!strchr("(,{", before) ||
+        (before == '(' && is_hash_fragment(s, start - 1)))
+      continue;
+    *start_out = start;
+    return after;
+  }
   return NULL;
 }
 
@@ -60,23 +100,14 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
       ok = false;
       break;
     }
-    const char *hit = find_key(src, key_str);
-    if (!hit) {
+    const char *start = NULL;
+    const char *end = find_key(src, key_str, &start);
+    if (!end) {
       ok = false;
     } else {
-      // Include a preceding [origin] block in the replacement.
-      const char *start = hit;
-      if (start > src && start[-1] == ']') {
-        const char *lb = start - 1;
-        while (lb > src && *lb != '[')
-          lb--;
-        if (*lb == '[')
-          start = lb;
-      }
       dst = copy_lower(dst, src, (size_t)(start - src));
       *dst++ = (char)('A' + i);
       // Skip the trailing derivation suffix (/<0;1>/* etc).
-      const char *end = hit + strlen(key_str);
       while (*end && strchr("/0123456789h'*<;>", *end))
         end++;
       src = end;

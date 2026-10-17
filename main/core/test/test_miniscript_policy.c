@@ -271,6 +271,32 @@ static void test_policy_case(void) {
   check_key_tokens("view: tr keys only", tr_upper, "AB");
 }
 
+#define XONLY_G                                                                \
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+#define XONLY_2G                                                               \
+  "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+
+/* tr() keys are x-only in libwally but may be written compressed: the 02/03
+ * prefix and any origin belong to the key expression. */
+static void test_policy_compressed_tr_keys(void) {
+  check_policy_string("policy string: compressed tr internal and leaf keys",
+                      "tr(02" XONLY_G ",and_v(v:pk(03" XONLY_2G "),older(10)))",
+                      "tr(A,and_v(v:pk(B),older(10)))");
+  check_policy_string("policy string: compressed tr keys with origins",
+                      "tr([00000000/86'/0'/0']02" XONLY_G
+                      ",and_v(v:pk([11111111/86'/0'/0']03" XONLY_2G
+                      "),older(10)))",
+                      "tr(A,and_v(v:pk(B),older(10)))");
+}
+
+/* A hash argument equal to a later key's hex stays a hash. */
+static void test_policy_hash_equal_to_key(void) {
+  check_policy_string("policy string: hash equal to a later key stays a hash",
+                      "tr(" XONLY_G ",and_v(v:sha256(" XONLY_2G "),pk(" XONLY_2G
+                      ")))",
+                      "tr(A,and_v(v:sha256(" XONLY_2G "),pk(B)))");
+}
+
 /* A flattened thresh() must carry each child whole, not just its first line. */
 static void test_thresh_combinator_child(void) {
   check_key_tokens("view: thresh keeps the keys under an or_b child",
@@ -490,6 +516,8 @@ int main(void) {
   test_policy_string();
   test_policy_case();
   test_thresh_combinator_child();
+  test_policy_compressed_tr_keys();
+  test_policy_hash_equal_to_key();
   test_is_miniscript();
   test_view();
   test_timelock_notes();
