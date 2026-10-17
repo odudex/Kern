@@ -16,7 +16,9 @@
 #include <string.h>
 #include <wally_bip32.h>
 #include <wally_bip39.h>
+#include <wally_bip85.h>
 #include <wally_core.h>
+#include <wally_crypto.h>
 
 static int tests_run = 0;
 static int tests_failed = 0;
@@ -470,6 +472,56 @@ static void test_internal_memory_exhaustion(void) {
   key_unload();
 }
 
+/* BIP-85 BIP39 application, the spec's test vectors (English, index 0). */
+static void test_bip85_vectors(void) {
+  static const char *xprv =
+      "xprv9s21ZrQH143K2LBWUUQRFXhucrQqBpKdRRxNVq2zBqsx8HVqFk2uYo8kmbaLLHRdqtQp"
+      "Um98uKfu3vca1LqdGhUtyoFnCNkfmXRyPXLjbKb";
+  static const struct {
+    uint32_t words;
+    const char *mnemonic;
+  } vectors[] = {
+      {12, "girl mad pet galaxy egg matter matrix prison refuse sense ordinary "
+           "nose"},
+      {18, "near account window bike charge season chef number sketch tomorrow "
+           "excuse sniff circle vital hockey outdoor supply token"},
+      {24,
+       "puppy ocean match cereal symbol another shed magic wrap hammer bulb "
+       "intact gadget divorce twin tonight reason outdoor destroy simple "
+       "truth cigar social volcano"},
+  };
+  struct ext_key *master = NULL;
+  if (bip32_key_from_base58_alloc(xprv, &master) != WALLY_OK) {
+    check("BIP-85 master key parses", false);
+    return;
+  }
+  for (size_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
+    unsigned char entropy[HMAC_SHA512_LEN];
+    size_t written = 0;
+    char *mnemonic = NULL;
+    char name[48];
+    snprintf(name, sizeof(name), "BIP-85 %u words, index 0",
+             (unsigned)vectors[i].words);
+    check(name,
+          bip85_get_bip39_entropy(master, NULL, vectors[i].words, 0, entropy,
+                                  sizeof(entropy), &written) == WALLY_OK &&
+              kern_bip39_mnemonic_from_bytes(NULL, entropy, written,
+                                             &mnemonic) == WALLY_OK &&
+              strcmp(mnemonic, vectors[i].mnemonic) == 0);
+    SECURE_FREE_STRING(mnemonic);
+    if (i == 0) {
+      check("BIP-85 index 1 is another child",
+            bip85_get_bip39_entropy(master, NULL, 12, 1, entropy,
+                                    sizeof(entropy), &written) == WALLY_OK &&
+                kern_bip39_mnemonic_from_bytes(NULL, entropy, written,
+                                               &mnemonic) == WALLY_OK &&
+                strcmp(mnemonic, vectors[0].mnemonic) != 0);
+      SECURE_FREE_STRING(mnemonic);
+    }
+  }
+  bip32_key_free(master);
+}
+
 static void other_free(void *p) { free(p); }
 
 /* Secret operations rely on libwally's free_fn releasing kern_secret_alloc
@@ -514,6 +566,7 @@ int main(void) {
   test_unload();
   test_internal_memory_exhaustion();
   test_free_fn_change_fails_closed();
+  test_bip85_vectors();
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);
   return tests_failed == 0 ? 0 : 1;
