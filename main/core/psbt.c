@@ -919,31 +919,6 @@ static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
   return true;
 }
 
-/* BIP-370 signer rules: a signature that is not ANYONECANPAY pins the input
- * set, and one that is not SIGHASH_NONE pins the output set, so both flags
- * must be cleared once we have signed. `input_is_signable` refuses everything
- * but ALL/DEFAULT, so reaching here means both apply unconditionally.
- *
- * libwally has this logic in wally_psbt_add_input_signature(), but its own
- * signing path adds signatures at the input level and never runs it, so the
- * flags survive a signing pass untouched. Leaving them set tells the next
- * tool in the chain it may still add inputs or outputs, which would silently
- * invalidate the signature we just produced. */
-static void apply_signer_modifiable_rules(struct wally_psbt *psbt) {
-  if (!psbt_is_v2(psbt))
-    return;
-
-  size_t flags = 0;
-  if (wally_psbt_get_tx_modifiable_flags(psbt, &flags) != WALLY_OK)
-    return;
-
-  uint32_t pinned = (uint32_t)flags & ~(uint32_t)(WALLY_PSBT_TXMOD_INPUTS |
-                                                  WALLY_PSBT_TXMOD_OUTPUTS);
-  if (pinned != (uint32_t)flags &&
-      wally_psbt_set_tx_modifiable_flags(psbt, pinned) != WALLY_OK)
-    ESP_LOGW(TAG, "Failed to clear tx-modifiable flags after signing");
-}
-
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1054,9 +1029,6 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
         result->signed_ok++;
     }
   }
-
-  if (signatures_added)
-    apply_signer_modifiable_rules(psbt);
 
 cleanup:
   for (size_t i = 0; i < num_inputs; i++)
