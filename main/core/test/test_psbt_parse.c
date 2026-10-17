@@ -141,6 +141,12 @@ static void test_pset_rejected(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   base_len = hex_decode(PSBT_HEX, base, sizeof(base));
   if (!base_len) {
     printf("FAIL: could not decode the PSBT fixture\n");

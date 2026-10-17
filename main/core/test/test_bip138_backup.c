@@ -828,6 +828,12 @@ static void test_many_origins(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   check("test mnemonic loads",
         key_load_from_mnemonic(TEST_MNEMONIC, "", false));
   check("wallet initialises", wallet_init(WALLET_NETWORK_MAINNET));

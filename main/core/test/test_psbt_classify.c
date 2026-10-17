@@ -7,6 +7,7 @@
 /* Wally types needed by stubs */
 #include <wally_address.h>
 #include <wally_bip32.h>
+#include <wally_core.h>
 #include <wally_crypto.h>
 #include <wally_descriptor.h>
 #include <wally_psbt.h>
@@ -2569,6 +2570,76 @@ static void test_restore_without_memory(void) {
   wally_psbt_free(psbt);
 }
 
+/* Known-answer signatures. libwally signs deterministically (no nonce
+ * hardening is installed in host tests), so these pin BIP143 and BIP341
+ * sighashes and signing end to end, whichever hashing backend is built. */
+static void hex_of(const unsigned char *b, size_t n, char *out) {
+  for (size_t i = 0; i < n; i++)
+    sprintf(out + 2 * i, "%02x", b[i]);
+}
+
+static void expect_signature(const char *name, const unsigned char *sig,
+                             size_t len, const char *want) {
+  char hex[2 * 80 + 1];
+  TEST(name);
+  if (!sig || len > 80) {
+    FAIL("no signature");
+    return;
+  }
+  hex_of(sig, len, hex);
+  if (strcmp(hex, want) == 0)
+    PASS();
+  else
+    FAIL(hex);
+}
+
+static void test_known_answer_signatures(void) {
+  psbt_sign_policy_t policy = {0};
+
+  struct wally_psbt *psbt = make_safe_psbt();
+  const struct wally_map_item *it = NULL;
+  if (psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
+      psbt->inputs[0].signatures.num_items == 1)
+    it = &psbt->inputs[0].signatures.items[0];
+  expect_signature(
+      "KAT: P2WPKH (BIP143) signature", it ? it->value : NULL,
+      it ? it->value_len : 0,
+      "3044022072639180bbbaec17bee9427d14c7d8a6ae218700b04a2fb248503d44bf07f6"
+      "c902207da0d3365fe76f44bb0a2b6b4f639f07fb34194cb691225633c873b7bb95902c"
+      "01");
+  wally_psbt_free(psbt);
+
+  const char *bip86[] = {TR_BIP86_OURS};
+  psbt = make_tr_psbt(bip86, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  unsigned char sig[65];
+  size_t n = 0;
+  bool signed_kp = psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
+                   wally_psbt_get_input_taproot_signature(
+                       psbt, 0, sig, sizeof(sig), &n) == WALLY_OK;
+  expect_signature(
+      "KAT: taproot key-path (BIP341) signature", signed_kp ? sig : NULL, n,
+      "abfdae8f79070b7ffafe4a8c2b25734df93b0ab465ae73b533d904ef93ed3fe76ddf98"
+      "f68d637e9e95cae8d71337b502ea3913b23bf54e6cce5c499d64f8cbe7");
+  wally_psbt_free(psbt);
+
+  registry_clear();
+  it = NULL;
+  psbt = NULL;
+  const char *leaf[] = {TR_LEAF_OURS};
+  if (registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false) &&
+      (psbt = make_tr_psbt(leaf, 1, 0, 0, WALLY_PSBT_VERSION_0)) &&
+      psbt_sign(psbt, false, policy, NULL) == 1 &&
+      psbt->inputs[0].taproot_leaf_signatures.num_items == 1)
+    it = &psbt->inputs[0].taproot_leaf_signatures.items[0];
+  expect_signature(
+      "KAT: taproot script-path (BIP342) signature", it ? it->value : NULL,
+      it ? it->value_len : 0,
+      "b374394027acae385967663d3c47e6d2b5fc34ba0820b7a2cd4bfebb9dd11fb12e6afb"
+      "0fb45ae35556e4b0e8e73ad11aabd513f416099beee95e1de860208f27");
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
 /* One seed in two multipath groups of one policy: a primary <0;1> key and a
  * recovery <2;3> key, the Liana same-signer layout. Every own key of the
  * claimed descriptor at the input's index must sign, and an input still
@@ -4179,6 +4250,12 @@ static void test_registry_claim_oversize_wsh_fails(void) {
 /* ------------------------------------------------------------------ */
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== claim_regenerate whitelist tests ===\n\n");
 
   TEST("key_load_from_mnemonic");
@@ -4339,6 +4416,7 @@ int main(void) {
   test_tr_script_path_denied_input();
   test_tr_key_path_verified();
   test_restore_without_memory();
+  test_known_answer_signatures();
 
   printf("\n=== multi-key signing tests ===\n\n");
 

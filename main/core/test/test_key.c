@@ -497,6 +497,12 @@ static void test_free_fn_change_fails_closed(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== key tests ===\n\n");
   test_unloaded();
   test_load_and_reject();

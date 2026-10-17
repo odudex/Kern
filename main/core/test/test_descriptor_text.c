@@ -65,6 +65,12 @@ static void expect(const char *name, const char *in, const char *want) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== descriptor_to_unambiguous tests ===\n\n");
   char *good = checksummed(BARE);
   char *other = checksummed(BARE_OTHER);

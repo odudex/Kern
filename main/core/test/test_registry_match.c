@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <wally_core.h>
 
 #include "core/registry.h"
 
@@ -107,6 +108,12 @@ static void expect_none(const char *name, const uint8_t *kp, size_t len) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== registry_match_keypath tests ===\n\n");
   uint8_t kp[4 + MAX_KEYPATH_TOTAL_DEPTH * 4];
   size_t n;

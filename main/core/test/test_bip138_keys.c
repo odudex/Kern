@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wally_address.h>
+#include <wally_core.h>
 
 static int tests_run = 0;
 static int tests_failed = 0;
@@ -113,6 +114,12 @@ static void test_descriptors(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   test_vectors();
   test_descriptors();
   printf("\n%d tests, %d failed\n", tests_run, tests_failed);

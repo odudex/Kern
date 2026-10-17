@@ -201,6 +201,12 @@ static void test_single_path_sweeps_receive_only(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== address_match tests ===\n\n");
 
   if (!key_load_from_mnemonic(TEST_MNEMONIC, "", false)) {

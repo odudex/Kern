@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <wally_core.h>
 
 #include "core/ss_whitelist.h"
 
@@ -19,6 +20,12 @@ static int tests_failed = 0;
   } while (0)
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== ss_keypath_is_whitelisted tests ===\n\n");
 
   /* Group 1: account boundary */

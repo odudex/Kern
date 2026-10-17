@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wally_core.h>
 
 static int tests_run = 0;
 static int tests_failed = 0;
@@ -336,6 +337,12 @@ static void test_malformed(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== multisig_setup tests ===\n\n");
 
   test_single_header();

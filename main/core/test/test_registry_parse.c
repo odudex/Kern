@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <wally_core.h>
 
 #include "core/descriptor_checksum.h"
 #include "core/registry.h"
@@ -39,6 +40,12 @@ int registry_stub_storage_load_calls(void);
 #define DESC_WPKH "wpkh([00000000/84'/0'/0']" XPUB_84 "/<0;1>/*)#d9qwe873"
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== registry_add_from_string parse tests ===\n\n");
 
   /* --- Group 1: wpkh multipath --- */

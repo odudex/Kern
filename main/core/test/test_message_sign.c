@@ -115,6 +115,12 @@ static void test_signing_is_deterministic(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== message_sign tests ===\n\n");
   if (!key_load_from_mnemonic(TEST_MNEMONIC, "", false)) {
     printf("ABORT: failed to load mnemonic\n");
