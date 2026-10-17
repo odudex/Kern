@@ -49,6 +49,11 @@ typedef enum {
   /* More keys than DESCRIPTOR_INFO_MAX_KEYS letter IDs. Only tr() gets there:
    * sh()/wsh() hit the inner script cap first. */
   VALIDATION_TOO_MANY_KEYS,
+  /* A key carrying the wallet fingerprint has an origin Kern cannot use. The
+   * registry tracks the first one, which must be an xpub one to
+   * MAX_KEYPATH_ORIGIN_DEPTH steps deep; the others may be up to
+   * KEY_MAX_DERIVATION_DEPTH steps. */
+  VALIDATION_UNSUPPORTED_KEY_ORIGIN,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,

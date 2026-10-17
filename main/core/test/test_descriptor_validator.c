@@ -460,9 +460,9 @@ static void test_own_key_material(void) {
                                "[" FP "/0/1/2/3/4/5/6/7/8/9/10]%s/0/*))",
                                a, xpub_at("m/0/1/2/3/4/5/6/7/8/9"));
   check("origin deeper than the derivation limit rejected",
-        run(too_deep) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+        run(too_deep) == VALIDATION_UNSUPPORTED_KEY_ORIGIN && info_calls == 0 &&
             descriptor_validate_keyed(too_deep, NULL) ==
-                VALIDATION_PARSE_ERROR);
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
   check("four descriptors registered", registry_count() == 4);
   registry_clear();
 }
@@ -516,24 +516,27 @@ static void test_raw_and_registry_keys(void) {
                                 "[" FP "/48'/0'/0'/2']%s/0/*))",
                                 raw, a);
   check("raw first own key rejected before any dialog",
-        run(raw_first) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+        run(raw_first) == VALIDATION_UNSUPPORTED_KEY_ORIGIN &&
+            info_calls == 0 &&
             descriptor_validate_keyed(raw_first, NULL) ==
-                VALIDATION_PARSE_ERROR);
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
   const char *master_first = descf("wsh(multi(1,[" FP "]%s/0/*,"
                                    "[deadbeef/48'/0'/1'/2']%s/0/*))",
                                    xpub_at("m"), b);
   check("master first own key rejected before any dialog",
-        run(master_first) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+        run(master_first) == VALIDATION_UNSUPPORTED_KEY_ORIGIN &&
+            info_calls == 0 &&
             descriptor_validate_keyed(master_first, NULL) ==
-                VALIDATION_PARSE_ERROR);
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
   const char *deep_first =
       descf("wsh(multi(1,[" FP "/48'/0'/0'/2'/0'/0'/0']%s/0/*,"
             "[deadbeef/48'/0'/1'/2']%s/0/*))",
             xpub_at("m/48'/0'/0'/2'/0'/0'/0'"), b);
   check("first own key origin over six steps rejected before any dialog",
-        run(deep_first) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+        run(deep_first) == VALIDATION_UNSUPPORTED_KEY_ORIGIN &&
+            info_calls == 0 &&
             descriptor_validate_keyed(deep_first, NULL) ==
-                VALIDATION_PARSE_ERROR);
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
   check("only the accepted descriptors registered", registry_count() == 4);
   registry_clear();
 }

@@ -78,6 +78,12 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     dialog_show_error_timeout(msg, NULL, 3000);
     return true;
   }
+
+  case VALIDATION_UNSUPPORTED_KEY_ORIGIN:
+    dialog_show_error_timeout("Your key's derivation path is not supported",
+                              NULL, 3000);
+    return true;
+
   case VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE:
     dialog_show_error_timeout("Taproot internal key not provably unspendable",
                               NULL, 3000);

@@ -654,7 +654,7 @@ verify_own_key(const struct wally_descriptor *descriptor, int key_index,
    * a child path after it, which a raw key lacks. Refuse before any dialog. */
   if (!path_ok ||
       (registry_key && (raw || depth == 0 || depth > MAX_KEYPATH_ORIGIN_DEPTH)))
-    return VALIDATION_PARSE_ERROR;
+    return VALIDATION_UNSUPPORTED_KEY_ORIGIN;
 
   char *key_str = NULL;
   struct ext_key *ours = NULL;
