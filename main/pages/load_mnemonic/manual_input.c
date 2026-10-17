@@ -92,6 +92,7 @@ static void show_word_confirmation(const char *word) {
   snprintf(msg, sizeof(msg), "Word %d: %s", current_word_index + 1, word);
 
   dialog_show_confirm(msg, word_confirmation_cb, NULL, DIALOG_STYLE_OVERLAY);
+  secure_memzero(msg, sizeof(msg));
 }
 
 static void word_confirmation_cb(bool confirmed, void *user_data) {

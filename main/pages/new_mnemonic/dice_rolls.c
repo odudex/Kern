@@ -156,6 +156,7 @@ static void update_display(void) {
     char display[MAX_ROLLS + 2];
     snprintf(display, sizeof(display), "%s_", rolls_string);
     lv_label_set_text(rolls_label, display);
+    secure_memzero(display, sizeof(display));
 
     // Compute the vertical space available for the rolls label:
     // from just below the "..." position down to just above the keypad.

@@ -2,6 +2,7 @@
 
 #include "bip39_filter.h"
 #include "kern_wally.h"
+#include "secure_mem.h"
 #include <string.h>
 #include <wally_bip39.h>
 #include <wally_core.h>
@@ -95,7 +96,10 @@ int bip39_filter_get_word_index(const char *word) {
   return -1;
 }
 
-void bip39_filter_clear_last_word_cache(void) { valid_last_words_count = 0; }
+void bip39_filter_clear_last_word_cache(void) {
+  memset(valid_last_words_cache, 0, sizeof(valid_last_words_cache));
+  valid_last_words_count = 0;
+}
 
 /* Warms valid_last_words_cache and returns how many entries it holds. */
 static int ensure_last_word_cache(const char entered_words[24][16],
@@ -123,14 +127,17 @@ int bip39_filter_get_valid_last_words(const char entered_words[24][16],
   size_t last_word_entropy_bits = 11 - checksum_bits;
   int num_possibilities = 1 << last_word_entropy_bits;
 
-  // Pack word indices (11 bits each) from first N-1 words
+  // Pack word indices (11 bits each) from first N-1 words. Both buffers hold
+  // all but a few bits of the seed's entropy.
   uint8_t packed[32] = {0};
+  uint8_t test_packed[32];
   int bit_pos = 0;
+  int count = 0;
 
   for (int i = 0; i < word_count - 1; i++) {
     int idx = bip39_filter_get_word_index(entered_words[i]);
     if (idx < 0)
-      return 0;
+      goto cleanup;
 
     for (int b = 10; b >= 0; b--) {
       int byte_idx = bit_pos / 8;
@@ -141,12 +148,10 @@ int bip39_filter_get_valid_last_words(const char entered_words[24][16],
     }
   }
 
-  int count = 0;
   valid_last_words_count = 0;
 
   for (int entropy_val = 0;
        entropy_val < num_possibilities && count < max_words; entropy_val++) {
-    uint8_t test_packed[32];
     memcpy(test_packed, packed, sizeof(test_packed));
 
     int test_bit_pos = bit_pos;
@@ -176,9 +181,12 @@ int bip39_filter_get_valid_last_words(const char entered_words[24][16],
       }
     }
 
-    wally_free_string(new_mnemonic);
+    SECURE_FREE_STRING(new_mnemonic);
   }
 
+cleanup:
+  secure_memzero(packed, sizeof(packed));
+  secure_memzero(test_packed, sizeof(test_packed));
   return count;
 }
 

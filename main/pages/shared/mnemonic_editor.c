@@ -129,11 +129,12 @@ static bool recalculate_last_word(void) {
   // Pack word indices (11 bits each) from first N-1 words
   uint8_t packed[32] = {0};
   int bit_pos = 0;
+  bool ok = false;
 
   for (int i = 0; i < total_words - 1; i++) {
     int idx = bip39_filter_get_word_index(entered_words[i]);
     if (idx < 0)
-      return false;
+      goto cleanup;
 
     // Pack 11 bits into packed array
     for (int b = 10; b >= 0; b--) {
@@ -160,9 +161,8 @@ static bool recalculate_last_word(void) {
   // Generate mnemonic from entropy using libwally
   char *new_mnemonic = NULL;
   if (kern_bip39_mnemonic_from_bytes(NULL, packed, entropy_bytes,
-                                     &new_mnemonic) != WALLY_OK) {
-    return false;
-  }
+                                     &new_mnemonic) != WALLY_OK)
+    goto cleanup;
 
   // Extract last word from generated mnemonic
   char *last_space = strrchr(new_mnemonic, ' ');
@@ -172,8 +172,12 @@ static bool recalculate_last_word(void) {
     entered_words[total_words - 1][sizeof(entered_words[0]) - 1] = '\0';
   }
 
-  wally_free_string(new_mnemonic);
-  return true;
+  SECURE_FREE_STRING(new_mnemonic);
+  ok = true;
+
+cleanup:
+  secure_memzero(packed, sizeof(packed));
+  return ok;
 }
 
 static void update_fingerprint_display(void) {
@@ -272,6 +276,7 @@ static void update_word_label(int index) {
   char text[32];
   snprintf(text, sizeof(text), "%2d. %s", index + 1, entered_words[index]);
   lv_label_set_text(word_labels[index], text);
+  secure_memzero(text, sizeof(text));
 
   bool changed = strcmp(entered_words[index], original_words[index]) != 0;
   lv_obj_set_style_text_color(word_labels[index],
@@ -381,6 +386,7 @@ static void show_word_confirmation(const char *word) {
   snprintf(msg, sizeof(msg), "Word %d: %s", editing_word_index + 1, word);
 
   dialog_show_confirm(msg, word_confirmation_cb, NULL, DIALOG_STYLE_OVERLAY);
+  secure_memzero(msg, sizeof(msg));
 }
 
 static void word_confirmation_cb(bool confirmed, void *user_data) {
@@ -578,6 +584,7 @@ static lv_obj_t *create_word_button(lv_obj_t *parent, int index, int height,
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, text);
+  secure_memzero(text, sizeof(text));
   lv_obj_align(label, LV_ALIGN_LEFT_MID, -10, 0);
   lv_obj_set_style_text_font(label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(label, primary_color(), 0);
