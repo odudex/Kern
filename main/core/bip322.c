@@ -35,27 +35,12 @@ bool bip322_detect(const struct wally_psbt *psbt) {
   return psbt && get_message_field(psbt, &msg, &msg_len);
 }
 
-/* BIP322 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || message) */
+/* BIP322 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || message). libwally
+ * refuses an empty message, which bip322_parse rejects before getting here. */
 static bool message_tagged_hash(const unsigned char *msg, size_t msg_len,
                                 unsigned char hash_out[SHA256_LEN]) {
-  static const char tag[] = "BIP0322-signed-message";
-  unsigned char tag_hash[SHA256_LEN];
-  if (wally_sha256((const unsigned char *)tag, sizeof(tag) - 1, tag_hash,
-                   sizeof(tag_hash)) != WALLY_OK)
-    return false;
-
-  size_t buf_len = 2 * SHA256_LEN + msg_len;
-  unsigned char *buf = malloc(buf_len);
-  if (!buf)
-    return false;
-  memcpy(buf, tag_hash, SHA256_LEN);
-  memcpy(buf + SHA256_LEN, tag_hash, SHA256_LEN);
-  if (msg_len)
-    memcpy(buf + 2 * SHA256_LEN, msg, msg_len);
-
-  int ret = wally_sha256(buf, buf_len, hash_out, SHA256_LEN);
-  free(buf);
-  return ret == WALLY_OK;
+  return wally_bip340_tagged_hash(msg, msg_len, "BIP0322-signed-message",
+                                  hash_out, SHA256_LEN) == WALLY_OK;
 }
 
 /* Rebuild the virtual to_spend transaction for the message + proven script
