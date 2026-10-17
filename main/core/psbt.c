@@ -1032,6 +1032,15 @@ static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
     return false;
   }
 
+  /* A witness_utxo that contradicts the verified previous transaction beside
+   * it carries an amount the review never showed. libwally refuses it only by
+   * aborting the signing pass there, and signs a taproot script path from it
+   * regardless, so it is refused here as well as in the UI gate. */
+  if (psbt_get_input_amount(psbt, i).status == PSBT_AMOUNT_INVALID) {
+    ESP_LOGW(TAG, "Skipping input %zu: utxo data contradicts the prevout", i);
+    return false;
+  }
+
   if (ownership == PSBT_OWNERSHIP_OWNED_UNSAFE && !policy.allow_unsafe) {
     ESP_LOGW(TAG, "Skipping input %zu: OWNED_UNSAFE without permissive policy",
              i);

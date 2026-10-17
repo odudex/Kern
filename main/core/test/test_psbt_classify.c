@@ -1540,6 +1540,44 @@ static void test_fee_trust_taproot_signing(void) {
   wally_psbt_free(psbt);
 }
 
+/* An input whose witness_utxo disagrees with its verified previous
+ * transaction is refused by psbt_sign itself, not only by the UI gate. */
+static void test_sign_refuses_invalid_amount(void) {
+  const uint64_t witness_values[] = {1000, 500000, 100000};
+  for (size_t k = 0; k < 3; k++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "psbt_sign: previous tx of 100000, witness_utxo of %llu",
+             (unsigned long long)witness_values[k]);
+    TEST(name);
+    struct wally_tx *prev = NULL;
+    struct ext_key *derived = NULL;
+    struct wally_psbt *psbt =
+        make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+    const uint8_t kp[24] = {0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80,
+                            0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80};
+    if (!psbt || !key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+      FAIL("fixture");
+    } else {
+      wally_psbt_set_input_utxo(psbt, 0, prev);
+      set_witness_value(psbt, witness_values[k]);
+      wally_map_add(&psbt->inputs[0].keypaths, derived->pub_key,
+                    EC_PUBLIC_KEY_LEN, kp, sizeof(kp));
+      psbt_sign_policy_t policy = {0};
+      size_t n = psbt_sign(psbt, false, policy, NULL);
+      bool consistent = witness_values[k] == 100000;
+      if (consistent ? n != 1 : n != 0)
+        FAIL(consistent ? "a consistent pair should sign"
+                        : "a contradicting witness_utxo must not be signed");
+      else
+        PASS();
+    }
+    bip32_key_free(derived);
+    wally_psbt_free(psbt);
+    wally_tx_free(prev);
+  }
+}
+
 /* ================================================================
  * Sighash and fee-percentage tests
  * ================================================================ */
@@ -4263,6 +4301,7 @@ int main(void) {
   test_amount_audit_mixed();
   test_fee_trust_by_input_count();
   test_fee_trust_taproot_signing();
+  test_sign_refuses_invalid_amount();
 
   printf("\n=== sighash and fee tests ===\n\n");
 
