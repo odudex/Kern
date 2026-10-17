@@ -115,13 +115,14 @@ typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
                                                      void *user_data),
                                      void *user_data);
 
-// Validate descriptor against wallet key and load if valid.
-// Checks fingerprint, derivation path attributes, and xpub match.
-// On purpose/script binding mismatch, uses confirm_cb to prompt the user
-// (NULL = auto-decline).
-// After xpub match, uses info_confirm_cb to show descriptor info
-// (NULL = auto-confirm).
-// Calls callback with result (may be async if user confirmation needed).
+// Validate a descriptor against the loaded key and load it into the session
+// registry. Runs the checks of descriptor_validate_keyed, then rejects a
+// session duplicate. On purpose/script binding mismatch, uses confirm_cb to
+// prompt the user (NULL = auto-decline). Then uses info_confirm_cb to show
+// descriptor info (NULL = auto-confirm). Calls callback with the result (async
+// when the user is asked).
+// The descriptor is registered as parsed, with the first key carrying our
+// fingerprint, verified as below, as the registry's own key.
 void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
@@ -152,10 +153,17 @@ void descriptor_validate_and_load_watch_only(
     void *user_data);
 
 /* Synchronous, UI-free keyed validation shared by the interactive load and the
- * boot scan: notation, parse for the wallet network, private-key rejection,
- * miniscript wrapper, script generatability, taproot internal key, wallet
- * fingerprint membership and xpub match at the key's origin. Requires a loaded
- * key. On success *key_index_out (optional) receives our key's index. */
+ * boot scan. Checks the hardened notation, parses for the wallet network, and
+ * rejects private keys, an unsupported top level or miniscript wrapper, inner
+ * scripts over 520 bytes, more than DESCRIPTOR_INFO_MAX_KEYS keys
+ * (VALIDATION_TOO_MANY_KEYS) and an unprovable taproot internal key. Then
+ * every key carrying our fingerprint must be ours by key material: an xpub
+ * matches our key's pub_key and chain_code at its parsed origin, a raw key
+ * our public key at its origin, which is its full path (x-only in tr()).
+ * The first such key, which registry_add_parsed() records as the registry's
+ * own key, must be an xpub 1 to MAX_KEYPATH_ORIGIN_DEPTH steps deep
+ * (VALIDATION_UNSUPPORTED_KEY_ORIGIN otherwise). Requires a loaded key. On
+ * success *key_index_out (optional) receives that first key's index. */
 KERN_WARN_UNUSED_RESULT descriptor_validation_result_t
 descriptor_validate_keyed(const char *descriptor_str, int *key_index_out);
 /* Same, handing the parsed descriptor over on success (free with
