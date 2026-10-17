@@ -3210,6 +3210,111 @@ static void test_trim_leaves_out_previous_transactions(void) {
  * place. It must stay v2, keep the flags the signer set and every signature,
  * and still describe the same transaction, or the coordinator cannot merge it.
  */
+/* A v0 PSBT is trimmed like a v2 one, on a copy: every signature, final
+ * field and witness_utxo survives, whatever its sighash byte. */
+static void test_trim_v0_keeps_signatures(void) {
+  TEST("psbt_trim v0: signatures, final fields and witness_utxo survive");
+  struct ext_key *ours = NULL, *cosigner = NULL;
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt = NULL, *trimmed = NULL, *reparsed = NULL;
+  const char *err = NULL;
+  uint8_t funding_txid[32] = {0xaa};
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &ours) ||
+      !key_get_derived_key("m/84'/0'/0'/0/1", &cosigner) ||
+      !(psbt = make_reused_address_psbt()) ||
+      wally_tx_init_alloc(2, 0, 1, 1, &prev) != WALLY_OK ||
+      wally_tx_add_raw_input(prev, funding_txid, sizeof(funding_txid), 0,
+                             0xffffffff, NULL, 0, NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(prev, 100000, REF_SPK_P2WPKH,
+                              sizeof(REF_SPK_P2WPKH), 0) != WALLY_OK) {
+    err = "fixture";
+    goto done;
+  }
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  if (psbt_sign(psbt, false, policy, &res) == 0) {
+    err = "signing";
+    goto done;
+  }
+  /* Added after signing, which would refuse its txid: trim drops it. */
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+  uint8_t hash[32] = {2}, sig[EC_SIGNATURE_LEN];
+  uint8_t der[EC_SIGNATURE_DER_MAX_LEN + 1];
+  size_t der_len = 0;
+  if (wally_ec_sig_from_bytes(cosigner->priv_key + 1, EC_PRIVATE_KEY_LEN, hash,
+                              sizeof(hash), EC_FLAG_ECDSA, sig,
+                              sizeof(sig)) != WALLY_OK ||
+      wally_ec_sig_to_der(sig, sizeof(sig), der, sizeof(der) - 1, &der_len) !=
+          WALLY_OK) {
+    err = "cosigner signature";
+    goto done;
+  }
+  /* A sighash byte of 0: libwally parses it but its setter refuses it, and
+   * the old rebuild dropped it through that setter. */
+  der[der_len++] = 0x00;
+  if (wally_map_add(&psbt->inputs[0].signatures, cosigner->pub_key,
+                    EC_PUBLIC_KEY_LEN, der, der_len) != WALLY_OK) {
+    err = "cosigner signature map";
+    goto done;
+  }
+  struct wally_tx_witness_stack *stack = NULL;
+  wally_tx_witness_stack_init_alloc(2, &stack);
+  wally_tx_witness_stack_add(stack, der, der_len);
+  wally_tx_witness_stack_add(stack, cosigner->pub_key, EC_PUBLIC_KEY_LEN);
+  wally_psbt_set_input_final_witness(psbt, 1, stack);
+  wally_tx_witness_stack_free(stack);
+
+  size_t full_len = 0, trimmed_len = 0, written = 0, version = 0;
+  unsigned char *bytes = NULL;
+  if (!(trimmed = psbt_trim(psbt)) ||
+      wally_psbt_get_length(psbt, 0, &full_len) != WALLY_OK ||
+      wally_psbt_get_length(trimmed, 0, &trimmed_len) != WALLY_OK ||
+      !(bytes = malloc(trimmed_len)) ||
+      wally_psbt_to_bytes(trimmed, 0, bytes, trimmed_len, &written) !=
+          WALLY_OK ||
+      wally_psbt_from_bytes(bytes, written, 0, &reparsed) != WALLY_OK) {
+    free(bytes);
+    err = "trim or reparse";
+    goto done;
+  }
+  free(bytes);
+  size_t idx_ours = 0, idx_cos = 0, final_len = 0;
+  wally_map_find(&reparsed->inputs[0].signatures, ours->pub_key,
+                 EC_PUBLIC_KEY_LEN, &idx_ours);
+  wally_map_find(&reparsed->inputs[0].signatures, cosigner->pub_key,
+                 EC_PUBLIC_KEY_LEN, &idx_cos);
+  if (reparsed->inputs[1].final_witness)
+    final_len = reparsed->inputs[1].final_witness->num_items;
+  wally_psbt_get_version(reparsed, &version);
+  if (version != WALLY_PSBT_VERSION_0)
+    err = "version changed";
+  else if (!idx_ours || !idx_cos)
+    err = "a partial signature was lost";
+  else if (final_len != 2)
+    err = "the final witness was lost";
+  else if (!reparsed->inputs[0].witness_utxo)
+    err = "the witness_utxo was lost";
+  else if (reparsed->inputs[0].utxo)
+    err = "the previous transaction came back";
+  else if (reparsed->inputs[0].keypaths.num_items ||
+           reparsed->inputs[1].keypaths.num_items)
+    err = "keypaths came back";
+  else if (trimmed_len >= full_len)
+    err = "the payload did not shrink";
+
+done:
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(reparsed);
+  wally_psbt_free(trimmed);
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+  bip32_key_free(ours);
+  bip32_key_free(cosigner);
+}
+
 static void test_trim_psbt_v2_in_place(void) {
   TEST("psbt_trim: a v2 PSBT is trimmed in place");
 
@@ -4214,6 +4319,7 @@ int main(void) {
   test_tx_alloc_rejects_bad_amount();
   test_trim_leaves_out_previous_transactions();
   test_trim_psbt_v2_in_place();
+  test_trim_v0_keeps_signatures();
 
   key_unload();
 

@@ -60,8 +60,8 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     scan_ctx.signed_psbt_base64 = NULL;
   }
 
-  // Trimming rebuilds the PSBT from its tx and drops global unknowns, which
-  // would strip the BIP322 message field — export those untrimmed (tiny).
+  // Trimming drops global unknowns, which would strip the BIP322 message
+  // field — export those untrimmed (tiny).
   struct wally_psbt *trimmed_psbt =
       scan_ctx.is_bip322 ? NULL : psbt_trim(scan_ctx.psbt);
   struct wally_psbt *export_psbt = trimmed_psbt ? trimmed_psbt : scan_ctx.psbt;

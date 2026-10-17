@@ -211,14 +211,6 @@ struct wally_tx *psbt_tx_alloc(const struct wally_psbt *psbt) {
   return tx;
 }
 
-/* True when this PSBT keeps BIP-370's tx-modifiable flags. v0 has no such
- * field: it is implicitly modifiable until finalized. */
-static bool psbt_is_v2(const struct wally_psbt *psbt) {
-  size_t version = 0;
-  return psbt && wally_psbt_get_version(psbt, &version) == WALLY_OK &&
-         version == WALLY_PSBT_VERSION_2;
-}
-
 /* Bitcoin Core's IsWitnessProgram: OP_0 or OP_1..OP_16, then a single push of
  * 2..40 bytes making up the whole script. */
 static bool spk_is_witness_program(const unsigned char *spk, size_t spk_len) {
@@ -1264,18 +1256,15 @@ cleanup:
   return signatures_added;
 }
 
-/* A v0 PSBT is trimmed by rebuilding it from its transaction, but that
- * constructor only produces v0: a v2 one would either export downgraded or be
- * upgraded back, and the upgrade rewrites the tx-modifiable flags to fully
- * modifiable, undoing the signer rules applied above. A v2 PSBT also carries
- * its transaction in its inputs and outputs, sequences and required locktimes
- * included, where a rebuild could lose a field and with it the txid. So a copy
- * is trimmed in place, of what weighs: previous transactions, key origins,
- * scripts the coordinator has and unknown fields. The small fields the v0 path
- * also drops (sighash type, taproot merkle root, preimages) stay. */
-static struct wally_psbt *psbt_trim_v2(const struct wally_psbt *psbt) {
+/* A copy is trimmed in place, of what weighs: previous transactions, key
+ * origins, scripts the coordinator has and unknown fields. Everything a
+ * signature or the transaction depends on stays, in the version the PSBT came
+ * in: a v2 PSBT carries its transaction in its inputs and outputs, sequences
+ * and required locktimes included, and its tx-modifiable flags as the signer
+ * rules left them. The only failure is the copy itself. */
+struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
   struct wally_psbt *trimmed = NULL;
-  if (wally_psbt_clone_alloc(psbt, 0, &trimmed) != WALLY_OK)
+  if (!psbt || wally_psbt_clone_alloc(psbt, 0, &trimmed) != WALLY_OK)
     return NULL;
 
   wally_map_clear(&trimmed->global_xpubs);
@@ -1302,146 +1291,6 @@ static struct wally_psbt *psbt_trim_v2(const struct wally_psbt *psbt) {
     wally_map_clear(&out->taproot_leaf_paths);
     wally_map_clear(&out->taproot_tree);
     wally_map_clear(&out->unknowns);
-  }
-
-  return trimmed;
-}
-
-struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
-  if (!psbt) {
-    return NULL;
-  }
-
-  if (psbt_is_v2(psbt)) {
-    return psbt_trim_v2(psbt);
-  }
-
-  struct wally_tx *global_tx = psbt_tx_alloc(psbt);
-  if (!global_tx) {
-    return NULL;
-  }
-
-  struct wally_psbt *trimmed = NULL;
-  if (wally_psbt_from_tx(global_tx, 0, 0, &trimmed) != WALLY_OK) {
-    wally_tx_free(global_tx);
-    return NULL;
-  }
-  wally_tx_free(global_tx);
-
-  size_t num_inputs = 0;
-  wally_psbt_get_num_inputs(psbt, &num_inputs);
-
-  for (size_t i = 0; i < num_inputs; i++) {
-    // Copy partial signatures using direct map access
-    size_t sigs_size = 0;
-    if (wally_psbt_get_input_signatures_size(psbt, i, &sigs_size) == WALLY_OK &&
-        sigs_size > 0) {
-      // Access the signatures map directly from the source PSBT input
-      const struct wally_map *sig_map = &psbt->inputs[i].signatures;
-      for (size_t j = 0; j < sig_map->num_items; j++) {
-        const struct wally_map_item *item = &sig_map->items[j];
-        if (item->key && item->key_len > 0 && item->value &&
-            item->value_len > 0) {
-          wally_psbt_add_input_signature(trimmed, i, item->key, item->key_len,
-                                         item->value, item->value_len);
-        }
-      }
-    }
-
-    // Copy final witness if present
-    struct wally_tx_witness_stack *witness = NULL;
-    if (wally_psbt_get_input_final_witness_alloc(psbt, i, &witness) ==
-            WALLY_OK &&
-        witness) {
-      wally_psbt_set_input_final_witness(trimmed, i, witness);
-      wally_tx_witness_stack_free(witness);
-    }
-
-    // Copy final scriptsig if present
-    size_t scriptsig_len = 0;
-    if (wally_psbt_get_input_final_scriptsig_len(psbt, i, &scriptsig_len) ==
-            WALLY_OK &&
-        scriptsig_len > 0) {
-      unsigned char *scriptsig = malloc(scriptsig_len);
-      if (scriptsig) {
-        size_t written = 0;
-        if (wally_psbt_get_input_final_scriptsig(
-                psbt, i, scriptsig, scriptsig_len, &written) == WALLY_OK) {
-          wally_psbt_set_input_final_scriptsig(trimmed, i, scriptsig, written);
-        }
-        free(scriptsig);
-      }
-    }
-
-    // Copy witness UTXO if present
-    struct wally_tx_output *witness_utxo = NULL;
-    if (wally_psbt_get_input_witness_utxo_alloc(psbt, i, &witness_utxo) ==
-            WALLY_OK &&
-        witness_utxo) {
-      wally_psbt_set_input_witness_utxo(trimmed, i, witness_utxo);
-      wally_tx_output_free(witness_utxo);
-    }
-
-    // Copy redeem script if present (P2SH)
-    size_t redeem_len = 0;
-    if (wally_psbt_get_input_redeem_script_len(psbt, i, &redeem_len) ==
-            WALLY_OK &&
-        redeem_len > 0) {
-      unsigned char *redeem = malloc(redeem_len);
-      if (redeem) {
-        size_t written = 0;
-        if (wally_psbt_get_input_redeem_script(psbt, i, redeem, redeem_len,
-                                               &written) == WALLY_OK) {
-          wally_psbt_set_input_redeem_script(trimmed, i, redeem, written);
-        }
-        free(redeem);
-      }
-    }
-
-    // Copy witness script if present (P2WSH)
-    size_t witness_script_len = 0;
-    if (wally_psbt_get_input_witness_script_len(psbt, i, &witness_script_len) ==
-            WALLY_OK &&
-        witness_script_len > 0) {
-      unsigned char *witness_script = malloc(witness_script_len);
-      if (witness_script) {
-        size_t written = 0;
-        if (wally_psbt_get_input_witness_script(psbt, i, witness_script,
-                                                witness_script_len,
-                                                &written) == WALLY_OK) {
-          wally_psbt_set_input_witness_script(trimmed, i, witness_script,
-                                              written);
-        }
-        free(witness_script);
-      }
-    }
-
-    // Copy taproot key signature if present
-    size_t tap_sig_len = 0;
-    if (wally_psbt_get_input_taproot_signature_len(psbt, i, &tap_sig_len) ==
-            WALLY_OK &&
-        tap_sig_len > 0) {
-      unsigned char tap_sig[65];
-      size_t written = 0;
-      if (wally_psbt_get_input_taproot_signature(
-              psbt, i, tap_sig, sizeof(tap_sig), &written) == WALLY_OK) {
-        wally_psbt_set_input_taproot_signature(trimmed, i, tap_sig, written);
-      }
-    }
-
-    // Copy taproot script-path signatures (TAP_SCRIPT_SIG). These live in a
-    // separate map from the key-path signature above; without this, script-path
-    // (tapscript) spends would export with no signature.
-    const struct wally_map *tap_sigs = &psbt->inputs[i].taproot_leaf_signatures;
-    for (size_t j = 0; j < tap_sigs->num_items; j++) {
-      const struct wally_map_item *item = &tap_sigs->items[j];
-      if (item->key && item->key_len > 0 && item->value &&
-          item->value_len > 0) {
-        wally_psbt_input_add_taproot_leaf_signature(
-            &trimmed->inputs[i], item->key, item->key_len, item->value,
-            item->value_len);
-      }
-    }
   }
 
   return trimmed;
