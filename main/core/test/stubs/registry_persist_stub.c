@@ -37,6 +37,12 @@ bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
   return true;
 }
 
+bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
+                                      char **descriptor_out,
+                                      bool *approved_out) {
+  return bip138_backup_decrypt_any(data, len, descriptor_out, approved_out);
+}
+
 void bip138_backup_forget_keys(void) {}
 
 bool storage_descriptor_exists(storage_location_t loc, const char *id,

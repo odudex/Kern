@@ -291,6 +291,32 @@ static void test_unload_forgets_common_keys(void) {
     abort();
 }
 
+/* The boot scan opens registered backups through their stored paths only: a
+ * backup another seed wrote is skipped without walking the common paths. */
+static void test_hinted_skips_common_walk(void) {
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  char *recovered = NULL;
+  bip138_backup_forget_keys();
+  check(
+      "hinted: foreign backup is not opened",
+      bip138_backup_encrypt("wpkh(" FOREIGN_KEY "/<0;1>/*)", &blob,
+                            &blob_len) &&
+          !bip138_backup_decrypt_any_hinted(blob, blob_len, &recovered, NULL));
+  check("hinted: no common path was derived", bip138_backup_cache_is_empty());
+  free(blob);
+
+  char descriptor[256];
+  check(
+      "hinted: own common-account backup opens",
+      build_wpkh("m/84'/0'/0'", descriptor, sizeof(descriptor)) &&
+          bip138_backup_encrypt(descriptor, &blob, &blob_len) &&
+          bip138_backup_decrypt_any_hinted(blob, blob_len, &recovered, NULL) &&
+          strcmp(recovered, descriptor) == 0);
+  free(recovered);
+  free(blob);
+}
+
 static void test_foreign_key(void) {
   const char *descriptor = "wpkh(" FOREIGN_KEY "/<0;1>/*)";
   uint8_t *blob = NULL;
@@ -792,6 +818,7 @@ int main(void) {
   test_uncommon_account();
   test_repeated_key_hint();
   test_unload_forgets_common_keys();
+  test_hinted_skips_common_walk();
   test_foreign_key();
   test_text_form();
   test_rejections();

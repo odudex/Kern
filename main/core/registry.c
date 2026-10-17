@@ -146,7 +146,8 @@ static void registry_init_scan(void) {
     char id[REGISTRY_ID_MAX_LEN];
     char existing[REGISTRY_ID_MAX_LEN];
     bool approved = false;
-    if (!bip138_backup_decrypt_any(data, data_len, &desc_str, &approved)) {
+    if (!bip138_backup_decrypt_any_hinted(data, data_len, &desc_str,
+                                          &approved)) {
       ESP_LOGI(TAG, "Skipping '%s': not addressed to the loaded key", fname);
     } else if (!approved) {
       ESP_LOGI(TAG, "Skipping '%s': not registered on this device", fname);

@@ -240,8 +240,9 @@ static bool mark_is_valid(const bip138_item *descriptor_item,
   return diff == 0;
 }
 
-bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
-                           char **descriptor_out, bool *approved_out) {
+static bool decrypt_impl(const uint8_t *blob, size_t blob_len,
+                         char **descriptor_out, bool *approved_out,
+                         bool walk_common) {
   bip138_container cont;
   hint_path_t hints[BIP138_BACKUP_MAX_PATHS];
   uint8_t xonly[BIP138_KEY_LEN];
@@ -263,7 +264,7 @@ bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
   if (!pt)
     return false;
 
-  size_t candidates = n_hints + bip138_common_path_count();
+  size_t candidates = n_hints + (walk_common ? bip138_common_path_count() : 0);
   for (size_t i = 0; i < candidates && !found; i++) {
     bool have = i < n_hints
                     ? candidate_key(hints[i].child, hints[i].depth, xonly)
@@ -291,27 +292,45 @@ bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
   return ok;
 }
 
+bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
+                           char **descriptor_out, bool *approved_out) {
+  return decrypt_impl(blob, blob_len, descriptor_out, approved_out, true);
+}
+
 bool bip138_backup_detect(const uint8_t *data, size_t len) {
   static const char base64_magic[] = "QklQMTM4"; /* base64("BIP138") */
   return bip138_is_container(data, len) ||
          (data && len >= 8 && memcmp(data, base64_magic, 8) == 0);
 }
 
-bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
-                               char **descriptor_out, bool *approved_out) {
+static bool decrypt_any_impl(const uint8_t *data, size_t len,
+                             char **descriptor_out, bool *approved_out,
+                             bool walk_common) {
   if (approved_out)
     *approved_out = false;
   if (!data || len == 0 || len > BIP138_BACKUP_MAX_LEN * 2)
     return false;
   if (bip138_is_container(data, len))
-    return bip138_backup_decrypt(data, len, descriptor_out, approved_out);
+    return decrypt_impl(data, len, descriptor_out, approved_out, walk_common);
   size_t cap = BIP138_BASE64_DECODED_MAX(len);
   uint8_t *blob = malloc(cap);
   size_t blob_len = 0;
-  bool ok = blob &&
-            bip138_base64_decode((const char *)data, len, blob, cap,
-                                 &blob_len) == BIP138_OK &&
-            bip138_backup_decrypt(blob, blob_len, descriptor_out, approved_out);
+  bool ok =
+      blob &&
+      bip138_base64_decode((const char *)data, len, blob, cap, &blob_len) ==
+          BIP138_OK &&
+      decrypt_impl(blob, blob_len, descriptor_out, approved_out, walk_common);
   free(blob);
   return ok;
+}
+
+bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
+                               char **descriptor_out, bool *approved_out) {
+  return decrypt_any_impl(data, len, descriptor_out, approved_out, true);
+}
+
+bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
+                                      char **descriptor_out,
+                                      bool *approved_out) {
+  return decrypt_any_impl(data, len, descriptor_out, approved_out, false);
 }

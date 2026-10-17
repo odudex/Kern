@@ -40,6 +40,16 @@ KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt_any(const uint8_t *data,
                                                        char **descriptor_out,
                                                        bool *approved_out);
 
+/* Same, trying only the paths the container itself stores, never the common
+ * paths. A backup this device registered stores the origin of every key it
+ * holds, so the boot scan needs nothing more, and a backup the loaded key
+ * cannot open (another seed's, or every backup when the passphrase is not yet
+ * applied) costs one derivation per stored path instead of a walk of all 140
+ * common paths. */
+KERN_WARN_UNUSED_RESULT bool
+bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
+                                 char **descriptor_out, bool *approved_out);
+
 /* True for a binary container or its base64 text form. */
 bool bip138_backup_detect(const uint8_t *data, size_t len);
 
