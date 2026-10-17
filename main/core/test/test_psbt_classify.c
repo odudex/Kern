@@ -2433,6 +2433,104 @@ static void test_tr_key_path_verified(void) {
   registry_clear();
 }
 
+/* Out of memory once signing is done: restoring a denied input must not need
+ * an allocation, or our signature stays on it while the UI says it was
+ * discarded. */
+static bool fail_mallocs;
+static bool fail_after_signing;
+void *__real_malloc(size_t size);
+void *__wrap_malloc(size_t size) {
+  return fail_mallocs ? NULL : __real_malloc(size);
+}
+int __real_wally_psbt_signing_cache_disable(struct wally_psbt *psbt);
+int __wrap_wally_psbt_signing_cache_disable(struct wally_psbt *psbt) {
+  int ret = __real_wally_psbt_signing_cache_disable(psbt);
+  if (fail_after_signing)
+    fail_mallocs = true;
+  return ret;
+}
+
+static size_t sign_out_of_memory_after_signing(struct wally_psbt *psbt,
+                                               psbt_sign_result_t *res) {
+  psbt_sign_policy_t policy = {0};
+  fail_after_signing = true;
+  size_t n = psbt_sign(psbt, false, policy, res);
+  fail_mallocs = false;
+  fail_after_signing = false;
+  return n;
+}
+
+static void test_restore_without_memory(void) {
+  TEST("restore under OOM: ECDSA denied input keeps only the cosigner sig");
+  struct ext_key *ours = NULL, *cosigner = NULL;
+  struct wally_psbt *psbt = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &ours) ||
+      !key_get_derived_key("m/84'/0'/0'/0/1", &cosigner)) {
+    FAIL("key derivation failed");
+  } else {
+    uint8_t kp_ours[24] = {0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80,
+                           0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80};
+    uint8_t kp_foreign[24];
+    memcpy(kp_foreign, kp_ours, sizeof(kp_foreign));
+    kp_foreign[0] = 0xde;
+    psbt = make_two_input_psbt(
+        REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), ours->pub_key,
+        EC_PUBLIC_KEY_LEN, kp_ours, sizeof(kp_ours), REF_SPK_P2WPKH,
+        sizeof(REF_SPK_P2WPKH), ours->pub_key, EC_PUBLIC_KEY_LEN, kp_foreign,
+        sizeof(kp_foreign));
+    uint8_t hash[32] = {1}, sig[EC_SIGNATURE_LEN];
+    uint8_t der[EC_SIGNATURE_DER_MAX_LEN + 1];
+    size_t der_len = 0;
+    psbt_sign_result_t res = {0};
+    if (!psbt ||
+        wally_ec_sig_from_bytes(cosigner->priv_key + 1, EC_PRIVATE_KEY_LEN,
+                                hash, sizeof(hash), EC_FLAG_ECDSA, sig,
+                                sizeof(sig)) != WALLY_OK ||
+        wally_ec_sig_to_der(sig, sizeof(sig), der, sizeof(der) - 1, &der_len) !=
+            WALLY_OK) {
+      FAIL("fixture");
+    } else {
+      der[der_len++] = WALLY_SIGHASH_ALL;
+      wally_psbt_add_input_signature(psbt, 1, cosigner->pub_key,
+                                     EC_PUBLIC_KEY_LEN, der, der_len);
+      sign_out_of_memory_after_signing(psbt, &res);
+      size_t idx = 0;
+      bool ours_left =
+          wally_map_find(&psbt->inputs[1].signatures, ours->pub_key,
+                         EC_PUBLIC_KEY_LEN, &idx) == WALLY_OK &&
+          idx != 0;
+      if (res.blocked != 1 || ours_left ||
+          psbt->inputs[1].signatures.num_items != 1)
+        FAIL("our signature leaked onto the denied input");
+      else
+        PASS();
+    }
+  }
+  wally_psbt_free(psbt);
+  bip32_key_free(ours);
+  bip32_key_free(cosigner);
+
+  TEST("restore under OOM: taproot denied input keeps no key-path sig");
+  const char *descs[] = {TR_BIP86_OURS, TR_BIP86_FOREIGN};
+  psbt = make_tr_psbt(descs, 2, 0, 0, WALLY_PSBT_VERSION_0);
+  psbt_sign_result_t res = {0};
+  size_t internal_len = 0;
+  if (!psbt) {
+    FAIL("fixture");
+  } else {
+    sign_out_of_memory_after_signing(psbt, &res);
+    if (res.blocked != 1 || tap_key_sig_len(psbt, 1) != 0)
+      FAIL("our signature leaked onto the denied input");
+    else if (wally_psbt_get_input_taproot_internal_key_len(
+                 psbt, 1, &internal_len) != WALLY_OK ||
+             internal_len != EC_XONLY_PUBLIC_KEY_LEN)
+      FAIL("the denied input lost its internal key");
+    else
+      PASS();
+  }
+  wally_psbt_free(psbt);
+}
+
 /* One seed in two multipath groups of one policy: a primary <0;1> key and a
  * recovery <2;3> key, the Liana same-signer layout. Every own key of the
  * claimed descriptor at the input's index must sign, and an input still
@@ -4096,6 +4194,7 @@ int main(void) {
   test_tr_change_output_owned();
   test_tr_script_path_denied_input();
   test_tr_key_path_verified();
+  test_restore_without_memory();
 
   printf("\n=== multi-key signing tests ===\n\n");
 

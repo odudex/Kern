@@ -917,6 +917,16 @@ static bool capture_input_state(const struct wally_psbt *psbt, size_t i,
   return true;
 }
 
+/* Puts the snapshot back by exchanging the maps, which allocates nothing: a
+ * copy back could fail for want of memory and leave our signature in place.
+ * The snapshot was copied without the live map's verifier, so it takes it. */
+static void swap_back(struct wally_map *live, struct wally_map *saved) {
+  saved->verify_fn = live->verify_fn;
+  struct wally_map tmp = *live;
+  *live = *saved;
+  *saved = tmp;
+}
+
 static void restore_input_state(struct wally_psbt *psbt, size_t i,
                                 input_plan_t *plan,
                                 psbt_sign_result_t *result) {
@@ -929,11 +939,11 @@ static void restore_input_state(struct wally_psbt *psbt, size_t i,
       result->blocked++;
   }
 
-  wally_map_assign(&psbt->inputs[i].signatures, &plan->signatures);
-  wally_map_assign(&psbt->inputs[i].taproot_leaf_signatures,
-                   &plan->leaf_signatures);
-  wally_map_assign(&psbt->inputs[i].psbt_fields, &plan->fields);
-  release_input_state(plan);
+  struct wally_psbt_input *inp = &psbt->inputs[i];
+  swap_back(&inp->signatures, &plan->signatures);
+  swap_back(&inp->taproot_leaf_signatures, &plan->leaf_signatures);
+  swap_back(&inp->psbt_fields, &plan->fields);
+  release_input_state(plan); /* frees what signing added */
 }
 
 typedef struct {
