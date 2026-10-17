@@ -42,14 +42,15 @@ static void remember_flagged_path(sign_policy_review_t *review,
     review->flagged_path[0] = '\0'; // the review renders without a path
 }
 
-static void scan_inputs(struct wally_psbt *psbt, bool is_testnet,
+static void scan_inputs(struct wally_psbt *psbt,
+                        const input_ownership_t *inputs,
                         sign_policy_review_t *review) {
   size_t num_inputs = 0;
   if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK)
     return;
 
   for (size_t i = 0; i < num_inputs; i++) {
-    input_ownership_t own = psbt_classify_input(psbt, i, is_testnet);
+    input_ownership_t own = inputs[i];
     if (own.ownership != PSBT_OWNERSHIP_EXTERNAL &&
         psbt_input_is_taproot(psbt, i))
       review->signs_taproot = true;
@@ -79,14 +80,15 @@ static void scan_inputs(struct wally_psbt *psbt, bool is_testnet,
   }
 }
 
-static void scan_outputs(struct wally_psbt *psbt, bool is_testnet,
+static void scan_outputs(struct wally_psbt *psbt,
+                         const output_ownership_t *outputs,
                          sign_policy_review_t *review) {
   size_t num_outputs = 0;
   if (wally_psbt_get_num_outputs(psbt, &num_outputs) != WALLY_OK)
     return;
 
   for (size_t i = 0; i < num_outputs; i++) {
-    output_ownership_t own = psbt_classify_output(psbt, i, is_testnet);
+    output_ownership_t own = outputs[i];
     switch (own.ownership) {
     case PSBT_OWNERSHIP_OWNED_UNSAFE:
       remember_flagged_path(review, own.ownership, i, false, own.raw_keypath,
@@ -366,15 +368,17 @@ static bool reject_partial(const sign_policy_review_t *review,
   return true;
 }
 
-bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
+bool psbt_sign_policy_allows_review(struct wally_psbt *psbt,
+                                    const input_ownership_t *inputs,
+                                    const output_ownership_t *outputs,
                                     dialog_callback_t dismissed_cb,
                                     void (*load_descriptor_cb)(void)) {
-  if (!psbt)
+  if (!psbt || !inputs || !outputs)
     return false;
 
   sign_policy_review_t review = {0};
-  scan_inputs(psbt, is_testnet, &review);
-  scan_outputs(psbt, is_testnet, &review);
+  scan_inputs(psbt, inputs, &review);
+  scan_outputs(psbt, outputs, &review);
 
   psbt_amount_audit_t audit;
   psbt_audit_input_amounts(psbt, &audit);

@@ -31,7 +31,16 @@ static void psbt_desc_menu_back_cb(void);
 static void psbt_desc_qr_cb(void);
 static void psbt_desc_flash_cb(void);
 static void psbt_desc_sd_cb(void);
-static bool create_psbt_info_display(void);
+/* The PSBT's classification, taken once per review and shared by the
+ * sign-policy gate and the review screen. */
+typedef struct {
+  input_ownership_t *inputs;
+  output_ownership_t *outputs;
+  size_t num_inputs;
+  size_t num_outputs;
+} psbt_owners_t;
+
+static bool create_psbt_info_display(const psbt_owners_t *owners);
 
 // Fee share of the inputs at which the review screen stops calling it normal.
 #define HIGH_FEE_PERCENT 10u
@@ -128,10 +137,8 @@ static bool output_shares_input_policy(const classified_input_t *inputs,
 // owned-safe input spends from; anything else owned is a self-transfer, shown
 // with its address and wallet.
 static void classify_output(const classified_input_t *inputs, size_t num_inputs,
+                            output_ownership_t ownership,
                             classified_output_t *out) {
-  output_ownership_t ownership =
-      psbt_classify_output(scan_ctx.psbt, out->index, scan_ctx.is_testnet);
-
   switch (ownership.ownership) {
   case PSBT_OWNERSHIP_OWNED_SAFE:
     if (ownership.source.kind == CLAIM_WHITELIST) {
@@ -174,13 +181,45 @@ static void policy_reject_dismissed_cb(void *user_data) {
 // Re-runs the policy gate against the retained PSBT. With offer_descriptor the
 // expected-owned rejection becomes an offer to load a descriptor; without it
 // the gate falls back to the plain rejection dialog.
+static void owners_free(psbt_owners_t *o) {
+  free(o->inputs);
+  free(o->outputs);
+  memset(o, 0, sizeof(*o));
+}
+
+static bool owners_classify(psbt_owners_t *o) {
+  memset(o, 0, sizeof(*o));
+  if (!scan_ctx.psbt ||
+      wally_psbt_get_num_inputs(scan_ctx.psbt, &o->num_inputs) != WALLY_OK ||
+      wally_psbt_get_num_outputs(scan_ctx.psbt, &o->num_outputs) != WALLY_OK ||
+      !o->num_inputs || !o->num_outputs)
+    return false;
+  o->inputs = calloc(o->num_inputs, sizeof(*o->inputs));
+  o->outputs = calloc(o->num_outputs, sizeof(*o->outputs));
+  if (!o->inputs || !o->outputs) {
+    owners_free(o);
+    return false;
+  }
+  for (size_t i = 0; i < o->num_inputs; i++)
+    o->inputs[i] = psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
+  for (size_t i = 0; i < o->num_outputs; i++)
+    o->outputs[i] = psbt_classify_output(scan_ctx.psbt, i, scan_ctx.is_testnet);
+  return true;
+}
+
 void scan_psbt_resume_review(bool offer_descriptor) {
-  if (!psbt_sign_policy_allows_review(
-          scan_ctx.psbt, scan_ctx.is_testnet, policy_reject_dismissed_cb,
-          offer_descriptor ? psbt_offer_descriptor_cb : NULL))
-    return;
-  if (!create_psbt_info_display())
+  psbt_owners_t owners;
+  if (!owners_classify(&owners)) {
     dialog_show_error_timeout("Invalid PSBT data", scan_ctx.return_cb, 0);
+    return;
+  }
+  if (psbt_sign_policy_allows_review(scan_ctx.psbt, owners.inputs,
+                                     owners.outputs, policy_reject_dismissed_cb,
+                                     offer_descriptor ? psbt_offer_descriptor_cb
+                                                      : NULL) &&
+      !create_psbt_info_display(&owners))
+    dialog_show_error_timeout("Invalid PSBT data", scan_ctx.return_cb, 0);
+  owners_free(&owners);
 }
 
 static void psbt_offer_descriptor_cb(void) {
@@ -339,11 +378,11 @@ static void review_data_free(review_data_t *d) {
   memset(d, 0, sizeof(*d));
 }
 
-static bool review_data_collect(review_data_t *d) {
+static bool review_data_collect(review_data_t *d, const psbt_owners_t *owners) {
   memset(d, 0, sizeof(*d));
-  if (wally_psbt_get_num_inputs(scan_ctx.psbt, &d->num_inputs) != WALLY_OK ||
-      wally_psbt_get_num_outputs(scan_ctx.psbt, &d->num_outputs) != WALLY_OK ||
-      d->num_inputs == 0 || d->num_outputs == 0)
+  d->num_inputs = owners->num_inputs;
+  d->num_outputs = owners->num_outputs;
+  if (d->num_inputs == 0 || d->num_outputs == 0)
     return false;
 
   d->inputs = calloc(d->num_inputs, sizeof(*d->inputs));
@@ -362,8 +401,7 @@ static bool review_data_collect(review_data_t *d) {
     in->value = values[i];
     d->total_input += in->value;
 
-    input_ownership_t own =
-        psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
+    const input_ownership_t own = owners->inputs[i];
     in->ownership = own.ownership;
     if (own.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
       in->claim = own.claim;
@@ -420,7 +458,7 @@ static bool review_data_collect(review_data_t *d) {
     out->address = psbt_output_destination(
         txo->script, txo->script_len, scan_ctx.is_testnet, &out->dest_kind);
     out->script_len = txo->script_len;
-    classify_output(d->inputs, d->num_inputs, out);
+    classify_output(d->inputs, d->num_inputs, owners->outputs[i], out);
     out->is_dust =
         out->value < psbt_output_dust_threshold(txo->script, txo->script_len);
     if (out->is_dust) {
@@ -931,14 +969,14 @@ static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
   }
 }
 
-static bool create_psbt_info_display(void) {
+static bool create_psbt_info_display(const psbt_owners_t *owners) {
   if (!scan_ctx.screen || !scan_ctx.psbt || !wallet_is_initialized())
     return false;
   if (scan_psbt_check_mismatch())
     return true;
 
   review_data_t data;
-  if (!review_data_collect(&data))
+  if (!review_data_collect(&data, owners))
     return false;
 
   scan_ctx.info_container = theme_create_scroll_column(scan_ctx.screen, 10, 10);
