@@ -1,4 +1,5 @@
 #include "address_match.h"
+#include "descriptor_branch.h"
 #include "psbt_internal.h"
 #include <string.h>
 #include <wally_address.h>
@@ -62,19 +63,26 @@ bool address_match_descriptor(const struct wally_descriptor *desc,
     return false;
   uint32_t chains = num_paths <= 1 ? 1 : 2;
   for (uint32_t chain = 0; chain < chains; chain++) {
-    for (uint32_t i = start; i < limit; i++) {
+    struct wally_descriptor *branch = descriptor_branch_alloc(desc, chain);
+    const struct wally_descriptor *gen = branch ? branch : desc;
+    uint32_t multi_index = branch ? 0 : chain;
+    bool found = false;
+    for (uint32_t i = start; i < limit && !found; i++) {
       /* Depth 0 builds the inner script in this buffer before hashing it, so
        * it must hold the largest script a registered descriptor generates. */
       uint8_t candidate[PSBT_MAX_INNER_SCRIPT_LEN];
       size_t len = 0;
-      if (wally_descriptor_to_script(desc, 0, 0, 0, chain, i, 0, candidate,
+      if (wally_descriptor_to_script(gen, 0, 0, 0, multi_index, i, 0, candidate,
                                      sizeof(candidate), &len) == WALLY_OK &&
           len <= sizeof(candidate) && spk_equal(candidate, len, spk, spk_len)) {
         out->chain = chain;
         out->index = i;
-        return true;
+        found = true;
       }
     }
+    wally_descriptor_free(branch);
+    if (found)
+      return true;
   }
   return false;
 }

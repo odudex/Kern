@@ -9,6 +9,9 @@
 
 #include "core/address_match.h"
 #include "core/key.h"
+#include "core/wallet.h"
+
+wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -25,7 +28,8 @@ static int tests_failed = 0;
     tests_failed++;                                                            \
   } while (0)
 
-/* Counts script generations, to pin how much of a wallet a sweep walks. */
+/* Counts script generations past child 0, to pin how much of a wallet a sweep
+ * walks; a per-branch copy is checked at child 0 before a sweep uses it. */
 static size_t to_script_calls = 0;
 int __real_wally_descriptor_to_script(const struct wally_descriptor *desc,
                                       uint32_t depth, uint32_t index,
@@ -39,7 +43,8 @@ int __wrap_wally_descriptor_to_script(const struct wally_descriptor *desc,
                                       uint32_t child_num, uint32_t flags,
                                       unsigned char *bytes_out, size_t len,
                                       size_t *written) {
-  to_script_calls++;
+  if (child_num > 0)
+    to_script_calls++;
   return __real_wally_descriptor_to_script(desc, depth, index, variant,
                                            multi_index, child_num, flags,
                                            bytes_out, len, written);
@@ -192,10 +197,10 @@ static void test_single_path_sweeps_receive_only(void) {
   wally_descriptor_free(desc);
   if (found || found2)
     FAIL("nothing should match");
-  else if (single_calls != 10)
-    FAIL("expected 10 generations for a single-path miss");
-  else if (to_script_calls != 20)
-    FAIL("expected 20 generations for a two-path miss");
+  else if (single_calls != 9)
+    FAIL("expected 9 generations past child 0 for a single-path miss");
+  else if (to_script_calls != 18)
+    FAIL("expected 18 generations past child 0 for a two-path miss");
   else
     PASS();
 }
