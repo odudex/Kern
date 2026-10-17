@@ -119,70 +119,10 @@ static bool get_mnemonic_fingerprint_hex(char *hex_out) {
 }
 
 static bool recalculate_last_word(void) {
-  if (total_words < 12)
+  if (!bip39_filter_complete_last_word(entered_words, total_words))
     return false;
-
-  // Calculate entropy and checksum sizes based on word count
-  // 12 words: 128 bits entropy + 4 bits checksum = 132 bits total
-  // 24 words: 256 bits entropy + 8 bits checksum = 264 bits total
-  size_t checksum_bits = total_words / 3; // 4 for 12 words, 8 for 24 words
-  size_t entropy_bits = (total_words * 11) - checksum_bits;
-  size_t entropy_bytes = entropy_bits / 8;
-  size_t last_word_entropy_bits = 11 - checksum_bits; // 7 for 12, 3 for 24
-
-  // Pack word indices (11 bits each) from first N-1 words
-  uint8_t packed[32] = {0};
-  int bit_pos = 0;
-  bool ok = false;
-
-  for (int i = 0; i < total_words - 1; i++) {
-    int idx = bip39_filter_get_word_index(entered_words[i]);
-    if (idx < 0)
-      goto cleanup;
-
-    // Pack 11 bits into packed array
-    for (int b = 10; b >= 0; b--) {
-      int byte_idx = bit_pos / 8;
-      int bit_idx = 7 - (bit_pos % 8);
-      if (idx & (1 << b))
-        packed[byte_idx] |= (1 << bit_idx);
-      bit_pos++;
-    }
-  }
-
-  // Pack the entropy bits from the current last word (top bits only)
-  int last_idx = bip39_filter_get_word_index(entered_words[total_words - 1]);
-  if (last_idx >= 0) {
-    for (int b = 10; b > (int)(10 - last_word_entropy_bits); b--) {
-      int byte_idx = bit_pos / 8;
-      int bit_idx = 7 - (bit_pos % 8);
-      if (last_idx & (1 << b))
-        packed[byte_idx] |= (1 << bit_idx);
-      bit_pos++;
-    }
-  }
-
-  // Generate mnemonic from entropy using libwally
-  char *new_mnemonic = NULL;
-  if (kern_bip39_mnemonic_from_bytes(NULL, packed, entropy_bytes,
-                                     &new_mnemonic) != WALLY_OK)
-    goto cleanup;
-
-  // Extract last word from generated mnemonic
-  char *last_space = strrchr(new_mnemonic, ' ');
-  if (last_space) {
-    strncpy(entered_words[total_words - 1], last_space + 1,
-            sizeof(entered_words[0]) - 1);
-    entered_words[total_words - 1][sizeof(entered_words[0]) - 1] = '\0';
-    fingerprint_cached = false;
-  }
-
-  SECURE_FREE_STRING(new_mnemonic);
-  ok = true;
-
-cleanup:
-  secure_memzero(packed, sizeof(packed));
-  return ok;
+  fingerprint_cached = false;
+  return true;
 }
 
 static void update_fingerprint_display(void) {
