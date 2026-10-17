@@ -2365,6 +2365,27 @@ static void test_tr_key_path_verified(void) {
     PASS();
   wally_psbt_free(psbt);
 
+  TEST("key path: tr(ours,tree) with a bogus merkle root");
+  psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  uint8_t bogus[32];
+  memset(bogus, 0x5c, sizeof(bogus));
+  if (psbt) {
+    wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
+                             TAP_MERKLE_ROOT_FIELD);
+    wally_map_add_integer(&psbt->inputs[0].psbt_fields, TAP_MERKLE_ROOT_FIELD,
+                          bogus, sizeof(bogus));
+  }
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res), res.bad_keypath != 1 ||
+                                     tap_key_sig_len(psbt, 0) != 0 ||
+                                     res.signed_ok != 0)
+    FAIL("expected the signature dropped and nothing signed");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
   TEST("key path: leaf key listed with no leaf hash and no internal key");
   const char *leaf[] = {TR_LEAF_OURS};
   psbt = make_tr_psbt(leaf, 1, 0, 0, WALLY_PSBT_VERSION_0);
