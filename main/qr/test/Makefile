@@ -20,7 +20,7 @@ LDFLAGS := -Wl,--wrap=malloc
 all: $(TARGET) $(PROGRESS_TARGET) $(YUV420_TARGET) $(FRAME_POOL_TARGET)
 
 $(UR_LIB): $(shell find $(UR_DIR)/src -name '*.[ch]' 2>/dev/null)
-	$(MAKE) -B -C $(UR_DIR) all
+	$(MAKE) -C $(UR_DIR) all
 
 $(TARGET): $(SOURCES) ../parser.h ../../utils/attributes.h \
 	$(ROOT)/components/bbqr/src/bbqr.h $(ROOT)/components/bbqr/src/base32.h \
