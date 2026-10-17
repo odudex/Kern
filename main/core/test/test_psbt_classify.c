@@ -1739,6 +1739,122 @@ static void test_classify_output_psbt_v2(void) {
   wally_psbt_free(psbt);
 }
 
+#define WSH_MULTIPATH_DESC                                                     \
+  "wsh(sortedmulti(2,"                                                         \
+  "[00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*,"                                \
+  "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*"                                 \
+  "))"
+
+/* One output paying entry `e` at (multi_index, child_num), with our keypath
+ * 48'/0'/0'/2'/<multi_index>/<child_num> on it. Classification never compares
+ * the map's pubkey, so any valid point will do. */
+static struct wally_psbt *make_registry_output_psbt(const registry_entry_t *e,
+                                                    uint32_t multi_index,
+                                                    uint32_t child_num) {
+  uint8_t spk[34];
+  uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t written = 0;
+  if (wally_descriptor_to_script(e->desc, 0, 0, 0, multi_index, child_num, 0,
+                                 work, sizeof(work), &written) != WALLY_OK ||
+      written > sizeof(spk))
+    return NULL;
+  memcpy(spk, work, written);
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK)
+    return NULL;
+  uint8_t txid[32] = {0};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_output(tx, 50000, spk, written, 0);
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK)
+    return NULL;
+
+  uint8_t kp_val[4 + 6 * 4] = {0};
+  const uint32_t path[] = {0x80000030, 0x80000000,  0x80000000,
+                           0x80000002, multi_index, child_num};
+  for (size_t i = 0; i < 6; i++)
+    for (size_t b = 0; b < 4; b++)
+      kp_val[4 + i * 4 + b] = (uint8_t)(path[i] >> (8 * b));
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/48'/0'/0'/2'/0/0", &derived)) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  wally_map_add(&psbt->outputs[0].keypaths, derived->pub_key, EC_PUBLIC_KEY_LEN,
+                kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return psbt;
+}
+
+static output_ownership_t classify_registry_output(const registry_entry_t *e,
+                                                   uint32_t multi_index,
+                                                   uint32_t child_num,
+                                                   bool *built) {
+  output_ownership_t r = {0};
+  struct wally_psbt *psbt =
+      make_registry_output_psbt(e, multi_index, child_num);
+  *built = psbt != NULL;
+  if (psbt) {
+    r = psbt_classify_output(psbt, 0, false);
+    wally_psbt_free(psbt);
+  }
+  return r;
+}
+
+/* Change past the output cap is still ours, but no gap-limited wallet scan
+ * would find it: the same hidden-funds case the whitelist cap exists for. */
+static void test_registry_change_index_cap(void) {
+  registry_clear();
+  if (!registry_add_from_string("t", WSH_MULTIPATH_DESC, STORAGE_FLASH,
+                                false)) {
+    TEST("registry change cap: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const registry_entry_t *e = registry_find_by_id("t");
+  bool built = false;
+
+  TEST("psbt_classify_output: registry change at /1/199 -> OWNED_SAFE");
+  output_ownership_t r = classify_registry_output(e, 1, 199, &built);
+  if (!built)
+    FAIL("fixture");
+  else if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+           r.source.kind != CLAIM_REGISTRY || r.source.registry.entry != e)
+    FAIL("expected an OWNED_SAFE registry claim");
+  else
+    PASS();
+
+  TEST("psbt_classify_output: registry change at /1/200 -> OWNED_UNSAFE");
+  r = classify_registry_output(e, 1, SS_MAX_OUT_ADDR_INDEX, &built);
+  char path[80];
+  if (!built)
+    FAIL("fixture");
+  else if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE)
+    FAIL("expected OWNED_UNSAFE");
+  else if (!psbt_format_keypath(r.raw_keypath, r.raw_keypath_len, path,
+                                sizeof(path)) ||
+           strcmp(path, "m/48'/0'/0'/2'/1/200") != 0)
+    FAIL("raw keypath should name the capped path");
+  else
+    PASS();
+
+  TEST("psbt_classify_output: registry receive at /0/2000000000 capped too");
+  r = classify_registry_output(e, 0, 2000000000u, &built);
+  if (!built)
+    FAIL("fixture");
+  else if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE)
+    FAIL("expected OWNED_UNSAFE");
+  else
+    PASS();
+
+  registry_clear();
+}
+
 /* Two inputs spending the same address: one key, two UTXOs. Every field is
  * identical except the prevout txid, which is what address reuse looks like
  * on the wire. */
@@ -2863,6 +2979,7 @@ int main(void) {
   test_psbt_classify_registry_wsh_tampered_witness();
   test_psbt_classify_registry_miniscript_owned();
   test_psbt_classify_registry_miniscript_tampered();
+  test_registry_change_index_cap();
 
   printf("\n=== PSBTv2 tests ===\n\n");
 

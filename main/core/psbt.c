@@ -633,6 +633,24 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
   return result;
 }
 
+/* The whitelist caps output indexes inside ss_keypath_is_whitelisted. A
+ * registry claim has no such check: past the cap the output is still provably
+ * ours, but no wallet scanning with a gap limit would find it, so it needs the
+ * same Permissive opt-in as single-sig change past the cap. */
+static void set_output_claim(output_ownership_t *result, const claim_t *claim,
+                             const unsigned char *keypath, size_t keypath_len) {
+  result->source = *claim;
+  if (claim->kind == CLAIM_REGISTRY &&
+      claim->registry.child_num >= SS_MAX_OUT_ADDR_INDEX) {
+    result->ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+    result->raw_keypath_len = 0;
+    remember_raw_keypath(result->raw_keypath, sizeof(result->raw_keypath),
+                         &result->raw_keypath_len, keypath, keypath_len);
+    return;
+  }
+  result->ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+}
+
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
@@ -672,8 +690,7 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                          &result.raw_keypath_len, keypath, keypath_len);
     if (try_match_claim(keypath, keypath_len, is_testnet, SS_MAX_OUT_ADDR_INDEX,
                         out_script, out_script_len, NULL, 0, &claim)) {
-      result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
-      result.source = claim;
+      set_output_claim(&result, &claim, keypath, keypath_len);
       wally_tx_free(global_tx);
       return result;
     }
@@ -696,8 +713,7 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                          &result.raw_keypath_len, val, val_len);
     if (try_match_claim(val, val_len, is_testnet, SS_MAX_OUT_ADDR_INDEX,
                         out_script, out_script_len, NULL, 0, &claim)) {
-      result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
-      result.source = claim;
+      set_output_claim(&result, &claim, val, val_len);
       wally_tx_free(global_tx);
       return result;
     }
