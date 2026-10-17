@@ -35,7 +35,9 @@ address_match_singlesig(ss_script_type_t script, uint32_t account,
                         bool is_testnet, const uint8_t *spk, size_t spk_len,
                         uint32_t start, uint32_t limit, address_match_t *out);
 
-/* Same for a descriptor with `num_paths` multipath branches. */
+/* Same for a descriptor with `num_paths` multipath branches. A single-path
+ * descriptor has no change branch, so only its receive addresses are
+ * searched. */
 KERN_WARN_UNUSED_RESULT bool
 address_match_descriptor(const struct wally_descriptor *desc, size_t num_paths,
                          const uint8_t *spk, size_t spk_len, uint32_t start,

@@ -56,16 +56,15 @@ bool address_match_descriptor(const struct wally_descriptor *desc,
                               address_match_t *out) {
   if (!desc || !spk || !out)
     return false;
-  for (uint32_t chain = 0; chain <= 1; chain++) {
-    uint32_t multi_index = num_paths <= 1 ? 0 : chain;
+  uint32_t chains = num_paths <= 1 ? 1 : 2;
+  for (uint32_t chain = 0; chain < chains; chain++) {
     for (uint32_t i = start; i < limit; i++) {
       /* Depth 0 builds the inner script in this buffer before hashing it, so
        * it must hold the largest script a registered descriptor generates. */
       uint8_t candidate[PSBT_MAX_INNER_SCRIPT_LEN];
       size_t len = 0;
-      if (wally_descriptor_to_script(desc, 0, 0, 0, multi_index, i, 0,
-                                     candidate, sizeof(candidate),
-                                     &len) == WALLY_OK &&
+      if (wally_descriptor_to_script(desc, 0, 0, 0, chain, i, 0, candidate,
+                                     sizeof(candidate), &len) == WALLY_OK &&
           len <= sizeof(candidate) && spk_equal(candidate, len, spk, spk_len)) {
         out->chain = chain;
         out->index = i;

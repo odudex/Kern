@@ -25,6 +25,26 @@ static int tests_failed = 0;
     tests_failed++;                                                            \
   } while (0)
 
+/* Counts script generations, to pin how much of a wallet a sweep walks. */
+static size_t to_script_calls = 0;
+int __real_wally_descriptor_to_script(const struct wally_descriptor *desc,
+                                      uint32_t depth, uint32_t index,
+                                      uint32_t variant, uint32_t multi_index,
+                                      uint32_t child_num, uint32_t flags,
+                                      unsigned char *bytes_out, size_t len,
+                                      size_t *written);
+int __wrap_wally_descriptor_to_script(const struct wally_descriptor *desc,
+                                      uint32_t depth, uint32_t index,
+                                      uint32_t variant, uint32_t multi_index,
+                                      uint32_t child_num, uint32_t flags,
+                                      unsigned char *bytes_out, size_t len,
+                                      size_t *written) {
+  to_script_calls++;
+  return __real_wally_descriptor_to_script(desc, depth, index, variant,
+                                           multi_index, child_num, flags,
+                                           bytes_out, len, written);
+}
+
 static const char *TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon "
     "abandon abandon abandon abandon abandon about";
@@ -146,6 +166,40 @@ static void test_descriptor_base58_case_variant(void) {
   wally_descriptor_free(desc);
 }
 
+/* A single-path descriptor has no change branch: sweeping "change" would
+ * regenerate the receive addresses a second time. */
+static void test_single_path_sweeps_receive_only(void) {
+  const char *single =
+      "wsh(sortedmulti(2,"
+      "[5bf9f809/48h/0h/0h/1h]xpub6E6EsYCLtbWuL8pnpVKamSTLGw2DqZ7WkdgiFBuxZmuLN"
+      "nng6KVv1b3M6K4HWnMDED9TCNaM4VnjyKiCG1ziwtp2dZvWSwqhsPDYmZHQKeT/0/*,"
+      "[301682c5/48h/0h/0h/1h]xpub6EPzE2wqkpe2ocFEB2NkXYhKJb2hniTmMWF9MDm1fYS3"
+      "SySXJKmYEgjmKDJxN6Wt1aDJPgx9onFZFtCnbJZQnN2t5o6Eckir5fYB57nneWC/0/*))";
+  struct wally_descriptor *desc = NULL;
+  TEST("single-path descriptor: a miss walks only receive addresses");
+  if (wally_descriptor_parse(single, NULL, WALLY_NETWORK_BITCOIN_MAINNET, 0,
+                             &desc) != WALLY_OK) {
+    FAIL("parse");
+    return;
+  }
+  const uint8_t spk[22] = {0x00, 0x14};
+  address_match_t m;
+  to_script_calls = 0;
+  bool found = address_match_descriptor(desc, 1, spk, sizeof(spk), 0, 10, &m);
+  size_t single_calls = to_script_calls;
+  to_script_calls = 0;
+  bool found2 = address_match_descriptor(desc, 2, spk, sizeof(spk), 0, 10, &m);
+  wally_descriptor_free(desc);
+  if (found || found2)
+    FAIL("nothing should match");
+  else if (single_calls != 10)
+    FAIL("expected 10 generations for a single-path miss");
+  else if (to_script_calls != 20)
+    FAIL("expected 20 generations for a two-path miss");
+  else
+    PASS();
+}
+
 int main(void) {
   printf("=== address_match tests ===\n\n");
 
@@ -158,6 +212,7 @@ int main(void) {
   test_singlesig_uppercase_bech32();
   test_wrong_network_rejected();
   test_descriptor_base58_case_variant();
+  test_single_path_sweeps_receive_only();
 
   key_unload();
 

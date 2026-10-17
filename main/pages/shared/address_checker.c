@@ -170,10 +170,12 @@ static void perform_sweep_deferred(lv_timer_t *timer) {
   // Not found — offer to search another batch
   char msg[192];
   snprintf(msg, sizeof(msg),
-           "Address not found in first %u addresses.\n\n"
+           "Address not found in first %u %saddresses.\n\n"
            "(Check if loaded wallet settings match coordinator's)\n\n"
            "Search %u more?",
-           search_limit, SEARCH_BATCH);
+           search_limit,
+           reg_entry && reg_entry->num_paths <= 1 ? "receive " : "",
+           SEARCH_BATCH);
   dialog_show_confirm(msg, not_found_confirm_cb, NULL, DIALOG_STYLE_FULLSCREEN);
 }
 
