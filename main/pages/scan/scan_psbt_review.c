@@ -359,12 +359,15 @@ static bool review_data_collect(review_data_t *d) {
   if (!d->inputs || !d->outputs)
     goto fail;
 
-  psbt_audit_input_amounts(scan_ctx.psbt, &d->amount_audit);
+  uint64_t *values = calloc(d->num_inputs, sizeof(*values));
+  if (!values)
+    goto fail;
+  psbt_audit_input_values(scan_ctx.psbt, &d->amount_audit, values);
 
   for (size_t i = 0; i < d->num_inputs; i++) {
     classified_input_t *in = &d->inputs[i];
     in->index = i;
-    in->value = psbt_get_input_value(scan_ctx.psbt, i);
+    in->value = values[i];
     d->total_input += in->value;
 
     input_ownership_t own =
@@ -393,6 +396,8 @@ static bool review_data_collect(review_data_t *d) {
       }
     }
   }
+
+  free(values);
 
   bool *signing = calloc(d->num_inputs, sizeof(*signing));
   if (!signing)

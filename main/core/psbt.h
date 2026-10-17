@@ -138,6 +138,10 @@ psbt_input_amount_t psbt_get_input_amount(const struct wally_psbt *psbt,
 // Same, across every input.
 void psbt_audit_input_amounts(const struct wally_psbt *psbt,
                               psbt_amount_audit_t *out);
+// Same, also writing each input's resolved value to values[i] (one per
+// input).
+void psbt_audit_input_values(const struct wally_psbt *psbt,
+                             psbt_amount_audit_t *out, uint64_t *values);
 
 // True when every input's amount is backed by its previous transaction, i.e.
 // the displayed fee is arithmetic on verified numbers.

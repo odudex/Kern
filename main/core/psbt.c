@@ -62,15 +62,13 @@ static bool prevout_matches_witness(const struct wally_tx_output *prevout,
 psbt_input_amount_t psbt_get_input_amount(const struct wally_psbt *psbt,
                                           size_t index) {
   psbt_input_amount_t result = {.status = PSBT_AMOUNT_MISSING, .value = 0};
+  if (!psbt || index >= psbt->num_inputs)
+    return result;
 
-  struct wally_tx_output *witness = NULL;
-  if (wally_psbt_get_input_witness_utxo_alloc(psbt, index, &witness) !=
-      WALLY_OK)
-    witness = NULL;
-
-  struct wally_tx *prev = NULL;
-  if (wally_psbt_get_input_utxo_alloc(psbt, index, &prev) != WALLY_OK)
-    prev = NULL;
+  /* Read in place: copying a previous transaction costs as much as hashing
+   * it, and both happen per input on every review. */
+  const struct wally_tx_output *witness = psbt->inputs[index].witness_utxo;
+  const struct wally_tx *prev = psbt->inputs[index].utxo;
 
   if (prev) {
     const struct wally_tx_output *prevout = verified_prevout(psbt, index, prev);
@@ -92,16 +90,16 @@ psbt_input_amount_t psbt_get_input_amount(const struct wally_psbt *psbt,
     result.value = witness->satoshi;
   }
 
-  if (witness)
-    wally_tx_output_free(witness);
-  if (prev)
-    wally_tx_free(prev);
-
   return result;
 }
 
 void psbt_audit_input_amounts(const struct wally_psbt *psbt,
                               psbt_amount_audit_t *out) {
+  psbt_audit_input_values(psbt, out, NULL);
+}
+
+void psbt_audit_input_values(const struct wally_psbt *psbt,
+                             psbt_amount_audit_t *out, uint64_t *values) {
   if (!out)
     return;
 
@@ -115,6 +113,8 @@ void psbt_audit_input_amounts(const struct wally_psbt *psbt,
 
   for (size_t i = 0; i < out->num_inputs; i++) {
     psbt_input_amount_t amount = psbt_get_input_amount(psbt, i);
+    if (values)
+      values[i] = amount.value;
     out->total += amount.value;
     switch (amount.status) {
     case PSBT_AMOUNT_PROVEN:
@@ -296,42 +296,13 @@ uint32_t psbt_fee_percent(uint64_t fee, uint64_t total_input) {
 bool psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
                             unsigned char *out, size_t out_cap,
                             size_t *out_len) {
-  struct wally_tx_output *witness_utxo = NULL;
-  if (wally_psbt_get_input_witness_utxo_alloc(psbt, input_i, &witness_utxo) ==
-          WALLY_OK &&
-      witness_utxo) {
-    if (witness_utxo->script_len > out_cap) {
-      wally_tx_output_free(witness_utxo);
-      return false;
-    }
-    memcpy(out, witness_utxo->script, witness_utxo->script_len);
-    *out_len = witness_utxo->script_len;
-    wally_tx_output_free(witness_utxo);
-    return true;
-  }
-
-  struct wally_tx *tx = NULL;
-  if (wally_psbt_get_input_utxo_alloc(psbt, input_i, &tx) != WALLY_OK || !tx) {
+  /* The witness_utxo, else the spent output of the previous transaction. */
+  const struct wally_tx_output *utxo = NULL;
+  if (wally_psbt_get_input_best_utxo(psbt, input_i, &utxo) != WALLY_OK ||
+      !utxo || utxo->script_len > out_cap)
     return false;
-  }
-
-  uint32_t prevout_index = 0;
-  if (wally_psbt_get_input_output_index(psbt, input_i, &prevout_index) !=
-          WALLY_OK ||
-      prevout_index >= tx->num_outputs) {
-    wally_tx_free(tx);
-    return false;
-  }
-
-  size_t script_len = tx->outputs[prevout_index].script_len;
-  if (script_len > out_cap) {
-    wally_tx_free(tx);
-    return false;
-  }
-
-  memcpy(out, tx->outputs[prevout_index].script, script_len);
-  *out_len = script_len;
-  wally_tx_free(tx);
+  memcpy(out, utxo->script, utxo->script_len);
+  *out_len = utxo->script_len;
   return true;
 }
 
@@ -661,27 +632,37 @@ static void set_output_claim(output_ownership_t *result, const claim_t *claim,
   result->ownership = PSBT_OWNERSHIP_OWNED_SAFE;
 }
 
+/* Output i's scriptPubKey, read in place: v0 keeps it in the global
+ * transaction, v2 in the output itself. Extracting the transaction per output
+ * made every classification pass cubic in the number of outputs. */
+static bool output_script(const struct wally_psbt *psbt, size_t i,
+                          const unsigned char **script, size_t *script_len) {
+  if (!psbt || i >= psbt->num_outputs)
+    return false;
+  if (psbt->tx) {
+    if (i >= psbt->tx->num_outputs)
+      return false;
+    *script = psbt->tx->outputs[i].script;
+    *script_len = psbt->tx->outputs[i].script_len;
+  } else {
+    *script = psbt->outputs[i].script;
+    *script_len = psbt->outputs[i].script_len;
+  }
+  return *script && *script_len;
+}
+
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
 
-  struct wally_tx *global_tx = psbt_tx_alloc(psbt);
-  if (!global_tx)
+  const unsigned char *out_script = NULL;
+  size_t out_script_len = 0;
+  if (!output_script(psbt, i, &out_script, &out_script_len))
     return result;
-
-  if (i >= global_tx->num_outputs) {
-    wally_tx_free(global_tx);
-    return result;
-  }
-
-  const unsigned char *out_script = global_tx->outputs[i].script;
-  size_t out_script_len = global_tx->outputs[i].script_len;
 
   unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
-  if (!key_get_fingerprint(our_fp)) {
-    wally_tx_free(global_tx);
+  if (!key_get_fingerprint(our_fp))
     return result;
-  }
 
   /* PSBT_OUT_BIP32_DERIVATION, then PSBT_OUT_TAP_BIP32_DERIVATION: without
    * the second, taproot change and self-transfers read as external spends. */
@@ -701,7 +682,6 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                           SS_MAX_OUT_ADDR_INDEX, out_script, out_script_len,
                           NULL, 0, &claim)) {
         set_output_claim(&result, &claim, item->value, item->value_len);
-        wally_tx_free(global_tx);
         return result;
       }
     }
@@ -718,7 +698,6 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
       result.ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
   }
 
-  wally_tx_free(global_tx);
   return result;
 }
 
