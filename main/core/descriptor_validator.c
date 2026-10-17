@@ -151,36 +151,12 @@ static int find_matching_key_index(const struct wally_descriptor *descriptor,
   return -1;
 }
 
-// Extract xpub from a wally_descriptor_get_key() string, which carries no
-// origin: "xpub..." (NULL for raw keys)
-static char *extract_xpub_from_key(const char *key_str) {
-  if (!key_str) {
-    return NULL;
-  }
-
-  // Find xpub prefix (xpub or tpub)
-  const char *prefix = strstr(key_str, "pub");
-  if (!prefix || prefix == key_str) {
-    return NULL;
-  }
-  prefix--; // Back up to 'x' or 't'
-
-  // Find end of xpub (stop at / or end of string)
-  const char *end = prefix;
-  while (*end && *end != '/' && *end != ')' && *end != ',' && *end != '<') {
-    end++;
-  }
-
-  size_t len = end - prefix;
-  char *xpub = malloc(len + 1);
-  if (!xpub) {
-    return NULL;
-  }
-
-  memcpy(xpub, prefix, len);
-  xpub[len] = '\0';
-
-  return xpub;
+static bool key_is_raw(const struct wally_descriptor *descriptor,
+                       uint32_t index) {
+  uint32_t features = 0;
+  return wally_descriptor_get_key_features(descriptor, index, &features) ==
+             WALLY_OK &&
+         (features & WALLY_MS_IS_RAW);
 }
 
 static bool descriptor_has_private_key(const struct wally_descriptor *desc) {
@@ -264,8 +240,8 @@ static bool xonly_hex_is_nums(const char *xonly) {
 }
 
 /* True if the tr() internal key (descriptor key index 0) is a known NUMS point.
- * Handles both the bare-pubkey form (x-only 64 hex / compressed 66 hex) and the
- * extended-key form used by coordinators (an xpub whose base public key is H,
+ * Handles both a raw key (written x-only or compressed) and the extended-key
+ * form used by coordinators (an xpub whose base public key is H,
  * e.g. xpub6...QuVxqNUS); non-hardened derivation only tweaks H, so comparing
  * the xpub's base key to H is sufficient — matches Krux/embit's NUMS check. */
 static bool tr_internal_key_is_nums(struct wally_descriptor *descriptor) {
@@ -273,24 +249,15 @@ static bool tr_internal_key_is_nums(struct wally_descriptor *descriptor) {
   if (wally_descriptor_get_key(descriptor, 0, &key_str) != WALLY_OK || !key_str)
     return false;
 
-  const char *p = key_str;
-  if (*p == '[') { /* skip any [origin] prefix */
-    const char *close = strchr(p, ']');
-    if (close)
-      p = close + 1;
-  }
-
+  /* libwally lists the key bare, with no origin or path; a raw tr() key is
+   * x-only even when written compressed. */
   bool is_nums = false;
-  size_t len = strlen(p);
-  if (len == 64) {
-    is_nums = xonly_hex_is_nums(p);
-  } else if (len == 66 &&
-             (strncmp(p, "02", 2) == 0 || strncmp(p, "03", 2) == 0)) {
-    is_nums = xonly_hex_is_nums(p + 2);
+  if (key_is_raw(descriptor, 0)) {
+    is_nums = strlen(key_str) == 64 && xonly_hex_is_nums(key_str);
   } else {
     /* Extended key: decode and compare its base pubkey's x coordinate to H. */
     struct ext_key xkey;
-    if (bip32_key_from_base58(p, &xkey) == WALLY_OK) {
+    if (bip32_key_from_base58(key_str, &xkey) == WALLY_OK) {
       char xonly[65];
       for (int i = 0; i < 32; i++)
         snprintf(xonly + i * 2, 3, "%02x", xkey.pub_key[i + 1]);
@@ -404,15 +371,12 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
               sizeof(info->keys[i].fingerprint_hex));
     }
 
-    // Xpub
+    // Xpub; raw keys have none. libwally lists the key bare.
     char *key_str = NULL;
-    if (wally_descriptor_get_key(descriptor, i, &key_str) == WALLY_OK) {
-      char *xpub = extract_xpub_from_key(key_str);
-      if (xpub) {
-        strncpy(info->keys[i].xpub, xpub, sizeof(info->keys[i].xpub) - 1);
-        info->keys[i].xpub[sizeof(info->keys[i].xpub) - 1] = '\0';
-        free(xpub);
-      }
+    if (!key_is_raw(descriptor, i) &&
+        wally_descriptor_get_key(descriptor, i, &key_str) == WALLY_OK) {
+      strncpy(info->keys[i].xpub, key_str, sizeof(info->keys[i].xpub) - 1);
+      info->keys[i].xpub[sizeof(info->keys[i].xpub) - 1] = '\0';
       wally_free_string(key_str);
     }
 

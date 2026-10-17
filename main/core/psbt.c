@@ -26,7 +26,8 @@ static const char *TAG = "PSBT";
 
 /* Locate the output a non_witness_utxo claims to fund, after checking that the
  * transaction really is the one this input spends. libwally applies the same
- * txid check when it signs a legacy input (get_scriptcode), but never on the
+ * txid check when it signs any ECDSA or taproot key-path input that carries a
+ * non_witness_utxo, though not for a taproot script path, and never on the
  * path that reports amounts, so the fee could be read off a fabricated
  * previous transaction that signing would later reject. */
 static const struct wally_tx_output *

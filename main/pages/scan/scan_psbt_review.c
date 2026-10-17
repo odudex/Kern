@@ -250,11 +250,6 @@ bool scan_psbt_parse_base64(const char *base64_data) {
 
   scan_psbt_cleanup();
 
-  scan_ctx.psbt_base64 = strdup(base64_data);
-  if (!scan_ctx.psbt_base64) {
-    return false;
-  }
-
   int ret = wally_psbt_from_base64(base64_data, 0, &scan_ctx.psbt);
   if (ret != WALLY_OK) {
     scan_psbt_cleanup();
@@ -984,11 +979,6 @@ void scan_psbt_cleanup(void) {
   if (scan_ctx.psbt) {
     wally_psbt_free(scan_ctx.psbt);
     scan_ctx.psbt = NULL;
-  }
-
-  if (scan_ctx.psbt_base64) {
-    free(scan_ctx.psbt_base64);
-    scan_ctx.psbt_base64 = NULL;
   }
 
   if (scan_ctx.signed_psbt_base64) {

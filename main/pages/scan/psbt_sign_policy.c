@@ -201,8 +201,9 @@ static bool reject_unsupported_sighash(const psbt_sighash_audit_t *audit,
 /* An input whose utxo data contradicts the prevout it spends is not a missing
  * proof, it is a broken one: the previous transaction supplied does not hash
  * to the outpoint, or it disagrees with the witness_utxo beside it. No fee can
- * be computed from that, and libwally would refuse the signature anyway for a
- * legacy input, so stop before the review screen shows a fabricated number. */
+ * be computed from that, and libwally refuses an ECDSA or taproot key-path
+ * signature over a previous transaction whose txid does not match anyway, so
+ * stop before the review screen shows a fabricated number. */
 static bool reject_invalid_amount(const psbt_amount_audit_t *audit,
                                   dialog_callback_t dismissed_cb) {
   if (!audit->invalid)
@@ -220,10 +221,10 @@ static bool reject_invalid_amount(const psbt_amount_audit_t *audit,
 }
 
 /* Everything the review screen shows about outputs comes from the transaction
- * the PSBT describes. v0 stores it directly; v2 has it rebuilt from per-input
- * and per-output fields, which fails when those fields cannot form a valid
- * transaction -- an amount past the supply, say. Refuse here rather than let
- * the review screen come up empty and report it as unparseable data. */
+ * the PSBT describes, extracted from v0's global transaction or rebuilt from
+ * v2's per-input and per-output fields. Either fails when the result is not a
+ * valid transaction -- outputs past the supply, say. Refuse here rather than
+ * let the review screen come up empty and report it as unparseable data. */
 static bool reject_unbuildable_tx(struct wally_psbt *psbt,
                                   dialog_callback_t dismissed_cb) {
   struct wally_tx *tx = psbt_tx_alloc(psbt);
