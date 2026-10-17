@@ -22,28 +22,14 @@ WALLY_PRIV_INCS = \
 	-I$(WALLY_DIR)/upstream \
 	-I$(WALLY_DIR)/upstream/src \
 	-I$(WALLY_DIR)/upstream/src/ccan \
-	-I$(WALLY_DIR)/upstream/src/secp256k1 \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/include \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/ecdh \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/ecdsa_adaptor \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/ecdsa_s2c \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/extrakeys \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/generator \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/musig \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/rangeproof \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/recovery \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/schnorrsig \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/surjection \
-	-I$(WALLY_DIR)/upstream/src/secp256k1/src/modules/whitelist
+	-I$(WALLY_DIR)/upstream/src/secp256k1/include
 
 # HAVE_PSA_CRYPTO_H: hash through PSA like the device build, so its glue and
 # the uncached BIP341 path are what the tests run. Every libwally link line
 # then needs -lmbedcrypto.
-WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_STANDARD_SECP=1 -DHAVE_PSA_CRYPTO_H $(SANITIZE_WALLY_DEFS)
-WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS) \
-	-Wno-nonnull-compare -Wno-unused-function -Wno-type-limits \
-	-Wno-unterminated-string-initialization
+WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_STANDARD_SECP=1 -DECMULT_WINDOW_SIZE=8 \
+	-DHAVE_PSA_CRYPTO_H $(SANITIZE_WALLY_DEFS)
+WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS)
 
 # ESP-IDF stubs (esp_log.h etc.)
 ESP_STUBS_INC = stubs

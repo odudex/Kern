@@ -63,20 +63,7 @@ target_include_directories(wally PRIVATE
     ${WALLY_DIR}/upstream
     ${WALLY_DIR}/upstream/src
     ${WALLY_DIR}/upstream/src/ccan
-    ${WALLY_DIR}/upstream/src/secp256k1
-    ${WALLY_DIR}/upstream/src/secp256k1/src
     ${WALLY_DIR}/upstream/src/secp256k1/include
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/ecdh
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/ecdsa_adaptor
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/ecdsa_s2c
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/extrakeys
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/generator
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/musig
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/rangeproof
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/recovery
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/schnorrsig
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/surjection
-    ${WALLY_DIR}/upstream/src/secp256k1/src/modules/whitelist
 )
 
 target_compile_definitions(wally PRIVATE
@@ -84,17 +71,10 @@ target_compile_definitions(wally PRIVATE
     # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
     BUILD_STANDARD_SECP=1
     ECMULT_WINDOW_SIZE=8
-    ENABLE_MODULE_ECDH=1
-    ENABLE_MODULE_ECDSA_S2C=1
-    ENABLE_MODULE_EXTRAKEYS=1
-    ENABLE_MODULE_GENERATOR=1
-    ENABLE_MODULE_RECOVERY=1
-    ENABLE_MODULE_SCHNORRSIG=1
-    NDEBUG=1
 )
 
 target_compile_options(wally PRIVATE
-    -w  # suppress all warnings (third-party code)
+    -Wall -Wextra -Wno-unused-parameter
     -fstack-protector-strong
 )
 
