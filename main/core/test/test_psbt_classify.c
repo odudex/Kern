@@ -6,10 +6,12 @@
 
 /* Wally types needed by stubs */
 #include <wally_bip32.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
 #include <wally_script.h>
+#include <wally_transaction.h>
 
 /* Project headers for stub type declarations */
 #include "core/key.h"
@@ -1855,6 +1857,106 @@ static void test_registry_change_index_cap(void) {
   registry_clear();
 }
 
+/* A segwit input may carry only its previous transaction. The pinned fork
+ * signs it with the BIP143 sighash; upstream libwally used the
+ * legacy one there, an invalid signature counted as signed. */
+static void test_sign_non_witness_utxo_only_segwit(void) {
+  TEST("psbt_sign: P2WPKH with only non_witness_utxo signs BIP143");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+  const uint64_t amount = 100000;
+  struct wally_tx *prev = NULL;
+  struct wally_tx *tx = NULL;
+  struct wally_psbt *psbt = NULL;
+  const char *err = NULL;
+
+  uint8_t zero_txid[32] = {0};
+  uint8_t prev_txid[32];
+  uint8_t op_return[] = {0x6a};
+  if (wally_tx_init_alloc(2, 0, 1, 1, &prev) != WALLY_OK ||
+      wally_tx_add_raw_input(prev, zero_txid, sizeof(zero_txid), 0, 0xffffffff,
+                             NULL, 0, NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(prev, amount, REF_SPK_P2WPKH,
+                              sizeof(REF_SPK_P2WPKH), 0) != WALLY_OK ||
+      wally_tx_get_txid(prev, prev_txid, sizeof(prev_txid)) != WALLY_OK ||
+      wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK ||
+      wally_tx_add_raw_input(tx, prev_txid, sizeof(prev_txid), 0, 0xfffffffd,
+                             NULL, 0, NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(tx, 90000, op_return, sizeof(op_return), 0) !=
+          WALLY_OK ||
+      wally_psbt_from_tx(tx, 0, 0, &psbt) != WALLY_OK ||
+      wally_psbt_set_input_utxo(psbt, 0, prev) != WALLY_OK) {
+    err = "fixture";
+    goto done;
+  }
+
+  const uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  wally_map_add(&psbt->inputs[0].keypaths, derived->pub_key, EC_PUBLIC_KEY_LEN,
+                kp_val, sizeof(kp_val));
+
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t result;
+  if (psbt_sign(psbt, false, policy, &result) != 1 || result.signed_ok != 1) {
+    err = "expected one signature";
+    goto done;
+  }
+
+  const struct wally_map *sigs = &psbt->inputs[0].signatures;
+  if (sigs->num_items != 1 || sigs->items[0].value_len < 2) {
+    err = "no partial signature";
+    goto done;
+  }
+  const struct wally_map_item *sig = &sigs->items[0];
+  uint8_t compact[EC_SIGNATURE_LEN];
+  if (sig->value[sig->value_len - 1] != WALLY_SIGHASH_ALL ||
+      wally_ec_sig_from_der(sig->value, sig->value_len - 1, compact,
+                            sizeof(compact)) != WALLY_OK) {
+    err = "signature does not decode";
+    goto done;
+  }
+
+  /* BIP143 scriptCode of P2WPKH: the P2PKH script of the same key hash. */
+  uint8_t script_code[25] = {0x76, 0xa9, 0x14};
+  memcpy(script_code + 3, REF_SPK_P2WPKH + 2, 20);
+  script_code[23] = 0x88;
+  script_code[24] = 0xac;
+  uint8_t bip143[SHA256_LEN], legacy[SHA256_LEN];
+  if (wally_tx_get_btc_signature_hash(
+          tx, 0, script_code, sizeof(script_code), amount, WALLY_SIGHASH_ALL,
+          WALLY_TX_FLAG_USE_WITNESS, bip143, sizeof(bip143)) != WALLY_OK ||
+      wally_tx_get_btc_signature_hash(tx, 0, script_code, sizeof(script_code),
+                                      amount, WALLY_SIGHASH_ALL, 0, legacy,
+                                      sizeof(legacy)) != WALLY_OK) {
+    err = "sighash";
+    goto done;
+  }
+  if (wally_ec_sig_verify(derived->pub_key, EC_PUBLIC_KEY_LEN, bip143,
+                          sizeof(bip143), EC_FLAG_ECDSA, compact,
+                          sizeof(compact)) != WALLY_OK)
+    err = "signature does not verify against the BIP143 sighash";
+  else if (wally_ec_sig_verify(derived->pub_key, EC_PUBLIC_KEY_LEN, legacy,
+                               sizeof(legacy), EC_FLAG_ECDSA, compact,
+                               sizeof(compact)) == WALLY_OK)
+    err = "signature verifies against the legacy sighash";
+
+done:
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  wally_tx_free(tx);
+  wally_tx_free(prev);
+  bip32_key_free(derived);
+}
+
 /* Change is only change when it returns to the wallet the inputs spend from:
  * any other provably-owned output is a transfer between wallets. */
 static void test_claims_share_policy(void) {
@@ -3062,6 +3164,7 @@ int main(void) {
   test_psbt_classify_registry_miniscript_tampered();
   test_registry_change_index_cap();
   test_claims_share_policy();
+  test_sign_non_witness_utxo_only_segwit();
 
   printf("\n=== PSBTv2 tests ===\n\n");
 

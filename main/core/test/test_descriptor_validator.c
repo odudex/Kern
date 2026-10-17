@@ -21,8 +21,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
+#include <wally_descriptor.h>
 
 static int tests_run = 0;
 static int tests_failed = 0;
@@ -331,6 +333,69 @@ static void test_static_gates(void) {
         r == VALIDATION_UNSUPPORTED_SCRIPT);
   check("static rejections never reach the dialogs",
         info_calls == 0 && warn_calls == 0 && registry_count() == 0);
+}
+
+/* The pinned libwally fork rejects non-sane miniscript by default (repeated
+ * keys, height and time timelocks mixed in one branch, a branch spendable
+ * without any signature). A re-point that drops that default would still
+ * compile and pass every other test, so pin each shape here. Each descf()
+ * result is used at once: descf rotates only four buffers. */
+static void check_non_sane(const char *name, const char *desc) {
+  struct wally_descriptor *d = NULL;
+  bool parses_when_allowed =
+      wally_descriptor_parse(desc, NULL, WALLY_NETWORK_BITCOIN_MAINNET,
+                             WALLY_MINISCRIPT_ALLOW_NON_SANE, &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  registry_clear();
+  check(name, parses_when_allowed && run(desc) == VALIDATION_PARSE_ERROR &&
+                  registry_count() == 0 && info_calls == 0);
+}
+
+static void test_non_sane_miniscript(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+
+  check_non_sane("non-sane: multi() with a repeated key",
+                 descf("wsh(multi(2,[" FP "/48'/0'/0'/2']%s/0/*,"
+                       "[deadbeef/48'/0'/1'/2']%s/0/*,"
+                       "[deadbeef/48'/0'/1'/2']%s/0/*))",
+                       a, b, b));
+  check_non_sane("non-sane: and_v(v:pk(A),pk(A))",
+                 descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "pk([" FP "/48'/0'/0'/2']%s/0/*)))",
+                       a, a));
+  check_non_sane("non-sane: height and time after() in one branch",
+                 descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "and_v(v:after(100),after(500000001))))",
+                       a));
+  check_non_sane("non-sane: height and time older() in one branch",
+                 descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "and_v(v:older(10),older(4194305))))",
+                       a));
+  check_non_sane("non-sane: mixed timelocks in an or_d recovery branch",
+                 descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "and_v(v:pk([deadbeef/48'/0'/1'/2']%s/0/*),"
+                       "and_v(v:after(100),after(500000001)))))",
+                       a, b));
+  check_non_sane(
+      "non-sane: or_d recovery branch needs no signature",
+      descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/0/*),older(144)))", a));
+
+  registry_clear();
+  check("sane control: distinct keys, one timelock kind",
+        run(descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                  "and_v(v:pk([deadbeef/48'/0'/1'/2']%s/0/*),older(144))))",
+                  a, b)) == VALIDATION_SUCCESS &&
+            registry_count() == 1);
+  registry_clear();
+
+  /* A hardened step after the multipath tuple is not derivable from an xpub;
+   * the pinned fork refuses it at parse time. */
+  const char *hardened_tail =
+      descf("wpkh([" FP "/84'/0'/0']%s/<0;1h>/*)", xpub_at("m/84'/0'/0'"));
+  check("xpub/<0;1h>/* not accepted",
+        run(hardened_tail) != VALIDATION_SUCCESS && registry_count() == 0);
+  registry_clear();
 }
 
 static void test_key_matching(void) {
@@ -1021,6 +1086,7 @@ int main(void) {
 
   test_preconditions();
   test_static_gates();
+  test_non_sane_miniscript();
   test_key_matching();
   test_own_keys();
   test_own_key_material();
