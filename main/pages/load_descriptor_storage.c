@@ -8,6 +8,7 @@
 #include "../ui/dialog.h"
 #include "../utils/secure_mem.h"
 #include "../utils/session_cleanup.h"
+#include "../utils/text_file.h"
 #include "sd_card.h"
 #include "shared/descriptor_loader.h"
 #include "shared/kef_decrypt_page.h"
@@ -101,14 +102,14 @@ static void decrypt_envelope(uint8_t *envelope, size_t env_len) {
   kef_decrypt_page_show();
 }
 
+/* Read like a file the scan page opens: a trailing newline, a BOM or comment
+ * lines do not make a descriptor file fail to parse. */
 static void process_plaintext(const uint8_t *data, size_t len) {
-  char *descriptor_str = malloc(len + 1);
+  char *descriptor_str = text_file_normalize(data, len);
   if (!descriptor_str) {
-    dialog_show_error_timeout("Out of memory", NULL, 0);
+    dialog_show_error_timeout("No loadable content in file", NULL, 0);
     return;
   }
-  memcpy(descriptor_str, data, len);
-  descriptor_str[len] = '\0';
 
   browser_hide();
   descriptor_loader_process_string(descriptor_str, descriptor_validation_cb,

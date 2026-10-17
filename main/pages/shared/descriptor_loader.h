@@ -86,11 +86,6 @@ void descriptor_loader_destroy_source_menu(void);
  */
 char *descriptor_extract_from_scanner(void);
 
-// Normalize a descriptor by appending derivation path suffixes to keys
-// without them. Strips any existing checksum.
-// Returns new normalized string (caller must free), or NULL if unchanged.
-char *descriptor_to_unambiguous(const char *descriptor);
-
 /**
  * Render a miniscript policy (keys already replaced by letter IDs) as an
  * indented tree with semantic colors: logic operators highlighted, timelocks

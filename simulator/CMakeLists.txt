@@ -161,6 +161,7 @@ set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/estimated_entropy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/text_file.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/worker_task.c
 )
 
@@ -193,6 +194,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/address_match.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_text.c
     # Shared zlib adapter used by KEF and BBQr
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)
