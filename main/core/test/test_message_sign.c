@@ -92,10 +92,23 @@ static char *sign_hello(void) {
   return b64;
 }
 
+/* "Hello Kern" signed at m/84'/0'/0'/0/0 by an independent RFC6979
+ * implementation (HMAC-SHA256, low S), from BIP84's private key for that path.
+ */
+static const char *HELLO_RFC6979 =
+    "H6/HLXbHJ4WR/1apaOHCnsBah1Zecvpahhr1VvIIjeROOrvlI0Ky150kTVQeiGhSKWabus6Hu7"
+    "NzUXbrWKvVWLs=";
+
 /* Blinding changes how the computation runs, never its result: signatures stay
  * RFC6979's, so anyone holding the seed can reproduce them. */
 static void test_signing_is_deterministic(void) {
   char *a = sign_hello(), *b = sign_hello();
+  TEST("the signature is RFC6979's, with nothing else in the nonce");
+  if (a && strcmp(a, HELLO_RFC6979) == 0)
+    PASS();
+  else
+    FAIL(a ? a : "no signature");
+
   TEST("signing the same message twice gives the same signature");
   if (a && b && strcmp(a, b) == 0)
     PASS();
