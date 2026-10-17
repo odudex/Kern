@@ -84,6 +84,28 @@ int crypto_pbkdf2_sha256(const uint8_t *password, size_t password_len,
 #endif
 }
 
+int crypto_pbkdf2_sha512(const uint8_t *password, size_t password_len,
+                         const uint8_t *salt, size_t salt_len,
+                         uint32_t iterations, uint8_t *key_out,
+                         size_t key_len) {
+  if (!password || !salt || !key_out || iterations == 0 || key_len == 0) {
+    return CRYPTO_ERR_INVALID_ARG;
+  }
+
+#ifdef SIMULATOR
+  int ret = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA512, password,
+                                          password_len, salt, salt_len,
+                                          iterations, key_len, key_out);
+  return (ret == 0) ? CRYPTO_OK : CRYPTO_ERR_INTERNAL;
+#elif defined(CONFIG_KERN_PBKDF2_HW_SHA)
+  return pbkdf2_hw_sha512(password, password_len, salt, salt_len, iterations,
+                          key_out, key_len);
+#else
+  return pbkdf2_psa_sha512(password, password_len, salt, salt_len, iterations,
+                           key_out, key_len);
+#endif
+}
+
 /* --- Hashing --- */
 
 int crypto_sha256(const uint8_t *data, size_t data_len, uint8_t *hash_out) {

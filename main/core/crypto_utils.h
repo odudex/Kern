@@ -34,6 +34,12 @@ crypto_pbkdf2_sha256(const uint8_t *password, size_t password_len,
                      const uint8_t *salt, size_t salt_len, uint32_t iterations,
                      uint8_t *key_out, size_t key_len);
 
+/* PBKDF2-HMAC-SHA512, same contract. */
+KERN_WARN_UNUSED_RESULT int
+crypto_pbkdf2_sha512(const uint8_t *password, size_t password_len,
+                     const uint8_t *salt, size_t salt_len, uint32_t iterations,
+                     uint8_t *key_out, size_t key_len);
+
 /* --- Hashing --- */
 
 /* SHA-256 hash. hash_out must be at least CRYPTO_SHA256_SIZE bytes. */

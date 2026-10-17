@@ -29,13 +29,14 @@ menu "Kern Configuration"
     endchoice
 
     config KERN_PBKDF2_HW_SHA
-        bool "Drive PBKDF2-HMAC-SHA256 on the P4 SHA accelerator"
+        bool "Drive PBKDF2-HMAC-SHA256 and -SHA512 on the P4 SHA accelerator"
         default y
         help
             Holds the SHA peripheral across batches of PBKDF2 iterations and
             precomputes the HMAC ipad/opad midstates, so an iteration costs two
             hardware block compressions instead of four compressions wrapped in
-            four crypto-lock acquire/reset/release cycles.
+            four crypto-lock acquire/reset/release cycles. SHA-256 derives PIN
+            and KEF keys, SHA-512 BIP39 seeds.
 
             Output is byte-identical to the PSA path, which stays compiled in.
             Every call first runs a known-answer vector through the accelerated
