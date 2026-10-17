@@ -266,6 +266,11 @@ typedef struct {
 // ours, from another multipath group of the same policy say, that signed
 // nothing; they are not in `signed_ok`.
 //
+// `bad_keypath` counts taproot key-path signatures discarded because they do
+// not verify against the output key being spent: libwally tweaks the key from
+// the PSBT's TAP_INTERNAL_KEY and TAP_MERKLE_ROOT, which a coordinator can get
+// wrong.
+//
 // `blocked` counts inputs the policy refused that libwally signed anyway
 // because they name a key used elsewhere in the transaction, and whose
 // signature was therefore discarded. A PSBT arranged that way is not something
@@ -274,6 +279,7 @@ typedef struct {
   size_t attempted;
   size_t signed_ok;
   size_t missing_keys;
+  size_t bad_keypath;
   size_t blocked;
 } psbt_sign_result_t;
 

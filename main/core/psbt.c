@@ -10,6 +10,7 @@
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 #include <wally_map.h>
 #include <wally_psbt_members.h>
@@ -875,6 +876,7 @@ typedef struct {
    * are the common case. Only a baseline taken before any signing can tell
    * "already signed by us" from "never signed". */
   size_t sig_baseline;
+  bool had_tap_key_sig;
   size_t sig_count;
   struct wally_map signatures;
   struct wally_map leaf_signatures;
@@ -1064,6 +1066,63 @@ static bool input_is_signable(const struct wally_psbt *psbt, size_t i,
   return true;
 }
 
+/* libwally decides whether and how to key-path sign a taproot input from the
+ * PSBT's TAP_INTERNAL_KEY, leaf hashes and TAP_MERKLE_ROOT, and never checks
+ * the tweaked key against the output key the input spends. A stray or missing
+ * merkle root yields a signature for some other key, which finalizers still
+ * prefer over a valid script-path one. Verify each new key-path signature
+ * against the output key and drop those that fail. */
+static bool key_path_sig_verifies(struct wally_psbt *psbt, size_t i,
+                                  const struct wally_tx *tx) {
+  unsigned char spk[34], sig[EC_SIGNATURE_LEN + 1], hash[SHA256_LEN];
+  size_t spk_len = 0, sig_len = 0;
+  return psbt_input_utxo_script(psbt, i, spk, sizeof(spk), &spk_len) &&
+         spk_len == sizeof(spk) && spk[0] == OP_1 && spk[1] == 32 &&
+         wally_psbt_get_input_taproot_signature(psbt, i, sig, sizeof(sig),
+                                                &sig_len) == WALLY_OK &&
+         sig_len >= EC_SIGNATURE_LEN && sig_len <= sizeof(sig) &&
+         wally_psbt_get_input_signature_hash(psbt, i, tx, NULL, 0, 0, hash,
+                                             sizeof(hash)) == WALLY_OK &&
+         wally_ec_sig_verify(spk + 2, EC_XONLY_PUBLIC_KEY_LEN, hash,
+                             sizeof(hash), EC_FLAG_SCHNORR, sig,
+                             EC_SIGNATURE_LEN) == WALLY_OK;
+}
+
+static void drop_unverified_key_path_sigs(struct wally_psbt *psbt,
+                                          const input_plan_t *plan,
+                                          size_t num_inputs,
+                                          psbt_sign_result_t *result) {
+  struct wally_tx *tx = NULL;
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (plan[i].denied || plan[i].had_tap_key_sig ||
+        !tap_key_sig_present(psbt, i))
+      continue;
+    if (!tx && !(tx = psbt_tx_alloc(psbt)))
+      break;
+    if (key_path_sig_verifies(psbt, i, tx))
+      continue;
+    ESP_LOGW(TAG,
+             "Dropping key-path signature that fails to verify on input %zu",
+             i);
+    wally_psbt_set_input_taproot_signature(psbt, i, NULL, 0);
+    if (result)
+      result->bad_keypath++;
+  }
+  if (tx) {
+    wally_tx_free(tx);
+    return;
+  }
+  /* Without the transaction no signature can be checked: drop them all. */
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (plan[i].denied || plan[i].had_tap_key_sig ||
+        !tap_key_sig_present(psbt, i))
+      continue;
+    wally_psbt_set_input_taproot_signature(psbt, i, NULL, 0);
+    if (result)
+      result->bad_keypath++;
+  }
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1096,6 +1155,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
       signable_any = true;
       plan[i].sig_baseline = input_signature_count(psbt, i);
+      plan[i].had_tap_key_sig = tap_key_sig_present(psbt, i);
       continue;
     }
     plan[i].denied = true;
@@ -1163,6 +1223,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       bip32_key_free(keys[p]);
   }
 
+  drop_unverified_key_path_sigs(psbt, plan, num_inputs, result);
   wally_psbt_signing_cache_disable(psbt);
 
   for (size_t i = 0; i < num_inputs; i++)

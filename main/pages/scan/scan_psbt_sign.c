@@ -99,6 +99,23 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
+  // The key-path signatures were made for a key other than the one the
+  // output commits to, so the coordinator's taproot data is wrong; they were
+  // dropped rather than exported for a finalizer to prefer.
+  if (sign_result.bad_keypath) {
+    char body[320];
+    snprintf(body, sizeof(body),
+             "%zu taproot signature%s did not match the address being spent "
+             "and %s discarded.\n\n"
+             "The PSBT's taproot data (internal key or script tree) is wrong. "
+             "Re-export it from the coordinator.",
+             sign_result.bad_keypath, sign_result.bad_keypath == 1 ? "" : "s",
+             sign_result.bad_keypath == 1 ? "was" : "were");
+    dialog_show_info("Signatures discarded", body, partial_sign_ack_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+
   // Exporting a partly-signed PSBT without saying so is what an attacker
   // harvesting one signature per session relies on: each round looks like a
   // clean success. Name the shortfall before the export menu appears.

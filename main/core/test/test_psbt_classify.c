@@ -2271,6 +2271,147 @@ static void test_tr_script_path_denied_input(void) {
   registry_clear();
 }
 
+/* BIP371 PSBT_IN_TAP_MERKLE_ROOT */
+#define TAP_MERKLE_ROOT_FIELD 0x18
+#define TR_OURS_WITH_TREE                                                      \
+  "tr([00000000/86'/0'/0']" XPUB_86 "/0/*,pk([11111111/86'/0'/0']" XPUB_84     \
+  "/0/*))"
+#define TR_OURS_INTERNAL_AND_LEAF                                              \
+  "tr([00000000/86'/0'/0']" XPUB_86 "/0/*,pk([00000000/86'/0'/0']" XPUB_86     \
+  "/1/*))"
+
+static bool sign_one(struct wally_psbt *psbt, psbt_sign_result_t *res) {
+  psbt_sign_policy_t policy = {0};
+  return psbt_sign(psbt, false, policy, res) > 0;
+}
+
+/* libwally tweaks the key-path key from the PSBT's own taproot fields: a
+ * signature made for another key must not be counted or exported. */
+static void test_tr_key_path_verified(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    uint8_t junk[32];
+    memset(junk, 0x42, sizeof(junk));
+    psbt_sign_result_t res;
+
+    snprintf(name, sizeof(name), "key path v%u: BIP86 signature verifies",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *bip86[] = {TR_BIP86_OURS};
+    struct wally_psbt *psbt = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt || !sign_one(psbt, &res))
+      FAIL("signing failed");
+    else if (res.signed_ok != 1 || res.bad_keypath != 0 ||
+             tap_key_sig_len(psbt, 0) != 64)
+      FAIL("expected one valid key-path signature");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+
+    snprintf(name, sizeof(name),
+             "key path v%u: BIP86 with a stray merkle root is dropped",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    psbt = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
+    if (psbt)
+      wally_map_add_integer(&psbt->inputs[0].psbt_fields, TAP_MERKLE_ROOT_FIELD,
+                            junk, sizeof(junk));
+    res.bad_keypath = 0;
+    if (!psbt)
+      FAIL("fixture");
+    else if (sign_one(psbt, &res), res.bad_keypath != 1 || res.signed_ok != 0 ||
+                                       tap_key_sig_len(psbt, 0) != 0)
+      FAIL("expected the signature dropped and nothing signed");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  registry_clear();
+  psbt_sign_result_t res;
+  if (!registry_add_from_string("tree", TR_OURS_WITH_TREE, STORAGE_FLASH,
+                                false) ||
+      !registry_add_from_string("both", TR_OURS_INTERNAL_AND_LEAF,
+                                STORAGE_FLASH, false) ||
+      !registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false)) {
+    TEST("key path: registry setup");
+    FAIL("registry_add_from_string");
+    registry_clear();
+    return;
+  }
+
+  TEST("key path: tr(ours,tree) with its merkle root signs");
+  const char *tree[] = {TR_OURS_WITH_TREE};
+  struct wally_psbt *psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (!psbt || !sign_one(psbt, &res) || res.bad_keypath != 0 ||
+      res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64)
+    FAIL("expected one valid key-path signature");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: tr(ours,tree) with the merkle root dropped");
+  psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (psbt)
+    wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
+                             TAP_MERKLE_ROOT_FIELD);
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res),
+           res.bad_keypath != 1 || tap_key_sig_len(psbt, 0) != 0)
+    FAIL("expected the signature dropped");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: leaf key listed with no leaf hash and no internal key");
+  const char *leaf[] = {TR_LEAF_OURS};
+  psbt = make_tr_psbt(leaf, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (psbt) {
+    wally_psbt_set_input_taproot_internal_key(psbt, 0, NULL, 0);
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
+  }
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res),
+           tap_key_sig_len(psbt, 0) != 0 || res.signed_ok != 0)
+    FAIL("expected no key-path signature and nothing signed");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: internal and leaf key both sign");
+  const char *both_ok[] = {TR_OURS_INTERNAL_AND_LEAF};
+  psbt = make_tr_psbt(both_ok, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (!psbt || !sign_one(psbt, &res) || res.bad_keypath != 0 ||
+      res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64 ||
+      psbt->inputs[0].taproot_leaf_signatures.num_items != 1)
+    FAIL("expected a key-path and a leaf signature");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: internal and leaf key, root dropped, leaf signature kept");
+  const char *both[] = {TR_OURS_INTERNAL_AND_LEAF};
+  psbt = make_tr_psbt(both, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (psbt)
+    wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
+                             TAP_MERKLE_ROOT_FIELD);
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res),
+           res.bad_keypath != 1 || tap_key_sig_len(psbt, 0) != 0 ||
+               psbt->inputs[0].taproot_leaf_signatures.num_items != 1)
+    FAIL("expected the key-path signature dropped and the leaf one kept");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
 /* One seed in two multipath groups of one policy: a primary <0;1> key and a
  * recovery <2;3> key, the Liana same-signer layout. Every own key of the
  * claimed descriptor at the input's index must sign, and an input still
@@ -3933,6 +4074,7 @@ int main(void) {
   test_tr_keypath_denied_input();
   test_tr_change_output_owned();
   test_tr_script_path_denied_input();
+  test_tr_key_path_verified();
 
   printf("\n=== multi-key signing tests ===\n\n");
 
