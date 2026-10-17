@@ -866,11 +866,16 @@ static void test_generation_guard(void) {
 
 static void test_watch_only(void) {
   registry_clear();
+  const char *foreign = descf("wpkh([deadbeef/84'/0'/0']%s/0/*)", X84_0);
+  check("watch-only refused while a key is loaded",
+        run_watch(foreign, WALLET_NETWORK_MAINNET) ==
+                VALIDATION_INTERNAL_ERROR &&
+            info_calls == 0 && registry_count() == 0);
+
   key_unload();
   wallet_cleanup();
   wallet_set_watch_only(WALLET_NETWORK_MAINNET);
 
-  const char *foreign = descf("wpkh([deadbeef/84'/0'/0']%s/0/*)", X84_0);
   check("keyed validation without a key is an internal error",
         run(foreign) == VALIDATION_INTERNAL_ERROR);
 

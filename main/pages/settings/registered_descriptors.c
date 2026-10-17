@@ -33,13 +33,14 @@ static void build_rd_menu(void);
 static void disabled_entry_cb(void) {}
 
 // Letters ('A' + key index) of descriptor keys whose origin fingerprint
-// matches the loaded wallet key. out must hold MINISCRIPT_POLICY_MAX_KEYS + 1
-// bytes.
-static void our_key_letters(const struct wally_descriptor *desc, char *out) {
+// matches the loaded wallet key; none for watch-only entries, whose keys were
+// never verified. out must hold MINISCRIPT_POLICY_MAX_KEYS + 1 bytes.
+static void our_key_letters(const registry_entry_t *entry, char *out) {
+  const struct wally_descriptor *desc = entry->desc;
   size_t n = 0;
   unsigned char my_fp[BIP32_KEY_FINGERPRINT_LEN];
   uint32_t num_keys = 0;
-  if (key_get_fingerprint(my_fp) &&
+  if (entry->my_key_index != SIZE_MAX && key_get_fingerprint(my_fp) &&
       wally_descriptor_get_num_keys(desc, &num_keys) == WALLY_OK) {
     if (num_keys > MINISCRIPT_POLICY_MAX_KEYS)
       num_keys = MINISCRIPT_POLICY_MAX_KEYS;
@@ -114,7 +115,7 @@ static void view_descriptor_cb(void) {
     char *policy = miniscript_policy_string(entry->desc);
     if (policy) {
       char ours[MINISCRIPT_POLICY_MAX_KEYS + 1];
-      our_key_letters(entry->desc, ours);
+      our_key_letters(entry, ours);
       descriptor_policy_view_create(body, policy, ours);
       free(policy);
     }

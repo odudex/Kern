@@ -946,6 +946,14 @@ void descriptor_validate_and_load_watch_only(
     const char *descriptor_str, wallet_network_t network,
     validation_complete_cb callback, validation_info_confirm_cb info_confirm_cb,
     void *user_data) {
+  /* Watch-only skips xpub verification, so with a key loaded the views would
+   * mark keys that only claim its fingerprint as ours. */
+  if (descriptor_str && callback && key_is_loaded()) {
+    cleanup_context();
+    callback(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+
   struct wally_descriptor *descriptor = NULL;
   if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
                        &descriptor) != VALIDATION_SUCCESS)

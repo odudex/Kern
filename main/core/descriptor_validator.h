@@ -127,8 +127,9 @@ descriptor_infer_network(const char *descriptor_str,
                          wallet_network_t *network_out);
 
 /* Watch-only (keyless) variant of descriptor_validate_and_load: validates and
- * loads a descriptor for address viewing without a loaded master key. Skips the
- * key precondition, fingerprint match, and xpub verification; otherwise reuses
+ * loads a descriptor for address viewing without a loaded master key, and
+ * refuses (VALIDATION_INTERNAL_ERROR) while one is loaded. Skips the
+ * fingerprint match and xpub verification; otherwise reuses
  * the same parse/script checks, the same "Load?" info dialog (info_confirm_cb),
  * and session dedup. The caller must have set the watch-only network first (via
  * wallet_set_watch_only). On confirm the descriptor is registered watch-only.
