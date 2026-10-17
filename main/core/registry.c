@@ -5,12 +5,14 @@
 #include "descriptor_checksum.h"
 #include "descriptor_validator.h"
 #include "key.h"
+#include "psbt_internal.h"
 #include "wallet.h"
 #include <esp_log.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wally_address.h>
 #include <wally_bip32.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 
 static const char *TAG = "registry";
@@ -149,7 +151,6 @@ static void registry_init_scan(void) {
     struct wally_descriptor *desc = NULL;
     int key_index = -1;
     char id[REGISTRY_ID_MAX_LEN];
-    char checksum[9];
     char existing[REGISTRY_ID_MAX_LEN];
     bool approved = false;
     if (!bip138_backup_decrypt_any_hinted(data, data_len, &desc_str,
@@ -161,10 +162,8 @@ static void registry_init_scan(void) {
       ESP_LOGW(TAG, "Skipping '%s': failed validation", fname);
     } else if (!descriptor_id_from_filename(fname, id, sizeof(id))) {
       ESP_LOGW(TAG, "Skipping '%s': unexpected filename", fname);
-    } else if (!descriptor_checksum_from_descriptor(desc, checksum)) {
-      ESP_LOGW(TAG, "Skipping '%s': no checksum", fname);
-    } else if (registry_session_has_duplicate_checksum(checksum, existing,
-                                                       sizeof(existing))) {
+    } else if (registry_session_has_duplicate_scripts(desc, existing,
+                                                      sizeof(existing))) {
       ESP_LOGI(TAG, "Skipping '%s': same descriptor as '%s'", fname, existing);
     } else if (registry_find_by_id(id)) {
       ESP_LOGW(TAG, "Skipping '%s': id '%s' already registered", fname, id);
@@ -194,20 +193,55 @@ void registry_init(bool is_testnet) {
   ESP_LOGI(TAG, "Registry: %zu entries loaded", registry_len);
 }
 
-static char *descriptor_checksum_alloc(const char *descriptor_str) {
-  if (!descriptor_str)
-    return NULL;
-  uint32_t net = wallet_wally_network();
-  struct wally_descriptor *desc = NULL;
-  if (wallet_descriptor_parse(descriptor_str, NULL, net, &desc) != WALLY_OK &&
-      wallet_descriptor_parse(descriptor_str, NULL,
-                              wallet_wally_other_network(net),
-                              &desc) != WALLY_OK)
-    return NULL;
-  char checksum[9];
-  bool ok = descriptor_checksum_from_descriptor(desc, checksum);
-  wally_descriptor_free(desc);
-  return ok ? strdup(checksum) : NULL;
+/* Groups past this many add nothing a duplicate check needs. */
+#define SCRIPT_ID_MAX_GROUPS 4
+
+static bool script_id(const struct wally_descriptor *desc, uint8_t out[32]) {
+  uint32_t num_paths = 0;
+  if (wally_descriptor_get_num_paths(desc, &num_paths) != WALLY_OK)
+    return false;
+  uint32_t groups =
+      num_paths < SCRIPT_ID_MAX_GROUPS ? num_paths : SCRIPT_ID_MAX_GROUPS;
+  uint8_t buf[4 + SCRIPT_ID_MAX_GROUPS * 35];
+  size_t len = 4;
+  memcpy(buf, &num_paths, 4);
+  for (uint32_t mi = 0; mi < groups; mi++) {
+    /* Depth 0 builds the inner script here before hashing it. */
+    uint8_t spk[PSBT_MAX_INNER_SCRIPT_LEN];
+    size_t written = 0;
+    if (wally_descriptor_to_script(desc, 0, 0, 0, mi, 0, 0, spk, sizeof(spk),
+                                   &written) != WALLY_OK ||
+        written > 34)
+      return false;
+    buf[len++] = (uint8_t)written;
+    memcpy(buf + len, spk, written);
+    len += written;
+  }
+  return wally_sha256(buf, len, out, 32) == WALLY_OK;
+}
+
+static void set_script_id(registry_entry_t *e) {
+  e->has_script_id = script_id(e->desc, e->script_id);
+}
+
+bool registry_session_has_duplicate_scripts(const struct wally_descriptor *desc,
+                                            char *out_id, size_t out_id_size) {
+  if (out_id && out_id_size > 0)
+    out_id[0] = '\0';
+  uint8_t id[32];
+  if (!desc || !script_id(desc, id))
+    return false;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (!registry_entries[i].has_script_id ||
+        memcmp(registry_entries[i].script_id, id, sizeof(id)) != 0)
+      continue;
+    if (out_id && out_id_size > 0) {
+      strncpy(out_id, registry_entries[i].id, out_id_size - 1);
+      out_id[out_id_size - 1] = '\0';
+    }
+    return true;
+  }
+  return false;
 }
 
 bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
@@ -216,42 +250,16 @@ bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
     out_id[0] = '\0';
   if (!descriptor_str)
     return false;
-
-  char *target = descriptor_checksum_alloc(descriptor_str);
-  if (!target)
+  uint32_t net = wallet_wally_network();
+  struct wally_descriptor *desc = NULL;
+  if (wallet_descriptor_parse(descriptor_str, NULL, net, &desc) != WALLY_OK &&
+      wallet_descriptor_parse(descriptor_str, NULL,
+                              wallet_wally_other_network(net),
+                              &desc) != WALLY_OK)
     return false;
-
   bool found =
-      registry_session_has_duplicate_checksum(target, out_id, out_id_size);
-  free(target);
-  return found;
-}
-
-bool registry_session_has_duplicate_checksum(const char checksum[9],
-                                             char *out_id, size_t out_id_size) {
-  if (out_id && out_id_size > 0)
-    out_id[0] = '\0';
-  if (!checksum || checksum[0] == '\0')
-    return false;
-
-  bool found = false;
-  for (size_t i = 0; i < registry_len; i++) {
-    char entry_cksum[9];
-    if (registry_entries[i].desc &&
-        descriptor_checksum_from_descriptor(registry_entries[i].desc,
-                                            entry_cksum)) {
-      if (strcmp(entry_cksum, checksum) == 0) {
-        found = true;
-        if (out_id && out_id_size > 0) {
-          strncpy(out_id, registry_entries[i].id, out_id_size - 1);
-          out_id[out_id_size - 1] = '\0';
-        }
-      }
-      if (found)
-        break;
-    }
-  }
-
+      registry_session_has_duplicate_scripts(desc, out_id, out_id_size);
+  wally_descriptor_free(desc);
   return found;
 }
 
@@ -445,6 +453,7 @@ bool registry_add_parsed(const char *id, struct wally_descriptor *desc,
   e->origin_path_len = origin_path_len;
   memcpy(e->origin_path, origin_path, origin_path_len * sizeof(uint32_t));
   collect_own_keys(e, wallet_fp, num_keys);
+  set_script_id(e);
   registry_len++;
 
   if (persist) {
@@ -583,6 +592,7 @@ bool registry_add_watch_only(const char *id, const char *descriptor_str,
   e->my_key_index = SIZE_MAX; // no key in watch-only mode
   e->num_paths = (size_t)num_paths;
   e->origin_path_len = 0;
+  set_script_id(e);
   registry_len++;
 
   ESP_LOGI(TAG, "added watch-only '%s' (%zu entries total)", id, registry_len);

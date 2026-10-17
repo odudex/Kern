@@ -41,6 +41,10 @@ typedef struct {
   /* Every own key, the first included, up to REGISTRY_MAX_OWN_KEYS. */
   registry_own_key_t own_keys[REGISTRY_MAX_OWN_KEYS];
   size_t num_own_keys;
+  /* What the descriptor pays, however it is written; see
+   * registry_session_has_duplicate_scripts. */
+  uint8_t script_id[32];
+  bool has_script_id;
   bool persisted;
 } registry_entry_t;
 
@@ -87,16 +91,19 @@ KERN_WARN_UNUSED_RESULT bool registry_add_watch_only(const char *id,
                                                      const char *descriptor_str,
                                                      wallet_network_t network);
 
-/* Look up whether `descriptor_str` is already loaded in the in-memory
- * session registry. Compares h-normalized BIP-380 checksums and writes the
- * matching session id to `out_id` if non-NULL. */
+/* Look up whether a descriptor paying the same scripts as `descriptor_str` is
+ * already loaded in the in-memory session registry, and write its session id
+ * to `out_id` if non-NULL. */
 KERN_WARN_UNUSED_RESULT bool
 registry_session_has_duplicate(const char *descriptor_str, char *out_id,
                                size_t out_id_size);
-/* Same lookup when the caller already has the h-normalized BIP-380 checksum. */
+/* Same for a parsed descriptor. Entries match when they have the same number
+ * of multipath groups and the same scriptPubKey at child 0 of each, so an
+ * uppercase fingerprint, sortedmulti keys in another order or a key written
+ * with or without its origin are one descriptor. */
 KERN_WARN_UNUSED_RESULT bool
-registry_session_has_duplicate_checksum(const char checksum[9], char *out_id,
-                                        size_t out_id_size);
+registry_session_has_duplicate_scripts(const struct wally_descriptor *desc,
+                                       char *out_id, size_t out_id_size);
 
 void registry_clear(void);
 /* Clears the session and registers every flash backup the loaded key opens. */

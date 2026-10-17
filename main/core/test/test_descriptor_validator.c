@@ -1002,6 +1002,23 @@ static void test_dedup(void) {
         run(h_variant) == VALIDATION_DUPLICATE);
   check("still exactly one entry", registry_count() == 1);
 
+  const char *upper =
+      descf("wpkh([" FP_UPPER "/84'/0'/0']%s/0/*)", xpub_at("m/84'/0'/0'"));
+  check("uppercase fingerprint is the same descriptor",
+        run(upper) == VALIDATION_DUPLICATE);
+
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  check("sortedmulti loads",
+        run(descf("wsh(sortedmulti(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                  "[deadbeef/48'/0'/1'/2']%s/0/*))",
+                  a, b)) == VALIDATION_SUCCESS);
+  check("sortedmulti with its keys in another order is the same descriptor",
+        run(descf("wsh(sortedmulti(1,[deadbeef/48'/0'/1'/2']%s/0/*,"
+                  "[" FP "/48'/0'/0'/2']%s/0/*))",
+                  b, a)) == VALIDATION_DUPLICATE);
+  check("drop the sortedmulti entry", registry_remove_at(1));
+
   const char *other =
       descf("wpkh([" FP "/84'/0'/1']%s/0/*)", xpub_at("m/84'/0'/1'"));
   check("different account is not a duplicate",
@@ -1105,6 +1122,9 @@ static void test_watch_only(void) {
 
   check("watch-only dedup",
         run_watch(foreign, WALLET_NETWORK_MAINNET) == VALIDATION_DUPLICATE);
+  check("watch-only dedup ignores the key origin",
+        run_watch(descf("wpkh(%s/0/*)", X84_0), WALLET_NETWORK_MAINNET) ==
+            VALIDATION_DUPLICATE);
 
   capture_reset();
   info_answer = false;

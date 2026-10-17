@@ -651,16 +651,9 @@ verify_own_keys(const struct wally_descriptor *descriptor) {
   return VALIDATION_SUCCESS;
 }
 
-// Verify our keys match the wallet, extract info, and show it.
-static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
-                                      int key_index) {
-  descriptor_validation_result_t xpub_result = verify_own_keys(descriptor);
-  if (xpub_result != VALIDATION_SUCCESS) {
-    wally_descriptor_free(descriptor);
-    complete_validation(xpub_result);
-    return;
-  }
-
+// Extract info from a descriptor whose keys are verified, and show it.
+static void show_keyed_info(struct wally_descriptor *descriptor,
+                            int key_index) {
   // Run soft purpose-script binding check before freeing the descriptor.
   psb_result_t psb_result = purpose_script_binding_check_soft(descriptor);
 
@@ -834,11 +827,11 @@ descriptor_validate_keyed_parsed(const char *descriptor_str,
   return result;
 }
 
-/* Store the descriptor checksum, then reject duplicates already in the
- * in-memory session (h-normalized BIP-380 checksum match). Descriptor files on
- * flash/SD are explicit import sources, not registered descriptors, so dedup is
- * session-scoped. On failure frees `descriptor`, delivers the result, and
- * returns false; the caller must stop. */
+/* Store the descriptor checksum, which names the session entry, then reject
+ * a descriptor already in the in-memory session that pays the same scripts.
+ * Descriptor files on flash/SD are explicit import sources, not registered
+ * descriptors, so dedup is session-scoped. On failure frees `descriptor`,
+ * delivers the result, and returns false; the caller must stop. */
 static bool checksum_and_dedup(struct wally_descriptor *descriptor) {
   if (!descriptor_checksum_from_descriptor(descriptor,
                                            current_ctx->descriptor_checksum)) {
@@ -848,8 +841,8 @@ static bool checksum_and_dedup(struct wally_descriptor *descriptor) {
   }
 
   char existing_id[REGISTRY_ID_MAX_LEN];
-  if (registry_session_has_duplicate_checksum(
-          current_ctx->descriptor_checksum, existing_id, sizeof(existing_id))) {
+  if (registry_session_has_duplicate_scripts(descriptor, existing_id,
+                                             sizeof(existing_id))) {
     wally_descriptor_free(descriptor);
     strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
     last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
@@ -888,10 +881,19 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
+  /* Before the duplicate check: a forged variant of a loaded descriptor pays
+   * the same scripts, and should be named as forged. */
+  descriptor_validation_result_t keys_result = verify_own_keys(descriptor);
+  if (keys_result != VALIDATION_SUCCESS) {
+    wally_descriptor_free(descriptor);
+    complete_validation(keys_result);
+    return;
+  }
+
   if (!checksum_and_dedup(descriptor))
     return;
 
-  verify_xpub_and_show_info(descriptor, key_index);
+  show_keyed_info(descriptor, key_index);
 }
 
 // Watch-only: extract info and show the "Load?" dialog, skipping the xpub
