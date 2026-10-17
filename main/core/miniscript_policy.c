@@ -70,6 +70,47 @@ static char *copy_lower(char *dst, const char *src, size_t len) {
   return dst + len;
 }
 
+size_t
+miniscript_policy_key_letters(const struct wally_descriptor *desc,
+                              uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS],
+                              uint32_t *num_exprs_out) {
+  uint32_t num_keys = 0;
+  if (!desc || !letters || !num_exprs_out ||
+      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
+      num_keys == 0 || num_keys > MINISCRIPT_POLICY_MAX_KEY_EXPRS)
+    return 0;
+
+  char *distinct[MINISCRIPT_POLICY_MAX_KEYS];
+  size_t num_distinct = 0;
+  bool ok = true;
+  for (uint32_t i = 0; i < num_keys && ok; i++) {
+    char *key = NULL;
+    if (wally_descriptor_get_key(desc, i, &key) != WALLY_OK || !key) {
+      ok = false;
+      break;
+    }
+    size_t j = 0;
+    while (j < num_distinct && strcmp(distinct[j], key) != 0)
+      j++;
+    if (j < num_distinct) {
+      wally_free_string(key);
+    } else if (num_distinct == MINISCRIPT_POLICY_MAX_KEYS) {
+      wally_free_string(key);
+      ok = false;
+      break;
+    } else {
+      distinct[num_distinct++] = key;
+    }
+    letters[i] = (uint8_t)j;
+  }
+  for (size_t j = 0; j < num_distinct; j++)
+    wally_free_string(distinct[j]);
+  if (!ok)
+    return 0;
+  *num_exprs_out = num_keys;
+  return num_distinct;
+}
+
 char *miniscript_policy_string(const struct wally_descriptor *desc) {
   char *canon = NULL;
   if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
@@ -77,9 +118,9 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
       !canon)
     return NULL;
 
+  uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS];
   uint32_t num_keys = 0;
-  if (wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
-      num_keys == 0 || num_keys > MINISCRIPT_POLICY_MAX_KEYS) {
+  if (!miniscript_policy_key_letters(desc, letters, &num_keys)) {
     wally_free_string(canon);
     return NULL;
   }
@@ -106,7 +147,7 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
       ok = false;
     } else {
       dst = copy_lower(dst, src, (size_t)(start - src));
-      *dst++ = (char)('A' + i);
+      *dst++ = (char)('A' + letters[i]);
       // Skip the trailing derivation suffix (/<0;1>/* etc).
       while (*end && strchr("/0123456789h'*<;>", *end))
         end++;

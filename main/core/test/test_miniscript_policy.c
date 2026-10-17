@@ -209,7 +209,7 @@ static void test_policy_string(void) {
                       "wsh(or_d(pk([00000000/48'/0'/0'/2']" XPUB_84 "/0/*),"
                       "and_v(v:pkh([00000000/48'/0'/0'/2']" XPUB_84 "/2/*),"
                       "older(144))))",
-                      "wsh(or_d(pk(A),and_v(v:pkh(B),older(144))))");
+                      "wsh(or_d(pk(A),and_v(v:pkh(A),older(144))))");
 }
 
 /* Only key letters may become KEY tokens, wherever the indenter breaks a
@@ -302,11 +302,11 @@ static void test_thresh_combinator_child(void) {
   check_key_tokens("view: thresh keeps the keys under an or_b child",
                    "wsh(thresh(2,pk(" XPUB_84 "/0/*),a:pk(" XPUB_84 "/1/*),"
                    "a:or_b(pk(" XPUB_84 "/2/*),a:pk(" XPUB_84 "/3/*))))",
-                   "ABCD");
+                   "AAAA");
   check_key_tokens("view: thresh keeps the keys under an and_b child",
                    "wsh(thresh(1,pk(" XPUB_84 "/0/*),a:and_b(pk(" XPUB_84
                    "/1/*),a:pk(" XPUB_84 "/2/*))))",
-                   "ABC");
+                   "AAA");
 }
 
 static void test_is_miniscript(void) {

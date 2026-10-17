@@ -340,11 +340,12 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   memset(info, 0, sizeof(descriptor_info_t));
 
   /* static_checks rejects more keys than letter IDs; this guards keys[]. */
-  uint32_t num_keys = 0;
-  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK ||
-      num_keys > DESCRIPTOR_INFO_MAX_KEYS) {
+  uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS];
+  uint32_t num_exprs = 0;
+  uint32_t num_keys =
+      (uint32_t)miniscript_policy_key_letters(descriptor, letters, &num_exprs);
+  if (num_keys == 0 || num_keys > DESCRIPTOR_INFO_MAX_KEYS)
     return false;
-  }
 
   info->is_miniscript = miniscript_policy_is_miniscript(descriptor);
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
@@ -358,40 +359,48 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
     info->threshold = parse_multisig_threshold(descriptor_str);
   }
 
-  for (uint32_t i = 0; i < info->num_keys; i++) {
+  /* Each distinct key is listed by its first expression. */
+  for (uint32_t e = 0; e < num_exprs; e++) {
+    uint32_t k = letters[e];
+    bool first = true;
+    for (uint32_t prev = 0; prev < e && first; prev++)
+      first = letters[prev] != k;
+    if (!first)
+      continue;
+
     // Fingerprint
     unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
     if (wally_descriptor_get_key_origin_fingerprint(
-            descriptor, i, fp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK) {
-      snprintf(info->keys[i].fingerprint_hex,
-               sizeof(info->keys[i].fingerprint_hex), "%02X%02X%02X%02X", fp[0],
+            descriptor, e, fp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK) {
+      snprintf(info->keys[k].fingerprint_hex,
+               sizeof(info->keys[k].fingerprint_hex), "%02X%02X%02X%02X", fp[0],
                fp[1], fp[2], fp[3]);
     } else {
-      strncpy(info->keys[i].fingerprint_hex, "N/A",
-              sizeof(info->keys[i].fingerprint_hex));
+      strncpy(info->keys[k].fingerprint_hex, "N/A",
+              sizeof(info->keys[k].fingerprint_hex));
     }
 
     // Xpub; raw keys have none. libwally lists the key bare.
     char *key_str = NULL;
-    if (!key_is_raw(descriptor, i) &&
-        wally_descriptor_get_key(descriptor, i, &key_str) == WALLY_OK) {
-      strncpy(info->keys[i].xpub, key_str, sizeof(info->keys[i].xpub) - 1);
-      info->keys[i].xpub[sizeof(info->keys[i].xpub) - 1] = '\0';
+    if (!key_is_raw(descriptor, e) &&
+        wally_descriptor_get_key(descriptor, e, &key_str) == WALLY_OK) {
+      strncpy(info->keys[k].xpub, key_str, sizeof(info->keys[k].xpub) - 1);
+      info->keys[k].xpub[sizeof(info->keys[k].xpub) - 1] = '\0';
       wally_free_string(key_str);
     }
 
     // Derivation path
     char *path_str = NULL;
-    if (wally_descriptor_get_key_origin_path_str(descriptor, i, &path_str) ==
+    if (wally_descriptor_get_key_origin_path_str(descriptor, e, &path_str) ==
             WALLY_OK &&
         path_str && path_str[0] != '\0') {
-      snprintf(info->keys[i].derivation, sizeof(info->keys[i].derivation),
+      snprintf(info->keys[k].derivation, sizeof(info->keys[k].derivation),
                "m/%s", path_str);
       wally_free_string(path_str);
     } else {
       wally_free_string(path_str);
-      strncpy(info->keys[i].derivation, "N/A",
-              sizeof(info->keys[i].derivation));
+      strncpy(info->keys[k].derivation, "N/A",
+              sizeof(info->keys[k].derivation));
     }
   }
 
@@ -551,7 +560,7 @@ static void proceed_psb_or_info(void) {
 /* Keyless structural checks applied to every parsed descriptor. */
 static descriptor_validation_result_t
 static_checks(struct wally_descriptor *descriptor) {
-  uint32_t num_keys = 0;
+  uint32_t num_exprs = 0;
   if (descriptor_has_private_key(descriptor))
     return VALIDATION_PRIVATE_KEY;
   descriptor_validation_result_t top = check_top_level(descriptor);
@@ -559,8 +568,8 @@ static_checks(struct wally_descriptor *descriptor) {
     return top;
   if (!descriptor_scripts_are_generatable(descriptor))
     return VALIDATION_UNSUPPORTED_SCRIPT;
-  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK ||
-      num_keys > DESCRIPTOR_INFO_MAX_KEYS)
+  uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS];
+  if (miniscript_policy_key_letters(descriptor, letters, &num_exprs) == 0)
     return VALIDATION_TOO_MANY_KEYS;
   if (tr_internal_keypath_unprovable(descriptor))
     return VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE;

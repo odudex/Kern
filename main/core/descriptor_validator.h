@@ -46,7 +46,8 @@ typedef enum {
   /* Descriptor carries a private key (xprv/tprv). A signing device never
    * needs one in a descriptor, and a backup would leak it. */
   VALIDATION_PRIVATE_KEY,
-  /* More keys than DESCRIPTOR_INFO_MAX_KEYS letter IDs. Only tr() gets there:
+  /* More distinct keys than DESCRIPTOR_INFO_MAX_KEYS letter IDs, or more than
+   * MINISCRIPT_POLICY_MAX_KEY_EXPRS key expressions. Only tr() gets there:
    * sh()/wsh() hit the inner script cap first. */
   VALIDATION_TOO_MANY_KEYS,
   /* A key carrying the wallet fingerprint has an origin Kern cannot use. The
@@ -80,8 +81,9 @@ typedef enum {
   TR_KEYPATH_EXTERNAL, /* internal key is an external key — can spend alone */
 } tr_keypath_class_t;
 
-/* Descriptor info for confirmation display. One letter ID per key; more keys
- * are rejected as VALIDATION_TOO_MANY_KEYS. */
+/* Descriptor info for confirmation display. One letter ID per distinct key
+ * (see miniscript_policy_key_letters), listed by its first expression; more
+ * keys are rejected as VALIDATION_TOO_MANY_KEYS. */
 #define DESCRIPTOR_INFO_MAX_KEYS MINISCRIPT_POLICY_MAX_KEYS
 typedef struct {
   bool is_multisig;

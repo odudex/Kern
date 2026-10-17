@@ -11,6 +11,19 @@
 /* Keys are labeled with one letter ID each, 'A'..'Z'. Shared by the policy
  * letter substitution and every screen that lists descriptor keys. */
 #define MINISCRIPT_POLICY_MAX_KEYS 26
+/* Most key expressions a descriptor may hold; a key used in several of them
+ * keeps one letter. */
+#define MINISCRIPT_POLICY_MAX_KEY_EXPRS 64
+
+/* The letter index of each key expression (`*num_exprs_out` of them, in
+ * libwally's key order): expressions of the same key, as libwally lists it
+ * without origin or derivation (K/<0;1> and K/<2;3>, say), share the letter of
+ * the first. Returns the number of distinct keys, or 0 when there are more
+ * than MINISCRIPT_POLICY_MAX_KEYS of them, more than
+ * MINISCRIPT_POLICY_MAX_KEY_EXPRS expressions, or the keys cannot be read. */
+KERN_WARN_UNUSED_RESULT size_t miniscript_policy_key_letters(
+    const struct wally_descriptor *desc,
+    uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS], uint32_t *num_exprs_out);
 
 /* True for a policy shown as a tree rather than a key list: miniscript
  * fragments, or any tr() script tree. libwally clears WALLY_MS_IS_DESCRIPTOR
@@ -26,8 +39,8 @@ miniscript_policy_is_miniscript(const struct wally_descriptor *desc) {
 }
 
 /* Canonical descriptor with each key expression (origin, xpub and child
- * path) replaced by its letter ID ('A' + key index, matching the order keys
- * are listed by libwally) and the rest lowercased, so the letters are its only
+ * path) replaced by its letter ID (see miniscript_policy_key_letters) and the
+ * rest lowercased, so the letters are its only
  * uppercase characters. Returns a malloc'd string, e.g.
  * "wsh(or_d(pk(A),and_v(v:pkh(B),older(65535))))", or NULL on failure. */
 KERN_WARN_UNUSED_RESULT char *

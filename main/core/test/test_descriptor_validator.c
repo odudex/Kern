@@ -230,6 +230,8 @@ static const char *pub_at(const char *path, bool xonly) {
 
 /* Captured while a key is loaded, for the keyless watch-only stage. */
 static char X84_0[120], X84_1[120], X86_0[120], X86_1[120];
+/* Distinct cosigner xpubs, m/86'/0'/<2 + i>', for the key-count tests. */
+static char XCOS[DESCRIPTOR_INFO_MAX_KEYS][120];
 
 static char desc_buf[4][4096];
 static int desc_next;
@@ -275,6 +277,11 @@ static void test_preconditions(void) {
   snprintf(X84_1, sizeof(X84_1), "%s", xpub_at("m/84'/0'/1'"));
   snprintf(X86_0, sizeof(X86_0), "%s", xpub_at("m/86'/0'/0'"));
   snprintf(X86_1, sizeof(X86_1), "%s", xpub_at("m/86'/0'/1'"));
+  for (int i = 0; i < DESCRIPTOR_INFO_MAX_KEYS; i++) {
+    char path[32];
+    snprintf(path, sizeof(path), "m/86'/0'/%d'", 2 + i);
+    snprintf(XCOS[i], sizeof(XCOS[i]), "%s", xpub_at(path));
+  }
   check("BIP84 account xpub matches the reference vector",
         strcmp(xpub_at("m/84'/0'/0'"),
                "xpub6CatWdiZiodmUeTDp8LT5or8nmbKNcuyvz7WyksVFkKB4RHwCD3XyuvPEb"
@@ -891,15 +898,22 @@ static void test_taproot_keypath(void) {
   registry_clear();
 }
 
-/* tr(NUMS, multi_a(1, ours, cosigner...)) with num_keys keys in all */
-static const char *tr_multi_a(char *out, size_t len, int num_keys) {
+/* tr(NUMS, multi_a(1, ours, cosigner...)) with num_keys distinct keys in all,
+ * or, when `repeat`, one cosigner xpub at a different path in each slot. */
+static const char *tr_multi_a_keys(char *out, size_t len, int num_keys,
+                                   bool repeat) {
   size_t n = snprintf(
       out, len, "tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*", X86_0);
   for (int i = 2; i < num_keys && n < len; i++)
-    n += snprintf(out + n, len - n, ",[deadbeef/86'/0'/1']%s/%d/*", X86_1, i);
+    n += snprintf(out + n, len - n, ",[deadbeef/86'/0'/1']%s/%d/*",
+                  repeat ? X86_1 : XCOS[i - 2], i);
   if (n < len)
     snprintf(out + n, len - n, "))");
   return out;
+}
+
+static const char *tr_multi_a(char *out, size_t len, int num_keys) {
+  return tr_multi_a_keys(out, len, num_keys, false);
 }
 
 /* Keys are shown by letter ID, A to Z, but tr() can hold more keys. */
@@ -919,6 +933,17 @@ static void test_key_cap(void) {
             strcmp(info_seen.keys[25].fingerprint_hex, "DEADBEEF") == 0 &&
             strstr(info_seen.policy, ",Y,Z))") != NULL);
   check("only the 26-key descriptor registered", registry_count() == 1);
+  registry_clear();
+
+  /* The cap counts keys, not the expressions that use them. */
+  const char *reused = tr_multi_a_keys(buf, sizeof(buf), 30, true);
+  check("three keys over 30 expressions accepted",
+        run(reused) == VALIDATION_SUCCESS && info_seen.num_keys == 3 &&
+            strncmp(info_seen.policy, "tr(A,multi_a(1,B,C,C,", 21) == 0 &&
+            strstr(info_seen.policy, "D") == NULL);
+  check("info: a reused key is listed once",
+        strcmp(info_seen.keys[2].fingerprint_hex, "DEADBEEF") == 0 &&
+            strcmp(info_seen.keys[2].xpub, X86_1) == 0);
   registry_clear();
 }
 
