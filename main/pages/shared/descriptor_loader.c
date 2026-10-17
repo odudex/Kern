@@ -44,7 +44,8 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     return true;
 
   case VALIDATION_XPUB_MISMATCH:
-    dialog_show_error_timeout("XPub mismatch - check passphrase", NULL, 2000);
+    dialog_show_error_timeout("A key with your fingerprint is not yours", NULL,
+                              3000);
     return true;
 
   case VALIDATION_PARSE_ERROR:
