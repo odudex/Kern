@@ -215,6 +215,23 @@ KERN_WARN_UNUSED_RESULT char *
 psbt_scriptpubkey_to_address(const unsigned char *script, size_t script_len,
                              bool is_testnet);
 
+typedef enum {
+  PSBT_DEST_ADDRESS,         /* a standard script's address, or OP_RETURN */
+  PSBT_DEST_UNKNOWN_WITNESS, /* a witness version or length Kern does not use */
+  PSBT_DEST_SCRIPT,          /* no address form: the script itself, as hex */
+} psbt_destination_kind_t;
+
+// Scripts past this many bytes with no address form are too long to show.
+#define PSBT_MAX_SHOWN_SCRIPT_LEN 520
+
+// What an output pays, for the review screen: always something to show, since
+// a spend shown with no destination is not reviewable. Free like
+// psbt_scriptpubkey_to_address's result. NULL only for an empty script or out
+// of memory.
+KERN_WARN_UNUSED_RESULT char *
+psbt_output_destination(const unsigned char *spk, size_t spk_len,
+                        bool is_testnet, psbt_destination_kind_t *kind);
+
 // Per-call signing policy. Mirrors the user-facing settings toggles
 // (Settings > Wallet) and is enforced inside `psbt_sign()` per-input,
 // so a forgotten UI gate cannot leak signatures on UNSAFE/EXPECTED_OWNED

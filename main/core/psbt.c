@@ -7,6 +7,7 @@
 #include <esp_log.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
 #include <wally_descriptor.h>
@@ -769,6 +770,25 @@ bool psbt_detect_network(const struct wally_psbt *psbt) {
 char *psbt_scriptpubkey_to_address(const unsigned char *script,
                                    size_t script_len, bool is_testnet) {
   return script_template_address_from_spk(script, script_len, is_testnet);
+}
+
+char *psbt_output_destination(const unsigned char *spk, size_t spk_len,
+                              bool is_testnet, psbt_destination_kind_t *kind) {
+  *kind = PSBT_DEST_ADDRESS;
+  char *dest = script_template_address_from_spk(spk, spk_len, is_testnet);
+  if (dest || !spk || !spk_len)
+    return dest;
+
+  *kind = PSBT_DEST_UNKNOWN_WITNESS;
+  if (spk_is_witness_program(spk, spk_len) &&
+      wally_addr_segwit_from_bytes(spk, spk_len, is_testnet ? "tb" : "bc", 0,
+                                   &dest) == WALLY_OK)
+    return dest;
+
+  *kind = PSBT_DEST_SCRIPT;
+  if (wally_hex_from_bytes(spk, spk_len, &dest) != WALLY_OK)
+    return NULL;
+  return dest;
 }
 
 bool psbt_format_keypath(const unsigned char *raw_keypath,

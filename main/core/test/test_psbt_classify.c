@@ -1559,6 +1559,69 @@ static void test_sign_refuses_unsupported_sighash(void) {
     PASS();
 }
 
+/* Every output has something to show: its address, the address of a witness
+ * version Kern does not use, or the raw script. */
+static void check_destination(const char *name, const uint8_t *spk,
+                              size_t spk_len, psbt_destination_kind_t want,
+                              const char *prefix) {
+  TEST(name);
+  psbt_destination_kind_t kind = PSBT_DEST_ADDRESS;
+  char *dest = psbt_output_destination(spk, spk_len, false, &kind);
+  char *hex = NULL;
+  if (want == PSBT_DEST_SCRIPT &&
+      wally_hex_from_bytes(spk, spk_len, &hex) != WALLY_OK)
+    hex = NULL;
+  if (!dest)
+    FAIL("no destination");
+  else if (kind != want)
+    FAIL("wrong kind");
+  else if (want == PSBT_DEST_SCRIPT && (!hex || strcmp(dest, hex) != 0))
+    FAIL("script should be shown as hex");
+  else if (prefix && strncmp(dest, prefix, strlen(prefix)) != 0)
+    FAIL("unexpected address prefix");
+  else
+    PASS();
+  wally_free_string(hex);
+  wally_free_string(dest);
+}
+
+static void test_output_destination(void) {
+  uint8_t p2pk[35] = {0x21, 0x02};
+  p2pk[34] = OP_CHECKSIG;
+  uint8_t p2pk_u[67] = {0x41, 0x04};
+  p2pk_u[66] = OP_CHECKSIG;
+  uint8_t bare_ms[37] = {OP_1, 0x21, 0x02};
+  bare_ms[35] = OP_1;
+  bare_ms[36] = OP_CHECKMULTISIG;
+  const uint8_t p2a[] = {OP_1, 0x02, 0x4e, 0x73};
+  uint8_t v2_32[34] = {OP_2, 0x20, 0x11};
+  uint8_t v1_20[22] = {OP_1, 0x14, 0x22};
+  uint8_t v16_40[42] = {OP_16, 0x28, 0x33};
+  uint8_t v0_16[18] = {OP_0, 0x10, 0x44};
+  const uint8_t op1_equal[] = {OP_1, OP_EQUAL};
+
+  check_destination("destination: P2WPKH is an address", REF_SPK_P2WPKH,
+                    sizeof(REF_SPK_P2WPKH), PSBT_DEST_ADDRESS, "bc1q");
+  check_destination("destination: P2PK shows its script", p2pk, sizeof(p2pk),
+                    PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: uncompressed P2PK shows its script", p2pk_u,
+                    sizeof(p2pk_u), PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: bare 1-of-1 multisig shows its script",
+                    bare_ms, sizeof(bare_ms), PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: P2A is an unknown witness program", p2a,
+                    sizeof(p2a), PSBT_DEST_UNKNOWN_WITNESS, "bc1pfeessrawgf");
+  check_destination("destination: v2 32-byte program", v2_32, sizeof(v2_32),
+                    PSBT_DEST_UNKNOWN_WITNESS, "bc1z");
+  check_destination("destination: v1 20-byte program", v1_20, sizeof(v1_20),
+                    PSBT_DEST_UNKNOWN_WITNESS, "bc1p");
+  check_destination("destination: v16 40-byte program", v16_40, sizeof(v16_40),
+                    PSBT_DEST_UNKNOWN_WITNESS, "bc1s");
+  check_destination("destination: malformed v0 program shows its script", v0_16,
+                    sizeof(v0_16), PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: OP_1 OP_EQUAL shows its script", op1_equal,
+                    sizeof(op1_equal), PSBT_DEST_SCRIPT, NULL);
+}
+
 static void test_fee_percent(void) {
   TEST("psbt_fee_percent: integer percentage of inputs");
 
@@ -3756,6 +3819,7 @@ int main(void) {
   test_sighash_audit_flags_input();
   test_sign_refuses_unsupported_sighash();
   test_fee_percent();
+  test_output_destination();
   test_dust_threshold();
   test_total_output_value();
 

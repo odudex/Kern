@@ -57,8 +57,10 @@ typedef struct {
   uint32_t address_index;
   bool change_chain; /* owned output on its wallet's change chain */
   bool is_dust;      /* below the relay dust threshold for its script type */
-  char policy[64];   /* wallet of an owned output, as for inputs */
-  char path[80];     /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
+  psbt_destination_kind_t dest_kind;
+  size_t script_len;
+  char policy[64]; /* wallet of an owned output, as for inputs */
+  char path[80];   /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
 } classified_output_t;
 
 /* Input classification for the review screen. We only need a subset of
@@ -69,7 +71,9 @@ typedef struct {
   size_t index;
   psbt_ownership_t ownership;
   uint64_t value;
-  char *address; /* heap-allocated, may be NULL if spk can't be decoded */
+  char *address; /* heap-allocated, may be NULL if spk can't be read */
+  psbt_destination_kind_t dest_kind;
+  size_t script_len;
   /* Human-readable policy this input is signed under, e.g. "BIP84 (Native
    * SegWit) acct 0" for whitelisted singlesig or the registered
    * descriptor's id ("ms_2of2") for registry matches. Empty for inputs
@@ -383,11 +387,14 @@ static bool review_data_collect(review_data_t *d) {
     /* Only external inputs show their address, in the co-signing warning. */
     if (own.ownership == PSBT_OWNERSHIP_EXTERNAL) {
       d->external_inputs++;
-      unsigned char spk[34];
+      unsigned char spk[PSBT_MAX_SHOWN_SCRIPT_LEN];
       size_t spk_len = 0;
-      if (psbt_input_utxo_script(scan_ctx.psbt, i, spk, sizeof(spk), &spk_len))
-        in->address =
-            psbt_scriptpubkey_to_address(spk, spk_len, scan_ctx.is_testnet);
+      if (psbt_input_utxo_script(scan_ctx.psbt, i, spk, sizeof(spk),
+                                 &spk_len)) {
+        in->address = psbt_output_destination(spk, spk_len, scan_ctx.is_testnet,
+                                              &in->dest_kind);
+        in->script_len = spk_len;
+      }
     }
   }
 
@@ -408,8 +415,9 @@ static bool review_data_collect(review_data_t *d) {
     out->index = i;
     out->value = txo->satoshi;
     d->total_output += out->value;
-    out->address = psbt_scriptpubkey_to_address(txo->script, txo->script_len,
-                                                scan_ctx.is_testnet);
+    out->address = psbt_output_destination(
+        txo->script, txo->script_len, scan_ctx.is_testnet, &out->dest_kind);
+    out->script_len = txo->script_len;
     classify_output(d->inputs, d->num_inputs, out);
     out->is_dust =
         out->value < psbt_output_dust_threshold(txo->script, txo->script_len);
@@ -579,6 +587,31 @@ static void append_policy_note(lv_obj_t *row, const char *preposition,
   lv_obj_set_style_max_width(note, LV_PCT(100), 0);
 }
 
+/* A script with no address of a kind Kern knows says so above its
+ * destination, which is then the address of an unknown witness version or the
+ * raw script. */
+static void render_destination(lv_obj_t *parent, const char *address,
+                               psbt_destination_kind_t kind, size_t script_len,
+                               lv_color_t color) {
+  if (!address)
+    return;
+  if (kind == PSBT_DEST_ADDRESS) {
+    scan_create_address_label(parent, address, color, ADDRESS_INDENT_PX);
+    return;
+  }
+  char note[64];
+  if (kind == PSBT_DEST_UNKNOWN_WITNESS)
+    snprintf(note, sizeof(note), "Unknown witness version:");
+  else
+    snprintf(note, sizeof(note),
+             "Non-standard script (%zu bytes):", script_len);
+  lv_obj_t *label = theme_create_label(parent, note, false);
+  lv_obj_set_style_text_color(label, error_color(), 0);
+  lv_obj_set_style_text_font(label, theme_font_small(), 0);
+  lv_obj_set_style_pad_left(label, ADDRESS_INDENT_PX, 0);
+  scan_create_address_label(parent, address, error_color(), ADDRESS_INDENT_PX);
+}
+
 /* ---------- input sections ---------- */
 
 /* One "Inputs(N): <amount> from <policy>" row per distinct signing policy of
@@ -695,9 +728,8 @@ static void render_external_inputs(lv_obj_t *parent, const review_data_t *d) {
     char text[64];
     snprintf(text, sizeof(text), "Input %zu: ", in->index);
     indented_amount_row(parent, text, in->value);
-    if (in->address)
-      scan_create_address_label(parent, in->address, error_color(),
-                                ADDRESS_INDENT_PX);
+    render_destination(parent, in->address, in->dest_kind, in->script_len,
+                       error_color());
   }
 }
 
@@ -736,9 +768,8 @@ static void render_self_transfers(lv_obj_t *parent, const review_data_t *d) {
     lv_obj_t *row = indented_amount_row(parent, text, out->value);
     if (out->policy[0])
       append_policy_note(row, "to", out->policy);
-    if (out->address)
-      scan_create_address_label(parent, out->address, accent_color(),
-                                ADDRESS_INDENT_PX);
+    render_destination(parent, out->address, out->dest_kind, out->script_len,
+                       accent_color());
   }
 }
 
@@ -787,8 +818,8 @@ static void render_output_group(lv_obj_t *parent, const review_data_t *d,
     else
       snprintf(text, sizeof(text), "Output %zu: ", out->index);
     indented_amount_row(parent, text, out->value);
-    if (out->address)
-      scan_create_address_label(parent, out->address, color, ADDRESS_INDENT_PX);
+    render_destination(parent, out->address, out->dest_kind, out->script_len,
+                       color);
   }
 }
 

@@ -236,6 +236,42 @@ static bool reject_unbuildable_tx(struct wally_psbt *psbt,
   return true;
 }
 
+/* An output with no address form is shown as its script's hex, which only
+ * reviews it while the whole script fits on the screen. */
+static bool reject_unshowable_output(struct wally_psbt *psbt,
+                                     dialog_callback_t dismissed_cb) {
+  struct wally_tx *tx = psbt_tx_alloc(psbt);
+  if (!tx)
+    return false;
+  size_t index = tx->num_outputs, script_len = 0;
+  for (size_t i = 0; i < tx->num_outputs && index == tx->num_outputs; i++) {
+    const struct wally_tx_output *out = &tx->outputs[i];
+    if (out->script_len <= PSBT_MAX_SHOWN_SCRIPT_LEN)
+      continue;
+    char *dest =
+        psbt_scriptpubkey_to_address(out->script, out->script_len, false);
+    if (dest)
+      wally_free_string(dest);
+    else {
+      index = i;
+      script_len = out->script_len;
+    }
+  }
+  size_t num_outputs = tx->num_outputs;
+  wally_tx_free(tx);
+  if (index == num_outputs)
+    return false;
+
+  char body[256];
+  snprintf(body, sizeof(body),
+           "Output %zu pays a %zu-byte script that has no address.\n\n"
+           "It is too long to show in full, so what it pays cannot be "
+           "reviewed.",
+           index, script_len);
+  show_cannot_sign(body, dismissed_cb);
+  return true;
+}
+
 /* sum(outputs) > sum(inputs) cannot happen on chain: the difference is the
  * fee and it is never negative. Either an input amount is understated or an
  * output amount is inflated, and both make every number on the review screen
@@ -316,6 +352,8 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt, bool is_testnet,
     return false;
   }
   if (reject_unbuildable_tx(psbt, dismissed_cb))
+    return false;
+  if (reject_unshowable_output(psbt, dismissed_cb))
     return false;
   if (reject_unsupported_sighash(&sighash_audit, dismissed_cb))
     return false;
