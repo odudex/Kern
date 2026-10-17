@@ -40,3 +40,13 @@ int kern_bip39_mnemonic_to_bytes(const struct words *words,
                                  size_t len, size_t *written);
 int kern_bip39_mnemonic_to_seed512(const char *mnemonic, const char *passphrase,
                                    unsigned char *out, size_t len);
+
+/* A BIP39 seed is PBKDF2-HMAC-SHA512 over 2048 iterations. A registered
+ * implementation, returning 0 on success, replaces libwally's own in
+ * kern_bip39_mnemonic_to_seed512; NULL restores it. Register before any
+ * seed is derived. */
+typedef int (*kern_pbkdf2_sha512_fn)(const uint8_t *password,
+                                     size_t password_len, const uint8_t *salt,
+                                     size_t salt_len, uint32_t iterations,
+                                     uint8_t *key_out, size_t key_len);
+void kern_set_bip39_pbkdf2(kern_pbkdf2_sha512_fn fn);

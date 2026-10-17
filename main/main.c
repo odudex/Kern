@@ -1,4 +1,5 @@
 #include "bus_timeout.h"
+#include "core/crypto_utils.h"
 #include "core/entropy_pool.h"
 #include "core/fw_update.h"
 #include "core/nvs_secure.h"
@@ -20,6 +21,7 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <kern_wally.h>
 #include <lvgl.h>
 #include <nvs_flash.h>
 #include <wally_core.h>
@@ -111,6 +113,7 @@ void app_main(void) {
     abort();
   }
   secp_blind_refresh();
+  kern_set_bip39_pbkdf2(crypto_pbkdf2_sha512);
 
   // Initialize BIP39 wordlist (needed for anti-phishing words)
   if (!bip39_filter_init())

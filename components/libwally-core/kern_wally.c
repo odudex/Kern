@@ -2,6 +2,7 @@
 #include "secure_memory.h"
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wally_core.h>
 #ifdef ESP_PLATFORM
 #include <esp_heap_caps.h>
@@ -133,7 +134,35 @@ int kern_bip39_mnemonic_to_bytes(const struct words *words,
   SECRET_CALL(bip39_mnemonic_to_bytes(words, mnemonic, out, len, written));
 }
 
+static kern_pbkdf2_sha512_fn bip39_pbkdf2;
+
+void kern_set_bip39_pbkdf2(kern_pbkdf2_sha512_fn fn) { bip39_pbkdf2 = fn; }
+
 int kern_bip39_mnemonic_to_seed512(const char *mnemonic, const char *passphrase,
                                    unsigned char *out, size_t len) {
-  SECRET_CALL(bip39_mnemonic_to_seed512(mnemonic, passphrase, out, len));
+  if (!bip39_pbkdf2)
+    SECRET_CALL(bip39_mnemonic_to_seed512(mnemonic, passphrase, out, len));
+
+  /* The same salt and checks as libwally's bip39_mnemonic_to_seed. */
+  static const char prefix[] = "mnemonic";
+  const size_t prefix_len = sizeof(prefix) - 1;
+  if (!mnemonic || !out || len != BIP39_SEED_LEN_512)
+    return WALLY_EINVAL;
+  size_t passphrase_len = passphrase ? strlen(passphrase) : 0;
+  size_t salt_len = prefix_len + passphrase_len;
+  unsigned char *salt = kern_secret_alloc(salt_len);
+  if (!salt)
+    return WALLY_ENOMEM;
+  memcpy(salt, prefix, prefix_len);
+  if (passphrase_len)
+    memcpy(salt + prefix_len, passphrase, passphrase_len);
+  int ret = bip39_pbkdf2((const uint8_t *)mnemonic, strlen(mnemonic), salt,
+                         salt_len, 2048, out, len);
+  wally_bzero(salt, salt_len);
+  free(salt);
+  if (ret != 0) {
+    wally_bzero(out, len);
+    return WALLY_ERROR;
+  }
+  return WALLY_OK;
 }

@@ -519,6 +519,76 @@ static void other_free(void *p) { free(p); }
 
 /* Secret operations rely on libwally's free_fn releasing kern_secret_alloc
  * blocks; another free_fn must make them fail closed. */
+static int hook_calls;
+static unsigned char hook_salt[64];
+static size_t hook_salt_len;
+static uint32_t hook_iterations;
+static bool hook_fail;
+
+/* Stands in for the device's accelerated PBKDF2: libwally's own, recording
+ * what kern_wally hands it. */
+static int recording_pbkdf2(const uint8_t *password, size_t password_len,
+                            const uint8_t *salt, size_t salt_len,
+                            uint32_t iterations, uint8_t *key_out,
+                            size_t key_len) {
+  hook_calls++;
+  hook_salt_len = salt_len < sizeof(hook_salt) ? salt_len : sizeof(hook_salt);
+  memcpy(hook_salt, salt, hook_salt_len);
+  hook_iterations = iterations;
+  if (hook_fail)
+    return -1;
+  return wally_pbkdf2_hmac_sha512(password, password_len, salt, salt_len, 0,
+                                  iterations, key_out, key_len) == WALLY_OK
+             ? 0
+             : -1;
+}
+
+static void test_registered_bip39_pbkdf2(void) {
+  struct ext_key ref;
+  unsigned char fp[4];
+  char with_pass[9], plain_24[9], got[9];
+
+  check(
+      "reference keys",
+      reference_master(TEST_MNEMONIC, "TREZOR", BIP32_VER_MAIN_PRIVATE, &ref) &&
+          bip32_key_get_fingerprint(&ref, fp, 4) == WALLY_OK);
+  fp_hex(fp, with_pass);
+  check(
+      "reference 24-word key",
+      reference_master(TEST_MNEMONIC_24, NULL, BIP32_VER_MAIN_PRIVATE, &ref) &&
+          bip32_key_get_fingerprint(&ref, fp, 4) == WALLY_OK);
+  fp_hex(fp, plain_24);
+
+  kern_set_bip39_pbkdf2(recording_pbkdf2);
+  hook_calls = 0;
+  check("registered PBKDF2 derives the same key",
+        key_load_from_mnemonic(TEST_MNEMONIC, "TREZOR", false) &&
+            key_get_fingerprint_hex(got) && strcmp(got, with_pass) == 0);
+  check("  in one call with BIP39's salt and cost",
+        hook_calls == 1 && hook_salt_len == 14 &&
+            memcmp(hook_salt, "mnemonicTREZOR", 14) == 0 &&
+            hook_iterations == 2048);
+  hook_calls = 0;
+  check("registered PBKDF2 with a NULL passphrase salts with 'mnemonic'",
+        key_mnemonic_passphrase_fingerprint_hex(TEST_MNEMONIC_24, NULL, got) &&
+            strcmp(got, plain_24) == 0 && hook_calls == 1 &&
+            hook_salt_len == 8 && memcmp(hook_salt, "mnemonic", 8) == 0);
+
+  hook_fail = true;
+  check("a failing PBKDF2 loads no key",
+        !key_load_from_mnemonic(TEST_MNEMONIC, NULL, false) &&
+            !key_is_loaded());
+  hook_fail = false;
+
+  kern_set_bip39_pbkdf2(NULL);
+  hook_calls = 0;
+  check("unregistered, libwally derives the seed again",
+        key_load_from_mnemonic(TEST_MNEMONIC, NULL, false) &&
+            key_get_fingerprint_hex(got) && strcmp(got, "73c5da0a") == 0 &&
+            hook_calls == 0);
+  key_unload();
+}
+
 static void test_free_fn_change_fails_closed(void) {
   struct wally_operations ops = {.struct_size = sizeof(ops)};
   if (wally_get_operations(&ops) != WALLY_OK) {
@@ -559,6 +629,7 @@ int main(void) {
   test_unload();
   test_internal_memory_exhaustion();
   test_free_fn_change_fails_closed();
+  test_registered_bip39_pbkdf2();
   test_bip85_vectors();
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);
