@@ -38,6 +38,15 @@ static int tests_failed = 0;
 #define XPUB_86                                                                \
   "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWc"                \
   "LteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+/* Uppercase hex, which libwally keeps as written in the canonical text */
+#define XONLY_G_UPPER                                                          \
+  "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"
+#define SHA256_UPPER                                                           \
+  "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B85A"
+#define SHA256_LOWER                                                           \
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85a"
+#define HASH160_UPPER "E7D285B4817F83F724CD29394DA75DFC84FE639E"
+#define HASH160_LOWER "e7d285b4817f83f724cd29394da75dfc84fe639e"
 
 typedef struct {
   const char *input;
@@ -201,6 +210,65 @@ static void test_policy_string(void) {
                       "and_v(v:pkh([00000000/48'/0'/0'/2']" XPUB_84 "/2/*),"
                       "older(144))))",
                       "wsh(or_d(pk(A),and_v(v:pkh(B),older(144))))");
+}
+
+/* Only key letters may become KEY tokens, wherever the indenter breaks a
+ * hash. */
+static void check_key_tokens(const char *name, const char *descriptor,
+                             const char *expected_keys) {
+  TEST(name);
+  struct wally_descriptor *desc = parse_desc(descriptor);
+  char *policy = desc ? miniscript_policy_string(desc) : NULL;
+  if (desc)
+    wally_descriptor_free(desc);
+  if (!policy) {
+    FAIL("policy string is NULL");
+    return;
+  }
+  bool ok = true;
+  char keys[64] = "";
+  for (size_t width = 10; ok && width <= 80; width++) {
+    ms_policy_view_t view;
+    if (!miniscript_policy_view_build(policy, width, &view)) {
+      ok = false;
+      break;
+    }
+    keys[0] = '\0';
+    for (size_t i = 0; i < view.num_lines; i++)
+      for (size_t j = 0; j < view.lines[i].num_tokens; j++)
+        if (view.lines[i].tokens[j].kind == MS_TOKEN_KEY)
+          strncat(keys, view.lines[i].tokens[j].text,
+                  sizeof(keys) - strlen(keys) - 1);
+    ok = strcmp(keys, expected_keys) == 0;
+    miniscript_policy_view_free(&view);
+  }
+  free(policy);
+  if (!ok) {
+    printf("\n--- got keys '%s', expected '%s' ---\n", keys, expected_keys);
+    FAIL("mismatch");
+  } else {
+    PASS();
+  }
+}
+
+static void test_policy_case(void) {
+  const char *hashlock = "wsh(and_v(v:pk([00000000/48'/0'/0'/2']" XPUB_84
+                         "/<0;1>/*),sha256(" SHA256_UPPER ")))";
+  check_policy_string("policy string: uppercase hash lowercased", hashlock,
+                      "wsh(and_v(v:pk(A),sha256(" SHA256_LOWER ")))");
+  check_key_tokens("view: hex digits never painted as keys", hashlock, "A");
+
+  check_policy_string("policy string: uppercase raw key",
+                      "wsh(and_v(v:pk(02" XONLY_G_UPPER "),older(10)))",
+                      "wsh(and_v(v:pk(A),older(10)))");
+
+  const char *tr_upper =
+      "tr(" XONLY_G_UPPER ",and_v(v:pk([00000000/86'/0'/0']" XPUB_86
+      "/0/*),hash160(" HASH160_UPPER ")))";
+  check_policy_string("policy string: uppercase tr internal key and hash",
+                      tr_upper,
+                      "tr(A,and_v(v:pk(B),hash160(" HASH160_LOWER ")))");
+  check_key_tokens("view: tr keys only", tr_upper, "AB");
 }
 
 static void test_is_miniscript(void) {
@@ -386,6 +454,7 @@ int main(void) {
   printf("=== miniscript_policy tests ===\n\n");
   test_indenter();
   test_policy_string();
+  test_policy_case();
   test_is_miniscript();
   test_view();
   test_timelock_notes();

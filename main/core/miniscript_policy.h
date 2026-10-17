@@ -16,7 +16,8 @@ miniscript_policy_is_miniscript(const struct wally_descriptor *desc);
 
 /* Canonical descriptor with each key expression (origin, xpub and child
  * path) replaced by its letter ID ('A' + key index, matching the order keys
- * are listed by libwally). Returns a malloc'd string, e.g.
+ * are listed by libwally) and the rest lowercased, so the letters are its only
+ * uppercase characters. Returns a malloc'd string, e.g.
  * "wsh(or_d(pk(A),and_v(v:pkh(B),older(65535))))", or NULL on failure. */
 KERN_WARN_UNUSED_RESULT char *
 miniscript_policy_string(const struct wally_descriptor *desc);

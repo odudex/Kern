@@ -2,10 +2,12 @@
 // and an indented tree rendering ported from Krux's MiniScriptIndenter.
 
 #include "miniscript_policy.h"
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <wally_core.h>
 #include <wally_descriptor.h>
 
@@ -14,6 +16,25 @@ bool miniscript_policy_is_miniscript(const struct wally_descriptor *desc) {
   if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
     return false;
   return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
+}
+
+// libwally returns raw keys as lowercase hex but keeps them as written in the
+// canonical text. Extended keys are base58, so they must match exactly.
+static const char *find_key(const char *s, const char *key) {
+  size_t len = strlen(key);
+  bool hex = strspn(key, "0123456789abcdef") == len;
+  for (; *s; s++)
+    if ((hex ? strncasecmp(s, key, len) : strncmp(s, key, len)) == 0)
+      return s;
+  return NULL;
+}
+
+// Hashes keep the case they were written in; lowercasing all text outside the
+// keys leaves the key letters as the only uppercase characters.
+static char *copy_lower(char *dst, const char *src, size_t len) {
+  for (size_t i = 0; i < len; i++)
+    dst[i] = (char)tolower((unsigned char)src[i]);
+  return dst + len;
 }
 
 char *miniscript_policy_string(const struct wally_descriptor *desc) {
@@ -46,7 +67,7 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
       ok = false;
       break;
     }
-    const char *hit = strstr(src, key_str);
+    const char *hit = find_key(src, key_str);
     if (!hit) {
       ok = false;
     } else {
@@ -59,8 +80,7 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
         if (*lb == '[')
           start = lb;
       }
-      memcpy(dst, src, (size_t)(start - src));
-      dst += start - src;
+      dst = copy_lower(dst, src, (size_t)(start - src));
       *dst++ = (char)('A' + i);
       // Skip the trailing derivation suffix (/<0;1>/* etc).
       const char *end = hit + strlen(key_str);
@@ -72,7 +92,7 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
   }
 
   if (ok) {
-    strcpy(dst, src);
+    *copy_lower(dst, src, strlen(src)) = '\0';
   } else {
     free(out);
     out = NULL;
