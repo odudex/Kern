@@ -1122,28 +1122,45 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     if (!num_paths)
       ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
 
+    struct ext_key *keys[REGISTRY_MAX_OWN_KEYS] = {0};
     for (size_t p = 0; p < num_paths; p++) {
-      struct ext_key *derived_key = NULL;
       if (!key_get_derived_key_components(paths[p].path, paths[p].len,
-                                          &derived_key)) {
+                                          &keys[p])) {
         ESP_LOGE(TAG, "Failed to derive key %zu for input %zu", p, i);
         continue;
       }
-
       plan[i].attempted = true;
       memcpy(plan[i].signing_pubkeys[plan[i].num_signing_pubkeys++],
-             derived_key->pub_key, EC_PUBLIC_KEY_LEN);
+             keys[p]->pub_key, EC_PUBLIC_KEY_LEN);
+    }
 
-      int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
-                                EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
-      bip32_key_free(derived_key);
-
-      if (ret == WALLY_OK) {
-        signatures_added++;
-      } else {
-        ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
+    /* libwally stops looking at an input's taproot keys once it holds a
+     * key-path signature, so every leaf key signs before the internal key. */
+    unsigned char internal[EC_XONLY_PUBLIC_KEY_LEN];
+    size_t internal_len = 0;
+    bool has_internal =
+        wally_psbt_get_input_taproot_internal_key(
+            psbt, i, internal, sizeof(internal), &internal_len) == WALLY_OK &&
+        internal_len == sizeof(internal);
+    for (int last = 0; last <= 1; last++) {
+      for (size_t p = 0; p < num_paths; p++) {
+        if (!keys[p])
+          continue;
+        bool is_internal =
+            has_internal &&
+            memcmp(keys[p]->pub_key + 1, internal, sizeof(internal)) == 0;
+        if (is_internal != (last == 1))
+          continue;
+        int ret = wally_psbt_sign(psbt, keys[p]->priv_key + 1,
+                                  EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
+        if (ret == WALLY_OK)
+          signatures_added++;
+        else
+          ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
       }
     }
+    for (size_t p = 0; p < num_paths; p++)
+      bip32_key_free(keys[p]);
   }
 
   wally_psbt_signing_cache_disable(psbt);

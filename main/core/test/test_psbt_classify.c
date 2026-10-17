@@ -2447,6 +2447,32 @@ static void test_sign_every_own_key_tr(void) {
     wally_psbt_free(psbt);
   }
 
+  /* Our key both as the internal key and in a leaf: libwally ignores an
+   * input's taproot keys once it holds a key-path signature, so the leaf key
+   * must sign first. */
+  TEST("two-group tr: internal and leaf key of ours both sign");
+  const char *both[] = {"tr([00000000/86'/0'/0']" XPUB_86
+                        "/0/*,pk([00000000/86'/0'/0']" XPUB_86 "/1/*))"};
+  registry_clear();
+  struct wally_psbt *bpsbt = NULL;
+  psbt_sign_policy_t bpolicy = {0};
+  psbt_sign_result_t bres;
+  if (!registry_add_from_string("both", both[0], STORAGE_FLASH, false) ||
+      !(bpsbt = make_tr_psbt(both, 1, 0, 0, WALLY_PSBT_VERSION_0)))
+    FAIL("fixture");
+  else if (psbt_sign(bpsbt, false, bpolicy, &bres) == 0 ||
+           bres.signed_ok != 1 || tap_key_sig_len(bpsbt, 0) != 64 ||
+           bpsbt->inputs[0].taproot_leaf_signatures.num_items != 1)
+    FAIL("expected a key-path and a leaf signature");
+  else
+    PASS();
+  wally_psbt_free(bpsbt);
+  registry_clear();
+  if (!registry_add_from_string("liana", desc, STORAGE_FLASH, false)) {
+    FAIL("re-register two-group policy");
+    return;
+  }
+
   /* Without the recovery leaf's script libwally cannot sign it, though the
    * PSBT lists our recovery key: the input is not complete. */
   TEST("two-group tr: an unsignable listed key leaves the input incomplete");
