@@ -4191,6 +4191,62 @@ static void test_registry_claim(const char *test_name, const char *desc_str,
   PASS();
 }
 
+/* Golden scriptPubKeys computed independently of libwally (BIP341 by hand),
+ * not captured from a libwally run: they catch a wrong tweak or leaf hash in
+ * the code that builds receive addresses. Origins do not affect scripts. */
+#define GOLDEN_NUMS                                                            \
+  "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+#define GOLDEN_K84 "[00000000/84'/0'/0']" XPUB_84 "/<0;1>/*"
+#define GOLDEN_K86 "[00000000/86'/0'/0']" XPUB_86 "/<0;1>/*"
+
+static void test_golden_spk(const char *name, const char *desc,
+                            uint32_t multi_index, uint32_t child_num,
+                            const char *spk_hex) {
+  uint8_t want[34];
+  size_t want_len = 0;
+  expected_scripts_t out = {0};
+  if (wally_hex_to_bytes(spk_hex, want, sizeof(want), &want_len) != WALLY_OK) {
+    TEST(name);
+    FAIL("bad reference hex");
+    return;
+  }
+  TEST(name);
+  const char *err = regen_registry_scripts(desc, multi_index, child_num, &out);
+  if (err)
+    FAIL(err);
+  else if (out.spk_len != want_len || memcmp(out.spk, want, want_len) != 0)
+    FAIL("scriptPubKey differs from the independent value");
+  else
+    PASS();
+}
+
+static void test_golden_taproot_vectors(void) {
+  const char *tree =
+      "tr(" GOLDEN_NUMS ",{pk(" GOLDEN_K84 "),pk(" GOLDEN_K86 ")})";
+  test_golden_spk("golden: tr(NUMS,{pk,pk}) receive 0", tree, 0, 0,
+                  "512076134a01924170a8367a71bb2a41b567b5785d8b5be34c4cbc7bca2"
+                  "b0abc6db3");
+  test_golden_spk("golden: tr(NUMS,{pk,pk}) receive 1", tree, 0, 1,
+                  "51206a0df9393b4d618fe3441b0d4342020c677b0f29a5567c02fd3157e"
+                  "30cd74d0e");
+  test_golden_spk(
+      "golden: tr(NUMS,multi_a(2,...)) receive 1",
+      "tr(" GOLDEN_NUMS ",multi_a(2," GOLDEN_K84 "," GOLDEN_K86 "))", 0, 1,
+      "51209d35535e8a054a170d3fce7c7fe26649b500bfcc168cf57a655028716d4055e1");
+  test_golden_spk(
+      "golden: tr(NUMS,sortedmulti_a(2,...)) receive 1",
+      "tr(" GOLDEN_NUMS ",sortedmulti_a(2," GOLDEN_K84 "," GOLDEN_K86 "))", 0,
+      1,
+      "5120adbd03c553f26e7cc2e84f8aeec66043eeefe406d9e55a252bf5d891e310e4e6");
+  test_golden_spk(
+      "golden: tr(NUMS,{and_v(v:pk,older(144)),pk}) receive 0",
+      "tr(" GOLDEN_NUMS ",{and_v(v:pk(" GOLDEN_K84
+      "),older(144)),pk(" GOLDEN_K86 ")})",
+      0, 0,
+      "5120540a6ecccac18ed07d0114c39a24e28a9ff102fac60974379cbd411d4c40215a");
+  registry_clear();
+}
+
 /* sortedmulti witness script size: 3 + 34 * num_keys. 15 keys (513 bytes) is
  * libwally's generation maximum: CHECKMULTISIG is capped at 15 keys and
  * sh()/wsh() inner scripts at 520 bytes (PSBT_MAX_INNER_SCRIPT_LEN). */
@@ -4334,6 +4390,7 @@ int main(void) {
       "wsh(sortedmulti 8-of-15): 513-byte witness regenerates (max)",
       "wsh(sortedmulti(8," MS_15_KEYS "))", 513);
   test_registry_claim_oversize_wsh_fails();
+  test_golden_taproot_vectors();
 
   printf("\n=== psbt_classify_input tests ===\n\n");
 
