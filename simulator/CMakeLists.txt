@@ -164,6 +164,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/message_sign.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip322.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_gate.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_parse.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c

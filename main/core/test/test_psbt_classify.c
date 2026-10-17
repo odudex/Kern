@@ -18,6 +18,7 @@
 /* Project headers for stub type declarations */
 #include "core/key.h"
 #include "core/psbt.h"
+#include "core/psbt_gate.h"
 #include "core/psbt_internal.h"
 #include "core/registry.h"
 #include "core/storage.h"
@@ -4531,6 +4532,217 @@ static void test_registry_claim_oversize_wsh_fails(void) {
 
 /* ------------------------------------------------------------------ */
 
+/* ================================================================
+ * Pre-review gate order
+ * ================================================================ */
+
+/* Two inputs (60000 and 50000 sats, witness_utxo of `spk0` and P2WPKH) paying
+ * 100000 to one P2WPKH output. */
+static struct wally_psbt *make_gate_psbt(const uint8_t *spk0, size_t spk0_len) {
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 2, 1, &tx) != WALLY_OK)
+    return NULL;
+  uint8_t txid[32] = {0xbb};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 1, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_output(tx, 100000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                          0);
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK)
+    return NULL;
+
+  struct wally_tx_output *utxo = NULL;
+  wally_tx_output_init_alloc(60000, spk0, spk0_len, &utxo);
+  wally_psbt_set_input_witness_utxo(psbt, 0, utxo);
+  wally_tx_output_free(utxo);
+  wally_tx_output_init_alloc(50000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                             &utxo);
+  wally_psbt_set_input_witness_utxo(psbt, 1, utxo);
+  wally_tx_output_free(utxo);
+  return psbt;
+}
+
+static void gate_add_output(struct wally_psbt *psbt, uint64_t satoshi,
+                            const uint8_t *spk, size_t spk_len) {
+  struct wally_tx_output out = {0};
+  out.satoshi = satoshi;
+  out.script = (unsigned char *)spk;
+  out.script_len = spk_len;
+  wally_psbt_add_tx_output_at(psbt, (uint32_t)psbt->num_outputs, 0, &out);
+}
+
+typedef struct {
+  input_ownership_t inputs[3];
+  output_ownership_t outputs[3];
+  psbt_gate_settings_t settings;
+} gate_case_t;
+
+static void gate_case_init(gate_case_t *c) {
+  memset(c, 0, sizeof(*c));
+  for (size_t i = 0; i < 3; i++) {
+    c->inputs[i].ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    c->outputs[i].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  }
+}
+
+static psbt_gate_t gate_run(struct wally_psbt *psbt, const gate_case_t *c,
+                            psbt_gate_report_t *report) {
+  return psbt_gate_check(psbt, c->inputs, c->outputs, &c->settings, report);
+}
+
+static void test_gate_order(void) {
+  TEST("psbt_gate_check: each gate fires in order, the first one reported");
+
+  struct wally_psbt *psbt =
+      make_gate_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH));
+  if (!psbt) {
+    FAIL("make_gate_psbt");
+    return;
+  }
+  gate_case_t c;
+  psbt_gate_report_t r;
+  const char *err = NULL;
+
+  gate_case_init(&c);
+  if (gate_run(psbt, &c, &r) != PSBT_GATE_ALLOW)
+    err = "a clean PSBT should pass";
+
+  /* Each lower gate is armed with every one above it, then the one above is
+   * cleared: partial < permissive < expected-owned. */
+  gate_case_init(&c);
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_PARTIAL ||
+               r.external_count != 1 || r.external_inputs[0] != 1))
+    err = "an external input should need partial signing";
+  c.settings.partial = true;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_ALLOW)
+    err = "partial signing should lift the external input";
+
+  gate_case_init(&c);
+  c.inputs[0].ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_PERMISSIVE ||
+               !r.flagged_is_input || r.flagged_index != 0))
+    err = "permissive should outrank partial and name input 0";
+  c.settings.permissive = true;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_PARTIAL)
+    err = "with permissive on, partial should fire next";
+
+  gate_case_init(&c);
+  c.inputs[0].ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+  c.outputs[0].ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_EXPECTED_OWNED ||
+               r.flagged_is_input || r.flagged_index != 0))
+    err = "expected-owned should outrank permissive and name output 0";
+  c.settings.expected_owned = true;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_PERMISSIVE)
+    err = "with expected-owned on, permissive should fire next";
+
+  /* Every input external: nothing else is worth reporting. */
+  gate_case_init(&c);
+  c.inputs[0].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_NONE);
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_NOTHING_SIGNABLE)
+    err = "no signable input should be reported first";
+
+  gate_case_init(&c);
+  c.outputs[0].ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_UNSUPPORTED_SIGHASH ||
+               r.sighash.first_unsupported != 0))
+    err = "an unsupported sighash should outrank expected-owned";
+  wally_psbt_set_input_sighash(psbt, 0, 0);
+
+  /* Outputs above inputs, then an input whose amounts disagree. */
+  gate_add_output(psbt, 20000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH));
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_IMPOSSIBLE_FEE ||
+               r.amounts.total != 110000 || r.total_output != 120000))
+    err = "a negative fee should outrank expected-owned";
+
+  struct wally_tx *forged = NULL;
+  wally_tx_init_alloc(2, 0, 1, 1, &forged);
+  uint8_t funding_txid[32] = {0xcc};
+  wally_tx_add_raw_input(forged, funding_txid, sizeof(funding_txid), 0,
+                         0xffffffff, NULL, 0, NULL, 0);
+  wally_tx_add_raw_output(forged, 1000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                          0);
+  wally_psbt_set_input_utxo(psbt, 1, forged);
+  wally_tx_free(forged);
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_INVALID_AMOUNT ||
+               r.amounts.first_invalid != 1))
+    err = "a contradicted amount should outrank the negative fee";
+
+  wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_SINGLE);
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_UNSUPPORTED_SIGHASH)
+    err = "an unsupported sighash should outrank a contradicted amount";
+
+  uint8_t long_script[PSBT_MAX_SHOWN_SCRIPT_LEN + 1];
+  memset(long_script, 0x51, sizeof(long_script));
+  gate_add_output(psbt, 0, long_script, sizeof(long_script));
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_UNSHOWABLE_OUTPUT ||
+               r.unshowable_index != 2 ||
+               r.unshowable_script_len != sizeof(long_script)))
+    err = "an unshowable output should outrank an unsupported sighash";
+
+  if (!err && wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK)
+    err = "could not convert the fixture to v2";
+  if (!err) {
+    psbt->outputs[0].amount = UINT64_MAX;
+    if (gate_run(psbt, &c, &r) != PSBT_GATE_UNBUILDABLE_TX)
+      err = "an unbuildable transaction should outrank an unshowable output";
+  }
+
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(psbt);
+}
+
+static void test_gate_taproot_missing_amount(void) {
+  TEST("psbt_gate_check: a taproot input refuses a missing amount before the "
+       "settings gates");
+
+  struct wally_psbt *psbt = make_gate_psbt(REF_SPK_P2TR, sizeof(REF_SPK_P2TR));
+  struct wally_psbt *segwit =
+      make_gate_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH));
+  if (!psbt || !segwit) {
+    FAIL("make_gate_psbt");
+    wally_psbt_free(psbt);
+    wally_psbt_free(segwit);
+    return;
+  }
+  wally_psbt_set_input_witness_utxo(psbt, 1, NULL);
+  wally_psbt_set_input_witness_utxo(segwit, 1, NULL);
+
+  gate_case_t c;
+  gate_case_init(&c);
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  psbt_gate_report_t r;
+  const char *err = NULL;
+  if (gate_run(psbt, &c, &r) != PSBT_GATE_TAPROOT_MISSING_AMOUNT ||
+      r.amounts.first_missing != 1)
+    err = "taproot with a missing amount should outrank partial";
+  else if (gate_run(segwit, &c, &r) != PSBT_GATE_PARTIAL)
+    err = "a missing amount alone should not block a segwit v0 input";
+
+  c.inputs[0].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  c.inputs[1].ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_PARTIAL)
+    err = "an external taproot input is not ours to sign";
+
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  wally_psbt_free(segwit);
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -4721,6 +4933,8 @@ int main(void) {
   test_sign_clears_tx_modifiable();
   test_sign_counts_reused_address();
   test_tx_alloc_rejects_bad_amount();
+  test_gate_order();
+  test_gate_taproot_missing_amount();
   test_trim_leaves_out_previous_transactions();
   test_trim_psbt_v2_in_place();
   test_trim_v0_keeps_signatures();
