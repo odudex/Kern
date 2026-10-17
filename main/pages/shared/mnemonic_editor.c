@@ -59,6 +59,10 @@ static int filtered_count = 0;
 static editor_mode_t current_mode = MODE_WORD_GRID;
 static char pending_word[16] = {0};
 static bool is_new_mnemonic = false;
+/* The fingerprint costs a PBKDF2 run, so it is computed once per word change.
+ * An empty string means no fingerprint (invalid checksum). */
+static bool fingerprint_cached = false;
+static char cached_fingerprint[9];
 
 static void create_ui(void);
 static void create_word_grid(void);
@@ -170,6 +174,7 @@ static bool recalculate_last_word(void) {
     strncpy(entered_words[total_words - 1], last_space + 1,
             sizeof(entered_words[0]) - 1);
     entered_words[total_words - 1][sizeof(entered_words[0]) - 1] = '\0';
+    fingerprint_cached = false;
   }
 
   SECURE_FREE_STRING(new_mnemonic);
@@ -184,16 +189,18 @@ static void update_fingerprint_display(void) {
   if (!fingerprint_label)
     return;
 
-  if (is_checksum_valid()) {
-    char fp_hex[9];
-    if (get_mnemonic_fingerprint_hex(fp_hex)) {
-      char buf[24];
-      snprintf(buf, sizeof(buf), ICON_FINGERPRINT " %s", fp_hex);
-      lv_label_set_text(fingerprint_label, buf);
-      lv_obj_clear_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
-    }
+  if (!fingerprint_cached) {
+    if (!is_checksum_valid() ||
+        !get_mnemonic_fingerprint_hex(cached_fingerprint))
+      cached_fingerprint[0] = '\0';
+    fingerprint_cached = true;
+  }
+
+  if (cached_fingerprint[0]) {
+    char buf[24];
+    snprintf(buf, sizeof(buf), ICON_FINGERPRINT " %s", cached_fingerprint);
+    lv_label_set_text(fingerprint_label, buf);
+    lv_obj_clear_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
   }
@@ -232,6 +239,7 @@ static void filter_words_by_prefix(void) {
 
 static void parse_mnemonic(const char *mnemonic) {
   total_words = 0;
+  fingerprint_cached = false;
   secure_memzero(entered_words, sizeof(entered_words));
   secure_memzero(original_words, sizeof(original_words));
 
@@ -396,6 +404,7 @@ static void word_confirmation_cb(bool confirmed, void *user_data) {
     snprintf(entered_words[editing_word_index], sizeof(entered_words[0]), "%s",
              pending_word);
     pending_word[0] = '\0';
+    fingerprint_cached = false;
     update_word_label(editing_word_index);
 
     if (is_new_mnemonic) {
@@ -751,6 +760,8 @@ void mnemonic_editor_page_destroy(void) {
   load_label = NULL;
   header_container = NULL;
   fingerprint_label = NULL;
+  fingerprint_cached = false;
+  cached_fingerprint[0] = '\0';
   is_new_mnemonic = false;
   memset(word_labels, 0, sizeof(word_labels));
   secure_memzero(entered_words, sizeof(entered_words));
