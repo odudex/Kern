@@ -57,6 +57,11 @@ bool bip138_backup_detect(const uint8_t *data, size_t len);
  * wallet is unloaded, since they describe the seed that was loaded. */
 void bip138_backup_forget_keys(void);
 
+/* Between these calls the approval-mark key is derived once and kept, for a
+ * scan that checks many backups; release wipes it. */
+void bip138_backup_hold_approval_key(void);
+void bip138_backup_release_approval_key(void);
+
 #ifdef BIP138_BACKUP_TESTING
 bool bip138_backup_cache_is_empty(void);
 #endif

@@ -282,7 +282,7 @@ $(TARGET_BIP138_KEYS): $(SRCS_BIP138_KEYS) ../bip138_keys.c ../bip138_keys.h ../
 	$(CC) $(CFLAGS) $(TEST_INCS) $(BIP138_INCS) -o $@ $(SRCS_BIP138_KEYS) ../bip138_keys.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY)
 
 $(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_backup.h ../bip138_keys.c ../bip138_keys.h ../bip138_crypto.c ../bip138_crypto.h $(CRYPTO_UTILS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(DESC_VALIDATOR_SRC) $(BIP138_SRCS) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(KEF_INCS) $(BIP138_INCS) -DBIP138_BACKUP_TESTING -Wno-format-truncation -o $@ $(SRCS_BIP138_BACKUP) \
+	$(CC) $(CFLAGS) $(KEF_INCS) $(BIP138_INCS) -DBIP138_BACKUP_TESTING -Wl,--wrap=wally_descriptor_parse -Wno-format-truncation -o $@ $(SRCS_BIP138_BACKUP) \
 		../bip138_backup.c ../bip138_keys.c ../bip138_crypto.c \
 		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c \
 		../wallet.c ../descriptor_parse.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \

@@ -21,7 +21,20 @@ static const uint8_t approval_tag[] = "kern-approval";
 static const uint32_t approval_path[] = {0x4B45524Eu | BIP32_PATH_HARDENED,
                                          138u | BIP32_PATH_HARDENED};
 
-static bool approval_key(uint8_t out[32]) {
+/* Kept between hold and release, so a scan of many backups derives it once. */
+static uint8_t held_approval_key[32];
+static bool approval_key_held;
+static bool approval_key_cached;
+
+void bip138_backup_hold_approval_key(void) { approval_key_held = true; }
+
+void bip138_backup_release_approval_key(void) {
+  secure_memzero(held_approval_key, sizeof(held_approval_key));
+  approval_key_held = false;
+  approval_key_cached = false;
+}
+
+static bool derive_approval_key(uint8_t out[32]) {
   struct ext_key *key = NULL;
   if (!key_get_derived_key_components(
           approval_path, sizeof(approval_path) / sizeof(approval_path[0]),
@@ -31,6 +44,20 @@ static bool approval_key(uint8_t out[32]) {
                                      APPROVAL_KEY_TAG, out, 32) == WALLY_OK;
   bip32_key_free(key);
   return ok;
+}
+
+static bool approval_key(uint8_t out[32]) {
+  if (approval_key_cached) {
+    memcpy(out, held_approval_key, sizeof(held_approval_key));
+    return true;
+  }
+  if (!derive_approval_key(out))
+    return false;
+  if (approval_key_held) {
+    memcpy(held_approval_key, out, sizeof(held_approval_key));
+    approval_key_cached = true;
+  }
+  return true;
 }
 
 static bool approval_mac(const uint8_t *descriptor, size_t len,
@@ -127,6 +154,7 @@ static common_cache_t common_cache;
 
 void bip138_backup_forget_keys(void) {
   secure_memzero(&common_cache, sizeof(common_cache));
+  bip138_backup_release_approval_key();
 }
 
 #ifdef BIP138_BACKUP_TESTING

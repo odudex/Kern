@@ -65,6 +65,13 @@ KERN_WARN_UNUSED_RESULT bool registry_deregister_at(size_t index);
 KERN_WARN_UNUSED_RESULT bool
 registry_add_from_string(const char *id, const char *descriptor_str,
                          storage_location_t loc, bool persist);
+/* Same for a descriptor descriptor_validate_keyed_parsed accepted: takes
+ * ownership of `desc`, parsed for the wallet's network, whose first own key
+ * (an xpub with a 1 to MAX_KEYPATH_ORIGIN_DEPTH step origin) is `key_index`.
+ * Frees `desc` on failure. */
+KERN_WARN_UNUSED_RESULT bool
+registry_add_parsed(const char *id, struct wally_descriptor *desc,
+                    size_t key_index, storage_location_t loc, bool persist);
 
 /* Register a session entry: writes its BIP138 backup to flash under `name`,
  * then renames and labels the entry. Registered descriptors load automatically

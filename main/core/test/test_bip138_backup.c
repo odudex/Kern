@@ -165,6 +165,21 @@ static const char *TEST_MNEMONIC =
   "tpubDEPBvXvhta3pjVaKokqC3eeMQnszj9ehFaA2zD5nSdkaccwGAizu8jVB2NeSpvmP2P52M"  \
   "BoZvNCixqXRJnTyXx51FQzARR63tjxQSyP3Btw"
 
+/* Counts descriptor parses, to pin how often the boot scan parses a backup. */
+static int parse_calls;
+int __real_wally_descriptor_parse(const char *miniscript,
+                                  const struct wally_map *vars_in,
+                                  uint32_t network, uint32_t flags,
+                                  struct wally_descriptor **output);
+int __wrap_wally_descriptor_parse(const char *miniscript,
+                                  const struct wally_map *vars_in,
+                                  uint32_t network, uint32_t flags,
+                                  struct wally_descriptor **output) {
+  parse_calls++;
+  return __real_wally_descriptor_parse(miniscript, vars_in, network, flags,
+                                       output);
+}
+
 static bool build_wpkh(const char *path, char *out, size_t out_size) {
   char fp[9];
   char *xpub = NULL;
@@ -400,10 +415,12 @@ static void test_registry_persistence(void) {
             registry_session_has_duplicate(recovered, NULL, 0));
   free(recovered);
 
+  parse_calls = 0;
   registry_init(false);
   check("boot scan registers the stored descriptor",
         registry_count() == 1 && (entry = registry_get(0)) != NULL &&
             strcmp(entry->id, "ColdVault") == 0 && entry->persisted);
+  check("boot scan parses the backup once", parse_calls == 1);
 
   check("another seed loads",
         key_load_from_mnemonic("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo "

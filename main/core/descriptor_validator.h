@@ -154,6 +154,12 @@ void descriptor_validate_and_load_watch_only(
  * key. On success *key_index_out (optional) receives our key's index. */
 KERN_WARN_UNUSED_RESULT descriptor_validation_result_t
 descriptor_validate_keyed(const char *descriptor_str, int *key_index_out);
+/* Same, handing the parsed descriptor over on success (free with
+ * wally_descriptor_free, or pass it to registry_add_parsed). */
+KERN_WARN_UNUSED_RESULT descriptor_validation_result_t
+descriptor_validate_keyed_parsed(const char *descriptor_str,
+                                 struct wally_descriptor **descriptor_out,
+                                 int *key_index_out);
 
 /* When a VALIDATION_DUPLICATE result has just been delivered, copy the ID of
  * the existing registry entry into `out` and return true. Returns false if no

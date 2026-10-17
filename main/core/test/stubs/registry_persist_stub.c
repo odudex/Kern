@@ -44,6 +44,8 @@ bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
 }
 
 void bip138_backup_forget_keys(void) {}
+void bip138_backup_hold_approval_key(void) {}
+void bip138_backup_release_approval_key(void) {}
 
 bool storage_descriptor_exists(storage_location_t loc, const char *id,
                                storage_descriptor_format_t format) {

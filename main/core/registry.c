@@ -117,9 +117,10 @@ static bool descriptor_id_from_filename(const char *fname, char *id,
 
 /* Counts failures for the user, except a registration for the other network,
  * which a network switch makes expected. */
-static bool scan_validate(const char *descriptor_str) {
+static bool scan_validate(const char *descriptor_str,
+                          struct wally_descriptor **desc, int *key_index) {
   descriptor_validation_result_t result =
-      descriptor_validate_keyed(descriptor_str, NULL);
+      descriptor_validate_keyed_parsed(descriptor_str, desc, key_index);
   if (result != VALIDATION_SUCCESS && result != VALIDATION_NETWORK_MISMATCH)
     registry_rejected++;
   return result == VALIDATION_SUCCESS;
@@ -127,12 +128,14 @@ static bool scan_validate(const char *descriptor_str) {
 
 /* Registers every flash backup that this device wrote for the loaded key
  * (valid approval mark) and that still passes keyed validation. Backups
- * without a mark, plaintext and KEF files stay explicit imports. */
+ * without a mark, plaintext and KEF files stay explicit imports. Each backup
+ * is parsed once, by the validator, and handed to the registry as parsed. */
 static void registry_init_scan(void) {
   char **files = NULL;
   int count = 0;
   if (storage_list_descriptors(STORAGE_FLASH, &files, &count) != ESP_OK)
     return;
+  bip138_backup_hold_approval_key();
   for (int i = 0; i < count && registry_len < REGISTRY_MAX_ENTRIES; i++) {
     const char *fname = files[i];
     if (storage_descriptor_format(fname) != STORAGE_DESCRIPTOR_BIP138)
@@ -143,7 +146,10 @@ static void registry_init_scan(void) {
         ESP_OK)
       continue;
     char *desc_str = NULL;
+    struct wally_descriptor *desc = NULL;
+    int key_index = -1;
     char id[REGISTRY_ID_MAX_LEN];
+    char checksum[9];
     char existing[REGISTRY_ID_MAX_LEN];
     bool approved = false;
     if (!bip138_backup_decrypt_any_hinted(data, data_len, &desc_str,
@@ -151,23 +157,32 @@ static void registry_init_scan(void) {
       ESP_LOGI(TAG, "Skipping '%s': not addressed to the loaded key", fname);
     } else if (!approved) {
       ESP_LOGI(TAG, "Skipping '%s': not registered on this device", fname);
-    } else if (!scan_validate(desc_str)) {
+    } else if (!scan_validate(desc_str, &desc, &key_index)) {
       ESP_LOGW(TAG, "Skipping '%s': failed validation", fname);
     } else if (!descriptor_id_from_filename(fname, id, sizeof(id))) {
       ESP_LOGW(TAG, "Skipping '%s': unexpected filename", fname);
-    } else if (registry_session_has_duplicate(desc_str, existing,
-                                              sizeof(existing))) {
+    } else if (!descriptor_checksum_from_descriptor(desc, checksum)) {
+      ESP_LOGW(TAG, "Skipping '%s': no checksum", fname);
+    } else if (registry_session_has_duplicate_checksum(checksum, existing,
+                                                       sizeof(existing))) {
       ESP_LOGI(TAG, "Skipping '%s': same descriptor as '%s'", fname, existing);
     } else if (registry_find_by_id(id)) {
       ESP_LOGW(TAG, "Skipping '%s': id '%s' already registered", fname, id);
-    } else if (!registry_add_from_string(id, desc_str, STORAGE_FLASH, false)) {
-      ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register", id);
     } else {
-      registry_entries[registry_len - 1].persisted = true;
+      bool added = registry_add_parsed(id, desc, (size_t)key_index,
+                                       STORAGE_FLASH, false);
+      desc = NULL; /* owned by the registry, or freed on failure */
+      if (added)
+        registry_entries[registry_len - 1].persisted = true;
+      else
+        ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register",
+                 id);
     }
+    wally_descriptor_free(desc);
     SECURE_FREE_STRING(desc_str);
     free(data);
   }
+  bip138_backup_release_approval_key();
   storage_free_file_list(files, count);
 }
 
@@ -382,6 +397,75 @@ static void collect_own_keys(registry_entry_t *e,
   }
 }
 
+bool registry_add_parsed(const char *id, struct wally_descriptor *desc,
+                         size_t key_index, storage_location_t loc,
+                         bool persist) {
+  if (!id || !desc)
+    goto fail;
+  if (registry_len >= REGISTRY_MAX_ENTRIES) {
+    ESP_LOGE(TAG, "registry full (%d entries)", REGISTRY_MAX_ENTRIES);
+    goto fail;
+  }
+
+  unsigned char wallet_fp[BIP32_KEY_FINGERPRINT_LEN];
+  uint32_t num_keys = 0;
+  if (!key_get_fingerprint(wallet_fp) ||
+      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
+      key_index >= num_keys)
+    goto fail;
+
+  char *path_str = NULL;
+  uint32_t origin_path[MAX_KEYPATH_ORIGIN_DEPTH];
+  size_t origin_path_len = 0;
+  if (wally_descriptor_get_key_origin_path_str(desc, (uint32_t)key_index,
+                                               &path_str) != WALLY_OK ||
+      !path_str) {
+    ESP_LOGE(TAG, "failed to get origin path for key %zu", key_index);
+    goto fail;
+  }
+  bool path_ok = bip32_path_parse(path_str, origin_path, &origin_path_len,
+                                  MAX_KEYPATH_ORIGIN_DEPTH);
+  wally_free_string(path_str);
+  if (!path_ok) {
+    ESP_LOGE(TAG, "failed to parse origin path for key %zu", key_index);
+    goto fail;
+  }
+
+  uint32_t num_paths = 0;
+  if (wally_descriptor_get_num_paths(desc, &num_paths) != WALLY_OK)
+    goto fail;
+
+  registry_entry_t *e = &registry_entries[registry_len];
+  memset(e, 0, sizeof *e);
+  strncpy(e->id, id, REGISTRY_ID_MAX_LEN - 1);
+  e->loc = loc;
+  e->desc = desc;
+  e->my_key_index = key_index;
+  e->num_paths = (size_t)num_paths;
+  e->origin_path_len = origin_path_len;
+  memcpy(e->origin_path, origin_path, origin_path_len * sizeof(uint32_t));
+  collect_own_keys(e, wallet_fp, num_keys);
+  registry_len++;
+
+  if (persist) {
+    if (!registry_persist(id, id)) {
+      ESP_LOGE(TAG, "persisting descriptor failed, rolling back");
+      wally_descriptor_free(desc);
+      memset(&registry_entries[registry_len - 1], 0, sizeof(registry_entry_t));
+      registry_len--;
+      return false;
+    }
+    e->persisted = true;
+  }
+
+  ESP_LOGI(TAG, "added '%s' (%zu entries total)", id, registry_len);
+  return true;
+
+fail:
+  wally_descriptor_free(desc);
+  return false;
+}
+
 bool registry_add_from_string(const char *id, const char *descriptor_str,
                               storage_location_t loc, bool persist) {
   if (!id || !descriptor_str)
@@ -406,82 +490,22 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   }
 
   unsigned char wallet_fp[BIP32_KEY_FINGERPRINT_LEN];
-  if (!key_get_fingerprint(wallet_fp)) {
-    ESP_LOGE(TAG, "key_get_fingerprint failed");
-    wally_descriptor_free(desc);
-    return false;
-  }
   uint32_t num_keys = 0;
-  if (wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK) {
+  if (!key_get_fingerprint(wallet_fp) ||
+      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK) {
     wally_descriptor_free(desc);
     return false;
   }
-  int key_index = -1;
   for (uint32_t i = 0; i < num_keys; i++) {
     unsigned char kfp[BIP32_KEY_FINGERPRINT_LEN];
     if (wally_descriptor_get_key_origin_fingerprint(
             desc, i, kfp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK &&
-        memcmp(wallet_fp, kfp, BIP32_KEY_FINGERPRINT_LEN) == 0) {
-      key_index = (int)i;
-      break;
-    }
+        memcmp(wallet_fp, kfp, BIP32_KEY_FINGERPRINT_LEN) == 0)
+      return registry_add_parsed(id, desc, i, loc, persist);
   }
-  if (key_index < 0) {
-    ESP_LOGW(TAG, "wallet fingerprint not found in descriptor '%s'", id);
-    wally_descriptor_free(desc);
-    return false;
-  }
-
-  char *path_str = NULL;
-  uint32_t origin_path[MAX_KEYPATH_ORIGIN_DEPTH];
-  size_t origin_path_len = 0;
-  if (wally_descriptor_get_key_origin_path_str(desc, (uint32_t)key_index,
-                                               &path_str) != WALLY_OK ||
-      !path_str) {
-    ESP_LOGE(TAG, "failed to get origin path for key %d", key_index);
-    wally_descriptor_free(desc);
-    return false;
-  }
-  bool path_ok = bip32_path_parse(path_str, origin_path, &origin_path_len,
-                                  MAX_KEYPATH_ORIGIN_DEPTH);
-  wally_free_string(path_str);
-  if (!path_ok) {
-    ESP_LOGE(TAG, "failed to parse origin path for key %d", key_index);
-    wally_descriptor_free(desc);
-    return false;
-  }
-
-  uint32_t num_paths = 0;
-  if (wally_descriptor_get_num_paths(desc, &num_paths) != WALLY_OK) {
-    wally_descriptor_free(desc);
-    return false;
-  }
-
-  registry_entry_t *e = &registry_entries[registry_len];
-  memset(e, 0, sizeof *e);
-  strncpy(e->id, id, REGISTRY_ID_MAX_LEN - 1);
-  e->loc = loc;
-  e->desc = desc;
-  e->my_key_index = (size_t)key_index;
-  e->num_paths = (size_t)num_paths;
-  e->origin_path_len = origin_path_len;
-  memcpy(e->origin_path, origin_path, origin_path_len * sizeof(uint32_t));
-  collect_own_keys(e, wallet_fp, num_keys);
-  registry_len++;
-
-  if (persist) {
-    if (!registry_persist(id, id)) {
-      ESP_LOGE(TAG, "persisting descriptor failed, rolling back");
-      wally_descriptor_free(desc);
-      memset(&registry_entries[registry_len - 1], 0, sizeof(registry_entry_t));
-      registry_len--;
-      return false;
-    }
-    e->persisted = true;
-  }
-
-  ESP_LOGI(TAG, "added '%s' (%zu entries total)", id, registry_len);
-  return true;
+  ESP_LOGW(TAG, "wallet fingerprint not found in descriptor '%s'", id);
+  wally_descriptor_free(desc);
+  return false;
 }
 
 bool registry_persist(const char *id, const char *name) {

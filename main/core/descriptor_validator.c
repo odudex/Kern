@@ -37,6 +37,9 @@ typedef struct {
   validation_id_loc_cb id_loc_cb;
   void *user_data;
   descriptor_info_t info;
+  /* Keyed loads keep the parsed descriptor for registry_add_parsed. */
+  struct wally_descriptor *descriptor;
+  int key_index;
   char descriptor_checksum[9];
   bool watch_only;                /* keyless: skip key/xpub stages */
   wallet_network_t watch_network; /* network for the watch-only registry add */
@@ -99,6 +102,7 @@ static void cleanup_context(void) {
     if (current_ctx->descriptor_str) {
       free(current_ctx->descriptor_str);
     }
+    wally_descriptor_free(current_ctx->descriptor);
     free(current_ctx->info.policy);
     free(current_ctx);
     current_ctx = NULL;
@@ -430,7 +434,10 @@ static void id_loc_proceed(const char *id, storage_location_t loc,
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
-  if (!registry_add_from_string(id, current_ctx->descriptor_str, loc, true)) {
+  bool added = registry_add_parsed(id, current_ctx->descriptor,
+                                   (size_t)current_ctx->key_index, loc, true);
+  current_ctx->descriptor = NULL;
+  if (!added) {
     ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
     complete_validation(VALIDATION_INTERNAL_ERROR);
     return;
@@ -482,11 +489,16 @@ static void session_register_current_descriptor(void) {
     return;
   }
 
-  bool added = current_ctx->watch_only
-                   ? registry_add_watch_only(id, current_ctx->descriptor_str,
-                                             current_ctx->watch_network)
-                   : registry_add_from_string(id, current_ctx->descriptor_str,
-                                              STORAGE_FLASH, false);
+  bool added = false;
+  if (current_ctx->watch_only) {
+    added = registry_add_watch_only(id, current_ctx->descriptor_str,
+                                    current_ctx->watch_network);
+  } else {
+    added = registry_add_parsed(id, current_ctx->descriptor,
+                                (size_t)current_ctx->key_index, STORAGE_FLASH,
+                                false);
+    current_ctx->descriptor = NULL;
+  }
   if (!added) {
     ESP_LOGE(TAG, "Failed to load session descriptor '%s'", id);
     complete_validation(VALIDATION_INTERNAL_ERROR);
@@ -720,10 +732,10 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
              purpose, script_name);
   }
 
-  // Extract descriptor info before freeing.
   bool have_info = extract_descriptor_info(
       descriptor, current_ctx->descriptor_str, key_index, &current_ctx->info);
-  wally_descriptor_free(descriptor);
+  current_ctx->descriptor = descriptor;
+  current_ctx->key_index = key_index;
   if (!have_info) {
     complete_validation(VALIDATION_INTERNAL_ERROR);
     return;
@@ -804,7 +816,21 @@ validation_begin(const char *descriptor_str, validation_complete_cb callback,
 
 descriptor_validation_result_t
 descriptor_validate_keyed(const char *descriptor_str, int *key_index_out) {
-  if (!descriptor_str || !key_is_loaded() || !wallet_is_initialized())
+  struct wally_descriptor *descriptor = NULL;
+  descriptor_validation_result_t result = descriptor_validate_keyed_parsed(
+      descriptor_str, &descriptor, key_index_out);
+  wally_descriptor_free(descriptor);
+  return result;
+}
+
+descriptor_validation_result_t
+descriptor_validate_keyed_parsed(const char *descriptor_str,
+                                 struct wally_descriptor **descriptor_out,
+                                 int *key_index_out) {
+  if (descriptor_out)
+    *descriptor_out = NULL;
+  if (!descriptor_str || !descriptor_out || !key_is_loaded() ||
+      !wallet_is_initialized())
     return VALIDATION_INTERNAL_ERROR;
   if (descriptor_text_has_uppercase_hardened(descriptor_str))
     return VALIDATION_INVALID_HARDENED_NOTATION;
@@ -824,8 +850,12 @@ descriptor_validate_keyed(const char *descriptor_str, int *key_index_out) {
   }
   if (result == VALIDATION_SUCCESS)
     result = verify_own_keys(descriptor);
-  wally_descriptor_free(descriptor);
-  if (result == VALIDATION_SUCCESS && key_index_out)
+  if (result != VALIDATION_SUCCESS) {
+    wally_descriptor_free(descriptor);
+    return result;
+  }
+  *descriptor_out = descriptor;
+  if (key_index_out)
     *key_index_out = key_index;
   return result;
 }
