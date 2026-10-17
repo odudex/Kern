@@ -128,9 +128,10 @@ static void complete_validation(descriptor_validation_result_t result) {
 
 void descriptor_validation_cancel(void) { cleanup_context(); }
 
-// Find key index in descriptor that matches our fingerprint
+// Find the first key at or after `start` that carries our fingerprint
 // Returns -1 if not found
-static int find_matching_key_index(struct wally_descriptor *descriptor) {
+static int find_matching_key_index(const struct wally_descriptor *descriptor,
+                                   uint32_t start) {
   unsigned char wallet_fp[BIP32_KEY_FINGERPRINT_LEN];
   if (!key_get_fingerprint(wallet_fp)) {
     return -1;
@@ -141,7 +142,7 @@ static int find_matching_key_index(struct wally_descriptor *descriptor) {
     return -1;
   }
 
-  for (uint32_t i = 0; i < num_keys; i++) {
+  for (uint32_t i = start; i < num_keys; i++) {
     unsigned char key_fp[BIP32_KEY_FINGERPRINT_LEN];
     int ret = wally_descriptor_get_key_origin_fingerprint(
         descriptor, i, key_fp, BIP32_KEY_FINGERPRINT_LEN);
@@ -648,11 +649,23 @@ verify_xpub_match(const struct wally_descriptor *descriptor, int key_index) {
   return xpub_match ? VALIDATION_SUCCESS : VALIDATION_XPUB_MISMATCH;
 }
 
-// Verify xpub matches wallet, extract info, and show it.
+/* Verify every key carrying our fingerprint, not just the first: the UI shows
+ * each of them as the wallet's. */
+static descriptor_validation_result_t
+verify_own_keys(const struct wally_descriptor *descriptor) {
+  for (int i = find_matching_key_index(descriptor, 0); i >= 0;
+       i = find_matching_key_index(descriptor, (uint32_t)i + 1)) {
+    descriptor_validation_result_t result = verify_xpub_match(descriptor, i);
+    if (result != VALIDATION_SUCCESS)
+      return result;
+  }
+  return VALIDATION_SUCCESS;
+}
+
+// Verify our keys match the wallet, extract info, and show it.
 static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
                                       int key_index) {
-  descriptor_validation_result_t xpub_result =
-      verify_xpub_match(descriptor, key_index);
+  descriptor_validation_result_t xpub_result = verify_own_keys(descriptor);
   if (xpub_result != VALIDATION_SUCCESS) {
     wally_descriptor_free(descriptor);
     complete_validation(xpub_result);
@@ -798,12 +811,12 @@ descriptor_validate_keyed(const char *descriptor_str, int *key_index_out) {
   result = static_checks(descriptor);
   int key_index = -1;
   if (result == VALIDATION_SUCCESS) {
-    key_index = find_matching_key_index(descriptor);
+    key_index = find_matching_key_index(descriptor, 0);
     if (key_index < 0)
       result = VALIDATION_FINGERPRINT_NOT_FOUND;
   }
   if (result == VALIDATION_SUCCESS)
-    result = verify_xpub_match(descriptor, key_index);
+    result = verify_own_keys(descriptor);
   wally_descriptor_free(descriptor);
   if (result == VALIDATION_SUCCESS && key_index_out)
     *key_index_out = key_index;
@@ -856,7 +869,7 @@ void descriptor_validate_and_load(const char *descriptor_str,
   current_ctx->confirm_cb = confirm_cb;
   current_ctx->id_loc_cb = id_loc_cb;
 
-  int key_index = find_matching_key_index(descriptor);
+  int key_index = find_matching_key_index(descriptor, 0);
   if (key_index < 0) {
     ESP_LOGE(TAG, "Wallet fingerprint not found in descriptor");
     wally_descriptor_free(descriptor);

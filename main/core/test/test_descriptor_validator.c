@@ -309,6 +309,76 @@ static void test_key_matching(void) {
   check("nothing registered after rejections", registry_count() == 0);
 }
 
+/* Every key carrying our fingerprint is verified, not only the first. */
+static void test_own_keys(void) {
+  registry_clear();
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *c = xpub_at("m/48'/0'/2'/2'");
+  int idx = -1;
+
+  const char *fake_later =
+      descf("wsh(sortedmulti(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+            "[" FP "/48'/0'/1'/2']%s/0/*))",
+            a, c);
+  check("later key claiming our fingerprint rejected",
+        run(fake_later) == VALIDATION_XPUB_MISMATCH && info_calls == 0);
+  check("keyed validation rejects it too",
+        descriptor_validate_keyed(fake_later, NULL) ==
+            VALIDATION_XPUB_MISMATCH);
+
+  const char *fake_first =
+      descf("wsh(sortedmulti(1,[" FP "/48'/0'/1'/2']%s/0/*,"
+            "[" FP "/48'/0'/0'/2']%s/0/*))",
+            c, a);
+  check("fake first own key still rejected",
+        run(fake_first) == VALIDATION_XPUB_MISMATCH);
+
+  const char *fake_same_origin =
+      descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/<0;1>/*),"
+            "and_v(v:pk([" FP "/48'/0'/0'/2']%s/<2;3>/*),older(144))))",
+            a, b);
+  check("same-origin key with another xpub rejected",
+        run(fake_same_origin) == VALIDATION_XPUB_MISMATCH &&
+            descriptor_validate_keyed(fake_same_origin, NULL) ==
+                VALIDATION_XPUB_MISMATCH);
+
+  const char *fake_leaf = descf("tr(" NUMS_H ",multi_a(1,[" FP
+                                "/86'/0'/0']%s/0/*,[" FP "/86'/0'/1']%s/0/*))",
+                                xpub_at("m/86'/0'/0'"), xpub_at("m/86'/0'/2'"));
+  check("taproot leaf key claiming our fingerprint rejected",
+        run(fake_leaf) == VALIDATION_XPUB_MISMATCH);
+  check("no fake registered", registry_count() == 0);
+
+  const char *raw_cosigner = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                                   "[deadbeef/48'/0'/1'/2']02" XONLY_G "))",
+                                   a);
+  check("raw cosigner key accepted", run(raw_cosigner) == VALIDATION_SUCCESS);
+  const char *raw_ours = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[" FP "/48'/0'/1'/2']02" XONLY_G "))",
+                               a);
+  check("raw key claiming our fingerprint rejected",
+        run(raw_ours) == VALIDATION_PARSE_ERROR);
+
+  const char *two_ours = descf("wsh(sortedmulti(2,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[" FP "/48'/0'/1'/2']%s/0/*,"
+                               "[deadbeef/48'/0'/2'/2']%s/0/*))",
+                               a, b, c);
+  check("two genuine own keys accepted", run(two_ours) == VALIDATION_SUCCESS);
+  check("keyed validation reports the first own key",
+        descriptor_validate_keyed(two_ours, &idx) == VALIDATION_SUCCESS &&
+            idx == 0);
+
+  const char *reuse =
+      descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/<0;1>/*),"
+            "and_v(v:pk([" FP "/48'/0'/0'/2']%s/<2;3>/*),older(144))))",
+            a, a);
+  check("own key reused across spending paths accepted",
+        run(reuse) == VALIDATION_SUCCESS);
+  check("only the genuine descriptors registered", registry_count() == 3);
+  registry_clear();
+}
+
 static void test_single_sig_success(void) {
   registry_clear();
   check("single-sig wpkh accepted", run(wpkh84()) == VALIDATION_SUCCESS);
@@ -706,6 +776,7 @@ int main(void) {
   test_preconditions();
   test_static_gates();
   test_key_matching();
+  test_own_keys();
   test_single_sig_success();
   test_purpose_binding_warning();
   test_multisig_and_miniscript();
