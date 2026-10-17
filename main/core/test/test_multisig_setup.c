@@ -202,10 +202,38 @@ static void test_mixed(void) {
                         "Format: P2WSH\n"
                         "\n"
                         "73C5DA0A: " OWN_0 "\n"
-                        "# Derivation: m/48'/0'/1'/2'\n"
                         "3F635A63: " COS "\n";
-  expect("Derivation inside a comment line is not applied", comment,
-         "wsh(sortedmulti(1," O0 OWN_0 "," C0 COS "))");
+  expect("a derivation comment above the Derivation line is not applied",
+         comment, "wsh(sortedmulti(1," O0 OWN_0 "," C0 COS "))");
+}
+
+/* BlueWallet writes "# derivation:" before a cosigner whose path differs from
+ * the file's Derivation line, and only then: it applies to that key alone. */
+static void test_bluewallet_key_derivation(void) {
+  const char *custom = "# BlueWallet Multisig setup file\n"
+                       "#\n"
+                       "Name: bluewallet\n"
+                       "Policy: 2 of 3\n"
+                       "Derivation: m/48'/0'/0'/2'\n"
+                       "Format: P2WSH\n"
+                       "\n"
+                       "73C5DA0A: " OWN_0_ZPUB "\n"
+                       "# derivation: m/48'/0'/1'/2'\n"
+                       "73C5DA0A: " OWN_1 "\n"
+                       "3F635A63: " COS_ZPUB "\n";
+  expect("'# derivation:' applies to the next key only", custom, TWO_ACCOUNTS);
+
+  const char *no_global = "Name: bluewallet\n"
+                          "Policy: 1 of 2\n"
+                          "Format: P2WSH\n"
+                          "\n"
+                          "# derivation: m/48'/0'/0'/2'\n"
+                          "73C5DA0A: " OWN_0 "\n"
+                          "# derivation: m/48'/0'/1'/2'\n"
+                          "73C5DA0A: " OWN_1 "\n";
+  expect("every key with its own '# derivation:' and no Derivation line",
+         no_global,
+         "wsh(sortedmulti(1," O0 OWN_0 ",[73c5da0a/48'/0'/1'/2']" OWN_1 "))");
 }
 
 static void test_slip132(void) {
@@ -295,6 +323,7 @@ int main(void) {
   test_single_header();
   test_per_key_derivation();
   test_mixed();
+  test_bluewallet_key_derivation();
   test_slip132();
   test_malformed();
 

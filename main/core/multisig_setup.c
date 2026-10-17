@@ -13,6 +13,9 @@
 #define MULTISIG_SETUP_MAX_KEYS 15
 #define MULTISIG_SETUP_PATH_LEN 64
 #define DERIVATION_LABEL "Derivation:"
+/* BlueWallet's per-cosigner comment, written before a key whose path differs
+ * from the file's Derivation line. */
+#define KEY_DERIVATION_LABEL "derivation:"
 
 // Convert extended pubkey with non-standard version bytes to xpub/tpub.
 // Handles Zpub, Ypub (mainnet) and vpub, upub (testnet).
@@ -55,10 +58,9 @@ encode:;
   return result;
 }
 
-// Copy the path of the Derivation line at `line`, minus any "m/" prefix.
+// Copy the path that follows a derivation label, minus any "m/" prefix.
 static bool read_derivation(const char *line,
                             char out[MULTISIG_SETUP_PATH_LEN]) {
-  line += strlen(DERIVATION_LABEL);
   while (*line == ' ' || *line == '\t')
     line++;
   if (line[0] == 'm' && line[1] == '/')
@@ -104,6 +106,7 @@ char *multisig_setup_to_descriptor(const char *text) {
   }
 
   char derivation[MULTISIG_SETUP_PATH_LEN] = "";
+  char next_key_derivation[MULTISIG_SETUP_PATH_LEN] = "";
   char fingerprints[MULTISIG_SETUP_MAX_KEYS][9];
   char origins[MULTISIG_SETUP_MAX_KEYS][MULTISIG_SETUP_PATH_LEN];
   char *xpubs[MULTISIG_SETUP_MAX_KEYS];
@@ -116,7 +119,17 @@ char *multisig_setup_to_descriptor(const char *text) {
       line++;
 
     if (strncmp(line, DERIVATION_LABEL, strlen(DERIVATION_LABEL)) == 0) {
-      if (!read_derivation(line, derivation))
+      if (!read_derivation(line + strlen(DERIVATION_LABEL), derivation))
+        goto cleanup;
+      next_key_derivation[0] = '\0';
+    } else if (line[0] == '#') {
+      const char *comment = line + 1;
+      while (*comment == ' ' || *comment == '\t')
+        comment++;
+      if (strncasecmp(comment, KEY_DERIVATION_LABEL,
+                      strlen(KEY_DERIVATION_LABEL)) == 0 &&
+          !read_derivation(comment + strlen(KEY_DERIVATION_LABEL),
+                           next_key_derivation))
         goto cleanup;
     } else if (strlen(line) > 10) {
       bool is_hex = true;
@@ -124,12 +137,15 @@ char *multisig_setup_to_descriptor(const char *text) {
         is_hex = isxdigit((unsigned char)line[i]);
 
       if (is_hex && line[8] == ':' && line[9] == ' ') {
-        if (!derivation[0])
+        const char *origin =
+            next_key_derivation[0] ? next_key_derivation : derivation;
+        if (!origin[0])
           goto cleanup;
         for (int i = 0; i < 8; i++)
           fingerprints[found_keys][i] = tolower((unsigned char)line[i]);
         fingerprints[found_keys][8] = '\0';
-        memcpy(origins[found_keys], derivation, sizeof(derivation));
+        memcpy(origins[found_keys], origin, MULTISIG_SETUP_PATH_LEN);
+        next_key_derivation[0] = '\0';
 
         const char *key_start = line + 10;
         const char *key_end = key_start;
