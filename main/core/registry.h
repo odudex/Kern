@@ -18,6 +18,22 @@
 #define REGISTRY_MAX_OWN_KEYS 8
 #define REGISTRY_CHILD_PATH_MAX_LEN 48
 
+/* How a descriptor's scriptPubKey wraps its innermost script. */
+typedef enum {
+  REGISTRY_WRAP_NONE,   /* the scriptPubKey itself: pkh(), wpkh(), tr() */
+  REGISTRY_WRAP_SH,     /* sh(X): P2SH of the redeem script */
+  REGISTRY_WRAP_WSH,    /* wsh(X): P2WSH of the witness script */
+  REGISTRY_WRAP_SH_WSH, /* sh(wsh(X)): P2SH of the P2WSH of the witness */
+} registry_wrapper_t;
+
+/* The wrapper, from the descriptor's top level. */
+KERN_WARN_UNUSED_RESULT registry_wrapper_t
+registry_descriptor_wrapper(const struct wally_descriptor *desc);
+/* The script depth wally_descriptor_to_script needs for the innermost script
+ * under `wrapper`: 0 for none, 1 for sh() or wsh(), 2 for sh(wsh()). */
+KERN_WARN_UNUSED_RESULT uint32_t
+registry_wrapper_depth(registry_wrapper_t wrapper);
+
 /* A key expression carrying the wallet's fingerprint. */
 typedef struct {
   size_t key_index;
@@ -36,6 +52,7 @@ typedef struct {
   /* First own key: an xpub, MAX_KEYPATH_ORIGIN_DEPTH steps deep at most. */
   size_t my_key_index;
   size_t num_paths;
+  registry_wrapper_t wrapper;
   uint32_t origin_path[MAX_KEYPATH_ORIGIN_DEPTH];
   size_t origin_path_len;
   /* Every own key, the first included, up to REGISTRY_MAX_OWN_KEYS. */

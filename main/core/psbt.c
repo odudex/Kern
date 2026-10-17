@@ -370,60 +370,72 @@ PSBT_PRIVATE bool claim_regenerate(const claim_t *claim, bool is_testnet,
         &out->spk_len, out->redeem, &out->redeem_len);
   }
 
-  /* CLAIM_REGISTRY: generate scripts from descriptor via libwally */
+  /* CLAIM_REGISTRY: one libwally generation, of the innermost script, then
+   * hashed locally into each wrapper above it. libwally reports a too-small
+   * buffer as WALLY_OK with written > len and the buffer untouched, hence
+   * the explicit written checks. */
   const registry_entry_t *e = claim->registry.entry;
   uint32_t mi = claim->registry.multi_index;
   uint32_t cn = claim->registry.child_num;
-
-  /* depth=0 generation reuses the output buffer as workspace for the inner
-   * script before hashing, so it needs max(inner_script_len, spk_len) bytes.
-   * Borrow out->witness as that workspace (it is still zeroed/unused here
-   * and gets overwritten by the depth=1/2 calls below), then copy the SPK.
-   * libwally reports a too-small buffer as WALLY_OK with written > len and
-   * the buffer untouched, hence the explicit written checks. */
-  size_t spk_work_len = 0;
-  if (wally_descriptor_to_script(e->desc, 0, 0, 0, mi, cn, 0, out->witness,
-                                 sizeof(out->witness),
-                                 &spk_work_len) != WALLY_OK ||
-      spk_work_len > sizeof(out->spk))
+  uint32_t depth = registry_wrapper_depth(e->wrapper);
+  /* The innermost script lands where it belongs: the witness script for
+   * wsh()/sh(wsh()), the redeem script for sh(). With no wrapper the witness
+   * buffer is workspace for the scriptPubKey. */
+  unsigned char *inner =
+      e->wrapper == REGISTRY_WRAP_SH ? out->redeem : out->witness;
+  size_t inner_len = 0;
+  if (wally_descriptor_to_script(e->desc, depth, 0, 0, mi, cn, 0, inner,
+                                 PSBT_MAX_INNER_SCRIPT_LEN,
+                                 &inner_len) != WALLY_OK ||
+      inner_len > PSBT_MAX_INNER_SCRIPT_LEN)
     return false;
-  memcpy(out->spk, out->witness, spk_work_len);
-  out->spk_len = spk_work_len;
 
-  size_t spk_type = 0;
-  wally_scriptpubkey_get_type(out->spk, out->spk_len, &spk_type);
-
-  if (spk_type == WALLY_SCRIPT_TYPE_P2WSH) {
-    if (wally_descriptor_to_script(e->desc, 1, 0, 0, mi, cn, 0, out->witness,
-                                   sizeof(out->witness),
-                                   &out->witness_len) != WALLY_OK ||
-        out->witness_len > sizeof(out->witness))
+  switch (e->wrapper) {
+  case REGISTRY_WRAP_WSH:
+    out->witness_len = inner_len;
+    return wally_witness_program_from_bytes(
+               inner, inner_len, WALLY_SCRIPT_SHA256, out->spk,
+               sizeof(out->spk), &out->spk_len) == WALLY_OK;
+  case REGISTRY_WRAP_SH_WSH:
+    out->witness_len = inner_len;
+    return wally_witness_program_from_bytes(
+               inner, inner_len, WALLY_SCRIPT_SHA256, out->redeem,
+               sizeof(out->redeem), &out->redeem_len) == WALLY_OK &&
+           wally_scriptpubkey_p2sh_from_bytes(
+               out->redeem, out->redeem_len, WALLY_SCRIPT_HASH160, out->spk,
+               sizeof(out->spk), &out->spk_len) == WALLY_OK;
+  case REGISTRY_WRAP_SH:
+    out->redeem_len = inner_len;
+    return wally_scriptpubkey_p2sh_from_bytes(
+               inner, inner_len, WALLY_SCRIPT_HASH160, out->spk,
+               sizeof(out->spk), &out->spk_len) == WALLY_OK;
+  case REGISTRY_WRAP_NONE:
+  default:
+    /* pkh(), wpkh(), tr(): the generated script is the scriptPubKey, and no
+     * inner script is compared. */
+    if (inner_len > sizeof(out->spk))
       return false;
-
-  } else if (spk_type == WALLY_SCRIPT_TYPE_P2SH) {
-    if (wally_descriptor_to_script(e->desc, 1, 0, 0, mi, cn, 0, out->redeem,
-                                   sizeof(out->redeem),
-                                   &out->redeem_len) != WALLY_OK ||
-        out->redeem_len > sizeof(out->redeem))
-      return false;
-
-    /* sh(wsh(...)): if redeem is itself a P2WSH witness program,
-     * depth=2 yields the inner witness script. */
-    size_t redeem_type = 0;
-    wally_scriptpubkey_get_type(out->redeem, out->redeem_len, &redeem_type);
-    if (redeem_type == WALLY_SCRIPT_TYPE_P2WSH) {
-      if (wally_descriptor_to_script(e->desc, 2, 0, 0, mi, cn, 0, out->witness,
-                                     sizeof(out->witness),
-                                     &out->witness_len) != WALLY_OK ||
-          out->witness_len > sizeof(out->witness))
-        return false;
-    }
-    /* sh(multi(...)): redeem is not P2WSH; out->witness_len stays 0 so the
-     * stale workspace bytes left in out->witness are never read. */
+    memcpy(out->spk, inner, inner_len);
+    out->spk_len = inner_len;
+    return true;
   }
-  /* Other types (P2WPKH, P2TR, etc.): no inner scripts needed. */
+}
 
-  return true;
+/* Whether a scriptPubKey can be what `wrapper` produces, before any script is
+ * generated for it: most registry entries are ruled out by shape alone. */
+static bool wrapper_fits_spk(registry_wrapper_t wrapper,
+                             const unsigned char *spk, size_t spk_len) {
+  switch (wrapper) {
+  case REGISTRY_WRAP_WSH:
+    return spk_len == WALLY_SCRIPTPUBKEY_P2WSH_LEN && spk[0] == OP_0;
+  case REGISTRY_WRAP_SH:
+  case REGISTRY_WRAP_SH_WSH:
+    return spk_len == WALLY_SCRIPTPUBKEY_P2SH_LEN && spk[0] == OP_HASH160;
+  case REGISTRY_WRAP_NONE:
+  default:
+    return !(spk_len == WALLY_SCRIPTPUBKEY_P2WSH_LEN && spk[0] == OP_0) &&
+           !(spk_len == WALLY_SCRIPTPUBKEY_P2SH_LEN && spk[0] == OP_HASH160);
+  }
 }
 
 static bool input_inner_scripts_match(const struct wally_psbt *psbt,
@@ -465,6 +477,10 @@ static bool claim_matches_spk(const claim_t *claim, bool is_testnet,
                               size_t target_spk_len,
                               const struct wally_psbt *input_psbt,
                               size_t input_i) {
+  if (claim->kind == CLAIM_REGISTRY && claim->registry.entry &&
+      !wrapper_fits_spk(claim->registry.entry->wrapper, target_spk,
+                        target_spk_len))
+    return false;
   expected_scripts_t exp; /* zeroed by claim_regenerate */
   if (!claim_regenerate(claim, is_testnet, &exp) ||
       exp.spk_len != target_spk_len ||

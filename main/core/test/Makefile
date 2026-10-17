@@ -240,7 +240,7 @@ $(PSBT_KEY_OBJ): $(KEY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Dkey_get_fingerprint=key_get_fingerprint_raw -c -o $@ ../key.c
 
 $(TARGET_PSBT_CLASSIFY): $(SRCS_PSBT_CLASSIFY) ../settings.h $(PSBT_SRC) $(SS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(LIBWALLY) $(PSBT_KEY_OBJ)
-	$(CC) $(CFLAGS) $(TEST_INCS) -DPSBT_TESTING -Wl,--wrap=malloc -Wl,--wrap=wally_psbt_signing_cache_disable -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c ../descriptor_parse.c $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) -DPSBT_TESTING -Wl,--wrap=malloc -Wl,--wrap=wally_psbt_signing_cache_disable -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c ../descriptor_parse.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c $(PSBT_H) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PSBT_PARSE) ../psbt_parse.c $(LIBWALLY) -lmbedcrypto

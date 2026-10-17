@@ -4242,6 +4242,100 @@ static void test_registry_claim(const char *test_name, const char *desc_str,
   PASS();
 }
 
+/* Counts libwally script generations, to pin how much work a claim costs. */
+static size_t to_script_calls;
+int __real_wally_descriptor_to_script(const struct wally_descriptor *desc,
+                                      uint32_t depth, uint32_t index,
+                                      uint32_t variant, uint32_t multi_index,
+                                      uint32_t child_num, uint32_t flags,
+                                      unsigned char *bytes_out, size_t len,
+                                      size_t *written);
+int __wrap_wally_descriptor_to_script(const struct wally_descriptor *desc,
+                                      uint32_t depth, uint32_t index,
+                                      uint32_t variant, uint32_t multi_index,
+                                      uint32_t child_num, uint32_t flags,
+                                      unsigned char *bytes_out, size_t len,
+                                      size_t *written) {
+  to_script_calls++;
+  return __real_wally_descriptor_to_script(desc, depth, index, variant,
+                                           multi_index, child_num, flags,
+                                           bytes_out, len, written);
+}
+
+/* A claim is one generation of the innermost script, hashed locally into
+ * each wrapper; the result must be the scriptPubKey libwally builds itself. */
+static void test_claim_local_wrap(void) {
+  static const char *const descs[] = {
+      "wsh(sortedmulti(2,[00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*,"
+      "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*))",
+      "sh(multi(1,[00000000/48'/0'/0'/1']" XPUB_84 "/<0;1>/*,"
+      "[11111111/48'/0'/0'/1']" XPUB_86 "/<0;1>/*))",
+      "sh(wsh(sortedmulti(1,[00000000/48'/0'/0'/1']" XPUB_84 "/<0;1>/*,"
+      "[11111111/48'/0'/0'/1']" XPUB_86 "/<0;1>/*)))",
+      "wsh(or_d(pk([00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*),"
+      "and_v(v:pkh([11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*),older(144))))",
+  };
+  for (size_t i = 0; i < sizeof(descs) / sizeof(descs[0]); i++) {
+    char name[64];
+    snprintf(name, sizeof(name), "claim: local wrap matches libwally (%zu)", i);
+    TEST(name);
+    expected_scripts_t out = {0};
+    uint8_t ref[PSBT_MAX_INNER_SCRIPT_LEN];
+    size_t ref_len = 0;
+    registry_clear();
+    bool added = registry_add_from_string("t", descs[i], STORAGE_FLASH, false);
+    const registry_entry_t *e = registry_find_by_id("t");
+    claim_t claim = {
+        .kind = CLAIM_REGISTRY,
+        .registry = {.entry = e, .multi_index = 1, .child_num = 7}};
+    to_script_calls = 0;
+    bool regenerated = added && e && claim_regenerate(&claim, false, &out);
+    size_t calls = to_script_calls;
+    if (!regenerated)
+      FAIL("claim_regenerate failed");
+    else if (wally_descriptor_to_script(e->desc, 0, 0, 0, 1, 7, 0, ref,
+                                        sizeof(ref), &ref_len) != WALLY_OK ||
+             ref_len != out.spk_len || memcmp(ref, out.spk, ref_len) != 0)
+      FAIL("scriptPubKey differs from libwally's");
+    else if (calls != 1)
+      FAIL("expected a single generation per claim");
+    else
+      PASS();
+  }
+  registry_clear();
+}
+
+/* A P2TR scriptPubKey cannot come from a wsh() entry: no script is generated
+ * to find that out. */
+static void test_claim_shape_prefilter(void) {
+  TEST("claim: a P2TR output never generates a wsh() entry's scripts");
+  registry_clear();
+  if (!registry_add_from_string("w",
+                                "wsh(sortedmulti(2,[00000000/87'/0'/0']" XPUB_84
+                                "/<0;1>/*,"
+                                "[11111111/87'/0'/0']" XPUB_86 "/<0;1>/*))",
+                                STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const char *descs[] = {"tr([00000000/87'/0'/0']" XPUB_86 "/<0;1>/*)"};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  to_script_calls = 0;
+  input_ownership_t r = {0};
+  if (psbt)
+    r = psbt_classify_input(psbt, 0, false);
+  if (!psbt)
+    FAIL("fixture");
+  else if (to_script_calls != 0)
+    FAIL("the wsh() entry's scripts were generated");
+  else if (r.ownership == PSBT_OWNERSHIP_OWNED_SAFE)
+    FAIL("a wsh() entry cannot claim a P2TR input");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
 /* Golden scriptPubKeys computed independently of libwally (BIP341 by hand),
  * not captured from a libwally run: they catch a wrong tweak or leaf hash in
  * the code that builds receive addresses. Origins do not affect scripts. */
@@ -4442,6 +4536,7 @@ int main(void) {
       "wsh(sortedmulti(8," MS_15_KEYS "))", 513);
   test_registry_claim_oversize_wsh_fails();
   test_golden_taproot_vectors();
+  test_claim_local_wrap();
 
   printf("\n=== psbt_classify_input tests ===\n\n");
 
@@ -4523,6 +4618,7 @@ int main(void) {
   test_tr_change_output_owned();
   test_tr_script_path_denied_input();
   test_tr_key_path_verified();
+  test_claim_shape_prefilter();
   test_restore_without_memory();
   test_known_answer_signatures();
   test_trim_keeps_taproot_signatures();

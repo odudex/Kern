@@ -193,6 +193,38 @@ void registry_init(bool is_testnet) {
   ESP_LOGI(TAG, "Registry: %zu entries loaded", registry_len);
 }
 
+registry_wrapper_t
+registry_descriptor_wrapper(const struct wally_descriptor *desc) {
+  char *canon = NULL;
+  registry_wrapper_t wrapper = REGISTRY_WRAP_NONE;
+  if (desc &&
+      wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canon) == WALLY_OK &&
+      canon) {
+    if (strncmp(canon, "sh(wsh(", 7) == 0)
+      wrapper = REGISTRY_WRAP_SH_WSH;
+    else if (strncmp(canon, "wsh(", 4) == 0)
+      wrapper = REGISTRY_WRAP_WSH;
+    else if (strncmp(canon, "sh(", 3) == 0)
+      wrapper = REGISTRY_WRAP_SH;
+  }
+  wally_free_string(canon);
+  return wrapper;
+}
+
+uint32_t registry_wrapper_depth(registry_wrapper_t wrapper) {
+  switch (wrapper) {
+  case REGISTRY_WRAP_SH:
+  case REGISTRY_WRAP_WSH:
+    return 1;
+  case REGISTRY_WRAP_SH_WSH:
+    return 2;
+  case REGISTRY_WRAP_NONE:
+  default:
+    return 0;
+  }
+}
+
 /* Groups past this many add nothing a duplicate check needs. */
 #define SCRIPT_ID_MAX_GROUPS 4
 
@@ -452,6 +484,7 @@ bool registry_add_parsed(const char *id, struct wally_descriptor *desc,
   e->num_paths = (size_t)num_paths;
   e->origin_path_len = origin_path_len;
   memcpy(e->origin_path, origin_path, origin_path_len * sizeof(uint32_t));
+  e->wrapper = registry_descriptor_wrapper(desc);
   collect_own_keys(e, wallet_fp, num_keys);
   set_script_id(e);
   registry_len++;
@@ -592,6 +625,7 @@ bool registry_add_watch_only(const char *id, const char *descriptor_str,
   e->my_key_index = SIZE_MAX; // no key in watch-only mode
   e->num_paths = (size_t)num_paths;
   e->origin_path_len = 0;
+  e->wrapper = registry_descriptor_wrapper(desc);
   set_script_id(e);
   registry_len++;
 

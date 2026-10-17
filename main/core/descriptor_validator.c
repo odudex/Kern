@@ -192,16 +192,17 @@ check_top_level(const struct wally_descriptor *desc) {
 
 // Signing regenerates sh()/wsh() inner scripts into PSBT_MAX_INNER_SCRIPT_LEN
 // (520) byte buffers, but libwally generates wsh() witness scripts up to 3600
-// bytes. Generating the scriptPubKey needs the inner script's length as
-// workspace, and libwally reports a too-small buffer as WALLY_OK with written >
-// len, so trial-generating into a 520-byte buffer rejects larger inner scripts
-// at load time instead of at signing time.
+// bytes. libwally reports a too-small buffer as WALLY_OK with written > len,
+// so trial-generating the innermost script, as claim_regenerate does, into a
+// 520-byte buffer rejects larger inner scripts at load time instead of at
+// signing time.
 static bool
 descriptor_scripts_are_generatable(const struct wally_descriptor *desc) {
   uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
   size_t written = 0;
-  return wally_descriptor_to_script(desc, 0, 0, 0, 0, 0, 0, work, sizeof(work),
-                                    &written) == WALLY_OK &&
+  uint32_t depth = registry_wrapper_depth(registry_descriptor_wrapper(desc));
+  return wally_descriptor_to_script(desc, depth, 0, 0, 0, 0, 0, work,
+                                    sizeof(work), &written) == WALLY_OK &&
          written <= sizeof(work);
 }
 
