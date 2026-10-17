@@ -79,6 +79,11 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet);
 
+// True when two claims name the same wallet: one registered descriptor, or one
+// single-sig purpose, coin and account. Chain and index may differ.
+KERN_WARN_UNUSED_RESULT bool psbt_claims_share_policy(const claim_t *a,
+                                                      const claim_t *b);
+
 KERN_WARN_UNUSED_RESULT bool
 psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
                        unsigned char *out, size_t out_cap, size_t *out_len);

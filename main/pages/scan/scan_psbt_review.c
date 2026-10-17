@@ -55,8 +55,10 @@ typedef struct {
   uint64_t value;
   char *address;
   uint32_t address_index;
-  bool is_dust;  /* below the relay dust threshold for its script type */
-  char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
+  bool change_chain; /* owned output on its wallet's change chain */
+  bool is_dust;      /* below the relay dust threshold for its script type */
+  char policy[64];   /* wallet of an owned output, as for inputs */
+  char path[80];     /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
 } classified_output_t;
 
 /* Input classification for the review screen. We only need a subset of
@@ -75,6 +77,7 @@ typedef struct {
    * raw path in their own warning sections. */
   char policy[64];
   char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
+  claim_t claim; /* valid when ownership is OWNED_SAFE */
 } classified_input_t;
 
 static const char *ss_script_label(ss_script_type_t script) {
@@ -92,58 +95,68 @@ static const char *ss_script_label(ss_script_type_t script) {
   }
 }
 
-static void format_input_policy(const input_ownership_t *own, char *out,
+static void format_claim_policy(const claim_t *claim, char *out,
                                 size_t out_size) {
   out[0] = '\0';
-  if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE)
-    return;
-  if (own->claim.kind == CLAIM_WHITELIST) {
+  if (claim->kind == CLAIM_WHITELIST) {
     snprintf(out, out_size, "%s @ account %u",
-             ss_script_label(own->claim.whitelist.script),
-             (unsigned)own->claim.whitelist.account);
-  } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
-    const registry_entry_t *entry = own->claim.registry.entry;
+             ss_script_label(claim->whitelist.script),
+             (unsigned)claim->whitelist.account);
+  } else if (claim->kind == CLAIM_REGISTRY && claim->registry.entry) {
+    const registry_entry_t *entry = claim->registry.entry;
     snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
   }
 }
 
-// Classify output as self-transfer, change, owned-unsafe, expected-owned,
-// or spend. For owned-unsafe and expected-owned, the path string is written
-// to path_out (truncated to path_out_size).
-static output_type_t classify_output(size_t output_index,
-                                     uint32_t *address_index_out,
-                                     char *path_out, size_t path_out_size) {
-  bool is_change = false;
-  uint32_t address_index = 0;
+static bool output_shares_input_policy(const classified_input_t *inputs,
+                                       size_t num_inputs,
+                                       const claim_t *source) {
+  for (size_t i = 0; i < num_inputs; i++)
+    if (inputs[i].ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+        psbt_claims_share_policy(&inputs[i].claim, source))
+      return true;
+  return false;
+}
 
+// Classify output as self-transfer, change, owned-unsafe, expected-owned,
+// or spend. Change is an owned output on the change chain of a wallet an
+// owned-safe input spends from; anything else owned is a self-transfer, shown
+// with its address and wallet.
+static void classify_output(const classified_input_t *inputs, size_t num_inputs,
+                            classified_output_t *out) {
   output_ownership_t ownership =
-      psbt_classify_output(scan_ctx.psbt, output_index, scan_ctx.is_testnet);
+      psbt_classify_output(scan_ctx.psbt, out->index, scan_ctx.is_testnet);
 
   switch (ownership.ownership) {
   case PSBT_OWNERSHIP_OWNED_SAFE:
     if (ownership.source.kind == CLAIM_WHITELIST) {
-      is_change = (ownership.source.whitelist.chain == 1);
-      address_index = ownership.source.whitelist.index;
+      out->change_chain = (ownership.source.whitelist.chain == 1);
+      out->address_index = ownership.source.whitelist.index;
     } else {
-      is_change = (ownership.source.registry.multi_index == 1);
-      address_index = ownership.source.registry.child_num;
+      out->change_chain = (ownership.source.registry.multi_index == 1);
+      out->address_index = ownership.source.registry.child_num;
     }
-    *address_index_out = address_index;
-    return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
+    format_claim_policy(&ownership.source, out->policy, sizeof(out->policy));
+    out->type = out->change_chain && output_shares_input_policy(
+                                         inputs, num_inputs, &ownership.source)
+                    ? OUTPUT_TYPE_CHANGE
+                    : OUTPUT_TYPE_SELF_TRANSFER;
+    return;
 
   case PSBT_OWNERSHIP_OWNED_UNSAFE:
   case PSBT_OWNERSHIP_EXPECTED_OWNED:
-    if (path_out && path_out_size > 0 &&
-        !psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
-                             path_out, path_out_size))
-      path_out[0] = '\0'; // renders no path line
-    return ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE
-               ? OUTPUT_TYPE_OWNED_UNSAFE
-               : OUTPUT_TYPE_EXPECTED_OWNED;
+    if (!psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
+                             out->path, sizeof(out->path)))
+      out->path[0] = '\0'; // renders no path line
+    out->type = ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE
+                    ? OUTPUT_TYPE_OWNED_UNSAFE
+                    : OUTPUT_TYPE_EXPECTED_OWNED;
+    return;
 
   case PSBT_OWNERSHIP_EXTERNAL:
   default:
-    return OUTPUT_TYPE_SPEND;
+    out->type = OUTPUT_TYPE_SPEND;
+    return;
   }
 }
 
@@ -357,7 +370,10 @@ static bool review_data_collect(review_data_t *d) {
     input_ownership_t own =
         psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
     in->ownership = own.ownership;
-    format_input_policy(&own, in->policy, sizeof(in->policy));
+    if (own.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
+      in->claim = own.claim;
+      format_claim_policy(&own.claim, in->policy, sizeof(in->policy));
+    }
     if ((own.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE ||
          own.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED) &&
         !psbt_format_keypath(own.raw_keypath, own.raw_keypath_len, in->path,
@@ -394,8 +410,7 @@ static bool review_data_collect(review_data_t *d) {
     d->total_output += out->value;
     out->address = psbt_scriptpubkey_to_address(txo->script, txo->script_len,
                                                 scan_ctx.is_testnet);
-    out->type =
-        classify_output(i, &out->address_index, out->path, sizeof(out->path));
+    classify_output(d->inputs, d->num_inputs, out);
     out->is_dust =
         out->value < psbt_output_dust_threshold(txo->script, txo->script_len);
     if (out->is_dust) {
@@ -430,12 +445,13 @@ static lv_obj_t *section_title(lv_obj_t *parent, const char *text,
   return title;
 }
 
-static void indented_amount_row(lv_obj_t *parent, const char *prefix,
-                                uint64_t sats) {
+static lv_obj_t *indented_amount_row(lv_obj_t *parent, const char *prefix,
+                                     uint64_t sats) {
   lv_obj_t *row =
       scan_create_btc_value_row(parent, prefix, sats, primary_color());
   lv_obj_set_width(row, LV_PCT(100));
   lv_obj_set_style_pad_left(row, 20, 0);
+  return row;
 }
 
 static lv_color_t output_type_color(output_type_t type) {
@@ -550,6 +566,19 @@ static bool render_diagram(lv_obj_t *parent, const review_data_t *d) {
   return true;
 }
 
+/* "<amount> from <wallet>" / "<amount> to <wallet>", wrapping under the
+ * amount when it does not fit beside it. */
+static void append_policy_note(lv_obj_t *row, const char *preposition,
+                               const char *policy) {
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_t *note = lv_label_create(row);
+  lv_label_set_text_fmt(note, " %s %s", preposition, policy);
+  lv_obj_set_style_text_font(note, theme_font_small(), 0);
+  lv_obj_set_style_text_color(note, secondary_color(), 0);
+  lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_max_width(note, LV_PCT(100), 0);
+}
+
 /* ---------- input sections ---------- */
 
 /* One "Inputs(N): <amount> from <policy>" row per distinct signing policy of
@@ -585,14 +614,7 @@ static void render_input_policy_rows(lv_obj_t *parent, const review_data_t *d) {
     lv_obj_t *row =
         scan_create_btc_value_row(parent, prefix, total, primary_color());
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
-
-    lv_obj_t *src = lv_label_create(row);
-    lv_label_set_text_fmt(src, " from %s", policy);
-    lv_obj_set_style_text_font(src, theme_font_small(), 0);
-    lv_obj_set_style_text_color(src, secondary_color(), 0);
-    lv_label_set_long_mode(src, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_max_width(src, LV_PCT(100), 0);
+    append_policy_note(row, "from", policy);
   }
 }
 
@@ -708,18 +730,24 @@ static void render_self_transfers(lv_obj_t *parent, const review_data_t *d) {
     if (out->type != OUTPUT_TYPE_SELF_TRANSFER)
       continue;
     char text[64];
-    snprintf(text, sizeof(text), "Receive #%u: ", out->address_index);
-    indented_amount_row(parent, text, out->value);
+    snprintf(text, sizeof(text),
+             "%s #%u: ", out->change_chain ? "Change" : "Receive",
+             out->address_index);
+    lv_obj_t *row = indented_amount_row(parent, text, out->value);
+    if (out->policy[0])
+      append_policy_note(row, "to", out->policy);
     if (out->address)
       scan_create_address_label(parent, out->address, accent_color(),
                                 ADDRESS_INDENT_PX);
   }
 }
 
-/* Change is verified-owned (derive reproduces the spk on chain=1), so the
- * addresses need no review and a single total keeps the screen focused on
- * outgoing spends. Outputs that cannot be verified classify as EXPECTED_OWNED
- * and render in their own warning section. */
+/* Change is verified-owned (derive reproduces the spk on chain=1, below the
+ * index cap) and returns to a wallet the inputs spend from, so the addresses
+ * need no review and a single total keeps the screen focused on outgoing
+ * spends. Change to any other wallet is listed under Self-Transfer, and
+ * outputs that cannot be verified classify as EXPECTED_OWNED and render in
+ * their own warning section. */
 static void render_change(lv_obj_t *parent, const review_data_t *d) {
   uint64_t total = 0;
   size_t count = 0;

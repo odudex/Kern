@@ -734,6 +734,16 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
   return result;
 }
 
+bool psbt_claims_share_policy(const claim_t *a, const claim_t *b) {
+  if (!a || !b || a->kind != b->kind)
+    return false;
+  if (a->kind == CLAIM_REGISTRY)
+    return a->registry.entry && a->registry.entry == b->registry.entry;
+  return a->whitelist.purpose == b->whitelist.purpose &&
+         a->whitelist.coin == b->whitelist.coin &&
+         a->whitelist.account == b->whitelist.account;
+}
+
 // Only a hardened purpose'/coin' prefix names a coin type: a taproot internal
 // key derived from an unspendable xpub sits at a bare /0/0, which would read
 // as coin 0.

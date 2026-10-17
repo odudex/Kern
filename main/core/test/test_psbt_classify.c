@@ -1855,6 +1855,87 @@ static void test_registry_change_index_cap(void) {
   registry_clear();
 }
 
+/* Change is only change when it returns to the wallet the inputs spend from:
+ * any other provably-owned output is a transfer between wallets. */
+static void test_claims_share_policy(void) {
+  claim_t a = {.kind = CLAIM_WHITELIST,
+               .whitelist = {.script = SS_SCRIPT_P2WPKH,
+                             .purpose = 84,
+                             .coin = 0,
+                             .account = 0,
+                             .chain = 0,
+                             .index = 5}};
+  claim_t b = a;
+  b.whitelist.chain = 1;
+  b.whitelist.index = 17;
+
+  TEST("psbt_claims_share_policy: same single-sig account, other chain");
+  if (psbt_claims_share_policy(&a, &b))
+    PASS();
+  else
+    FAIL("expected a shared policy");
+
+  TEST("psbt_claims_share_policy: other account is another wallet");
+  b.whitelist.account = 1;
+  if (!psbt_claims_share_policy(&a, &b))
+    PASS();
+  else
+    FAIL("account 0 and account 1 must not share a policy");
+
+  TEST("psbt_claims_share_policy: other script type is another wallet");
+  b.whitelist.account = 0;
+  b.whitelist.script = SS_SCRIPT_P2TR;
+  b.whitelist.purpose = 86;
+  if (!psbt_claims_share_policy(&a, &b))
+    PASS();
+  else
+    FAIL("BIP84 and BIP86 must not share a policy");
+
+  registry_clear();
+  if (!registry_add_from_string("a", WSH_MULTIPATH_DESC, STORAGE_FLASH,
+                                false) ||
+      !registry_add_from_string("b",
+                                "wsh(sortedmulti(2,"
+                                "[00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*,"
+                                "[22222222/48'/0'/0'/2']" XPUB_86 "/<0;1>/*))",
+                                STORAGE_FLASH, false)) {
+    TEST("psbt_claims_share_policy: registry setup");
+    FAIL("registry_add_from_string");
+    registry_clear();
+    return;
+  }
+  claim_t ra = {.kind = CLAIM_REGISTRY,
+                .registry = {.entry = registry_find_by_id("a"),
+                             .multi_index = 0,
+                             .child_num = 3}};
+  claim_t ra_change = ra;
+  ra_change.registry.multi_index = 1;
+  claim_t rb = {.kind = CLAIM_REGISTRY,
+                .registry = {.entry = registry_find_by_id("b"),
+                             .multi_index = 1,
+                             .child_num = 3}};
+
+  TEST("psbt_claims_share_policy: same registered descriptor");
+  if (psbt_claims_share_policy(&ra, &ra_change))
+    PASS();
+  else
+    FAIL("expected a shared policy");
+
+  TEST("psbt_claims_share_policy: other registered descriptor");
+  if (!psbt_claims_share_policy(&ra, &rb))
+    PASS();
+  else
+    FAIL("entries a and b must not share a policy");
+
+  TEST("psbt_claims_share_policy: registry vs single-sig");
+  if (!psbt_claims_share_policy(&ra, &a))
+    PASS();
+  else
+    FAIL("a registry claim and a whitelist claim must not share a policy");
+
+  registry_clear();
+}
+
 /* Two inputs spending the same address: one key, two UTXOs. Every field is
  * identical except the prevout txid, which is what address reuse looks like
  * on the wire. */
@@ -2980,6 +3061,7 @@ int main(void) {
   test_psbt_classify_registry_miniscript_owned();
   test_psbt_classify_registry_miniscript_tampered();
   test_registry_change_index_cap();
+  test_claims_share_policy();
 
   printf("\n=== PSBTv2 tests ===\n\n");
 
