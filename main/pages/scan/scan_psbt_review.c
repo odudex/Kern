@@ -324,16 +324,7 @@ typedef struct {
   bool fee_trusted;
 } review_data_t;
 
-/* psbt_scriptpubkey_to_address returns a wally string, except the literal
- * OP_RETURN marker which is plain malloc. */
-static void free_address(char *address) {
-  if (!address)
-    return;
-  if (strcmp(address, "OP_RETURN") == 0)
-    free(address);
-  else
-    wally_free_string(address);
-}
+static void free_address(char *address) { wally_free_string(address); }
 
 static void review_data_free(review_data_t *d) {
   if (d->inputs)

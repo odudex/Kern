@@ -7,6 +7,7 @@
  * policy changes during a secret operation; no global callback swapping. */
 static _Thread_local unsigned secret_depth;
 static void *(*default_malloc)(size_t);
+static void (*default_free)(void *);
 
 static void *policy_malloc(size_t size) {
   return secret_depth ? kern_secret_alloc(size) : default_malloc(size);
@@ -17,16 +18,20 @@ static void __attribute__((constructor)) init_secret_policy(void) {
   if (wally_get_operations(&ops) != WALLY_OK)
     abort();
   default_malloc = ops.malloc_fn;
+  default_free = ops.free_fn;
   ops.malloc_fn = policy_malloc;
   if (wally_set_operations(&ops) != WALLY_OK)
     abort();
 }
 
-/* Check the hook before every protected operation: a future allocator
- * override must fail closed instead of silently changing placement. */
+/* Check the hooks before every protected operation: a future allocator
+ * override must fail closed instead of silently changing placement, and a
+ * different free_fn would no longer release the kern_secret_alloc blocks
+ * policy_malloc hands out (see kern_wally.h). */
 static int enter_secret_operation(void) {
   struct wally_operations ops = {.struct_size = sizeof(ops)};
-  if (wally_get_operations(&ops) != WALLY_OK || ops.malloc_fn != policy_malloc)
+  if (wally_get_operations(&ops) != WALLY_OK ||
+      ops.malloc_fn != policy_malloc || ops.free_fn != default_free)
     return WALLY_ERROR;
   ++secret_depth;
   return WALLY_OK;
@@ -65,14 +70,6 @@ int kern_bip39_mnemonic_from_bytes(const struct words *words,
   if (out)
     *out = NULL;
   SECRET_CALL(bip39_mnemonic_from_bytes(words, entropy, len, out));
-}
-
-int kern_bip39_mnemonic_to_seed(const char *mnemonic, const char *passphrase,
-                                unsigned char *out, size_t len,
-                                size_t *written) {
-  if (written)
-    *written = 0;
-  SECRET_CALL(bip39_mnemonic_to_seed(mnemonic, passphrase, out, len, written));
 }
 
 int kern_bip39_mnemonic_to_seed512(const char *mnemonic, const char *passphrase,

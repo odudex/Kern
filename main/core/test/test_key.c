@@ -448,6 +448,32 @@ static void test_internal_memory_exhaustion(void) {
   key_unload();
 }
 
+static void other_free(void *p) { free(p); }
+
+/* Secret operations rely on libwally's free_fn releasing kern_secret_alloc
+ * blocks; another free_fn must make them fail closed. */
+static void test_free_fn_change_fails_closed(void) {
+  struct wally_operations ops = {.struct_size = sizeof(ops)};
+  if (wally_get_operations(&ops) != WALLY_OK) {
+    check("read libwally operations", false);
+    return;
+  }
+  struct wally_operations swapped = ops;
+  swapped.free_fn = other_free;
+  unsigned char entropy[16] = {0};
+  char *phrase = NULL;
+  bool refused = wally_set_operations(&swapped) == WALLY_OK &&
+                 kern_bip39_mnemonic_from_bytes(NULL, entropy, sizeof(entropy),
+                                                &phrase) == WALLY_ERROR &&
+                 !phrase;
+  bool restored = wally_set_operations(&ops) == WALLY_OK &&
+                  kern_bip39_mnemonic_from_bytes(NULL, entropy, sizeof(entropy),
+                                                 &phrase) == WALLY_OK;
+  SECURE_FREE_STRING(phrase);
+  check("a swapped free_fn makes secret operations fail closed",
+        refused && restored);
+}
+
 int main(void) {
   printf("=== key tests ===\n\n");
   test_unloaded();
@@ -459,6 +485,7 @@ int main(void) {
   test_set_network_keeps_passphrase();
   test_unload();
   test_internal_memory_exhaustion();
+  test_free_fn_change_fails_closed();
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);
   return tests_failed == 0 ? 0 : 1;

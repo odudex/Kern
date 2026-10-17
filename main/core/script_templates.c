@@ -171,7 +171,7 @@ char *script_template_address_from_spk(const unsigned char *script,
         WALLY_OK)
       return NULL;
   } else if (script_type == WALLY_SCRIPT_TYPE_OP_RETURN) {
-    address = strdup("OP_RETURN");
+    address = wally_strdup("OP_RETURN");
   }
 
   return address;
