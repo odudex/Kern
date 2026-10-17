@@ -107,4 +107,11 @@ registry_match_keypath(const uint8_t *keypath, size_t keypath_len,
                        registry_match_cursor_t *cursor, uint32_t *multi_index,
                        uint32_t *child_num);
 
+/* The full path `key` takes in the script at (multi_index, child_num): its
+ * origin, then its child path expanded. `path_out` holds
+ * MAX_KEYPATH_TOTAL_DEPTH components. */
+KERN_WARN_UNUSED_RESULT bool
+registry_own_key_path(const registry_own_key_t *key, uint32_t multi_index,
+                      uint32_t child_num, uint32_t *path_out, size_t *len_out);
+
 #endif // REGISTRY_H

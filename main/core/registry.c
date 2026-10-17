@@ -323,6 +323,29 @@ registry_entry_t *registry_match_keypath(const uint8_t *keypath,
   return NULL;
 }
 
+bool registry_own_key_path(const registry_own_key_t *key, uint32_t multi_index,
+                           uint32_t child_num, uint32_t *path_out,
+                           size_t *len_out) {
+  if (!key || !path_out || !len_out ||
+      key->origin_path_len > MAX_KEYPATH_TOTAL_DEPTH)
+    return false;
+  memcpy(path_out, key->origin_path, key->origin_path_len * sizeof(uint32_t));
+  size_t written = 0;
+  size_t len = strlen(key->child_path);
+  if (len &&
+      bip32_path_from_str_n(key->child_path, len, child_num, multi_index,
+                            BIP32_FLAG_STR_WILDCARD | BIP32_FLAG_STR_BARE |
+                                BIP32_FLAG_STR_MULTIPATH,
+                            path_out + key->origin_path_len,
+                            MAX_KEYPATH_TOTAL_DEPTH - key->origin_path_len,
+                            &written) != WALLY_OK)
+    return false;
+  if (written > MAX_KEYPATH_TOTAL_DEPTH - key->origin_path_len)
+    return false;
+  *len_out = key->origin_path_len + written;
+  return true;
+}
+
 /* Every key carrying `wallet_fp`, in key order. Keys past
  * REGISTRY_MAX_OWN_KEYS, or whose path does not fit, cannot be matched to a
  * PSBT keypath; that fails closed. */

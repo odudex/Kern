@@ -819,13 +819,19 @@ bool psbt_format_keypath(const unsigned char *raw_keypath,
  * taproot key-path field, and the taproot script-path leaf map. Counted before
  * and after each signing call so `signed_ok` reflects signatures that actually
  * landed, not calls that merely returned WALLY_OK. */
+static bool tap_key_sig_present(const struct wally_psbt *psbt, size_t i) {
+  size_t n = 0;
+  return wally_psbt_get_input_taproot_signature_len(psbt, i, &n) == WALLY_OK &&
+         n;
+}
+
 static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
   size_t count = 0;
   size_t n = 0;
 
   if (wally_psbt_get_input_signatures_size(psbt, i, &n) == WALLY_OK)
     count += n;
-  if (wally_psbt_get_input_taproot_signature_len(psbt, i, &n) == WALLY_OK && n)
+  if (tap_key_sig_present(psbt, i))
     count++;
   count += psbt->inputs[i].taproot_leaf_signatures.num_items;
 
@@ -857,6 +863,9 @@ typedef struct {
   struct wally_map signatures;
   struct wally_map leaf_signatures;
   struct wally_map fields;
+  /* Every key this input was signed with, for the completeness check. */
+  unsigned char signing_pubkeys[REGISTRY_MAX_OWN_KEYS][EC_PUBLIC_KEY_LEN];
+  size_t num_signing_pubkeys;
 } input_plan_t;
 
 /* Safe on an untouched plan, and safe twice, so every exit can run it over
@@ -907,6 +916,102 @@ static void restore_input_state(struct wally_psbt *psbt, size_t i,
                    &plan->leaf_signatures);
   wally_map_assign(&psbt->inputs[i].psbt_fields, &plan->fields);
   release_input_state(plan);
+}
+
+typedef struct {
+  uint32_t path[MAX_KEYPATH_TOTAL_DEPTH];
+  size_t len;
+} signing_path_t;
+
+static bool add_signing_path(signing_path_t *paths, size_t *count,
+                             const uint32_t *path, size_t len) {
+  if (*count >= REGISTRY_MAX_OWN_KEYS || len > MAX_KEYPATH_TOTAL_DEPTH)
+    return false;
+  for (size_t i = 0; i < *count; i++)
+    if (paths[i].len == len &&
+        memcmp(paths[i].path, path, len * sizeof(uint32_t)) == 0)
+      return false;
+  memcpy(paths[*count].path, path, len * sizeof(uint32_t));
+  paths[*count].len = len;
+  (*count)++;
+  return true;
+}
+
+/* The keys to sign an input with. A registry claim proves every own key of
+ * its descriptor at the claim's (multi_index, child_num), not only the one
+ * whose keypath matched: when one seed holds keys in two multipath groups
+ * (a primary <0;1> and a recovery <2;3> path), both are in the script. Keys
+ * the PSBT merely lists are never signed with. */
+static size_t input_signing_paths(const input_ownership_t *own,
+                                  signing_path_t *paths) {
+  size_t count = 0;
+  if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE) {
+    /* OWNED_UNSAFE / EXPECTED_OWNED: the policy already vetted the raw path
+     * supplied in the PSBT. */
+    uint32_t raw[MAX_KEYPATH_TOTAL_DEPTH];
+    size_t len = 0;
+    if (bip32_path_from_keypath(own->raw_keypath, own->raw_keypath_len, raw,
+                                &len, MAX_KEYPATH_TOTAL_DEPTH))
+      add_signing_path(paths, &count, raw, len);
+    return count;
+  }
+
+  add_signing_path(paths, &count, own->claim.derived_path,
+                   own->claim.derived_path_len);
+  if (own->claim.kind != CLAIM_REGISTRY || !own->claim.registry.entry)
+    return count;
+  const registry_entry_t *e = own->claim.registry.entry;
+  for (size_t k = 0; k < e->num_own_keys; k++) {
+    uint32_t path[MAX_KEYPATH_TOTAL_DEPTH];
+    size_t len = 0;
+    if (registry_own_key_path(&e->own_keys[k], own->claim.registry.multi_index,
+                              own->claim.registry.child_num, path, &len))
+      add_signing_path(paths, &count, path, len);
+  }
+  return count;
+}
+
+static bool map_has_key(const struct wally_map *map, const unsigned char *key,
+                        size_t key_len) {
+  size_t idx = 0;
+  return wally_map_find(map, key, key_len, &idx) == WALLY_OK && idx != 0;
+}
+
+static bool leaf_signed_by(const struct wally_psbt_input *inp,
+                           const unsigned char *xonly) {
+  const struct wally_map *sigs = &inp->taproot_leaf_signatures;
+  for (size_t i = 0; i < sigs->num_items; i++)
+    if (sigs->items[i].key_len > EC_XONLY_PUBLIC_KEY_LEN &&
+        memcmp(sigs->items[i].key, xonly, EC_XONLY_PUBLIC_KEY_LEN) == 0)
+      return true;
+  return false;
+}
+
+/* Whether every key this input was signed with that the PSBT also lists for
+ * it now has a signature there. A listed key left unsigned means part of the
+ * policy, a second multipath group say, could not be signed. */
+static bool input_signed_by_listed_keys(const struct wally_psbt *psbt, size_t i,
+                                        const input_plan_t *plan) {
+  const struct wally_psbt_input *inp = &psbt->inputs[i];
+  unsigned char internal[EC_XONLY_PUBLIC_KEY_LEN];
+  size_t internal_len = 0;
+  bool has_internal =
+      wally_psbt_get_input_taproot_internal_key(
+          psbt, i, internal, sizeof(internal), &internal_len) == WALLY_OK &&
+      internal_len == sizeof(internal);
+  for (size_t k = 0; k < plan->num_signing_pubkeys; k++) {
+    const unsigned char *pub = plan->signing_pubkeys[k];
+    const unsigned char *xonly = pub + 1;
+    if (map_has_key(&inp->keypaths, pub, EC_PUBLIC_KEY_LEN) &&
+        !map_has_key(&inp->signatures, pub, EC_PUBLIC_KEY_LEN))
+      return false;
+    if (map_has_key(&inp->taproot_leaf_paths, xonly, EC_XONLY_PUBLIC_KEY_LEN) &&
+        !leaf_signed_by(inp, xonly) &&
+        !(has_internal && memcmp(internal, xonly, sizeof(internal)) == 0 &&
+          tap_key_sig_present(psbt, i)))
+      return false;
+  }
+  return true;
 }
 
 /* True when `policy` clears this input for signing. */
@@ -996,44 +1101,32 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     if (plan[i].denied)
       continue;
 
-    const uint32_t *path = NULL;
-    size_t path_len = 0;
-    uint32_t raw_comps[MAX_KEYPATH_TOTAL_DEPTH];
-
-    if (ownership.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
-      path = ownership.claim.derived_path;
-      path_len = ownership.claim.derived_path_len;
-    } else {
-      /* OWNED_UNSAFE / EXPECTED_OWNED — policy already vetted above; derive
-       * from the raw path supplied in the PSBT. */
-      if (!bip32_path_from_keypath(ownership.raw_keypath,
-                                   ownership.raw_keypath_len, raw_comps,
-                                   &path_len, MAX_KEYPATH_TOTAL_DEPTH))
-        continue;
-      path = raw_comps;
-    }
-
-    if (!path || path_len > MAX_KEYPATH_TOTAL_DEPTH) {
+    signing_path_t paths[REGISTRY_MAX_OWN_KEYS];
+    size_t num_paths = input_signing_paths(&ownership, paths);
+    if (!num_paths)
       ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
-      continue;
-    }
 
-    struct ext_key *derived_key = NULL;
-    if (!key_get_derived_key_components(path, path_len, &derived_key)) {
-      ESP_LOGE(TAG, "Failed to derive key for input %zu", i);
-      continue;
-    }
+    for (size_t p = 0; p < num_paths; p++) {
+      struct ext_key *derived_key = NULL;
+      if (!key_get_derived_key_components(paths[p].path, paths[p].len,
+                                          &derived_key)) {
+        ESP_LOGE(TAG, "Failed to derive key %zu for input %zu", p, i);
+        continue;
+      }
 
-    plan[i].attempted = true;
+      plan[i].attempted = true;
+      memcpy(plan[i].signing_pubkeys[plan[i].num_signing_pubkeys++],
+             derived_key->pub_key, EC_PUBLIC_KEY_LEN);
 
-    int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
-                              EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
-    bip32_key_free(derived_key);
+      int ret = wally_psbt_sign(psbt, derived_key->priv_key + 1,
+                                EC_PRIVATE_KEY_LEN, EC_FLAG_GRIND_R);
+      bip32_key_free(derived_key);
 
-    if (ret == WALLY_OK) {
-      signatures_added++;
-    } else {
-      ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
+      if (ret == WALLY_OK) {
+        signatures_added++;
+      } else {
+        ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
+      }
     }
   }
 
@@ -1043,14 +1136,19 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     restore_input_state(psbt, i, &plan[i], result);
 
   /* Tally against the final PSBT rather than per call: what matters is
-   * whether an input we cleared ended the pass holding a new signature. */
+   * whether an input we cleared ended the pass holding a new signature, by
+   * every key of ours it lists. */
   if (result) {
     for (size_t i = 0; i < num_inputs; i++) {
       if (!plan[i].attempted)
         continue;
       result->attempted++;
-      if (input_signature_count(psbt, i) > plan[i].sig_baseline)
+      if (input_signature_count(psbt, i) <= plan[i].sig_baseline)
+        continue;
+      if (input_signed_by_listed_keys(psbt, i, &plan[i]))
         result->signed_ok++;
+      else
+        result->missing_keys++;
     }
   }
 

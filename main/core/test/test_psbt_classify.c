@@ -2152,6 +2152,214 @@ static void test_tr_script_path_denied_input(void) {
   registry_clear();
 }
 
+/* One seed in two multipath groups of one policy: a primary <0;1> key and a
+ * recovery <2;3> key, the Liana same-signer layout. Every own key of the
+ * claimed descriptor at the input's index must sign, and an input still
+ * missing one of them is not complete. */
+static char k48_xpub[128];
+
+static const char *two_group_desc(char *buf, size_t len, bool taproot) {
+  if (taproot)
+    snprintf(buf, len,
+             "tr(" NUMS_H ",{and_v(v:pk([00000000/48'/0'/0'/2']%s/<0;1>/*),"
+             "pk([11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*)),"
+             "and_v(v:pk([00000000/48'/0'/0'/2']%s/<2;3>/*),older(144))})",
+             k48_xpub, k48_xpub);
+  else
+    snprintf(buf, len,
+             "wsh(or_d(multi(2,[00000000/48'/0'/0'/2']%s/<0;1>/*,"
+             "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*),"
+             "and_v(v:pkh([00000000/48'/0'/0'/2']%s/<2;3>/*),older(144))))",
+             k48_xpub, k48_xpub);
+  return buf;
+}
+
+static bool load_k48_xpub(void) {
+  char *xpub = NULL;
+  if (!key_get_xpub("m/48'/0'/0'/2'", &xpub))
+    return false;
+  snprintf(k48_xpub, sizeof(k48_xpub), "%s", xpub);
+  wally_free_string(xpub);
+  return true;
+}
+
+static void k48_pubkey(uint32_t chain, uint32_t index,
+                       unsigned char out[EC_PUBLIC_KEY_LEN]) {
+  char path[64];
+  struct ext_key *k = NULL;
+  snprintf(path, sizeof(path), "m/48'/0'/0'/2'/%u/%u", (unsigned)chain,
+           (unsigned)index);
+  memset(out, 0, EC_PUBLIC_KEY_LEN);
+  if (key_get_derived_key(path, &k)) {
+    memcpy(out, k->pub_key, EC_PUBLIC_KEY_LEN);
+    bip32_key_free(k);
+  }
+}
+
+static void add_k48_keypath(struct wally_psbt *psbt, uint32_t chain,
+                            uint32_t index) {
+  unsigned char pub[EC_PUBLIC_KEY_LEN];
+  const uint32_t path[] = {0x80000030, 0x80000000, 0x80000000,
+                           0x80000002, chain,      index};
+  const unsigned char fp[4] = {0};
+  k48_pubkey(chain, index, pub);
+  wally_psbt_add_input_keypath(psbt, 0, pub, sizeof(pub), fp, sizeof(fp), path,
+                               6);
+}
+
+/* One input on the wsh two-group policy at (0, 3), listing our key at the
+ * given chains only. */
+static struct wally_psbt *make_two_group_wsh_psbt(const registry_entry_t *e,
+                                                  const uint32_t *chains,
+                                                  size_t num_chains) {
+  uint8_t spk[34], witness[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t spk_len = 0, witness_len = 0;
+  if (wally_descriptor_to_script(e->desc, 1, 0, 0, 0, 3, 0, witness,
+                                 sizeof(witness), &witness_len) != WALLY_OK ||
+      witness_len > sizeof(witness) ||
+      wally_witness_program_from_bytes(witness, witness_len,
+                                       WALLY_SCRIPT_SHA256, spk, sizeof(spk),
+                                       &spk_len) != WALLY_OK)
+    return NULL;
+  struct wally_psbt *psbt = make_test_psbt(spk, spk_len, NULL, 0, NULL, 0);
+  if (!psbt)
+    return NULL;
+  wally_map_clear(&psbt->inputs[0].keypaths);
+  if (wally_psbt_set_input_witness_script(psbt, 0, witness, witness_len) !=
+      WALLY_OK) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  for (size_t i = 0; i < num_chains; i++)
+    add_k48_keypath(psbt, chains[i], 3);
+  return psbt;
+}
+
+static bool has_partial_sig(const struct wally_psbt *psbt, uint32_t chain) {
+  unsigned char pub[EC_PUBLIC_KEY_LEN];
+  size_t idx = 0;
+  k48_pubkey(chain, 3, pub);
+  return wally_map_find(&psbt->inputs[0].signatures, pub, sizeof(pub), &idx) ==
+             WALLY_OK &&
+         idx != 0;
+}
+
+static void test_sign_every_own_key_wsh(void) {
+  char desc[1024];
+  registry_clear();
+  if (!registry_add_from_string("liana",
+                                two_group_desc(desc, sizeof(desc), false),
+                                STORAGE_FLASH, false)) {
+    TEST("two-group wsh: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const registry_entry_t *e = registry_find_by_id("liana");
+
+  TEST("two-group wsh: both own keys sign");
+  const uint32_t both[] = {0, 2};
+  struct wally_psbt *psbt = make_two_group_wsh_psbt(e, both, 2);
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_classify_input(psbt, 0, false).ownership !=
+           PSBT_OWNERSHIP_OWNED_SAFE)
+    FAIL("expected OWNED_SAFE");
+  else if (psbt_sign(psbt, false, policy, &res) == 0 || res.signed_ok != 1 ||
+           res.missing_keys != 0)
+    FAIL("expected a complete input");
+  else if (!has_partial_sig(psbt, 0) || !has_partial_sig(psbt, 2))
+    FAIL("expected partial signatures by K/0/3 and K/2/3");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("two-group wsh: PSBT pruned to the recovery key signs it");
+  const uint32_t recovery[] = {2};
+  psbt = make_two_group_wsh_psbt(e, recovery, 1);
+  input_ownership_t own = {0};
+  if (psbt)
+    own = psbt_classify_input(psbt, 0, false);
+  if (!psbt)
+    FAIL("fixture");
+  else if (own.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+           own.claim.registry.multi_index != 0 ||
+           own.claim.registry.child_num != 3)
+    FAIL("expected an OWNED_SAFE claim at group 0, index 3");
+  else if (psbt_sign(psbt, false, policy, &res) == 0 || res.signed_ok != 1)
+    FAIL("expected a complete input");
+  else if (!has_partial_sig(psbt, 2) ||
+           psbt->inputs[0].signatures.num_items != 1)
+    FAIL("expected only the K/2/3 signature");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
+static void test_sign_every_own_key_tr(void) {
+  char desc[1024];
+  registry_clear();
+  two_group_desc(desc, sizeof(desc), true);
+  if (!registry_add_from_string("liana", desc, STORAGE_FLASH, false)) {
+    TEST("two-group tr: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name), "two-group tr v%u: both leaves signed",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {desc};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 3, PSBT_VERSIONS[v]);
+    psbt_sign_policy_t policy = {0};
+    psbt_sign_result_t res;
+    if (!psbt)
+      FAIL("fixture");
+    else if (psbt_sign(psbt, false, policy, &res) == 0 || res.signed_ok != 1 ||
+             res.missing_keys != 0)
+      FAIL("expected a complete input");
+    else if (psbt->inputs[0].taproot_leaf_signatures.num_items != 2)
+      FAIL("expected a TAP_SCRIPT_SIG on each leaf");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  /* Without the recovery leaf's script libwally cannot sign it, though the
+   * PSBT lists our recovery key: the input is not complete. */
+  TEST("two-group tr: an unsignable listed key leaves the input incomplete");
+  const char *descs[] = {desc};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 3, WALLY_PSBT_VERSION_0);
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  if (!psbt || psbt->inputs[0].taproot_leaf_scripts.num_items != 2) {
+    FAIL("fixture");
+  } else {
+    /* Drop the leaf whose script ends in OP_CSV (older(144)). */
+    struct wally_map *leaves = &psbt->inputs[0].taproot_leaf_scripts;
+    for (size_t j = 0; j < leaves->num_items; j++) {
+      const struct wally_map_item *it = &leaves->items[j];
+      if (it->value_len &&
+          it->value[it->value_len - 1] == OP_CHECKSEQUENCEVERIFY) {
+        wally_map_remove(leaves, it->key, it->key_len);
+        break;
+      }
+    }
+    if (leaves->num_items != 1)
+      FAIL("fixture: recovery leaf not found");
+    else if (psbt_sign(psbt, false, policy, &res) == 0 || res.attempted != 1 ||
+             res.signed_ok != 0 || res.missing_keys != 1)
+      FAIL("expected one input missing a key");
+    else
+      PASS();
+  }
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
 /* A segwit input may carry only its previous transaction. The pinned fork
  * signs it with the BIP143 sighash; upstream libwally used the
  * legacy one there, an invalid signature counted as signed. */
@@ -3512,6 +3720,16 @@ int main(void) {
   test_tr_keypath_denied_input();
   test_tr_change_output_owned();
   test_tr_script_path_denied_input();
+
+  printf("\n=== multi-key signing tests ===\n\n");
+
+  if (!load_k48_xpub()) {
+    TEST("load K xpub");
+    FAIL("key_get_xpub");
+  } else {
+    test_sign_every_own_key_wsh();
+    test_sign_every_own_key_tr();
+  }
 
   printf("\n=== PSBTv2 tests ===\n\n");
 

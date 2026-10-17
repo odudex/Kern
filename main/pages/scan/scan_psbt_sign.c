@@ -103,15 +103,25 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   // harvesting one signature per session relies on: each round looks like a
   // clean success. Name the shortfall before the export menu appears.
   if (sign_result.signed_ok < sign_result.attempted) {
+    size_t shortfall = sign_result.attempted - sign_result.signed_ok;
     char body[320];
-    snprintf(body, sizeof(body),
-             "%zu of %zu inputs belonging to this wallet did not receive a "
-             "signature.\n\n"
-             "The exported PSBT is incomplete. If you did not expect this, do "
-             "not treat the transaction as reviewed -- re-export it from the "
-             "coordinator with full previous transactions and try again.",
-             sign_result.attempted - sign_result.signed_ok,
-             sign_result.attempted);
+    if (sign_result.missing_keys == shortfall)
+      snprintf(body, sizeof(body),
+               "%zu of %zu inputs belonging to this wallet were signed by only "
+               "some of the keys of this wallet they list.\n\n"
+               "The exported PSBT is incomplete: a spending path that needs "
+               "another key of this wallet, such as a recovery path, is "
+               "still unsigned.",
+               shortfall, sign_result.attempted);
+    else
+      snprintf(body, sizeof(body),
+               "%zu of %zu inputs belonging to this wallet did not receive a "
+               "signature.\n\n"
+               "The exported PSBT is incomplete. If you did not expect this, "
+               "do not treat the transaction as reviewed -- re-export it from "
+               "the coordinator with full previous transactions and try "
+               "again.",
+               shortfall, sign_result.attempted);
     dialog_show_info("Incomplete signing", body, partial_sign_ack_cb, NULL,
                      DIALOG_STYLE_FULLSCREEN);
     return;

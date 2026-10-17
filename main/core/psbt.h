@@ -231,6 +231,10 @@ typedef struct {
 // since silently exporting a partly-signed PSBT is exactly what an attacker
 // harvesting one signature per session wants.
 //
+// `missing_keys` counts inputs that gained a signature but still list a key of
+// ours, from another multipath group of the same policy say, that signed
+// nothing; they are not in `signed_ok`.
+//
 // `blocked` counts inputs the policy refused that libwally signed anyway
 // because they name a key used elsewhere in the transaction, and whose
 // signature was therefore discarded. A PSBT arranged that way is not something
@@ -238,6 +242,7 @@ typedef struct {
 typedef struct {
   size_t attempted;
   size_t signed_ok;
+  size_t missing_keys;
   size_t blocked;
 } psbt_sign_result_t;
 
