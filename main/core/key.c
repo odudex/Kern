@@ -16,8 +16,6 @@ static unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
 static char *stored_mnemonic = NULL;
 static bool key_loaded = false;
 
-#define KEY_MAX_DERIVATION_DEPTH 10
-
 static void fingerprint_to_hex(const unsigned char *fp, char *hex_out) {
   for (int i = 0; i < BIP32_KEY_FINGERPRINT_LEN; i++) {
     sprintf(hex_out + (i * 2), "%02x", fp[i]);

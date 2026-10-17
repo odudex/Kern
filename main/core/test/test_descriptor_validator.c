@@ -182,6 +182,22 @@ static const char *xpub_at(const char *path) {
   return slot;
 }
 
+/* The xpub at `path` as a coordinator rebuilds it from a UR hd-key without the
+ * parent fingerprint: same key and chain code, different base58. */
+static const char *xpub_without_parent(const char *path) {
+  struct ext_key k;
+  char *xpub = NULL;
+  if (bip32_key_from_base58(xpub_at(path), &k) != WALLY_OK)
+    return "";
+  memset(k.parent160, 0, sizeof(k.parent160));
+  if (bip32_key_to_base58(&k, BIP32_FLAG_KEY_PUBLIC, &xpub) != WALLY_OK)
+    return "";
+  char *slot = xpub_buf[xpub_next++ % 16];
+  snprintf(slot, sizeof(xpub_buf[0]), "%s", xpub);
+  wally_free_string(xpub);
+  return slot;
+}
+
 /* Captured while a key is loaded, for the keyless watch-only stage. */
 static char X84_0[120], X84_1[120], X86_0[120], X86_1[120];
 
@@ -376,6 +392,50 @@ static void test_own_keys(void) {
   check("own key reused across spending paths accepted",
         run(reuse) == VALIDATION_SUCCESS);
   check("only the genuine descriptors registered", registry_count() == 3);
+  registry_clear();
+}
+
+/* Own keys are compared by key material at the parsed origin path. */
+static void test_own_key_material(void) {
+  registry_clear();
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+
+  const char *rebuilt = xpub_without_parent("m/84'/0'/0'");
+  check("rebuilt xpub differs in base58",
+        rebuilt[0] && strcmp(rebuilt, xpub_at("m/84'/0'/0'")) != 0);
+  const char *no_parent = descf("wpkh([" FP "/84'/0'/0']%s/0/*)", rebuilt);
+  check("xpub without its parent fingerprint accepted",
+        run(no_parent) == VALIDATION_SUCCESS &&
+            descriptor_validate_keyed(no_parent, NULL) == VALIDATION_SUCCESS);
+
+  const char *long_origin = "2147483647'/2147483647'/2147483647'/"
+                            "2147483647'/2147483647'/2147483647'";
+  char long_path[80];
+  snprintf(long_path, sizeof(long_path), "m/%s", long_origin);
+  const char *long_desc =
+      descf("wpkh([" FP "/%s]%s/0/*)", long_origin, xpub_at(long_path));
+  check("origin over 69 characters verified at its full path",
+        strlen(long_origin) > 69 && run(long_desc) == VALIDATION_SUCCESS);
+
+  const char *master = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                             "[" FP "]%s/0/*))",
+                             a, xpub_at("m"));
+  check("master key carrying our fingerprint accepted",
+        run(master) == VALIDATION_SUCCESS);
+
+  const char *deepest = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                              "[" FP "/0/1/2/3/4/5/6/7/8/9]%s/0/*))",
+                              a, xpub_at("m/0/1/2/3/4/5/6/7/8/9"));
+  check("origin at the derivation limit accepted",
+        run(deepest) == VALIDATION_SUCCESS);
+  const char *too_deep = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[" FP "/0/1/2/3/4/5/6/7/8/9/10]%s/0/*))",
+                               a, xpub_at("m/0/1/2/3/4/5/6/7/8/9"));
+  check("origin deeper than the derivation limit rejected",
+        run(too_deep) == VALIDATION_PARSE_ERROR && info_calls == 0 &&
+            descriptor_validate_keyed(too_deep, NULL) ==
+                VALIDATION_PARSE_ERROR);
+  check("four descriptors registered", registry_count() == 4);
   registry_clear();
 }
 
@@ -777,6 +837,7 @@ int main(void) {
   test_static_gates();
   test_key_matching();
   test_own_keys();
+  test_own_key_material();
   test_single_sig_success();
   test_purpose_binding_warning();
   test_multisig_and_miniscript();

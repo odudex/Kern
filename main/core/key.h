@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <wally_bip32.h>
 
+#define KEY_MAX_DERIVATION_DEPTH 10
+
 KERN_WARN_UNUSED_RESULT bool key_is_loaded(void);
 /* Owned mnemonic/private-key allocations require internal RAM on firmware.
  * False includes internal-memory exhaustion; no PSRAM fallback is attempted. */

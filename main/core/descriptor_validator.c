@@ -12,6 +12,7 @@
 #include <wally_core.h>
 #include <wally_descriptor.h>
 
+#include "bip32_path.h"
 #include "descriptor_checksum.h"
 #include "miniscript_policy.h"
 #include "psbt_internal.h"
@@ -156,25 +157,16 @@ static int find_matching_key_index(const struct wally_descriptor *descriptor,
   return -1;
 }
 
-// Extract xpub from key string
-// Key format: "[fingerprint/path]xpub..." or just "xpub..."
+// Extract xpub from a wally_descriptor_get_key() string, which carries no
+// origin: "xpub..." (NULL for raw keys)
 static char *extract_xpub_from_key(const char *key_str) {
   if (!key_str) {
     return NULL;
   }
 
-  // Find start of xpub (skip origin info if present)
-  const char *xpub_start = key_str;
-  if (key_str[0] == '[') {
-    const char *close = strchr(key_str, ']');
-    if (close) {
-      xpub_start = close + 1;
-    }
-  }
-
   // Find xpub prefix (xpub or tpub)
-  const char *prefix = strstr(xpub_start, "pub");
-  if (!prefix || prefix == xpub_start) {
+  const char *prefix = strstr(key_str, "pub");
+  if (!prefix || prefix == key_str) {
     return NULL;
   }
   prefix--; // Back up to 'x' or 't'
@@ -613,40 +605,54 @@ static_checks(struct wally_descriptor *descriptor) {
   return VALIDATION_SUCCESS;
 }
 
-/* The wallet's xpub at key_index's origin path must equal the descriptor's. A
- * matching fingerprint alone is attacker-controllable text. */
+/* Depth, parent fingerprint and child number are metadata that coordinators
+ * rebuild, e.g. from a UR hd-key without the parent fingerprint: compare the
+ * key and chain code only. */
+static bool xpub_matches(const char *xpub, const struct ext_key *ours) {
+  struct ext_key xkey;
+  if (bip32_key_from_base58(xpub, &xkey) != WALLY_OK)
+    return false;
+  bool match =
+      memcmp(xkey.pub_key, ours->pub_key, sizeof(xkey.pub_key)) == 0 &&
+      memcmp(xkey.chain_code, ours->chain_code, sizeof(xkey.chain_code)) == 0;
+  wally_bzero(&xkey, sizeof(xkey));
+  return match;
+}
+
+/* Our key at key_index's origin path must be the descriptor's key. A matching
+ * fingerprint alone is attacker-controllable text. */
 static descriptor_validation_result_t
-verify_xpub_match(const struct wally_descriptor *descriptor, int key_index) {
-  char *key_str = NULL;
-  if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK)
+verify_own_key(const struct wally_descriptor *descriptor, int key_index) {
+  uint32_t features = 0;
+  char *path_str = NULL;
+  if (wally_descriptor_get_key_features(descriptor, key_index, &features) !=
+          WALLY_OK ||
+      wally_descriptor_get_key_origin_path_str(descriptor, (uint32_t)key_index,
+                                               &path_str) != WALLY_OK ||
+      !path_str)
     return VALIDATION_INTERNAL_ERROR;
-  char *descriptor_xpub = extract_xpub_from_key(key_str);
-  wally_free_string(key_str);
-  if (!descriptor_xpub)
+  uint32_t path[KEY_MAX_DERIVATION_DEPTH] = {0};
+  size_t depth = 0;
+  bool path_ok =
+      path_str[0] == '\0' ||
+      bip32_path_parse(path_str, path, &depth, KEY_MAX_DERIVATION_DEPTH);
+  wally_free_string(path_str);
+  if (!path_ok || (features & WALLY_MS_IS_RAW))
     return VALIDATION_PARSE_ERROR;
 
-  char *origin_path_str = NULL;
-  char full_path[72];
-  if (wally_descriptor_get_key_origin_path_str(descriptor, (uint32_t)key_index,
-                                               &origin_path_str) != WALLY_OK ||
-      !origin_path_str) {
-    free(descriptor_xpub);
+  char *key_str = NULL;
+  struct ext_key *ours = NULL;
+  if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK ||
+      !key_get_derived_key_components(path, depth, &ours)) {
+    wally_free_string(key_str);
     return VALIDATION_INTERNAL_ERROR;
   }
-  snprintf(full_path, sizeof(full_path), "m/%s", origin_path_str);
-  wally_free_string(origin_path_str);
-
-  char *wallet_xpub = NULL;
-  if (!key_get_xpub(full_path, &wallet_xpub)) {
-    free(descriptor_xpub);
-    return VALIDATION_INTERNAL_ERROR;
-  }
-  bool xpub_match = strcmp(descriptor_xpub, wallet_xpub) == 0;
-  free(descriptor_xpub);
-  wally_free_string(wallet_xpub);
-  if (!xpub_match)
+  bool match = xpub_matches(key_str, ours);
+  bip32_key_free(ours);
+  wally_free_string(key_str);
+  if (!match)
     ESP_LOGE(TAG, "XPub mismatch");
-  return xpub_match ? VALIDATION_SUCCESS : VALIDATION_XPUB_MISMATCH;
+  return match ? VALIDATION_SUCCESS : VALIDATION_XPUB_MISMATCH;
 }
 
 /* Verify every key carrying our fingerprint, not just the first: the UI shows
@@ -655,7 +661,7 @@ static descriptor_validation_result_t
 verify_own_keys(const struct wally_descriptor *descriptor) {
   for (int i = find_matching_key_index(descriptor, 0); i >= 0;
        i = find_matching_key_index(descriptor, (uint32_t)i + 1)) {
-    descriptor_validation_result_t result = verify_xpub_match(descriptor, i);
+    descriptor_validation_result_t result = verify_own_key(descriptor, i);
     if (result != VALIDATION_SUCCESS)
       return result;
   }
