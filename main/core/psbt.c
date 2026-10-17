@@ -513,12 +513,18 @@ static bool keypath_matches_fingerprint(const unsigned char *keypath,
 static void remember_raw_keypath(unsigned char *dst, size_t dst_cap,
                                  size_t *dst_len, const unsigned char *src,
                                  size_t src_len) {
-  if (*dst_len != 0)
+  if (*dst_len != 0 || src_len > dst_cap)
     return;
+  memcpy(dst, src, src_len);
+  *dst_len = src_len;
+}
 
-  size_t copy = src_len <= dst_cap ? src_len : dst_cap;
-  memcpy(dst, src, copy);
-  *dst_len = copy;
+/* A keypath map value (fingerprint, then path) that names our seed and is
+ * short enough to be a path Kern derives. A longer one cannot be ours. */
+static bool keypath_is_candidate(const struct wally_map_item *item,
+                                 const unsigned char *our_fp) {
+  return item->value_len <= MAX_KEYPATH_TOTAL_DEPTH * 4 + 4 &&
+         keypath_matches_fingerprint(item->value, item->value_len, our_fp);
 }
 
 /* Derive a key from raw_keypath, then check whether any of the four
@@ -565,50 +571,28 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
   if (!key_get_fingerprint(our_fp))
     return result;
 
-  size_t keypaths_size = 0;
-  wally_psbt_get_input_keypaths_size(psbt, i, &keypaths_size);
+  /* PSBT_IN_BIP32_DERIVATION, then PSBT_IN_TAP_BIP32_DERIVATION: both map a
+   * public key to fp(4) | path(4*depth). Only the first carries scripts to
+   * check against the claim. */
+  const struct wally_map *maps[] = {&psbt->inputs[i].keypaths,
+                                    &psbt->inputs[i].taproot_leaf_paths};
+  for (size_t m = 0; m < sizeof(maps) / sizeof(maps[0]); m++) {
+    for (size_t j = 0; j < maps[m]->num_items; j++) {
+      const struct wally_map_item *item = &maps[m]->items[j];
+      if (!keypath_is_candidate(item, our_fp))
+        continue;
 
-  for (size_t j = 0; j < keypaths_size; j++) {
-    unsigned char keypath[MAX_KEYPATH_TOTAL_DEPTH * 4 + 4];
-    size_t keypath_len = 0;
-    if (wally_psbt_get_input_keypath(psbt, i, j, keypath, sizeof(keypath),
-                                     &keypath_len) != WALLY_OK)
-      continue;
-    if (!keypath_matches_fingerprint(keypath, keypath_len, our_fp))
-      continue;
-
-    claim_t claim = {0};
-    remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
-                         &result.raw_keypath_len, keypath, keypath_len);
-    if (try_match_claim(keypath, keypath_len, is_testnet,
-                        SS_ADDR_INDEX_UNCAPPED, utxo_script, utxo_script_len,
-                        psbt, i, &claim)) {
-      result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
-      result.claim = claim;
-      return result;
-    }
-  }
-
-  /* Taproot keypaths — libwally stores PSBT_IN_TAP_BIP32_DERIVATION entries
-   * in a separate map whose value has the same `fp(4) | path(4*depth)`
-   * shape as the segwit keypaths map. Iterate it and run the same
-   * whitelist+registry match. */
-  const struct wally_map *tp_paths = &psbt->inputs[i].taproot_leaf_paths;
-  for (size_t j = 0; j < tp_paths->num_items; j++) {
-    const struct wally_map_item *item = &tp_paths->items[j];
-    const unsigned char *val = item->value;
-    size_t val_len = item->value_len;
-    if (!keypath_matches_fingerprint(val, val_len, our_fp))
-      continue;
-
-    claim_t claim = {0};
-    remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
-                         &result.raw_keypath_len, val, val_len);
-    if (try_match_claim(val, val_len, is_testnet, SS_ADDR_INDEX_UNCAPPED,
-                        utxo_script, utxo_script_len, NULL, 0, &claim)) {
-      result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
-      result.claim = claim;
-      return result;
+      claim_t claim = {0};
+      remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
+                           &result.raw_keypath_len, item->value,
+                           item->value_len);
+      if (try_match_claim(item->value, item->value_len, is_testnet,
+                          SS_ADDR_INDEX_UNCAPPED, utxo_script, utxo_script_len,
+                          m == 0 ? psbt : NULL, i, &claim)) {
+        result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+        result.claim = claim;
+        return result;
+      }
     }
   }
 
@@ -671,49 +655,27 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
     return result;
   }
 
-  size_t keypaths_size = 0;
-  wally_psbt_get_output_keypaths_size(psbt, i, &keypaths_size);
+  /* PSBT_OUT_BIP32_DERIVATION, then PSBT_OUT_TAP_BIP32_DERIVATION: without
+   * the second, taproot change and self-transfers read as external spends. */
+  const struct wally_map *maps[] = {&psbt->outputs[i].keypaths,
+                                    &psbt->outputs[i].taproot_leaf_paths};
+  for (size_t m = 0; m < sizeof(maps) / sizeof(maps[0]); m++) {
+    for (size_t j = 0; j < maps[m]->num_items; j++) {
+      const struct wally_map_item *item = &maps[m]->items[j];
+      if (!keypath_is_candidate(item, our_fp))
+        continue;
 
-  for (size_t j = 0; j < keypaths_size; j++) {
-    unsigned char keypath[MAX_KEYPATH_TOTAL_DEPTH * 4 + 4];
-    size_t keypath_len = 0;
-    if (wally_psbt_get_output_keypath(psbt, i, j, keypath, sizeof(keypath),
-                                      &keypath_len) != WALLY_OK)
-      continue;
-    if (!keypath_matches_fingerprint(keypath, keypath_len, our_fp))
-      continue;
-
-    claim_t claim = {0};
-    remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
-                         &result.raw_keypath_len, keypath, keypath_len);
-    if (try_match_claim(keypath, keypath_len, is_testnet, SS_MAX_OUT_ADDR_INDEX,
-                        out_script, out_script_len, NULL, 0, &claim)) {
-      set_output_claim(&result, &claim, keypath, keypath_len);
-      wally_tx_free(global_tx);
-      return result;
-    }
-  }
-
-  /* Taproot outputs — like the input classifier, libwally stores
-   * PSBT_OUT_TAP_BIP32_DERIVATION entries in a separate map whose value has
-   * the same fp(4)|path shape as the segwit keypaths. Without this, taproot
-   * change/self-transfer outputs are mistaken for external spends. */
-  const struct wally_map *tp_paths = &psbt->outputs[i].taproot_leaf_paths;
-  for (size_t j = 0; j < tp_paths->num_items; j++) {
-    const struct wally_map_item *item = &tp_paths->items[j];
-    const unsigned char *val = item->value;
-    size_t val_len = item->value_len;
-    if (!keypath_matches_fingerprint(val, val_len, our_fp))
-      continue;
-
-    claim_t claim = {0};
-    remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
-                         &result.raw_keypath_len, val, val_len);
-    if (try_match_claim(val, val_len, is_testnet, SS_MAX_OUT_ADDR_INDEX,
-                        out_script, out_script_len, NULL, 0, &claim)) {
-      set_output_claim(&result, &claim, val, val_len);
-      wally_tx_free(global_tx);
-      return result;
+      claim_t claim = {0};
+      remember_raw_keypath(result.raw_keypath, sizeof(result.raw_keypath),
+                           &result.raw_keypath_len, item->value,
+                           item->value_len);
+      if (try_match_claim(item->value, item->value_len, is_testnet,
+                          SS_MAX_OUT_ADDR_INDEX, out_script, out_script_len,
+                          NULL, 0, &claim)) {
+        set_output_claim(&result, &claim, item->value, item->value_len);
+        wally_tx_free(global_tx);
+        return result;
+      }
     }
   }
 

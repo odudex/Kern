@@ -73,9 +73,13 @@ wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
 #include "core/settings.h"
 bool settings_get_permissive_signing(void) { return false; }
 
+/* 00000000 unless a test sets another, which keeps stale or truncated
+ * buffers from matching by accident. */
+static unsigned char stub_fp[BIP32_KEY_FINGERPRINT_LEN];
+
 bool key_get_fingerprint(unsigned char *fp) {
   if (fp)
-    memset(fp, 0, BIP32_KEY_FINGERPRINT_LEN);
+    memcpy(fp, stub_fp, BIP32_KEY_FINGERPRINT_LEN);
   return true;
 }
 
@@ -3292,6 +3296,71 @@ static void test_psbt_classify_registry_miniscript_tampered(void) {
   PASS();
 }
 
+/* A keypath of nine components is longer than any path Kern derives. libwally
+ * reports it as WALLY_OK without copying it into a too-small buffer, so it
+ * used to be classified from whatever that buffer held, typically the keypath
+ * of the input classified just before. */
+static void test_overlong_keypaths_skipped(void) {
+  static const unsigned char fp[4] = {0x12, 0x34, 0x56, 0x78};
+  memcpy(stub_fp, fp, sizeof(fp));
+  struct ext_key *derived = NULL;
+  struct wally_psbt *psbt = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    TEST("overlong keypaths: setup");
+    FAIL("key derivation failed");
+    memset(stub_fp, 0, sizeof(stub_fp));
+    return;
+  }
+  uint8_t kp_owned[24] = {0x12, 0x34, 0x56, 0x78, 0x54, 0x00, 0x00, 0x80,
+                          0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80};
+  uint8_t kp_deep_foreign[4 + 9 * 4] = {0xde, 0xad, 0xbe, 0xef};
+  uint8_t kp_deep_ours[4 + 9 * 4] = {0x12, 0x34, 0x56, 0x78};
+  uint8_t other_pub[EC_PUBLIC_KEY_LEN];
+  memcpy(other_pub, derived->pub_key, sizeof(other_pub));
+  other_pub[0] = derived->pub_key[0] == 0x02 ? 0x03 : 0x02;
+  psbt = make_two_input_psbt(
+      REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+      EC_PUBLIC_KEY_LEN, kp_owned, sizeof(kp_owned), REF_SPK_P2WPKH,
+      sizeof(REF_SPK_P2WPKH), other_pub, sizeof(other_pub), kp_deep_foreign,
+      sizeof(kp_deep_foreign));
+
+  TEST("overlong keypaths: owned input, then a 9-deep foreign one");
+  if (!psbt) {
+    FAIL("fixture");
+  } else {
+    input_ownership_t r0 = psbt_classify_input(psbt, 0, false);
+    input_ownership_t r1 = psbt_classify_input(psbt, 1, false);
+    if (r0.ownership != PSBT_OWNERSHIP_OWNED_SAFE)
+      FAIL("input 0 should be OWNED_SAFE");
+    else if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL)
+      FAIL("a 9-deep foreign keypath must classify EXTERNAL");
+    else
+      PASS();
+
+    TEST("overlong keypaths: 9-deep foreign output keypath");
+    wally_map_add(&psbt->outputs[0].keypaths, other_pub, sizeof(other_pub),
+                  kp_deep_foreign, sizeof(kp_deep_foreign));
+    if (psbt_classify_output(psbt, 0, false).ownership !=
+        PSBT_OWNERSHIP_EXTERNAL)
+      FAIL("expected EXTERNAL");
+    else
+      PASS();
+
+    TEST("overlong keypaths: 9-deep taproot path of ours is not truncated");
+    wally_map_clear(&psbt->inputs[1].keypaths);
+    wally_map_add(&psbt->inputs[1].taproot_leaf_paths, other_pub + 1,
+                  EC_XONLY_PUBLIC_KEY_LEN, kp_deep_ours, sizeof(kp_deep_ours));
+    r1 = psbt_classify_input(psbt, 1, false);
+    if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL || r1.raw_keypath_len != 0)
+      FAIL("expected EXTERNAL with no remembered keypath");
+    else
+      PASS();
+  }
+  wally_psbt_free(psbt);
+  bip32_key_free(derived);
+  memset(stub_fp, 0, sizeof(stub_fp));
+}
+
 /* Mixed two-input PSBT: input 0 is OWNED_SAFE (BIP84 verified), input 1 is
  * EXTERNAL (foreign fp). Verifies each input is classified independently and
  * that the per-input policy gate in psbt_sign signs exactly one of them. */
@@ -3697,6 +3766,7 @@ int main(void) {
   test_psbt_sign_gate_expected_blocked();
   test_psbt_sign_gate_external_always_skipped();
   test_psbt_classify_multi_input_mixed();
+  test_overlong_keypaths_skipped();
   test_psbt_sign_denied_input_keeps_no_signature();
   test_psbt_classify_registry_wsh_owned();
   test_psbt_classify_registry_wsh_tampered_witness();
