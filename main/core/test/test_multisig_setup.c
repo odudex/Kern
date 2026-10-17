@@ -71,6 +71,12 @@ static void expect(const char *name, const char *text, const char *want) {
 #define OWN_T1                                                                 \
   "tpubDFH9dgzveyD8yHQb8VrpG8FYAuwcLMHMje2CCcbBo1FpaGzYVtJeYYxcYgRqSTta5utUFt" \
   "s8nPPHs9C2bqoxrey5jia6Dwf9mpwrPq7YvcJ"
+#define OWN_T2_VPUB_MS                                                         \
+  "Vpub5n95dMZrDHj6SeBgJ1oz4Fae2N2eJNuWK3VTKDb2dzGpMFLUHLmtyDfen7AaQxwQ5mZnMy" \
+  "XdVrkEaoMLVTH8FmVBRVWPGFYWhmtDUGehGmq"
+#define OWN_T1_UPUB_MS                                                         \
+  "Upub5TJpKgtw4cBcaAom7tyqG1yU3gSsjTVPkwWuR97vgrChHsT4S6M9d3BJ3jRmUgCUJZ58GU" \
+  "ZhkWt6eGUVM7sdizaeuZqvC61TGRSP43VHvGm"
 #define OWN_T1_UPUB                                                            \
   "upub5GQjCTAVVedF9bePBEWrRwdfKtQcX6ooSfsEVsrPK5NHfgt9fgxsXvKNF2UHvEya5619Pt" \
   "ZasJVbX6rj3tigaWTz56jWngYTNhAWU7wjLPa"
@@ -271,6 +277,18 @@ static void test_slip132(void) {
                         "Derivation: m/48'/1'/0'/1'\n"
                         "73C5DA0A: " OWN_T1_UPUB "\n";
   expect("vpub and upub keys become tpub", testnet,
+         "sh(wsh(sortedmulti(1,[73c5da0a/48'/1'/0'/2']" OWN_T2
+         ",[73c5da0a/48'/1'/0'/1']" OWN_T1 ")))");
+
+  const char *multisig_versions = "Name: testnet\n"
+                                  "Policy: 1 of 2\n"
+                                  "Format: P2WSH-P2SH\n"
+                                  "\n"
+                                  "Derivation: m/48'/1'/0'/2'\n"
+                                  "73C5DA0A: " OWN_T2_VPUB_MS "\n"
+                                  "Derivation: m/48'/1'/0'/1'\n"
+                                  "73C5DA0A: " OWN_T1_UPUB_MS "\n";
+  expect("Vpub and Upub keys become tpub", multisig_versions,
          "sh(wsh(sortedmulti(1,[73c5da0a/48'/1'/0'/2']" OWN_T2
          ",[73c5da0a/48'/1'/0'/1']" OWN_T1 ")))");
 }
