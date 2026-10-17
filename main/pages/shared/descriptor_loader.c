@@ -521,6 +521,9 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   } else if (info->is_multisig) {
     snprintf(title, sizeof(title), "Multisig (%u of %u) - Load?",
              info->threshold, info->num_keys);
+  } else if (info->script_type) {
+    snprintf(title, sizeof(title), "Single-sig (%s) - Load?",
+             info->script_type);
   } else {
     snprintf(title, sizeof(title), "Single-sig - Load?");
   }

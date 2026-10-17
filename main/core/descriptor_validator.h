@@ -101,6 +101,9 @@ typedef struct {
   char *policy;
   /* tr() only: classification of the taproot internal (key-path) key. */
   tr_keypath_class_t tr_keypath;
+  /* Outer script: "pkh", "wpkh", "sh(wpkh)", "sh", "sh(wsh)", "wsh" or "tr";
+   * NULL if none of these. */
+  const char *script_type;
 } descriptor_info_t;
 
 // UI-agnostic info confirmation callback: show descriptor info, call proceed()

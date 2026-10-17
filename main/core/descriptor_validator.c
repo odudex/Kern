@@ -334,6 +334,33 @@ classify_tr_keypath(struct wally_descriptor *descriptor, int our_key_index) {
   return TR_KEYPATH_EXTERNAL;
 }
 
+// Outer script as the canonical form names it, NULL for anything else.
+static const char *descriptor_script_type(struct wally_descriptor *descriptor) {
+  static const struct {
+    const char *prefix;
+    const char *name;
+  } types[] = {
+      {"sh(wpkh(", "sh(wpkh)"},
+      {"sh(wsh(", "sh(wsh)"},
+      {"sh(", "sh"},
+      {"wpkh(", "wpkh"},
+      {"wsh(", "wsh"},
+      {"pkh(", "pkh"},
+      {"tr(", "tr"},
+  };
+  char *canon = NULL;
+  if (wally_descriptor_canonicalize(descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canon) != WALLY_OK ||
+      !canon)
+    return NULL;
+  const char *name = NULL;
+  for (size_t i = 0; i < sizeof(types) / sizeof(types[0]) && !name; i++)
+    if (strncmp(canon, types[i].prefix, strlen(types[i].prefix)) == 0)
+      name = types[i].name;
+  wally_free_string(canon);
+  return name;
+}
+
 static bool extract_descriptor_info(struct wally_descriptor *descriptor,
                                     const char *descriptor_str,
                                     int our_key_index,
@@ -351,6 +378,7 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   info->is_miniscript = miniscript_policy_is_miniscript(descriptor);
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
   info->tr_keypath = classify_tr_keypath(descriptor, our_key_index);
+  info->script_type = descriptor_script_type(descriptor);
 
   if (info->is_miniscript)
     info->policy = miniscript_policy_string(descriptor);
@@ -460,6 +488,9 @@ static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
   } else if (current_ctx->info.is_multisig) {
     snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
              current_ctx->info.threshold, current_ctx->info.num_keys);
+  } else if (current_ctx->info.script_type) {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig (%s)",
+             current_ctx->info.script_type);
   } else {
     snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig");
   }
@@ -670,26 +701,9 @@ static void show_keyed_info(struct wally_descriptor *descriptor,
   // Build the WARN message while the descriptor is still available.
   char psb_msg[128] = {0};
   if (psb_result == PSB_WARN) {
-    // Determine outer script name from canonical form.
-    const char *script_name = "unknown";
-    char *canon = NULL;
-    if (wally_descriptor_canonicalize(
-            descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM, &canon) == WALLY_OK &&
-        canon) {
-      if (strncmp(canon, "sh(wpkh(", 8) == 0)
-        script_name = "sh(wpkh)";
-      else if (strncmp(canon, "sh(wsh(", 7) == 0)
-        script_name = "sh(wsh)";
-      else if (strncmp(canon, "wpkh(", 5) == 0)
-        script_name = "wpkh";
-      else if (strncmp(canon, "wsh(", 4) == 0)
-        script_name = "wsh";
-      else if (strncmp(canon, "pkh(", 4) == 0)
-        script_name = "pkh";
-      else if (strncmp(canon, "tr(", 3) == 0)
-        script_name = "tr";
-      wally_free_string(canon);
-    }
+    const char *script_name = descriptor_script_type(descriptor);
+    if (!script_name)
+      script_name = "unknown";
     // Extract purpose number from key[0] origin path.
     uint32_t purpose = 0;
     char *path = NULL;

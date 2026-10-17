@@ -468,6 +468,8 @@ static void test_bare_top_level(void) {
         run(descf("sh(multi(1,[" FP "/48'/0'/0'/1']%s/0/*,"
                   "[deadbeef/48'/0'/1'/1']%s/0/*))",
                   xpub_at("m/48'/0'/0'/1'"), b)) == VALIDATION_SUCCESS);
+  check("sh(multi()) script type",
+        info_seen.script_type && strcmp(info_seen.script_type, "sh") == 0);
   registry_clear();
 }
 
@@ -695,8 +697,11 @@ static void test_single_sig_success(void) {
   check("info: xpub",
         strcmp(info_seen.keys[0].xpub, xpub_at("m/84'/0'/0'")) == 0);
   check("info: not taproot", info_seen.tr_keypath == TR_KEYPATH_NONE);
+  check("info: script type wpkh",
+        info_seen.script_type && strcmp(info_seen.script_type, "wpkh") == 0);
   check("registered once in the session", registry_count() == 1);
-  check("session label is Single-sig", registry_has_label("Single-sig"));
+  check("session label names the script type",
+        registry_has_label("Single-sig (wpkh)"));
   check("session id derives from the checksum",
         strncmp(registry_get(0)->id, "desc_", 5) == 0 &&
             strlen(registry_get(0)->id) == 13);
@@ -719,13 +724,16 @@ static void test_single_sig_success(void) {
   const char *pkh =
       descf("pkh([" FP "/44'/0'/0']%s/0/*)", xpub_at("m/44'/0'/0'"));
   check("legacy pkh accepted", run(pkh) == VALIDATION_SUCCESS);
+  check("pkh labelled", registry_has_label("Single-sig (pkh)"));
   const char *sh_wpkh =
       descf("sh(wpkh([" FP "/49'/0'/0']%s/0/*))", xpub_at("m/49'/0'/0'"));
   check("nested sh(wpkh) accepted", run(sh_wpkh) == VALIDATION_SUCCESS);
+  check("sh(wpkh) labelled", registry_has_label("Single-sig (sh(wpkh))"));
   const char *tr86 =
       descf("tr([" FP "/86'/0'/0']%s/0/*)", xpub_at("m/86'/0'/0'"));
   check("BIP86 tr accepted", run(tr86) == VALIDATION_SUCCESS);
   check("BIP86 key-path is ours", info_seen.tr_keypath == TR_KEYPATH_OURS);
+  check("tr labelled", registry_has_label("Single-sig (tr)"));
   check("three descriptors registered", registry_count() == 3);
 }
 
@@ -1142,8 +1150,8 @@ static void test_watch_only(void) {
   check("watch-only info: foreign fingerprint reported",
         strcmp(info_seen.keys[0].fingerprint_hex, "DEADBEEF") == 0);
   check("watch-only entry registered", registry_count() == 1);
-  check("watch-only entry labelled Single-sig",
-        registry_has_label("Single-sig"));
+  check("watch-only entry labelled with its script type",
+        registry_has_label("Single-sig (wpkh)"));
 
   check("watch-only dedup",
         run_watch(foreign, WALLET_NETWORK_MAINNET) == VALIDATION_DUPLICATE);
