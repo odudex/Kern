@@ -73,6 +73,26 @@ static bool p2tr_from_pubkey(const uint8_t *pubkey, size_t pubkey_len,
   return true;
 }
 
+bool script_template_for_purpose(uint32_t purpose,
+                                 script_template_type_t *out) {
+  switch (purpose) {
+  case 44:
+    *out = SCRIPT_TEMPLATE_P2PKH;
+    return true;
+  case 49:
+    *out = SCRIPT_TEMPLATE_P2SH_P2WPKH;
+    return true;
+  case 84:
+    *out = SCRIPT_TEMPLATE_P2WPKH;
+    return true;
+  case 86:
+    *out = SCRIPT_TEMPLATE_P2TR;
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool script_template_from_pubkey(script_template_type_t type,
                                  const uint8_t *pubkey, size_t pubkey_len,
                                  uint8_t *spk_out, size_t *spk_len,

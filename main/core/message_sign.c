@@ -1,7 +1,9 @@
 #include "message_sign.h"
 #include "../utils/secure_mem.h"
+#include "bip32_path.h"
 #include "key.h"
 #include "message_validation.h"
+#include "script_templates.h"
 #include <esp_log.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,19 @@
 #include <wally_script.h>
 
 static const char *TAG = "message_sign";
+
+/* The script a message-signing path is shown as. Signatures are ECDSA with an
+ * Electrum-style header, so only the purposes of the single-key scripts they
+ * verify against are accepted: BIP44, BIP49 and BIP84. */
+static bool path_template(const char *path, script_template_type_t *out) {
+  uint32_t components[KEY_MAX_DERIVATION_DEPTH];
+  size_t depth = 0;
+  if (!bip32_path_parse(path, components, &depth, KEY_MAX_DERIVATION_DEPTH) ||
+      depth == 0 || !bip32_path_is_hardened(components[0]))
+    return false;
+  uint32_t purpose = bip32_path_unharden(components[0]);
+  return purpose != 86 && script_template_for_purpose(purpose, out);
+}
 
 bool message_sign_parse(const char *content, parsed_sign_message_t *result) {
   if (!content || !result) {
@@ -49,6 +64,12 @@ bool message_sign_parse(const char *content, parsed_sign_message_t *result) {
     }
   }
   converted_path[out_idx] = '\0';
+
+  script_template_type_t type;
+  if (!path_template(converted_path, &type)) {
+    free(converted_path);
+    return false;
+  }
 
   // After space, expect "ascii:" prefix
   const char *msg_start = path_end + 1;
@@ -148,25 +169,24 @@ bool message_sign_get_address(const char *derivation_path, bool is_testnet,
     return false;
   }
 
+  script_template_type_t type;
+  if (!path_template(derivation_path, &type))
+    return false;
+
   struct ext_key *derived_key = NULL;
   if (!key_get_derived_key(derivation_path, &derived_key)) {
     ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
     return false;
   }
 
-  unsigned char script[WALLY_WITNESSSCRIPT_MAX_LEN];
-  size_t script_len;
-
-  int ret = wally_witness_program_from_bytes(
-      derived_key->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, script,
-      sizeof(script), &script_len);
+  unsigned char spk[SCRIPT_TEMPLATE_MAX_SPK_LEN];
+  size_t spk_len = 0;
+  bool ok = script_template_from_pubkey(
+      type, derived_key->pub_key, EC_PUBLIC_KEY_LEN, spk, &spk_len, NULL, NULL);
   bip32_key_free(derived_key);
-
-  if (ret != WALLY_OK) {
+  if (!ok)
     return false;
-  }
 
-  const char *hrp = is_testnet ? "tb" : "bc";
-  ret = wally_addr_segwit_from_bytes(script, script_len, hrp, 0, address_out);
-  return (ret == WALLY_OK);
+  *address_out = script_template_address_from_spk(spk, spk_len, is_testnet);
+  return *address_out != NULL;
 }

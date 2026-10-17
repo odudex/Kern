@@ -28,3 +28,4 @@ test_pbkdf2_core.o
 test_multisig_setup
 test_address_match
 test_descriptor_text
+test_message_sign

@@ -92,17 +92,10 @@ static uint32_t ss_purpose_for_script(ss_script_type_t script) {
 }
 
 static script_template_type_t ss_template_for_script(ss_script_type_t script) {
-  switch (script) {
-  case SS_SCRIPT_P2PKH:
-    return SCRIPT_TEMPLATE_P2PKH;
-  case SS_SCRIPT_P2SH_P2WPKH:
-    return SCRIPT_TEMPLATE_P2SH_P2WPKH;
-  case SS_SCRIPT_P2WPKH:
-    return SCRIPT_TEMPLATE_P2WPKH;
-  case SS_SCRIPT_P2TR:
-  default:
+  script_template_type_t type = SCRIPT_TEMPLATE_P2TR;
+  if (!script_template_for_purpose(ss_purpose_for_script(script), &type))
     return SCRIPT_TEMPLATE_P2TR;
-  }
+  return type;
 }
 
 static bool ss_derive_key(ss_script_type_t script, uint32_t account,
