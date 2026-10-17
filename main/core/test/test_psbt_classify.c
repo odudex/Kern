@@ -5,6 +5,7 @@
 #include <string.h>
 
 /* Wally types needed by stubs */
+#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_crypto.h>
 #include <wally_descriptor.h>
@@ -1857,6 +1858,294 @@ static void test_registry_change_index_cap(void) {
   registry_clear();
 }
 
+/* ================================================================
+ * Taproot fixtures, built by libwally from tr() descriptors and taken
+ * through serialize + parse, so every taproot field Kern reads directly
+ * (taproot_leaf_paths, taproot_leaf_signatures, TAP_KEY_SIG in psbt_fields)
+ * is where libwally's own parser puts it.
+ * ================================================================ */
+
+#define NUMS_H                                                                 \
+  "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+#define TR_BIP86_OURS "tr([00000000/86'/0'/0']" XPUB_86 "/<0;1>/*)"
+#define TR_BIP86_FOREIGN "tr([deadbeef/86'/0'/0']" XPUB_86 "/<0;1>/*)"
+#define TR_LEAF_OURS "tr(" NUMS_H ",pk([00000000/86'/0'/0']" XPUB_86 "/0/*))"
+#define TR_LEAF_FOREIGN "tr(" NUMS_H ",pk([deadbeef/86'/0'/0']" XPUB_86 "/0/*))"
+
+static const uint32_t PSBT_VERSIONS[] = {WALLY_PSBT_VERSION_0,
+                                         WALLY_PSBT_VERSION_2};
+
+static struct wally_descriptor *parse_mainnet(const char *desc) {
+  struct wally_descriptor *d = NULL;
+  if (wallet_descriptor_parse(desc, NULL, WALLY_NETWORK_BITCOIN_MAINNET, &d) !=
+      WALLY_OK)
+    return NULL;
+  return d;
+}
+
+/* Re-encode at `version` and parse back; frees `psbt`. */
+static struct wally_psbt *psbt_roundtrip(struct wally_psbt *psbt,
+                                         uint32_t version) {
+  struct wally_psbt *out = NULL;
+  size_t len = 0, written = 0;
+  unsigned char *bytes = NULL;
+  if (psbt && wally_psbt_set_version(psbt, 0, version) == WALLY_OK &&
+      wally_psbt_get_length(psbt, 0, &len) == WALLY_OK &&
+      (bytes = malloc(len)) != NULL &&
+      wally_psbt_to_bytes(psbt, 0, bytes, len, &written) == WALLY_OK &&
+      written == len)
+    wally_psbt_from_bytes(bytes, len, 0, &out);
+  free(bytes);
+  wally_psbt_free(psbt);
+  return out;
+}
+
+/* One input per descriptor, each on its own prevout, funded with the
+ * descriptor's script at (multi_index, child_num) and populated from it by
+ * libwally; one OP_RETURN output. */
+static struct wally_psbt *make_tr_psbt(const char *const *descs, size_t n,
+                                       uint32_t multi_index, uint32_t child_num,
+                                       uint32_t version) {
+  struct wally_tx *tx = NULL;
+  struct wally_psbt *psbt = NULL;
+  uint8_t op_return[] = {0x6a};
+  if (wally_tx_init_alloc(2, 0, n, 1, &tx) != WALLY_OK)
+    return NULL;
+  for (size_t i = 0; i < n; i++) {
+    uint8_t txid[32] = {0};
+    txid[0] = (uint8_t)(i + 1);
+    wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xfffffffd, NULL, 0, NULL,
+                           0);
+  }
+  wally_tx_add_raw_output(tx, 1000, op_return, sizeof(op_return), 0);
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK)
+    return NULL;
+
+  for (size_t i = 0; i < n; i++) {
+    struct wally_descriptor *d = parse_mainnet(descs[i]);
+    uint8_t spk[34];
+    size_t spk_len = 0;
+    struct wally_tx_output *utxo = NULL;
+    bool ok =
+        d &&
+        wally_descriptor_to_script(d, 0, 0, 0, multi_index, child_num, 0, spk,
+                                   sizeof(spk), &spk_len) == WALLY_OK &&
+        spk_len == sizeof(spk) &&
+        wally_tx_output_init_alloc(100000, spk, spk_len, &utxo) == WALLY_OK &&
+        wally_psbt_set_input_witness_utxo(psbt, i, utxo) == WALLY_OK &&
+        wally_psbt_input_populate_taproot_from_descriptor(
+            psbt, i, d, multi_index, child_num, 0) == WALLY_OK;
+    wally_tx_output_free(utxo);
+    /* An origin-less key (the NUMS internal key) is listed with a bare
+     * 00000000 fingerprint, which is the test key's stub fingerprint. */
+    struct wally_map *paths = &psbt->inputs[i].taproot_leaf_paths;
+    for (size_t j = paths->num_items; ok && j-- > 0;)
+      if (paths->items[j].value_len == BIP32_KEY_FINGERPRINT_LEN)
+        ok = wally_map_remove(paths, paths->items[j].key,
+                              paths->items[j].key_len) == WALLY_OK;
+    wally_descriptor_free(d);
+    if (!ok) {
+      wally_psbt_free(psbt);
+      return NULL;
+    }
+  }
+  return psbt_roundtrip(psbt, version);
+}
+
+static size_t tap_key_sig_len(const struct wally_psbt *psbt, size_t i) {
+  size_t len = 0;
+  if (wally_psbt_get_input_taproot_signature_len(psbt, i, &len) != WALLY_OK)
+    return 0;
+  return len;
+}
+
+static void test_tr_bip86_input_owned(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: BIP86 input is OWNED_SAFE whitelist",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {TR_BIP86_OURS};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    input_ownership_t r = psbt_classify_input(psbt, 0, false);
+    if (psbt->inputs[0].keypaths.num_items != 0 ||
+        psbt->inputs[0].taproot_leaf_paths.num_items != 1)
+      FAIL("derivation should be in the taproot map only");
+    else if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+             r.claim.kind != CLAIM_WHITELIST ||
+             r.claim.whitelist.script != SS_SCRIPT_P2TR)
+      FAIL("expected an OWNED_SAFE BIP86 whitelist claim");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  TEST("taproot: BIP86 derivation that lists a leaf hash still matches");
+  struct ext_key *derived = NULL;
+  const char *descs[] = {TR_BIP86_OURS};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  const uint32_t path[] = {0x80000056, 0x80000000, 0x80000000, 0, 0};
+  const uint8_t fp[4] = {0};
+  uint8_t leaf_hash[32];
+  memset(leaf_hash, 0x5a, sizeof(leaf_hash));
+  if (!psbt || !key_get_derived_key("m/86'/0'/0'/0/0", &derived)) {
+    FAIL("fixture");
+  } else {
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_paths);
+    if (wally_psbt_add_input_taproot_keypath(
+            psbt, 0, 0, derived->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN,
+            leaf_hash, sizeof(leaf_hash), fp, sizeof(fp), path, 5) != WALLY_OK)
+      FAIL("add keypath");
+    else if (psbt_classify_input(psbt, 0, false).ownership !=
+             PSBT_OWNERSHIP_OWNED_SAFE)
+      FAIL("expected OWNED_SAFE");
+    else
+      PASS();
+  }
+  bip32_key_free(derived);
+  wally_psbt_free(psbt);
+}
+
+/* Two inputs on the same key; input 1 claims another seed's fingerprint, so
+ * the policy refuses it, but wally_psbt_sign() would key-path sign it too. */
+static void test_tr_keypath_denied_input(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: key-path sig on a denied input is discarded",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {TR_BIP86_OURS, TR_BIP86_FOREIGN};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 2, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    psbt_sign_policy_t policy = {0};
+    psbt_sign_result_t res;
+    size_t n = psbt_sign(psbt, false, policy, &res);
+    if (n != 1 || res.attempted != 1 || res.signed_ok != 1 || res.blocked != 1)
+      FAIL("expected one signed input and one blocked");
+    else if (tap_key_sig_len(psbt, 0) != 64)
+      FAIL("input 0 should hold a 64-byte TAP_KEY_SIG");
+    else if (tap_key_sig_len(psbt, 1) != 0)
+      FAIL("input 1 kept a signature");
+    else
+      PASS();
+
+    if (PSBT_VERSIONS[v] == WALLY_PSBT_VERSION_0) {
+      TEST("taproot v0: psbt_trim keeps the TAP_KEY_SIG");
+      struct wally_psbt *trimmed = psbt_trim(psbt);
+      if (!trimmed)
+        FAIL("psbt_trim");
+      else if (tap_key_sig_len(trimmed, 0) != 64 ||
+               tap_key_sig_len(trimmed, 1) != 0)
+        FAIL("trimmed PSBT lost or gained a key-path signature");
+      else
+        PASS();
+      wally_psbt_free(trimmed);
+    }
+    wally_psbt_free(psbt);
+  }
+}
+
+static void test_tr_change_output_owned(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: P2TR change with TAP_BIP32_DERIVATION is owned",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    struct wally_descriptor *d = parse_mainnet(TR_BIP86_OURS);
+    struct wally_tx *tx = NULL;
+    struct wally_psbt *psbt = NULL;
+    uint8_t spk[34];
+    size_t spk_len = 0;
+    uint8_t txid[32] = {1}; /* v2 refuses to serialize an all-zero txid */
+    if (d &&
+        wally_descriptor_to_script(d, 0, 0, 0, 1, 0, 0, spk, sizeof(spk),
+                                   &spk_len) == WALLY_OK &&
+        wally_tx_init_alloc(2, 0, 1, 1, &tx) == WALLY_OK &&
+        wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xfffffffd, NULL, 0,
+                               NULL, 0) == WALLY_OK &&
+        wally_tx_add_raw_output(tx, 5000, spk, spk_len, 0) == WALLY_OK &&
+        wally_psbt_from_tx(tx, 0, 0, &psbt) == WALLY_OK &&
+        wally_psbt_output_populate_taproot_from_descriptor(psbt, 0, d, 1, 0,
+                                                           0) == WALLY_OK)
+      psbt = psbt_roundtrip(psbt, PSBT_VERSIONS[v]);
+    else {
+      wally_psbt_free(psbt);
+      psbt = NULL;
+    }
+    wally_tx_free(tx);
+    wally_descriptor_free(d);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    output_ownership_t r = psbt_classify_output(psbt, 0, false);
+    if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+        r.source.kind != CLAIM_WHITELIST || r.source.whitelist.chain != 1)
+      FAIL("expected OWNED_SAFE change on chain 1");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+}
+
+/* Script path: input 0 spends our registered tr(NUMS,pk(ours)) leaf; input 1
+ * the same leaf under another seed's fingerprint, so it is denied. */
+static void test_tr_script_path_denied_input(void) {
+  registry_clear();
+  if (!registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false)) {
+    TEST("taproot script path: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: script-path sig on a denied input is discarded",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {TR_LEAF_OURS, TR_LEAF_FOREIGN};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 2, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    input_ownership_t r0 = psbt_classify_input(psbt, 0, false);
+    input_ownership_t r1 = psbt_classify_input(psbt, 1, false);
+    psbt_sign_policy_t policy = {0};
+    psbt_sign_result_t res;
+    size_t n = psbt_sign(psbt, false, policy, &res);
+    if (r0.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+        r0.claim.kind != CLAIM_REGISTRY)
+      FAIL("input 0 should be an OWNED_SAFE registry claim");
+    else if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL)
+      FAIL("input 1 should be EXTERNAL");
+    else if (n != 1 || res.signed_ok != 1 || res.blocked != 1)
+      FAIL("expected one signed input and one blocked");
+    else if (tap_key_sig_len(psbt, 0) != 0 || tap_key_sig_len(psbt, 1) != 0)
+      FAIL("a NUMS internal key must never get a key-path signature");
+    else if (psbt->inputs[0].taproot_leaf_signatures.num_items != 1 ||
+             psbt->inputs[1].taproot_leaf_signatures.num_items != 0)
+      FAIL("expected leaf signature counts 1 and 0");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+  registry_clear();
+}
+
 /* A segwit input may carry only its previous transaction. The pinned fork
  * signs it with the BIP143 sighash; upstream libwally used the
  * legacy one there, an invalid signature counted as signed. */
@@ -3165,6 +3454,13 @@ int main(void) {
   test_registry_change_index_cap();
   test_claims_share_policy();
   test_sign_non_witness_utxo_only_segwit();
+
+  printf("\n=== taproot parse/sign tests ===\n\n");
+
+  test_tr_bip86_input_owned();
+  test_tr_keypath_denied_input();
+  test_tr_change_output_owned();
+  test_tr_script_path_denied_input();
 
   printf("\n=== PSBTv2 tests ===\n\n");
 
