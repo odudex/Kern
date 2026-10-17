@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wally_bip39.h>
+#include <wally_bip85.h>
 #include <wally_core.h>
 #include <wally_crypto.h>
 
@@ -314,4 +315,31 @@ bool key_get_public_key_components(const uint32_t *path, size_t path_depth,
     return false;
   }
   return true;
+}
+
+bool key_bip85_mnemonic(const struct ext_key *master, uint32_t num_words,
+                        uint32_t index, char **mnemonic_out) {
+  if (mnemonic_out)
+    *mnemonic_out = NULL;
+  if (!master || !mnemonic_out)
+    return false;
+
+  unsigned char entropy[HMAC_SHA512_LEN];
+  size_t written = 0;
+  bool ok = bip85_get_bip39_entropy(master, NULL, num_words, index, entropy,
+                                    sizeof(entropy), &written) == WALLY_OK &&
+            kern_bip39_mnemonic_from_bytes(NULL, entropy, written,
+                                           mnemonic_out) == WALLY_OK &&
+            *mnemonic_out;
+  secure_memzero(entropy, sizeof(entropy));
+  return ok;
+}
+
+bool key_get_bip85_mnemonic(uint32_t num_words, uint32_t index,
+                            char **mnemonic_out) {
+  if (mnemonic_out)
+    *mnemonic_out = NULL;
+  if (!key_loaded || !master_key)
+    return false;
+  return key_bip85_mnemonic(master_key, num_words, index, mnemonic_out);
 }

@@ -60,4 +60,14 @@ KERN_WARN_UNUSED_RESULT bool
 key_get_public_key_components(const uint32_t *path, size_t path_depth,
                               struct ext_key **key_out);
 
+/* BIP-85 BIP39 child mnemonic of `master` (12, 18 or 24 words, English).
+ * SENSITIVE: free *mnemonic_out with wally_free_string(). */
+KERN_WARN_UNUSED_RESULT bool key_bip85_mnemonic(const struct ext_key *master,
+                                                uint32_t num_words,
+                                                uint32_t index,
+                                                char **mnemonic_out);
+/* Same, for the loaded key. */
+KERN_WARN_UNUSED_RESULT bool
+key_get_bip85_mnemonic(uint32_t num_words, uint32_t index, char **mnemonic_out);
+
 #endif // KEY_H

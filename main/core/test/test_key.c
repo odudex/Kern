@@ -16,7 +16,6 @@
 #include <string.h>
 #include <wally_bip32.h>
 #include <wally_bip39.h>
-#include <wally_bip85.h>
 #include <wally_core.h>
 #include <wally_crypto.h>
 
@@ -496,29 +495,23 @@ static void test_bip85_vectors(void) {
     return;
   }
   for (size_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
-    unsigned char entropy[HMAC_SHA512_LEN];
-    size_t written = 0;
     char *mnemonic = NULL;
     char name[48];
     snprintf(name, sizeof(name), "BIP-85 %u words, index 0",
              (unsigned)vectors[i].words);
-    check(name,
-          bip85_get_bip39_entropy(master, NULL, vectors[i].words, 0, entropy,
-                                  sizeof(entropy), &written) == WALLY_OK &&
-              kern_bip39_mnemonic_from_bytes(NULL, entropy, written,
-                                             &mnemonic) == WALLY_OK &&
-              strcmp(mnemonic, vectors[i].mnemonic) == 0);
+    check(name, key_bip85_mnemonic(master, vectors[i].words, 0, &mnemonic) &&
+                    strcmp(mnemonic, vectors[i].mnemonic) == 0);
     SECURE_FREE_STRING(mnemonic);
     if (i == 0) {
       check("BIP-85 index 1 is another child",
-            bip85_get_bip39_entropy(master, NULL, 12, 1, entropy,
-                                    sizeof(entropy), &written) == WALLY_OK &&
-                kern_bip39_mnemonic_from_bytes(NULL, entropy, written,
-                                               &mnemonic) == WALLY_OK &&
+            key_bip85_mnemonic(master, 12, 1, &mnemonic) &&
                 strcmp(mnemonic, vectors[0].mnemonic) != 0);
       SECURE_FREE_STRING(mnemonic);
     }
   }
+  char *mnemonic = NULL;
+  check("BIP-85 refuses a word count BIP39 lacks",
+        !key_bip85_mnemonic(master, 13, 0, &mnemonic) && !mnemonic);
   bip32_key_free(master);
 }
 
