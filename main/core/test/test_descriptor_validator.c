@@ -433,6 +433,37 @@ static void test_depth_cap(void) {
         raw_ok && capped && shallow_ok);
 }
 
+/* Bare top-level scripts parse, but have no address and a scriptPubKey too
+ * long for signing to read: refused before any dialog. */
+static void test_bare_top_level(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *cases[][2] = {
+      {"bare multi() refused", "multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[deadbeef/48'/0'/1'/2']%s/0/*)"},
+      {"bare sortedmulti() refused",
+       "sortedmulti(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+       "[deadbeef/48'/0'/1'/2']%s/0/*)"},
+      {"bare pk() refused", "pk([" FP "/48'/0'/0'/2']%s/0/*)"},
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+    registry_clear();
+    const char *desc = descf(cases[i][1], a, b);
+    descriptor_validation_result_t loaded = run(desc);
+    bool silent = info_calls == 0 && warn_calls == 0;
+    check(cases[i][0], loaded == VALIDATION_UNSUPPORTED_TOP_LEVEL && silent &&
+                           descriptor_validate_keyed(desc, NULL) ==
+                               VALIDATION_UNSUPPORTED_TOP_LEVEL &&
+                           registry_count() == 0);
+  }
+  registry_clear();
+  check("sh(multi()) control accepted",
+        run(descf("sh(multi(1,[" FP "/48'/0'/0'/1']%s/0/*,"
+                  "[deadbeef/48'/0'/1'/1']%s/0/*))",
+                  xpub_at("m/48'/0'/0'/1'"), b)) == VALIDATION_SUCCESS);
+  registry_clear();
+}
+
 static void test_key_matching(void) {
   registry_clear();
   const char *foreign =
@@ -1123,6 +1154,7 @@ int main(void) {
   test_static_gates();
   test_non_sane_miniscript();
   test_depth_cap();
+  test_bare_top_level();
   test_key_matching();
   test_own_keys();
   test_own_key_material();

@@ -189,19 +189,29 @@ static bool descriptor_has_private_key(const struct wally_descriptor *desc) {
          (features & WALLY_MS_IS_PRIVATE);
 }
 
-// Miniscript is supported wrapped in a plain wsh() (segwit v0) or tr()
-// (taproot script-path). Bare miniscript and other wrappers are rejected.
-static bool
-miniscript_wrapper_is_supported(const struct wally_descriptor *desc) {
+// Top-level shapes Kern signs and shows addresses for. Miniscript is supported
+// wrapped in a plain wsh() (segwit v0) or tr() (taproot script-path); bare
+// miniscript and other wrappers are rejected, and so are bare multi(),
+// sortedmulti(), pk() and other descriptors without an address.
+static descriptor_validation_result_t
+check_top_level(const struct wally_descriptor *desc) {
+  static const char *const supported[] = {"pkh(", "wpkh(", "sh(", "wsh(",
+                                          "tr("};
   char *canon = NULL;
   if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
                                     &canon) != WALLY_OK ||
       !canon)
-    return false;
-  bool supported =
+    return VALIDATION_INTERNAL_ERROR;
+  bool known = false;
+  for (size_t i = 0; i < sizeof(supported) / sizeof(supported[0]); i++)
+    if (strncmp(canon, supported[i], strlen(supported[i])) == 0)
+      known = true;
+  bool miniscript_wrapper =
       strncmp(canon, "wsh(", 4) == 0 || strncmp(canon, "tr(", 3) == 0;
   wally_free_string(canon);
-  return supported;
+  if (miniscript_policy_is_miniscript(desc) && !miniscript_wrapper)
+    return VALIDATION_UNSUPPORTED_MINISCRIPT;
+  return known ? VALIDATION_SUCCESS : VALIDATION_UNSUPPORTED_TOP_LEVEL;
 }
 
 // Signing regenerates sh()/wsh() inner scripts into PSBT_MAX_INNER_SCRIPT_LEN
@@ -580,9 +590,9 @@ static_checks(struct wally_descriptor *descriptor) {
   uint32_t num_keys = 0;
   if (descriptor_has_private_key(descriptor))
     return VALIDATION_PRIVATE_KEY;
-  if (miniscript_policy_is_miniscript(descriptor) &&
-      !miniscript_wrapper_is_supported(descriptor))
-    return VALIDATION_UNSUPPORTED_MINISCRIPT;
+  descriptor_validation_result_t top = check_top_level(descriptor);
+  if (top != VALIDATION_SUCCESS)
+    return top;
   if (!descriptor_scripts_are_generatable(descriptor))
     return VALIDATION_UNSUPPORTED_SCRIPT;
   if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK ||

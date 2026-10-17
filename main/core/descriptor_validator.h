@@ -54,6 +54,10 @@ typedef enum {
    * MAX_KEYPATH_ORIGIN_DEPTH steps deep; the others may be up to
    * KEY_MAX_DERIVATION_DEPTH steps. */
   VALIDATION_UNSUPPORTED_KEY_ORIGIN,
+  /* Top level is not pkh(), wpkh(), sh(), wsh() or tr(): a bare multi(),
+   * sortedmulti() or pk() parses but has no address, and its scriptPubKey is
+   * longer than signing reads. */
+  VALIDATION_UNSUPPORTED_TOP_LEVEL,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,

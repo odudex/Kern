@@ -62,6 +62,12 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
                               NULL, 3000);
     return true;
 
+  case VALIDATION_UNSUPPORTED_TOP_LEVEL:
+    dialog_show_error_timeout("Descriptor type not supported (use sh, wsh or "
+                              "tr)",
+                              NULL, 3000);
+    return true;
+
   case VALIDATION_UNSUPPORTED_SCRIPT:
     dialog_show_error_timeout("Script too large (max 15 multisig keys)", NULL,
                               3000);
