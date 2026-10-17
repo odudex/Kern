@@ -303,3 +303,15 @@ bool key_get_derived_key_components(const uint32_t *path, size_t path_depth,
       master_key, path, path_depth, BIP32_FLAG_KEY_PRIVATE, key_out);
   return (ret == WALLY_OK);
 }
+
+bool key_get_public_key_components(const uint32_t *path, size_t path_depth,
+                                   struct ext_key **key_out) {
+  if (!key_get_derived_key_components(path, path_depth, key_out))
+    return false;
+  if (bip32_key_strip_private_key(*key_out) != WALLY_OK) {
+    bip32_key_free(*key_out);
+    *key_out = NULL;
+    return false;
+  }
+  return true;
+}

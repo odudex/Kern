@@ -277,6 +277,12 @@ static void refresh_address_list(void) {
       return;
   }
 
+  ss_chain_t ss_chain = {0};
+  if (!reg_entry &&
+      !ss_chain_open(wallet_source_picker_script_type(current_source.source),
+                     current_source.account, chain, is_testnet, &ss_chain))
+    return;
+
   for (uint32_t i = 0; i < NUM_ADDRESSES; i++) {
     uint32_t idx = address_offset + i;
     char addr_buf[SS_ADDRESS_MAX_LEN];
@@ -289,10 +295,7 @@ static void refresh_address_list(void) {
                                             &dynamic_addr);
       success = (ret == WALLY_OK) && dynamic_addr;
     } else {
-      ss_script_type_t script =
-          wallet_source_picker_script_type(current_source.source);
-      success = ss_address(script, current_source.account, chain, idx,
-                           is_testnet, addr_buf, sizeof(addr_buf));
+      success = ss_chain_address(&ss_chain, idx, addr_buf, sizeof(addr_buf));
     }
 
     if (!success)
@@ -350,6 +353,7 @@ static void refresh_address_list(void) {
     lv_obj_add_event_cb(btn, address_button_cb, LV_EVENT_CLICKED,
                         (void *)(intptr_t)si);
   }
+  ss_chain_close(&ss_chain);
 }
 
 static lv_obj_t *create_nav_button(lv_obj_t *parent, const char *text,

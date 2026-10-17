@@ -54,5 +54,10 @@ KERN_WARN_UNUSED_RESULT bool key_get_derived_key(const char *path,
 KERN_WARN_UNUSED_RESULT bool
 key_get_derived_key_components(const uint32_t *path, size_t path_depth,
                                struct ext_key **key_out);
+/* The key at `path` with its private part removed, for deriving unhardened
+ * children publicly. Free with bip32_key_free(). */
+KERN_WARN_UNUSED_RESULT bool
+key_get_public_key_components(const uint32_t *path, size_t path_depth,
+                              struct ext_key **key_out);
 
 #endif // KEY_H

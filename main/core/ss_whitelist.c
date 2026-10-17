@@ -176,6 +176,64 @@ bool ss_address(ss_script_type_t script, uint32_t account, uint32_t chain,
   return true;
 }
 
+bool ss_chain_open(ss_script_type_t script, uint32_t account, uint32_t chain,
+                   bool is_testnet, ss_chain_t *out) {
+  if (!out)
+    return false;
+  memset(out, 0, sizeof(*out));
+  uint32_t purpose = ss_purpose_for_script(script);
+  if (purpose == 0 || bip32_path_is_hardened(chain))
+    return false;
+  const uint32_t path[] = {
+      BIP32_PATH_HARDENED | purpose,
+      BIP32_PATH_HARDENED | (is_testnet ? 1u : 0u),
+      BIP32_PATH_HARDENED | account,
+      chain,
+  };
+  if (!key_get_public_key_components(path, sizeof(path) / sizeof(path[0]),
+                                     &out->key))
+    return false;
+  out->script = script;
+  out->is_testnet = is_testnet;
+  return true;
+}
+
+bool ss_chain_scriptpubkey(const ss_chain_t *c, uint32_t index, uint8_t *out,
+                           size_t *out_len) {
+  struct ext_key child;
+  if (!c || !c->key || bip32_path_is_hardened(index) ||
+      bip32_key_from_parent(c->key, index,
+                            BIP32_FLAG_KEY_PUBLIC | BIP32_FLAG_SKIP_HASH,
+                            &child) != WALLY_OK)
+    return false;
+  bool ok = script_template_from_pubkey(ss_template_for_script(c->script),
+                                        child.pub_key, EC_PUBLIC_KEY_LEN, out,
+                                        out_len, NULL, NULL);
+  wally_bzero(&child, sizeof(child));
+  return ok;
+}
+
+bool ss_chain_address(const ss_chain_t *c, uint32_t index, char *out,
+                      size_t out_len) {
+  uint8_t spk[34];
+  size_t spk_len = 0;
+  if (!out || !ss_chain_scriptpubkey(c, index, spk, &spk_len))
+    return false;
+  char *address = script_template_address_from_spk(spk, spk_len, c->is_testnet);
+  bool ok = address && strlen(address) < out_len;
+  if (ok)
+    memcpy(out, address, strlen(address) + 1);
+  wally_free_string(address);
+  return ok;
+}
+
+void ss_chain_close(ss_chain_t *c) {
+  if (c && c->key)
+    bip32_key_free(c->key);
+  if (c)
+    memset(c, 0, sizeof(*c));
+}
+
 psb_result_t
 purpose_script_binding_check_soft(const struct wally_descriptor *desc) {
   /* Step 1: Identify outer script type via canonical string */

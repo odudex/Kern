@@ -35,17 +35,21 @@ bool address_match_singlesig(ss_script_type_t script, uint32_t account,
   if (!spk || !out)
     return false;
   for (uint32_t chain = 0; chain <= 1; chain++) {
+    ss_chain_t c;
+    if (!ss_chain_open(script, account, chain, is_testnet, &c))
+      return false;
     for (uint32_t i = start; i < limit; i++) {
       uint8_t candidate[34];
       size_t len = 0;
-      if (ss_scriptpubkey(script, account, chain, i, is_testnet, candidate,
-                          &len) &&
+      if (ss_chain_scriptpubkey(&c, i, candidate, &len) &&
           spk_equal(candidate, len, spk, spk_len)) {
+        ss_chain_close(&c);
         out->chain = chain;
         out->index = i;
         return true;
       }
     }
+    ss_chain_close(&c);
   }
   return false;
 }

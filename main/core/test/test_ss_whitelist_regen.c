@@ -91,6 +91,41 @@ static void test_address(const char *name, ss_script_type_t script,
   PASS();
 }
 
+/* A chain held as a public key gives every index the same script and address
+ * as the full private derivation does. */
+static void test_chain_matches_full_derivation(void) {
+  static const ss_script_type_t scripts[] = {
+      SS_SCRIPT_P2PKH, SS_SCRIPT_P2SH_P2WPKH, SS_SCRIPT_P2WPKH, SS_SCRIPT_P2TR};
+  for (size_t s = 0; s < 4; s++) {
+    for (uint32_t chain = 0; chain <= 1; chain++) {
+      char name[64];
+      snprintf(name, sizeof(name),
+               "public chain = full path (script %zu, chain %u)", s,
+               (unsigned)chain);
+      TEST(name);
+      ss_chain_t c;
+      bool ok = ss_chain_open(scripts[s], 0, chain, false, &c);
+      for (uint32_t i = 0; ok && i < 5; i++) {
+        uint8_t a[34], b[34];
+        size_t a_len = 0, b_len = 0;
+        char addr_a[SS_ADDRESS_MAX_LEN], addr_b[SS_ADDRESS_MAX_LEN];
+        ok = ss_chain_scriptpubkey(&c, i, a, &a_len) &&
+             ss_scriptpubkey(scripts[s], 0, chain, i, false, b, &b_len) &&
+             a_len == b_len && memcmp(a, b, a_len) == 0 &&
+             ss_chain_address(&c, i, addr_a, sizeof(addr_a)) &&
+             ss_address(scripts[s], 0, chain, i, false, addr_b,
+                        sizeof(addr_b)) &&
+             strcmp(addr_a, addr_b) == 0;
+      }
+      ss_chain_close(&c);
+      if (ok)
+        PASS();
+      else
+        FAIL("differs from the full derivation");
+    }
+  }
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -140,6 +175,7 @@ int main(void) {
     }
   }
 
+  test_chain_matches_full_derivation();
   key_unload();
 
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,
