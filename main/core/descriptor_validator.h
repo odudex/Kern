@@ -46,6 +46,9 @@ typedef enum {
   /* Descriptor carries a private key (xprv/tprv). A signing device never
    * needs one in a descriptor, and a backup would leak it. */
   VALIDATION_PRIVATE_KEY,
+  /* More keys than DESCRIPTOR_INFO_MAX_KEYS letter IDs. Only tr() gets there:
+   * sh()/wsh() hit the inner script cap first. */
+  VALIDATION_TOO_MANY_KEYS,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,
@@ -68,9 +71,8 @@ typedef enum {
   TR_KEYPATH_EXTERNAL, /* internal key is an external key — can spend alone */
 } tr_keypath_class_t;
 
-/* Descriptor info for confirmation display. One letter ID per key; the
- * script-size validation (VALIDATION_UNSUPPORTED_SCRIPT) guarantees loadable
- * descriptors stay well under this cap. */
+/* Descriptor info for confirmation display. One letter ID per key; more keys
+ * are rejected as VALIDATION_TOO_MANY_KEYS. */
 #define DESCRIPTOR_INFO_MAX_KEYS MINISCRIPT_POLICY_MAX_KEYS
 typedef struct {
   bool is_multisig;

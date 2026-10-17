@@ -729,6 +729,37 @@ static void test_taproot_keypath(void) {
   registry_clear();
 }
 
+/* tr(NUMS, multi_a(1, ours, cosigner...)) with num_keys keys in all */
+static const char *tr_multi_a(char *out, size_t len, int num_keys) {
+  size_t n = snprintf(
+      out, len, "tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*", X86_0);
+  for (int i = 2; i < num_keys && n < len; i++)
+    n += snprintf(out + n, len - n, ",[deadbeef/86'/0'/1']%s/%d/*", X86_1, i);
+  if (n < len)
+    snprintf(out + n, len - n, "))");
+  return out;
+}
+
+/* Keys are shown by letter ID, A to Z, but tr() can hold more keys. */
+static void test_key_cap(void) {
+  registry_clear();
+  char buf[8192];
+  const char *over = tr_multi_a(buf, sizeof(buf), DESCRIPTOR_INFO_MAX_KEYS + 1);
+  check("27 keys rejected as too many keys",
+        run(over) == VALIDATION_TOO_MANY_KEYS && info_calls == 0);
+  check("keyed validation rejects 27 keys too",
+        descriptor_validate_keyed(over, NULL) == VALIDATION_TOO_MANY_KEYS);
+
+  const char *full = tr_multi_a(buf, sizeof(buf), DESCRIPTOR_INFO_MAX_KEYS);
+  check("26 keys accepted", run(full) == VALIDATION_SUCCESS);
+  check("info: all 26 keys listed with a policy",
+        info_seen.num_keys == DESCRIPTOR_INFO_MAX_KEYS &&
+            strcmp(info_seen.keys[25].fingerprint_hex, "DEADBEEF") == 0 &&
+            strstr(info_seen.policy, ",Y,Z))") != NULL);
+  check("only the 26-key descriptor registered", registry_count() == 1);
+  registry_clear();
+}
+
 static void test_network(void) {
   registry_clear();
   key_unload();
@@ -918,6 +949,11 @@ static void test_watch_only(void) {
         run_watch(tr_bare, WALLET_NETWORK_MAINNET) ==
             VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE);
 
+  char buf[8192];
+  check("watch-only rejects more keys than letter IDs",
+        run_watch(tr_multi_a(buf, sizeof(buf), DESCRIPTOR_INFO_MAX_KEYS + 1),
+                  WALLET_NETWORK_MAINNET) == VALIDATION_TOO_MANY_KEYS);
+
   check("watch-only hardened notation gate",
         run_watch(descf("wpkh([deadbeef/84H/0H/0H]%s/0/*)", X84_0),
                   WALLET_NETWORK_MAINNET) ==
@@ -940,6 +976,7 @@ int main(void) {
   test_purpose_binding_warning();
   test_multisig_and_miniscript();
   test_taproot_keypath();
+  test_key_cap();
   test_network();
   test_dedup();
   test_generation_guard();

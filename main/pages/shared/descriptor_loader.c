@@ -229,6 +229,14 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
   case VALIDATION_PRIVATE_KEY:
     dialog_show_error_timeout("Descriptor contains a private key", NULL, 2500);
     return true;
+
+  case VALIDATION_TOO_MANY_KEYS: {
+    char msg[40];
+    snprintf(msg, sizeof(msg), "Too many keys (max %d)",
+             DESCRIPTOR_INFO_MAX_KEYS);
+    dialog_show_error_timeout(msg, NULL, 3000);
+    return true;
+  }
   case VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE:
     dialog_show_error_timeout("Taproot internal key not provably unspendable",
                               NULL, 3000);

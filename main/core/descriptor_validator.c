@@ -379,8 +379,10 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
                                     descriptor_info_t *info) {
   memset(info, 0, sizeof(descriptor_info_t));
 
+  /* static_checks rejects more keys than letter IDs; this guards keys[]. */
   uint32_t num_keys = 0;
-  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK) {
+  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK ||
+      num_keys > DESCRIPTOR_INFO_MAX_KEYS) {
     return false;
   }
 
@@ -394,11 +396,6 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
       snprintf(info->policy, sizeof(info->policy), "%s", policy);
       free(policy);
     }
-  }
-  /* Unreachable for loadable descriptors: the script-size guard caps key
-   * counts well below DESCRIPTOR_INFO_MAX_KEYS. Defensive bound for keys[]. */
-  if (num_keys > DESCRIPTOR_INFO_MAX_KEYS) {
-    return false;
   }
   info->num_keys = num_keys;
 
@@ -594,6 +591,7 @@ static void proceed_psb_or_info(void) {
 /* Keyless structural checks applied to every parsed descriptor. */
 static descriptor_validation_result_t
 static_checks(struct wally_descriptor *descriptor) {
+  uint32_t num_keys = 0;
   if (descriptor_has_private_key(descriptor))
     return VALIDATION_PRIVATE_KEY;
   if (descriptor_is_miniscript(descriptor) &&
@@ -601,6 +599,9 @@ static_checks(struct wally_descriptor *descriptor) {
     return VALIDATION_UNSUPPORTED_MINISCRIPT;
   if (!descriptor_scripts_are_generatable(descriptor))
     return VALIDATION_UNSUPPORTED_SCRIPT;
+  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK ||
+      num_keys > DESCRIPTOR_INFO_MAX_KEYS)
+    return VALIDATION_TOO_MANY_KEYS;
   if (tr_internal_keypath_unprovable(descriptor))
     return VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE;
   return VALIDATION_SUCCESS;
@@ -746,9 +747,13 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
   }
 
   // Extract descriptor info before freeing.
-  extract_descriptor_info(descriptor, current_ctx->descriptor_str, key_index,
-                          &current_ctx->info);
+  bool have_info = extract_descriptor_info(
+      descriptor, current_ctx->descriptor_str, key_index, &current_ctx->info);
   wally_descriptor_free(descriptor);
+  if (!have_info) {
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
 
   // Stash the purpose-script binding warning to run after the keypath gate.
   current_ctx->psb_warn = (psb_result == PSB_WARN);
@@ -914,9 +919,13 @@ void descriptor_validate_and_load(const char *descriptor_str,
 // Watch-only: extract info and show the "Load?" dialog, skipping the xpub
 // verification and PSB warning that the keyed path performs.
 static void watch_only_show_info(struct wally_descriptor *descriptor) {
-  extract_descriptor_info(descriptor, current_ctx->descriptor_str, -1,
-                          &current_ctx->info);
+  bool have_info = extract_descriptor_info(
+      descriptor, current_ctx->descriptor_str, -1, &current_ctx->info);
   wally_descriptor_free(descriptor);
+  if (!have_info) {
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
   show_info_or_auto_confirm();
 }
 
