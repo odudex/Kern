@@ -50,6 +50,7 @@ Font sizes are **derived, not hand-picked**. `tools/derive_font_sizes.py` holds 
 | crowpanel | 24 / 34 |
 | wave_7b | 24 / 34 |
 | wave_5 | 28 / 40 |
+| p4_pico | 28 / 40 |
 
 To retune: edit the targets/specs in `derive_font_sizes.py`, run `python3 tools/derive_font_sizes.py --apply`, then `scripts/bake_icons.sh`, then rebuild.
 

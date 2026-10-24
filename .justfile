@@ -1,14 +1,14 @@
 export IDF_PATH := env_var_or_default("IDF_PATH", env_var("HOME") + "/esp/esp-idf")
 export IDF_PATH_FORCE := "1"
 
-# Board parameter: "wave_4b" (default), "wave_35", "wave_5", "wave_43", "crowpanel", or "wave_7b"
+# Board parameter: "wave_4b" (default), "wave_35", "wave_5", "wave_43", "crowpanel", "wave_7b", or "p4_pico"
 # Usage: just build wave_35, just flash wave_4b, just build wave_5, just build wave_7b
 # Each board builds into its own build_<board>/ directory, so switching
 # boards is instant (no clean required) and per-board builds stay incremental.
 # Append _v3 to a board (just build wave_43_v3) for ESP32-P4 chip revision
 # v3.x: IDF cannot build one image for both v1.x and v3.x silicon.
 
-boards := "wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b"
+boards := "wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b p4_pico"
 
 _check_board board:
     #!/usr/bin/env sh
@@ -56,7 +56,7 @@ test:
     ./scripts/test.sh
 
 clean:
-    rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b
+    rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b build_p4_pico
     rm -fRd build_*_v3
     rm -fRd build_pbkdf2_*
     rm -fRd build_scanprof_*
@@ -98,14 +98,14 @@ site port="8000":
     python3 -m http.server {{port}} -d site
 
 # Simulator board resolution mapping
-# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800, crowpanel: 1024x600, wave_7b: 1024x600
+# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800, crowpanel: 1024x600, wave_7b: 1024x600, p4_pico: 720x1280
 _sim_h_res board:
     #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; wave_43) echo 480;; crowpanel) echo 1024;; wave_7b) echo 1024;; *) echo 720;; esac
+    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; wave_43) echo 480;; crowpanel) echo 1024;; wave_7b) echo 1024;; p4_pico) echo 720;; *) echo 720;; esac
 
 _sim_v_res board:
     #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; wave_43) echo 800;; crowpanel) echo 600;; wave_7b) echo 600;; *) echo 720;; esac
+    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; wave_43) echo 800;; crowpanel) echo 600;; wave_7b) echo 600;; p4_pico) echo 1280;; *) echo 720;; esac
 
 # Build the desktop simulator
 sim-build board="wave_4b": (_check_board board)

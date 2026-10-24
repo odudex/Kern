@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Board target for the Waveshare ESP32-P4-Pico (`p4_pico`), a display-less module with Raspberry Pi style DSI and CSI connectors and no radio chip, paired with Waveshare's 5-DSI-TOUCH-A (720x1280). The display is the HX8394 panel of the ESP32-P4-WiFi6-Touch-LCD-5, so it shares that board's panel driver, now its own component; its MCU at I2C 0x45 drives the backlight, and the GT911 touch controller is probed at 0x5D and 0x14. Untested on hardware
+
 ## [0.0.20] - 2026-09-23
 
 ### Added
