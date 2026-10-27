@@ -365,6 +365,10 @@ set_target_properties(lvgl PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(lvgl PUBLIC
     ${LVGL_DIR}
     ${LVGL_DIR}/src
+    # Debian's libsdl2-dev drops headers straight under /usr/include (already
+    # a default search path), but Homebrew's puts them under a non-default
+    # prefix; SDL2_INCLUDE_DIRS covers both without changing the Linux path.
+    ${SDL2_INCLUDE_DIRS}
 )
 target_include_directories(lvgl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -376,7 +380,7 @@ target_compile_definitions(lvgl PRIVATE
     lv_refr_now=kern_lv_refr_now_real
 )
 target_link_libraries(lvgl PUBLIC
-    SDL2
+    ${SDL2_LIBRARIES}
 )
 
 add_executable(kern_simulator
@@ -418,6 +422,7 @@ target_include_directories(kern_simulator PRIVATE
     # LVGL
     ${LVGL_DIR}
     ${LVGL_DIR}/src
+    ${SDL2_INCLUDE_DIRS}
 )
 
 target_compile_definitions(kern_simulator PRIVATE
@@ -473,7 +478,7 @@ endif()
 
 target_link_libraries(kern_simulator PRIVATE
     lvgl
-    SDL2
+    ${SDL2_LIBRARIES}
     Threads::Threads
     m
     wally
