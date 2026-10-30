@@ -171,6 +171,14 @@ static void test_dice_mnemonic(void) {
     int words;
     const char *want;
   } vectors[] = {
+      {"11111111111111111111111111111111111111111111111111", 12,
+       "diet glad hat rural panther lawsuit act drop gallery urge where fit"},
+      {"11111111111111111111111111111111111111111111111111111111111111111111"
+       "1111111111111111111111111111111",
+       24,
+       "wheel erase puppy pistol chapter accuse carpet drop quote final attend "
+       "near scrap satisfy limit style crunch person south inspire lunch "
+       "meadow enact tattoo"},
       {"12345612345612345612345612345612345612345612345612345612", 12,
        "chest spatial into brick once toast dog gallery battle flee stem "
        "miracle"},
