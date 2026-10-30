@@ -2574,9 +2574,11 @@ static void test_restore_without_memory(void) {
 /* Known-answer signatures. libwally signs deterministically, as on the device
  * (RFC6979, and BIP340 with no aux randomness), so these pin BIP143 and BIP341
  * sighashes and signing end to end, whichever hashing backend is built. The
- * two taproot ones were checked once against an independent pure-Python
- * BIP340/341/342 implementation: valid, and the leaf commits to the output
- * key. */
+ * P2WPKH one is Bitcoin Core's (CKey::Sign: RFC6979, low-R grinding, low-S),
+ * checked with an independent reimplementation; its first nonce has a high R,
+ * so it pins the grinding too. The two taproot ones were checked once against
+ * an independent pure-Python BIP340/341/342 implementation: valid, and the
+ * leaf commits to the output key. */
 static void hex_of(const unsigned char *b, size_t n, char *out) {
   for (size_t i = 0; i < n; i++)
     sprintf(out + 2 * i, "%02x", b[i]);
