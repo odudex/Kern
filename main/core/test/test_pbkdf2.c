@@ -513,6 +513,16 @@ static void test_fallback_and_args(void) {
                 CRYPTO_ERR_INVALID_ARG);
 }
 
+static void test_hw_active(void) {
+  engine_reset();
+  check("a healthy engine reports the accelerator active", pbkdf2_hw_active());
+  engine_reset();
+  engine_sabotage = true;
+  check("a faulty engine reports it inactive", !pbkdf2_hw_active());
+  check("the failed check released the peripheral", !engine_held);
+  engine_reset();
+}
+
 /* ---------- SHA-512 ---------- */
 
 /* RFC 6070's inputs under SHA-512, and the BIP39 TREZOR vectors for a 93-byte
@@ -658,6 +668,7 @@ int main(void) {
   test_hw_structure();
   test_differential();
   test_fallback_and_args();
+  test_hw_active();
   test_kats_512();
   test_hw_structure_512();
   test_differential_512();

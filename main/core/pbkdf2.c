@@ -320,3 +320,7 @@ int pbkdf2_hw_sha512(const uint8_t *password, size_t password_len,
   return accelerated(&SHA512_VARIANT, password, password_len, salt, salt_len,
                      iterations, key_out, key_len);
 }
+
+bool pbkdf2_hw_active(void) {
+  return self_check(&SHA256_VARIANT) && self_check(&SHA512_VARIANT);
+}

@@ -11,6 +11,7 @@
 #define PBKDF2_H
 
 #include "../utils/attributes.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -48,6 +49,13 @@ KERN_WARN_UNUSED_RESULT int
 pbkdf2_hw_sha512(const uint8_t *password, size_t password_len,
                  const uint8_t *salt, size_t salt_len, uint32_t iterations,
                  uint8_t *key_out, size_t key_len);
+
+/*
+ * Whether the accelerated path passes its known-answer check for both hashes.
+ * When it does not, pbkdf2_hw_*() run the PSA reference instead: the same
+ * bytes, only slower, so this is the one place the fallback shows.
+ */
+KERN_WARN_UNUSED_RESULT bool pbkdf2_hw_active(void);
 
 #ifdef CONFIG_KERN_PBKDF2_SELFTEST
 /*
