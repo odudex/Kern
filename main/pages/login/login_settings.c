@@ -10,6 +10,7 @@
 #include "../../utils/session.h"
 #include "../../utils/session_cleanup.h"
 #include "../settings/firmware_update.h"
+#include "../settings/self_test_page.h"
 #include "security_settings.h"
 #include <bsp/display.h>
 #include <lvgl.h>
@@ -148,6 +149,19 @@ static void firmware_update_cb(void) {
   firmware_update_page_show();
 }
 
+// ── Self test ──
+
+static void self_test_return_cb(void) {
+  self_test_page_destroy();
+  ui_menu_show(settings_menu);
+}
+
+static void self_test_cb(void) {
+  ui_menu_hide(settings_menu);
+  self_test_page_create(lv_screen_active(), self_test_return_cb);
+  self_test_page_show();
+}
+
 // ── Category menu callbacks ──
 
 static void brightness_cb(void) { show_brightness_page(); }
@@ -177,6 +191,7 @@ void login_settings_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   ui_menu_add_entry(settings_menu, "Screen Brightness", brightness_cb);
   ui_menu_add_entry(settings_menu, "Screensaver", screensaver_cb);
   ui_menu_add_entry(settings_menu, "Firmware Update", firmware_update_cb);
+  ui_menu_add_entry(settings_menu, "Self Test", self_test_cb);
 }
 
 void login_settings_page_show(void) {
@@ -192,6 +207,7 @@ void login_settings_page_hide(void) {
 void login_settings_page_destroy(void) {
   session_cleanup_unregister(login_settings_page_destroy);
   security_settings_page_destroy();
+  self_test_page_destroy();
   destroy_brightness_page();
   destroy_screensaver_page();
   if (settings_menu) {

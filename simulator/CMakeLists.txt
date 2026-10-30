@@ -183,6 +183,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_text.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/secp_hardening.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_init.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/self_test.c
     # Shared zlib adapter used by KEF and BBQr
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)
@@ -294,6 +295,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/settings/wallet_settings.c
     ${APP_PAGES_DIR}/settings/registered_descriptors.c
     ${APP_PAGES_DIR}/settings/firmware_update.c
+    ${APP_PAGES_DIR}/settings/self_test_page.c
     # Shared pages
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
