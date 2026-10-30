@@ -16,6 +16,7 @@
 #include <wally_transaction.h>
 
 /* Project headers for stub type declarations */
+#include "core/crypto_init.h"
 #include "core/key.h"
 #include "core/psbt.h"
 #include "core/psbt_gate.h"
@@ -4744,10 +4745,9 @@ static void test_gate_taproot_missing_amount(void) {
 }
 
 int main(void) {
-  /* The host libwally hashes through PSA, as the device does, which needs
-   * wally_init. */
-  if (wally_init(0) != WALLY_OK) {
-    printf("ABORT: wally_init failed\n");
+  /* Set up libwally as the firmware does, hooks included. */
+  if (!crypto_init()) {
+    printf("ABORT: crypto_init failed\n");
     return 1;
   }
   printf("=== claim_regenerate whitelist tests ===\n\n");

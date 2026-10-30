@@ -25,6 +25,12 @@ test_key
 test_crypto_utils
 test_pbkdf2
 test_pbkdf2_core.o
+test_crypto_init.a
+crypto_init.o
+secp_hardening.o
+crypto_utils.o
+entropy_pool.o
+esp_hw_stub.o
 test_multisig_setup
 test_address_match
 test_descriptor_text

@@ -182,6 +182,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_branch.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_text.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/secp_hardening.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_init.c
     # Shared zlib adapter used by KEF and BBQr
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)

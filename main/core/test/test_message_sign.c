@@ -6,6 +6,7 @@
 #include <wally_core.h>
 #include <wally_crypto.h>
 
+#include "core/crypto_init.h"
 #include "core/key.h"
 #include "core/message_sign.h"
 #include "core/secp_hardening.h"
@@ -128,10 +129,9 @@ static void test_signing_is_deterministic(void) {
 }
 
 int main(void) {
-  /* The host libwally hashes through PSA, as the device does, which needs
-   * wally_init. */
-  if (wally_init(0) != WALLY_OK) {
-    printf("ABORT: wally_init failed\n");
+  /* Set up libwally as the firmware does, hooks included. */
+  if (!crypto_init()) {
+    printf("ABORT: crypto_init failed\n");
     return 1;
   }
   printf("=== message_sign tests ===\n\n");
