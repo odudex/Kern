@@ -39,6 +39,7 @@ test_wally_descriptor
 test_seedqr
 test_mnemonic_words
 test_descriptor_branch
+test_self_test
 fuzz_psbt
 fuzz_descriptor
 fuzz_text
