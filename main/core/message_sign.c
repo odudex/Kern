@@ -105,15 +105,9 @@ void message_sign_free_parsed(parsed_sign_message_t *parsed) {
   parsed->message = NULL;
 }
 
-bool message_sign_sign(const char *derivation_path, const char *message,
-                       char **signature_b64_out) {
-  if (!derivation_path || !message || !signature_b64_out) {
-    return false;
-  }
-
-  struct ext_key *derived_key = NULL;
-  if (!key_get_derived_key(derivation_path, &derived_key)) {
-    ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
+bool message_sign_with_key(const struct ext_key *key, const char *message,
+                           char **signature_b64_out) {
+  if (!key || !message || !signature_b64_out) {
     return false;
   }
 
@@ -125,7 +119,6 @@ bool message_sign_sign(const char *derivation_path, const char *message,
       BITCOIN_MESSAGE_FLAG_HASH, hash, sizeof(hash), &written);
   if (ret != WALLY_OK) {
     ESP_LOGE(TAG, "Failed to format bitcoin message: %d", ret);
-    bip32_key_free(derived_key);
     return false;
   }
 
@@ -136,12 +129,9 @@ bool message_sign_sign(const char *derivation_path, const char *message,
   // added.
   unsigned char sig[EC_SIGNATURE_RECOVERABLE_LEN];
   ret = wally_ec_sig_from_bytes(
-      derived_key->priv_key + 1, EC_PRIVATE_KEY_LEN, hash, EC_MESSAGE_HASH_LEN,
+      key->priv_key + 1, EC_PRIVATE_KEY_LEN, hash, EC_MESSAGE_HASH_LEN,
       EC_FLAG_ECDSA | EC_FLAG_RECOVERABLE, sig, sizeof(sig));
-
-  // Securely clear private key material
   secure_memzero(hash, sizeof(hash));
-  bip32_key_free(derived_key);
 
   if (ret != WALLY_OK) {
     ESP_LOGE(TAG, "Failed to sign message: %d", ret);
@@ -161,6 +151,22 @@ bool message_sign_sign(const char *derivation_path, const char *message,
 
   *signature_b64_out = b64_output;
   return true;
+}
+
+bool message_sign_sign(const char *derivation_path, const char *message,
+                       char **signature_b64_out) {
+  if (!derivation_path || !message || !signature_b64_out) {
+    return false;
+  }
+
+  struct ext_key *derived_key = NULL;
+  if (!key_get_derived_key(derivation_path, &derived_key)) {
+    ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
+    return false;
+  }
+  bool ok = message_sign_with_key(derived_key, message, signature_b64_out);
+  bip32_key_free(derived_key);
+  return ok;
 }
 
 bool message_sign_get_address(const char *derivation_path, bool is_testnet,
