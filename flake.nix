@@ -3,9 +3,19 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    # mirrexagon/nixpkgs-esp-dev#135 (ESP-IDF v6.1) plus a libpython3.14 fix for Linux.
+    nixpkgs-esp-dev = {
+      url = "github:Sammyalhashe/nixpkgs-esp-dev/b574e8e501dfa691814c87d4151043eb991d2be9";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      nixpkgs-esp-dev,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -17,9 +27,20 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
-      devShells = forAllSystems (system:
+      devShells = forAllSystems (
+        system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ nixpkgs-esp-dev.overlays.default ];
+
+            # The Python library ecdsa is marked as insecure, but we need it for esptool.
+            # See https://github.com/mirrexagon/nixpkgs-esp-dev/issues/109
+            config.permittedInsecurePackages = [
+              "python3.13-ecdsa-0.19.1"
+              "python3.13-ecdsa-0.19.2"
+            ];
+          };
 
           # LLVM 21 is the major ESP-IDF 6.1 ships as esp-clang and the one
           # scripts/format.sh requires: clang-format's defaults drift between
@@ -50,6 +71,8 @@
               pkgs.mbedtls
               pkgs.SDL2
               pkgs.pkg-config
+              # ESP-IDF v6.1 with its toolchains and Python env (incl. esp-idf-sbom).
+              pkgs.esp-idf-full
             ];
 
             shellHook = ''
@@ -59,9 +82,10 @@
               echo "  cmake:      $(cmake --version | head -1)"
               echo "  make:       $(make --version | head -1)"
               echo "  just:       $(just --version)"
-              echo "  firmware:   install ESP-IDF v6.1 separately"
+              echo "  firmware:   ESP-IDF $(cat "$IDF_PATH/version.txt")"
             '';
           };
-        });
+        }
+      );
     };
-  }
+}
