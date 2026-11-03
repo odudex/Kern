@@ -9,6 +9,7 @@
 #include "scan.h"
 #include "../../../components/cUR/src/types/bytes_type.h"
 #include "../../../components/cUR/src/types/psbt.h"
+#include "../../core/bip138_backup.h"
 #include "../../core/bip322.h"
 #include "../../core/kef.h"
 #include "../../core/key.h"
@@ -45,6 +46,8 @@ scan_ctx_t scan_ctx = {
 };
 
 static ui_oneshot_t deferred_timer;
+static uint8_t *pending_bip138 = NULL;
+static size_t pending_bip138_len = 0;
 
 // Shows a progress dialog and runs cb from a one-shot timer so LVGL renders
 // the dialog before the slow work starts.
@@ -453,6 +456,38 @@ static void scan_kef_success_cb(const uint8_t *data, size_t len) {
   finish_dispatch(content, len, false, FORMAT_NONE);
 }
 
+static void deferred_bip138_cb(lv_timer_t *timer) {
+  (void)timer;
+  char *descriptor = NULL;
+  bool opened = bip138_backup_decrypt_any(pending_bip138, pending_bip138_len,
+                                          &descriptor, NULL);
+  free(pending_bip138);
+  pending_bip138 = NULL;
+  pending_bip138_len = 0;
+  scan_dismiss_progress();
+  if (!opened) {
+    dialog_show_error_timeout("Backup is not addressed to the loaded key",
+                              scan_ctx.return_cb, 0);
+    return;
+  }
+  scan_handle_descriptor(descriptor);
+  SECURE_FREE_STRING(descriptor);
+}
+
+static void scan_handle_bip138(const uint8_t *data, size_t len) {
+  free(pending_bip138);
+  pending_bip138_len = 0;
+  pending_bip138 = malloc(len);
+  if (!pending_bip138) {
+    dialog_show_error_timeout("Out of memory", scan_ctx.return_cb, 0);
+    return;
+  }
+  memcpy(pending_bip138, data, len);
+  pending_bip138_len = len;
+  scan_defer_with_progress("Descriptor Backup", "Opening backup...",
+                           deferred_bip138_cb);
+}
+
 void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                        const char *save_dir, const char *source_name,
                        void (*return_cb)(void), void (*complete_cb)(void)) {
@@ -469,6 +504,11 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
   // BBQr path); otherwise normalize the text for the layer-2 detectors.
   scan_psbt_cleanup();
   bool parse_success = psbt_parse_payload(data, len, &scan_ctx.psbt);
+
+  if (!parse_success && bip138_backup_detect(data, len)) {
+    scan_handle_bip138(data, len);
+    return;
+  }
 
   char *content = NULL;
   if (!parse_success) {
@@ -515,6 +555,9 @@ void scan_page_destroy(void) {
   session_cleanup_unregister(scan_page_destroy);
   ui_oneshot_cancel(&deferred_timer);
   scan_dismiss_progress();
+  free(pending_bip138);
+  pending_bip138 = NULL;
+  pending_bip138_len = 0;
   scan_export_destroy_menu();
   qr_scanner_page_destroy();
   load_descriptor_storage_page_destroy();
