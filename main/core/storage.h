@@ -40,10 +40,11 @@ typedef enum {
 #define STORAGE_DESCRIPTOR_EXT_KEF ".kef"
 #define STORAGE_DESCRIPTOR_EXT_TXT ".txt"
 #define STORAGE_DESCRIPTOR_EXT_BIP138 ".bip138"
-#define STORAGE_DESCRIPTOR_EXT_BIP138_SD ".bip138.txt"
+#define STORAGE_DESCRIPTOR_EXT_BIP138_TXT ".bip138.txt"
 
-/* On-disk form of a descriptor file, selected by its extension. KEF and
- * BIP138 files are raw on flash and base64 text on SD. */
+/* On-disk form of a descriptor file, selected by its extension. KEF files are
+ * raw on flash and base64 text on SD. BIP138 files are raw binary everywhere;
+ * a ".bip138.txt" file holds the base64 text form and is still read. */
 typedef enum {
   STORAGE_DESCRIPTOR_TXT = 0, /* plaintext descriptor */
   STORAGE_DESCRIPTOR_KEF,     /* password-encrypted KEF envelope */

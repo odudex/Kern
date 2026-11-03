@@ -445,7 +445,7 @@ static void test_descriptor_path(void) {
   storage_descriptor_path(STORAGE_SD, "My Wallet", STORAGE_DESCRIPTOR_BIP138,
                           out, sizeof(out));
   check("path: sd bip138",
-        strcmp(out, "/sdcard/kern/descriptors/My_Wallet.bip138.txt") == 0);
+        strcmp(out, "/sdcard/kern/descriptors/My_Wallet.bip138") == 0);
   check("format: by extension",
         storage_descriptor_format("d_x.bip138") == STORAGE_DESCRIPTOR_BIP138 &&
             storage_descriptor_format("x.bip138.txt") ==
@@ -785,13 +785,20 @@ static void test_sd_descriptors(void) {
             memcmp(data, txt, len) == 0);
   free(data);
 
-  check("sd desc: save bip138 is base64 under .bip138.txt",
+  check("sd desc: save bip138 is raw binary under .bip138",
         storage_save_descriptor(STORAGE_SD, "Vault", BLOB, sizeof(BLOB),
                                 STORAGE_DESCRIPTOR_BIP138) == ESP_OK &&
-            host_file_equals("/sdcard/kern/descriptors/Vault.bip138.txt", b64,
-                             b64_len));
-  check("sd desc: load bip138 decodes and flags format",
-        storage_load_descriptor(STORAGE_SD, "Vault.bip138.txt", &data, &len,
+            host_file_equals("/sdcard/kern/descriptors/Vault.bip138", BLOB,
+                             sizeof(BLOB)));
+  check("sd desc: load .bip138 is raw and flags format",
+        storage_load_descriptor(STORAGE_SD, "Vault.bip138", &data, &len,
+                                &fmt) == ESP_OK &&
+            fmt == STORAGE_DESCRIPTOR_BIP138 && len == sizeof(BLOB) &&
+            memcmp(data, BLOB, len) == 0);
+  free(data);
+  host_write("/sdcard/kern/descriptors/Old.bip138.txt", b64, b64_len);
+  check("sd desc: load .bip138.txt decodes base64",
+        storage_load_descriptor(STORAGE_SD, "Old.bip138.txt", &data, &len,
                                 &fmt) == ESP_OK &&
             fmt == STORAGE_DESCRIPTOR_BIP138 && len == sizeof(BLOB) &&
             memcmp(data, BLOB, len) == 0);
@@ -799,14 +806,15 @@ static void test_sd_descriptors(void) {
   char fname[64];
   storage_descriptor_filename(STORAGE_SD, "Vault", STORAGE_DESCRIPTOR_BIP138,
                               fname, sizeof(fname));
-  check("sd desc: filename helper", strcmp(fname, "Vault.bip138.txt") == 0);
+  check("sd desc: filename helper", strcmp(fname, "Vault.bip138") == 0);
 
   host_write("/sdcard/kern/descriptors/backup.bak", "x", 1);
-  check("sd desc: list has kef, txt and bip138",
+  check("sd desc: list has kef, txt and both bip138 encodings",
         storage_list_descriptors(STORAGE_SD, &files, &count) == ESP_OK &&
-            count == 3 && list_has(files, count, "Vault.kef") &&
+            count == 4 && list_has(files, count, "Vault.kef") &&
             list_has(files, count, "Plain.txt") &&
-            list_has(files, count, "Vault.bip138.txt"));
+            list_has(files, count, "Vault.bip138") &&
+            list_has(files, count, "Old.bip138.txt"));
   storage_free_file_list(files, count);
   check(
       "sd desc: exists per extension",
