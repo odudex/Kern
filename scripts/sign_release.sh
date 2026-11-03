@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Kern release signing + packaging — runs on the AIR-GAPPED signing PC.
 #
 # For each device staged by release.sh, this script:

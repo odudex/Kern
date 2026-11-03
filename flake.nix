@@ -56,6 +56,10 @@
           default = mkShell {
             name = "kern-dev-shell";
 
+            # The host tests build with -Werror, and fortify adds glibc's
+            # warn_unused_result to calls like posix_memalign that CI never sees.
+            hardeningDisable = [ "fortify" ];
+
             buildInputs = [
               # clang-format, clang-tidy and clangd, for scripts/format.sh
               # and the checked-in .clang-tidy / .clangd configs.
