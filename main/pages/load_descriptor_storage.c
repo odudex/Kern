@@ -285,7 +285,7 @@ static char *get_display_name(storage_location_t loc, const char *filename) {
   if (strncmp(start, STORAGE_DESCRIPTOR_PREFIX, prefix_len) == 0)
     start += prefix_len;
 
-  static const char *const exts[] = {STORAGE_DESCRIPTOR_EXT_BIP138_SD,
+  static const char *const exts[] = {STORAGE_DESCRIPTOR_EXT_BIP138_TXT,
                                      STORAGE_DESCRIPTOR_EXT_BIP138,
                                      STORAGE_DESCRIPTOR_EXT_TXT};
   size_t slen = strlen(start);

@@ -139,8 +139,7 @@ void storage_descriptor_filename(storage_location_t loc, const char *id,
                                  storage_descriptor_format_t format, char *out,
                                  size_t out_size) {
   const char *ext = format == STORAGE_DESCRIPTOR_BIP138
-                        ? (loc == STORAGE_SD ? STORAGE_DESCRIPTOR_EXT_BIP138_SD
-                                             : STORAGE_DESCRIPTOR_EXT_BIP138)
+                        ? STORAGE_DESCRIPTOR_EXT_BIP138
                         : STORAGE_DESCRIPTOR_EXT_TXT;
   snprintf(out, out_size, "%s%s%s",
            loc == STORAGE_FLASH ? STORAGE_DESCRIPTOR_PREFIX : "", id, ext);

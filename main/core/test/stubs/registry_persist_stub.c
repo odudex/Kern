@@ -54,7 +54,7 @@ static bool has_ext(const char *filename, const char *ext) {
 storage_descriptor_format_t storage_descriptor_format(const char *filename) {
   if (!filename)
     return STORAGE_DESCRIPTOR_TXT;
-  if (has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138_SD) ||
+  if (has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138_TXT) ||
       has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138))
     return STORAGE_DESCRIPTOR_BIP138;
   if (has_ext(filename, STORAGE_DESCRIPTOR_EXT_KEF))
@@ -69,8 +69,7 @@ void storage_descriptor_filename(storage_location_t loc, const char *id,
   if (format == STORAGE_DESCRIPTOR_KEF)
     ext = STORAGE_DESCRIPTOR_EXT_KEF;
   else if (format == STORAGE_DESCRIPTOR_BIP138)
-    ext = loc == STORAGE_SD ? STORAGE_DESCRIPTOR_EXT_BIP138_SD
-                            : STORAGE_DESCRIPTOR_EXT_BIP138;
+    ext = STORAGE_DESCRIPTOR_EXT_BIP138;
   snprintf(out, out_size, "%s%s%s",
            loc == STORAGE_FLASH ? STORAGE_DESCRIPTOR_PREFIX : "", id, ext);
 }

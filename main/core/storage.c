@@ -515,14 +515,12 @@ bool storage_mnemonic_exists(storage_location_t loc, const char *id) {
 
 /* ========== Descriptor public API (thin wrappers) ========== */
 
-static const char *descriptor_ext(storage_location_t loc,
-                                  storage_descriptor_format_t format) {
+static const char *descriptor_ext(storage_descriptor_format_t format) {
   switch (format) {
   case STORAGE_DESCRIPTOR_KEF:
     return STORAGE_DESCRIPTOR_EXT_KEF;
   case STORAGE_DESCRIPTOR_BIP138:
-    return loc == STORAGE_SD ? STORAGE_DESCRIPTOR_EXT_BIP138_SD
-                             : STORAGE_DESCRIPTOR_EXT_BIP138;
+    return STORAGE_DESCRIPTOR_EXT_BIP138;
   default:
     return STORAGE_DESCRIPTOR_EXT_TXT;
   }
@@ -531,7 +529,7 @@ static const char *descriptor_ext(storage_location_t loc,
 storage_descriptor_format_t storage_descriptor_format(const char *filename) {
   if (!filename)
     return STORAGE_DESCRIPTOR_TXT;
-  if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138_SD) ||
+  if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138_TXT) ||
       filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138))
     return STORAGE_DESCRIPTOR_BIP138;
   if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_KEF))
@@ -543,8 +541,7 @@ esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
                                   const uint8_t *data, size_t len,
                                   storage_descriptor_format_t format) {
   return item_save(&descriptor_config, loc, id, data, len,
-                   descriptor_ext(loc, format),
-                   format != STORAGE_DESCRIPTOR_TXT);
+                   descriptor_ext(format), format == STORAGE_DESCRIPTOR_KEF);
 }
 
 esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
@@ -557,7 +554,9 @@ esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
   if (format_out)
     *format_out = format;
 
-  bool decode = format != STORAGE_DESCRIPTOR_TXT && loc == STORAGE_SD;
+  bool decode = loc == STORAGE_SD &&
+                (format == STORAGE_DESCRIPTOR_KEF ||
+                 filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_BIP138_TXT));
   return item_load_file(&descriptor_config, loc, filename, data_out, len_out,
                         decode);
 }
@@ -576,7 +575,7 @@ esp_err_t storage_delete_descriptor(storage_location_t loc,
 
 bool storage_descriptor_exists(storage_location_t loc, const char *id,
                                storage_descriptor_format_t format) {
-  return item_exists(&descriptor_config, loc, id, descriptor_ext(loc, format));
+  return item_exists(&descriptor_config, loc, id, descriptor_ext(format));
 }
 
 void storage_descriptor_filename(storage_location_t loc, const char *id,
@@ -587,7 +586,7 @@ void storage_descriptor_filename(storage_location_t loc, const char *id,
   char sanitized[STORAGE_MAX_SANITIZED_ID_LEN + 1];
   storage_sanitize_id(id, sanitized, sizeof(sanitized));
   item_build_filename(&descriptor_config, loc, sanitized,
-                      descriptor_ext(loc, format), out, out_size);
+                      descriptor_ext(format), out, out_size);
 }
 
 void storage_descriptor_path(storage_location_t loc, const char *id,
