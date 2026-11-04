@@ -79,10 +79,11 @@ static void append_words_to_buffer(char *out, size_t out_len, char **words,
   out[0] = '\0';
 
   for (int i = start; i < end; i++) {
-    offset += snprintf(out + offset, out_len - offset, "%s%d. %s",
-                       i > start ? "\n" : "", i + 1, words[i]);
-    if (offset >= out_len)
+    int written = snprintf(out + offset, out_len - offset, "%s%d. %s",
+                           i > start ? "\n" : "", i + 1, words[i]);
+    if (written < 0 || offset + (size_t)written >= out_len)
       break;
+    offset += (size_t)written;
   }
 }
 
