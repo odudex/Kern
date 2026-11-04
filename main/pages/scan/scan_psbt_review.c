@@ -13,6 +13,7 @@
 #include "../../ui/theme_widgets.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
+#include "kern_wally.h"
 #include "psbt_sign_policy.h"
 #include "scan_internal.h"
 #include <inttypes.h>
@@ -30,7 +31,16 @@ static void psbt_desc_menu_back_cb(void);
 static void psbt_desc_qr_cb(void);
 static void psbt_desc_flash_cb(void);
 static void psbt_desc_sd_cb(void);
-static bool create_psbt_info_display(void);
+/* The PSBT's classification, taken once per review and shared by the
+ * sign-policy gate and the review screen. */
+typedef struct {
+  input_ownership_t *inputs;
+  output_ownership_t *outputs;
+  size_t num_inputs;
+  size_t num_outputs;
+} psbt_owners_t;
+
+static bool create_psbt_info_display(const psbt_owners_t *owners);
 
 // Fee share of the inputs at which the review screen stops calling it normal.
 #define HIGH_FEE_PERCENT 10u
@@ -55,8 +65,12 @@ typedef struct {
   uint64_t value;
   char *address;
   uint32_t address_index;
-  bool is_dust;  /* below the relay dust threshold for its script type */
-  char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
+  bool change_chain; /* owned output on its wallet's change chain */
+  bool is_dust;      /* below the relay dust threshold for its script type */
+  psbt_destination_kind_t dest_kind;
+  size_t script_len;
+  char policy[64]; /* wallet of an owned output, as for inputs */
+  char path[80];   /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
 } classified_output_t;
 
 /* Input classification for the review screen. We only need a subset of
@@ -67,7 +81,9 @@ typedef struct {
   size_t index;
   psbt_ownership_t ownership;
   uint64_t value;
-  char *address; /* heap-allocated, may be NULL if spk can't be decoded */
+  char *address; /* heap-allocated, may be NULL if spk can't be read */
+  psbt_destination_kind_t dest_kind;
+  size_t script_len;
   /* Human-readable policy this input is signed under, e.g. "BIP84 (Native
    * SegWit) acct 0" for whitelisted singlesig or the registered
    * descriptor's id ("ms_2of2") for registry matches. Empty for inputs
@@ -75,6 +91,7 @@ typedef struct {
    * raw path in their own warning sections. */
   char policy[64];
   char path[80]; /* populated for OWNED_UNSAFE / EXPECTED_OWNED */
+  claim_t claim; /* valid when ownership is OWNED_SAFE */
 } classified_input_t;
 
 static const char *ss_script_label(ss_script_type_t script) {
@@ -92,58 +109,66 @@ static const char *ss_script_label(ss_script_type_t script) {
   }
 }
 
-static void format_input_policy(const input_ownership_t *own, char *out,
+static void format_claim_policy(const claim_t *claim, char *out,
                                 size_t out_size) {
   out[0] = '\0';
-  if (own->ownership != PSBT_OWNERSHIP_OWNED_SAFE)
-    return;
-  if (own->claim.kind == CLAIM_WHITELIST) {
+  if (claim->kind == CLAIM_WHITELIST) {
     snprintf(out, out_size, "%s @ account %u",
-             ss_script_label(own->claim.whitelist.script),
-             (unsigned)own->claim.whitelist.account);
-  } else if (own->claim.kind == CLAIM_REGISTRY && own->claim.registry.entry) {
-    const registry_entry_t *entry = own->claim.registry.entry;
+             ss_script_label(claim->whitelist.script),
+             (unsigned)claim->whitelist.account);
+  } else if (claim->kind == CLAIM_REGISTRY && claim->registry.entry) {
+    const registry_entry_t *entry = claim->registry.entry;
     snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
   }
 }
 
+static bool output_shares_input_policy(const classified_input_t *inputs,
+                                       size_t num_inputs,
+                                       const claim_t *source) {
+  for (size_t i = 0; i < num_inputs; i++)
+    if (inputs[i].ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+        psbt_claims_share_policy(&inputs[i].claim, source))
+      return true;
+  return false;
+}
+
 // Classify output as self-transfer, change, owned-unsafe, expected-owned,
-// or spend. For owned-unsafe and expected-owned, the path string is written
-// to path_out (truncated to path_out_size).
-static output_type_t classify_output(size_t output_index,
-                                     uint32_t *address_index_out,
-                                     char *path_out, size_t path_out_size) {
-  bool is_change = false;
-  uint32_t address_index = 0;
-
-  output_ownership_t ownership =
-      psbt_classify_output(scan_ctx.psbt, output_index, scan_ctx.is_testnet);
-
+// or spend. Change is an owned output on the change chain of a wallet an
+// owned-safe input spends from; anything else owned is a self-transfer, shown
+// with its address and wallet.
+static void classify_output(const classified_input_t *inputs, size_t num_inputs,
+                            output_ownership_t ownership,
+                            classified_output_t *out) {
   switch (ownership.ownership) {
   case PSBT_OWNERSHIP_OWNED_SAFE:
     if (ownership.source.kind == CLAIM_WHITELIST) {
-      is_change = (ownership.source.whitelist.chain == 1);
-      address_index = ownership.source.whitelist.index;
+      out->change_chain = (ownership.source.whitelist.chain == 1);
+      out->address_index = ownership.source.whitelist.index;
     } else {
-      is_change = (ownership.source.registry.multi_index == 1);
-      address_index = ownership.source.registry.child_num;
+      out->change_chain = (ownership.source.registry.multi_index == 1);
+      out->address_index = ownership.source.registry.child_num;
     }
-    *address_index_out = address_index;
-    return is_change ? OUTPUT_TYPE_CHANGE : OUTPUT_TYPE_SELF_TRANSFER;
+    format_claim_policy(&ownership.source, out->policy, sizeof(out->policy));
+    out->type = out->change_chain && output_shares_input_policy(
+                                         inputs, num_inputs, &ownership.source)
+                    ? OUTPUT_TYPE_CHANGE
+                    : OUTPUT_TYPE_SELF_TRANSFER;
+    return;
 
   case PSBT_OWNERSHIP_OWNED_UNSAFE:
   case PSBT_OWNERSHIP_EXPECTED_OWNED:
-    if (path_out && path_out_size > 0 &&
-        !psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
-                             path_out, path_out_size))
-      path_out[0] = '\0'; // renders no path line
-    return ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE
-               ? OUTPUT_TYPE_OWNED_UNSAFE
-               : OUTPUT_TYPE_EXPECTED_OWNED;
+    if (!psbt_format_keypath(ownership.raw_keypath, ownership.raw_keypath_len,
+                             out->path, sizeof(out->path)))
+      out->path[0] = '\0'; // renders no path line
+    out->type = ownership.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE
+                    ? OUTPUT_TYPE_OWNED_UNSAFE
+                    : OUTPUT_TYPE_EXPECTED_OWNED;
+    return;
 
   case PSBT_OWNERSHIP_EXTERNAL:
   default:
-    return OUTPUT_TYPE_SPEND;
+    out->type = OUTPUT_TYPE_SPEND;
+    return;
   }
 }
 
@@ -156,13 +181,45 @@ static void policy_reject_dismissed_cb(void *user_data) {
 // Re-runs the policy gate against the retained PSBT. With offer_descriptor the
 // expected-owned rejection becomes an offer to load a descriptor; without it
 // the gate falls back to the plain rejection dialog.
+static void owners_free(psbt_owners_t *o) {
+  free(o->inputs);
+  free(o->outputs);
+  memset(o, 0, sizeof(*o));
+}
+
+static bool owners_classify(psbt_owners_t *o) {
+  memset(o, 0, sizeof(*o));
+  if (!scan_ctx.psbt ||
+      wally_psbt_get_num_inputs(scan_ctx.psbt, &o->num_inputs) != WALLY_OK ||
+      wally_psbt_get_num_outputs(scan_ctx.psbt, &o->num_outputs) != WALLY_OK ||
+      !o->num_inputs || !o->num_outputs)
+    return false;
+  o->inputs = calloc(o->num_inputs, sizeof(*o->inputs));
+  o->outputs = calloc(o->num_outputs, sizeof(*o->outputs));
+  if (!o->inputs || !o->outputs) {
+    owners_free(o);
+    return false;
+  }
+  for (size_t i = 0; i < o->num_inputs; i++)
+    o->inputs[i] = psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
+  for (size_t i = 0; i < o->num_outputs; i++)
+    o->outputs[i] = psbt_classify_output(scan_ctx.psbt, i, scan_ctx.is_testnet);
+  return true;
+}
+
 void scan_psbt_resume_review(bool offer_descriptor) {
-  if (!psbt_sign_policy_allows_review(
-          scan_ctx.psbt, scan_ctx.is_testnet, policy_reject_dismissed_cb,
-          offer_descriptor ? psbt_offer_descriptor_cb : NULL))
-    return;
-  if (!create_psbt_info_display())
+  psbt_owners_t owners;
+  if (!owners_classify(&owners)) {
     dialog_show_error_timeout("Invalid PSBT data", scan_ctx.return_cb, 0);
+    return;
+  }
+  if (psbt_sign_policy_allows_review(scan_ctx.psbt, owners.inputs,
+                                     owners.outputs, policy_reject_dismissed_cb,
+                                     offer_descriptor ? psbt_offer_descriptor_cb
+                                                      : NULL) &&
+      !create_psbt_info_display(&owners))
+    dialog_show_error_timeout("Invalid PSBT data", scan_ctx.return_cb, 0);
+  owners_free(&owners);
 }
 
 static void psbt_offer_descriptor_cb(void) {
@@ -233,12 +290,7 @@ bool scan_psbt_parse_base64(const char *base64_data) {
 
   scan_psbt_cleanup();
 
-  scan_ctx.psbt_base64 = strdup(base64_data);
-  if (!scan_ctx.psbt_base64) {
-    return false;
-  }
-
-  int ret = wally_psbt_from_base64(base64_data, 0, &scan_ctx.psbt);
+  int ret = kern_psbt_from_base64(base64_data, 0, &scan_ctx.psbt);
   if (ret != WALLY_OK) {
     scan_psbt_cleanup();
     return false;
@@ -272,19 +324,13 @@ bool scan_psbt_check_mismatch(void) {
   }
 
   char message[256];
-  int offset = 0;
-  offset += snprintf(
-      message + offset, sizeof(message) - offset,
-      "PSBT requires different settings for proper change detection:\n\n");
-
-  offset += snprintf(message + offset, sizeof(message) - offset,
-                     "  Network:  %s -> %s\n",
-                     wallet_is_testnet ? "Testnet" : "Mainnet",
-                     scan_ctx.is_testnet ? "Testnet" : "Mainnet");
-
-  snprintf(message + offset, sizeof(message) - offset,
+  snprintf(message, sizeof(message),
+           "PSBT requires different settings for proper change detection:\n\n"
+           "  Network:  %s -> %s\n"
            "\nGo to Settings " LV_SYMBOL_SETTINGS
-           " to update\nconfiguration before signing.");
+           " to update\nconfiguration before signing.",
+           wallet_is_testnet ? "Testnet" : "Mainnet",
+           scan_ctx.is_testnet ? "Testnet" : "Mainnet");
 
   dialog_show_info("Configuration Mismatch", message, mismatch_dialog_cb, NULL,
                    DIALOG_STYLE_FULLSCREEN);
@@ -309,18 +355,10 @@ typedef struct {
   size_t first_dust;
   uint64_t first_dust_value;
   psbt_amount_audit_t amount_audit;
+  bool fee_trusted;
 } review_data_t;
 
-/* psbt_scriptpubkey_to_address returns a wally string, except the literal
- * OP_RETURN marker which is plain malloc. */
-static void free_address(char *address) {
-  if (!address)
-    return;
-  if (strcmp(address, "OP_RETURN") == 0)
-    free(address);
-  else
-    wally_free_string(address);
-}
+static void free_address(char *address) { wally_free_string(address); }
 
 static void review_data_free(review_data_t *d) {
   if (d->inputs)
@@ -334,11 +372,11 @@ static void review_data_free(review_data_t *d) {
   memset(d, 0, sizeof(*d));
 }
 
-static bool review_data_collect(review_data_t *d) {
+static bool review_data_collect(review_data_t *d, const psbt_owners_t *owners) {
   memset(d, 0, sizeof(*d));
-  if (wally_psbt_get_num_inputs(scan_ctx.psbt, &d->num_inputs) != WALLY_OK ||
-      wally_psbt_get_num_outputs(scan_ctx.psbt, &d->num_outputs) != WALLY_OK ||
-      d->num_inputs == 0 || d->num_outputs == 0)
+  d->num_inputs = owners->num_inputs;
+  d->num_outputs = owners->num_outputs;
+  if (d->num_inputs == 0 || d->num_outputs == 0)
     return false;
 
   d->inputs = calloc(d->num_inputs, sizeof(*d->inputs));
@@ -346,18 +384,23 @@ static bool review_data_collect(review_data_t *d) {
   if (!d->inputs || !d->outputs)
     goto fail;
 
-  psbt_audit_input_amounts(scan_ctx.psbt, &d->amount_audit);
+  uint64_t *values = calloc(d->num_inputs, sizeof(*values));
+  if (!values)
+    goto fail;
+  psbt_audit_input_values(scan_ctx.psbt, &d->amount_audit, values);
 
   for (size_t i = 0; i < d->num_inputs; i++) {
     classified_input_t *in = &d->inputs[i];
     in->index = i;
-    in->value = psbt_get_input_value(scan_ctx.psbt, i);
+    in->value = values[i];
     d->total_input += in->value;
 
-    input_ownership_t own =
-        psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
+    const input_ownership_t own = owners->inputs[i];
     in->ownership = own.ownership;
-    format_input_policy(&own, in->policy, sizeof(in->policy));
+    if (own.ownership == PSBT_OWNERSHIP_OWNED_SAFE) {
+      in->claim = own.claim;
+      format_claim_policy(&own.claim, in->policy, sizeof(in->policy));
+    }
     if ((own.ownership == PSBT_OWNERSHIP_OWNED_UNSAFE ||
          own.ownership == PSBT_OWNERSHIP_EXPECTED_OWNED) &&
         !psbt_format_keypath(own.raw_keypath, own.raw_keypath_len, in->path,
@@ -367,13 +410,27 @@ static bool review_data_collect(review_data_t *d) {
     /* Only external inputs show their address, in the co-signing warning. */
     if (own.ownership == PSBT_OWNERSHIP_EXTERNAL) {
       d->external_inputs++;
-      unsigned char spk[34];
+      unsigned char spk[PSBT_MAX_SHOWN_SCRIPT_LEN];
       size_t spk_len = 0;
-      if (psbt_input_utxo_script(scan_ctx.psbt, i, spk, sizeof(spk), &spk_len))
-        in->address =
-            psbt_scriptpubkey_to_address(spk, spk_len, scan_ctx.is_testnet);
+      if (psbt_input_utxo_script(scan_ctx.psbt, i, spk, sizeof(spk),
+                                 &spk_len)) {
+        in->address = psbt_output_destination(spk, spk_len, scan_ctx.is_testnet,
+                                              &in->dest_kind);
+        in->script_len = spk_len;
+      }
     }
   }
+
+  free(values);
+
+  bool *signing = calloc(d->num_inputs, sizeof(*signing));
+  if (!signing)
+    goto fail;
+  for (size_t i = 0; i < d->num_inputs; i++)
+    signing[i] = d->inputs[i].ownership != PSBT_OWNERSHIP_EXTERNAL;
+  d->fee_trusted =
+      psbt_fee_is_trusted_for_signing(scan_ctx.psbt, &d->amount_audit, signing);
+  free(signing);
 
   struct wally_tx *tx = psbt_tx_alloc(scan_ctx.psbt);
   if (!tx)
@@ -392,10 +449,10 @@ static bool review_data_collect(review_data_t *d) {
     out->index = i;
     out->value = txo->satoshi;
     d->total_output += out->value;
-    out->address = psbt_scriptpubkey_to_address(txo->script, txo->script_len,
-                                                scan_ctx.is_testnet);
-    out->type =
-        classify_output(i, &out->address_index, out->path, sizeof(out->path));
+    out->address = psbt_output_destination(
+        txo->script, txo->script_len, scan_ctx.is_testnet, &out->dest_kind);
+    out->script_len = txo->script_len;
+    classify_output(d->inputs, d->num_inputs, owners->outputs[i], out);
     out->is_dust =
         out->value < psbt_output_dust_threshold(txo->script, txo->script_len);
     if (out->is_dust) {
@@ -430,12 +487,13 @@ static lv_obj_t *section_title(lv_obj_t *parent, const char *text,
   return title;
 }
 
-static void indented_amount_row(lv_obj_t *parent, const char *prefix,
-                                uint64_t sats) {
+static lv_obj_t *indented_amount_row(lv_obj_t *parent, const char *prefix,
+                                     uint64_t sats) {
   lv_obj_t *row =
       scan_create_btc_value_row(parent, prefix, sats, primary_color());
   lv_obj_set_width(row, LV_PCT(100));
   lv_obj_set_style_pad_left(row, 20, 0);
+  return row;
 }
 
 static lv_color_t output_type_color(output_type_t type) {
@@ -550,6 +608,44 @@ static bool render_diagram(lv_obj_t *parent, const review_data_t *d) {
   return true;
 }
 
+/* "<amount> from <wallet>" / "<amount> to <wallet>", wrapping under the
+ * amount when it does not fit beside it. */
+static void append_policy_note(lv_obj_t *row, const char *preposition,
+                               const char *policy) {
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_t *note = lv_label_create(row);
+  lv_label_set_text_fmt(note, " %s %s", preposition, policy);
+  lv_obj_set_style_text_font(note, theme_font_small(), 0);
+  lv_obj_set_style_text_color(note, secondary_color(), 0);
+  lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_max_width(note, LV_PCT(100), 0);
+}
+
+/* A script with no address of a kind Kern knows says so above its
+ * destination, which is then the address of an unknown witness version or the
+ * raw script. */
+static void render_destination(lv_obj_t *parent, const char *address,
+                               psbt_destination_kind_t kind, size_t script_len,
+                               lv_color_t color) {
+  if (!address)
+    return;
+  if (kind == PSBT_DEST_ADDRESS) {
+    scan_create_address_label(parent, address, color, ADDRESS_INDENT_PX);
+    return;
+  }
+  char note[64];
+  if (kind == PSBT_DEST_UNKNOWN_WITNESS)
+    snprintf(note, sizeof(note), "Unknown witness version:");
+  else
+    snprintf(note, sizeof(note),
+             "Non-standard script (%zu bytes):", script_len);
+  lv_obj_t *label = theme_create_label(parent, note, false);
+  lv_obj_set_style_text_color(label, error_color(), 0);
+  lv_obj_set_style_text_font(label, theme_font_small(), 0);
+  lv_obj_set_style_pad_left(label, ADDRESS_INDENT_PX, 0);
+  scan_create_address_label(parent, address, error_color(), ADDRESS_INDENT_PX);
+}
+
 /* ---------- input sections ---------- */
 
 /* One "Inputs(N): <amount> from <policy>" row per distinct signing policy of
@@ -585,14 +681,7 @@ static void render_input_policy_rows(lv_obj_t *parent, const review_data_t *d) {
     lv_obj_t *row =
         scan_create_btc_value_row(parent, prefix, total, primary_color());
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
-
-    lv_obj_t *src = lv_label_create(row);
-    lv_label_set_text_fmt(src, " from %s", policy);
-    lv_obj_set_style_text_font(src, theme_font_small(), 0);
-    lv_obj_set_style_text_color(src, secondary_color(), 0);
-    lv_label_set_long_mode(src, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_max_width(src, LV_PCT(100), 0);
+    append_policy_note(row, "from", policy);
   }
 }
 
@@ -673,9 +762,8 @@ static void render_external_inputs(lv_obj_t *parent, const review_data_t *d) {
     char text[64];
     snprintf(text, sizeof(text), "Input %zu: ", in->index);
     indented_amount_row(parent, text, in->value);
-    if (in->address)
-      scan_create_address_label(parent, in->address, error_color(),
-                                ADDRESS_INDENT_PX);
+    render_destination(parent, in->address, in->dest_kind, in->script_len,
+                       error_color());
   }
 }
 
@@ -708,18 +796,23 @@ static void render_self_transfers(lv_obj_t *parent, const review_data_t *d) {
     if (out->type != OUTPUT_TYPE_SELF_TRANSFER)
       continue;
     char text[64];
-    snprintf(text, sizeof(text), "Receive #%u: ", out->address_index);
-    indented_amount_row(parent, text, out->value);
-    if (out->address)
-      scan_create_address_label(parent, out->address, accent_color(),
-                                ADDRESS_INDENT_PX);
+    snprintf(text, sizeof(text),
+             "%s #%u: ", out->change_chain ? "Change" : "Receive",
+             out->address_index);
+    lv_obj_t *row = indented_amount_row(parent, text, out->value);
+    if (out->policy[0])
+      append_policy_note(row, "to", out->policy);
+    render_destination(parent, out->address, out->dest_kind, out->script_len,
+                       accent_color());
   }
 }
 
-/* Change is verified-owned (derive reproduces the spk on chain=1), so the
- * addresses need no review and a single total keeps the screen focused on
- * outgoing spends. Outputs that cannot be verified classify as EXPECTED_OWNED
- * and render in their own warning section. */
+/* Change is verified-owned (derive reproduces the spk on chain=1, below the
+ * index cap) and returns to a wallet the inputs spend from, so the addresses
+ * need no review and a single total keeps the screen focused on outgoing
+ * spends. Change to any other wallet is listed under Self-Transfer, and
+ * outputs that cannot be verified classify as EXPECTED_OWNED and render in
+ * their own warning section. */
 static void render_change(lv_obj_t *parent, const review_data_t *d) {
   uint64_t total = 0;
   size_t count = 0;
@@ -759,8 +852,8 @@ static void render_output_group(lv_obj_t *parent, const review_data_t *d,
     else
       snprintf(text, sizeof(text), "Output %zu: ", out->index);
     indented_amount_row(parent, text, out->value);
-    if (out->address)
-      scan_create_address_label(parent, out->address, color, ADDRESS_INDENT_PX);
+    render_destination(parent, out->address, out->dest_kind, out->script_len,
+                       color);
   }
 }
 
@@ -800,8 +893,10 @@ static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
   /* The fee is inputs minus outputs, and the outputs are committed to by the
    * sighash. The inputs are only as good as their proof, so say so here rather
    * than let the number read as verified. A single input is exempt: its
-   * signature commits to the amount, so a lie there cannot confirm. */
-  if (!psbt_fee_is_trusted(&d->amount_audit)) {
+   * signature commits to the amount, so a lie there cannot confirm. So is a
+   * transaction whose every signed input is taproot, each signature
+   * committing to every input's amount. */
+  if (!d->fee_trusted) {
     char note[160];
     snprintf(note, sizeof(note),
              LV_SYMBOL_WARNING " Unproven fee: %zu of %zu input amounts are "
@@ -868,14 +963,14 @@ static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
   }
 }
 
-static bool create_psbt_info_display(void) {
+static bool create_psbt_info_display(const psbt_owners_t *owners) {
   if (!scan_ctx.screen || !scan_ctx.psbt || !wallet_is_initialized())
     return false;
   if (scan_psbt_check_mismatch())
     return true;
 
   review_data_t data;
-  if (!review_data_collect(&data))
+  if (!review_data_collect(&data, owners))
     return false;
 
   scan_ctx.info_container = theme_create_scroll_column(scan_ctx.screen, 10, 10);
@@ -913,11 +1008,6 @@ void scan_psbt_cleanup(void) {
   if (scan_ctx.psbt) {
     wally_psbt_free(scan_ctx.psbt);
     scan_ctx.psbt = NULL;
-  }
-
-  if (scan_ctx.psbt_base64) {
-    free(scan_ctx.psbt_base64);
-    scan_ctx.psbt_base64 = NULL;
   }
 
   if (scan_ctx.signed_psbt_base64) {

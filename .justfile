@@ -55,6 +55,18 @@ format:
 test:
     ./scripts/test.sh
 
+# Core host tests built with ASan and UBSan, libwally included
+test-asan:
+    make -C main/core/test clean
+    make -C main/core/test SANITIZE=1 run
+    make -C main/core/test clean
+
+# Fuzz the glue around libwally (ASan and UBSan, coverage-blind driver)
+fuzz iterations="20000":
+    make -C main/core/test clean
+    make -C main/core/test SANITIZE=1 FUZZ_ITERATIONS={{iterations}} fuzz
+    make -C main/core/test clean
+
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b build_p4_pico
     rm -fRd build_*_v3

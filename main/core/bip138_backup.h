@@ -9,8 +9,9 @@
 
 /* Largest backup the recovery path will read. */
 #define BIP138_BACKUP_MAX_LEN (32 * 1024)
-/* Distinct container derivation paths tried during recovery. */
-#define BIP138_BACKUP_MAX_PATHS BIP138_KEYS_MAX
+/* Distinct container derivation paths tried during recovery: one per distinct
+ * key origin of a descriptor. A descriptor with more cannot be backed up. */
+#define BIP138_BACKUP_MAX_PATHS 32
 
 /* BIP138 container holding the descriptor, addressed to the descriptor's own
  * root keys, with every key's origin path stored as a recovery hint and this
@@ -39,7 +40,30 @@ KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt_any(const uint8_t *data,
                                                        char **descriptor_out,
                                                        bool *approved_out);
 
+/* Same, trying only the paths the container itself stores, never the common
+ * paths. A backup this device registered stores the origin of every key it
+ * holds, so the boot scan needs nothing more, and a backup the loaded key
+ * cannot open (another seed's, or every backup when the passphrase is not yet
+ * applied) costs one derivation per stored path instead of a walk of all 140
+ * common paths. */
+KERN_WARN_UNUSED_RESULT bool
+bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
+                                 char **descriptor_out, bool *approved_out);
+
 /* True for a binary container or its base64 text form. */
 bool bip138_backup_detect(const uint8_t *data, size_t len);
+
+/* Wipes the loaded key's cached common-path public keys. Called when the
+ * wallet is unloaded, since they describe the seed that was loaded. */
+void bip138_backup_forget_keys(void);
+
+/* Between these calls the approval-mark key is derived once and kept, for a
+ * scan that checks many backups; release wipes it. */
+void bip138_backup_hold_approval_key(void);
+void bip138_backup_release_approval_key(void);
+
+#ifdef BIP138_BACKUP_TESTING
+bool bip138_backup_cache_is_empty(void);
+#endif
 
 #endif // BIP138_BACKUP_H

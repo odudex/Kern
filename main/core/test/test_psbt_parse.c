@@ -45,6 +45,12 @@ static const char PSBT_HEX[] =
     "b1a51006cf3d975dbe7407e31ee75939e9e01865fb43fe5400008001000080000000800"
     "0000000010000000000";
 
+/* libwally's "PSET Version 2 Minimal" vector. The same bytes under the PSBT
+ * magic are a valid PSBT, so a rejection can only come from the magic. */
+static const char PSET_HEX[] =
+    "70736574ff01020402000000010401000105010001fb040200000000";
+static const char PSET_BASE64[] = "cHNldP8BAgQCAAAAAQQBAAEFAQAB+wQCAAAAAA==";
+
 static size_t hex_decode(const char *hex, uint8_t *out, size_t out_size) {
   size_t len = strlen(hex) / 2;
   if (len > out_size)
@@ -90,7 +96,57 @@ static void check_suffix(const char *name, const void *suffix,
     wally_psbt_free(psbt);
 }
 
+static void test_pset_rejected(void) {
+  TEST("libwally built without Elements");
+  size_t is_elements = 1;
+  if (wally_is_elements_build(&is_elements) == WALLY_OK && !is_elements)
+    PASS();
+  else
+    FAIL("libwally was built with Elements support");
+
+  uint8_t buf[32];
+  const size_t len = hex_decode(PSET_HEX, buf, sizeof(buf));
+
+  TEST("PSET bytes rejected");
+  struct wally_psbt *psbt = NULL;
+  if (len && !psbt_parse_payload(buf, len, &psbt) && !psbt) {
+    PASS();
+  } else {
+    FAIL("a PSET parsed");
+    if (psbt)
+      wally_psbt_free(psbt);
+  }
+
+  /* The base64 scan path calls wally_psbt_from_base64 with no flags. */
+  TEST("PSET base64 rejected");
+  psbt = NULL;
+  if (wally_psbt_from_base64(PSET_BASE64, 0, &psbt) != WALLY_OK && !psbt) {
+    PASS();
+  } else {
+    FAIL("a base64 PSET parsed");
+    if (psbt)
+      wally_psbt_free(psbt);
+  }
+
+  TEST("same body under the PSBT magic parses");
+  psbt = NULL;
+  memcpy(buf, "psbt", 4);
+  if (len && psbt_parse_payload(buf, len, &psbt) && psbt) {
+    PASS();
+  } else {
+    FAIL("the PSBT control did not parse");
+  }
+  if (psbt)
+    wally_psbt_free(psbt);
+}
+
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   base_len = hex_decode(PSBT_HEX, base, sizeof(base));
   if (!base_len) {
     printf("FAIL: could not decode the PSBT fixture\n");
@@ -160,6 +216,8 @@ int main(void) {
   } else {
     FAIL("a NULL argument was accepted");
   }
+
+  test_pset_rejected();
 
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);

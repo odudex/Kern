@@ -1,5 +1,6 @@
 #include "psbt.h"
 
+#include "kern_wally.h"
 #include <wally_psbt.h>
 
 bool psbt_parse_payload(const uint8_t *data, size_t len,
@@ -13,6 +14,6 @@ bool psbt_parse_payload(const uint8_t *data, size_t len,
     len--;
 
   return len > 0 &&
-         wally_psbt_from_bytes(data, len, WALLY_PSBT_PARSE_FLAG_COMPLETE,
-                               psbt_out) == WALLY_OK;
+         kern_psbt_from_bytes(data, len, WALLY_PSBT_PARSE_FLAG_COMPLETE,
+                              psbt_out) == WALLY_OK;
 }

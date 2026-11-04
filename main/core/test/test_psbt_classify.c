@@ -5,15 +5,21 @@
 #include <string.h>
 
 /* Wally types needed by stubs */
+#include <wally_address.h>
 #include <wally_bip32.h>
+#include <wally_core.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 #include <wally_psbt.h>
 #include <wally_psbt_members.h>
 #include <wally_script.h>
+#include <wally_transaction.h>
 
 /* Project headers for stub type declarations */
+#include "core/crypto_init.h"
 #include "core/key.h"
 #include "core/psbt.h"
+#include "core/psbt_gate.h"
 #include "core/psbt_internal.h"
 #include "core/registry.h"
 #include "core/storage.h"
@@ -66,20 +72,17 @@ void storage_free_file_list(char **files, int count) {
 /* --- Wallet stubs --- */
 wallet_network_t wallet_get_network(void) { return WALLET_NETWORK_MAINNET; }
 
-int wallet_descriptor_parse(const char *descriptor,
-                            const struct wally_map *vars_in, uint32_t network,
-                            struct wally_descriptor **output) {
-  uint32_t flags = KERN_DESCRIPTOR_MAX_DEPTH << WALLY_MINISCRIPT_DEPTH_SHIFT;
-  return wally_descriptor_parse(descriptor, vars_in, network, flags, output);
-}
-
 /* --- Settings stub: permissive signing disabled in tests --- */
 #include "core/settings.h"
 bool settings_get_permissive_signing(void) { return false; }
 
+/* 00000000 unless a test sets another, which keeps stale or truncated
+ * buffers from matching by accident. */
+static unsigned char stub_fp[BIP32_KEY_FINGERPRINT_LEN];
+
 bool key_get_fingerprint(unsigned char *fp) {
   if (fp)
-    memset(fp, 0, BIP32_KEY_FINGERPRINT_LEN);
+    memcpy(fp, stub_fp, BIP32_KEY_FINGERPRINT_LEN);
   return true;
 }
 
@@ -1481,6 +1484,103 @@ done:
   wally_tx_free(prev);
 }
 
+static struct wally_psbt *
+make_two_input_psbt(const uint8_t *spk1, size_t spk1_len, const uint8_t *pk1,
+                    size_t pk1_len, const uint8_t *kp1, size_t kp1_len,
+                    const uint8_t *spk2, size_t spk2_len, const uint8_t *pk2,
+                    size_t pk2_len, const uint8_t *kp2, size_t kp2_len);
+
+/* BIP341: a taproot signature commits to every input's amount, so when only
+ * taproot inputs are signed a lied amount can only invalidate them. */
+static void test_fee_trust_taproot_signing(void) {
+  const uint8_t pk[EC_PUBLIC_KEY_LEN] = {0x02, 0x01};
+  const uint8_t kp[4] = {0};
+  const bool both[2] = {true, true};
+  const bool first[2] = {true, false};
+  psbt_amount_audit_t audit;
+
+  TEST("fee trust: two asserted taproot inputs, both signed");
+  struct wally_psbt *psbt = make_two_input_psbt(
+      REF_SPK_P2TR, sizeof(REF_SPK_P2TR), pk, sizeof(pk), kp, sizeof(kp),
+      REF_SPK_P2TR, sizeof(REF_SPK_P2TR), pk, sizeof(pk), kp, sizeof(kp));
+  if (!psbt) {
+    FAIL("fixture");
+    return;
+  }
+  psbt_audit_input_amounts(psbt, &audit);
+  if (psbt_fee_is_trusted(&audit))
+    FAIL("count-based trust should still refuse two asserted inputs");
+  else if (!psbt_fee_is_trusted_for_signing(psbt, &audit, both))
+    FAIL("expected trust when every signed input is taproot");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("fee trust: a signed P2WPKH input next to a taproot one");
+  psbt = make_two_input_psbt(
+      REF_SPK_P2TR, sizeof(REF_SPK_P2TR), pk, sizeof(pk), kp, sizeof(kp),
+      REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), pk, sizeof(pk), kp, sizeof(kp));
+  if (!psbt) {
+    FAIL("fixture");
+    return;
+  }
+  psbt_audit_input_amounts(psbt, &audit);
+  if (psbt_fee_is_trusted_for_signing(psbt, &audit, both))
+    FAIL("a BIP143 signature commits to its own amount only");
+  else if (!psbt_fee_is_trusted_for_signing(psbt, &audit, first))
+    FAIL("signing only the taproot input should be trusted");
+  else
+    PASS();
+
+  TEST("fee trust: a taproot input next to a missing amount");
+  wally_psbt_input_set_witness_utxo(&psbt->inputs[1], NULL);
+  psbt_audit_input_amounts(psbt, &audit);
+  if (audit.missing != 1 || audit.first_missing != 1 ||
+      psbt_fee_is_trusted_for_signing(psbt, &audit, first))
+    FAIL("a missing amount is never trusted");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+}
+
+/* An input whose witness_utxo disagrees with its verified previous
+ * transaction is refused by psbt_sign itself, not only by the UI gate. */
+static void test_sign_refuses_invalid_amount(void) {
+  const uint64_t witness_values[] = {1000, 500000, 100000};
+  for (size_t k = 0; k < 3; k++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "psbt_sign: previous tx of 100000, witness_utxo of %llu",
+             (unsigned long long)witness_values[k]);
+    TEST(name);
+    struct wally_tx *prev = NULL;
+    struct ext_key *derived = NULL;
+    struct wally_psbt *psbt =
+        make_amount_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), 100000, &prev);
+    const uint8_t kp[24] = {0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80,
+                            0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80};
+    if (!psbt || !key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+      FAIL("fixture");
+    } else {
+      wally_psbt_set_input_utxo(psbt, 0, prev);
+      set_witness_value(psbt, witness_values[k]);
+      wally_map_add(&psbt->inputs[0].keypaths, derived->pub_key,
+                    EC_PUBLIC_KEY_LEN, kp, sizeof(kp));
+      psbt_sign_policy_t policy = {0};
+      size_t n = psbt_sign(psbt, false, policy, NULL);
+      bool consistent = witness_values[k] == 100000;
+      if (consistent ? n != 1 : n != 0)
+        FAIL(consistent ? "a consistent pair should sign"
+                        : "a contradicting witness_utxo must not be signed");
+      else
+        PASS();
+    }
+    bip32_key_free(derived);
+    wally_psbt_free(psbt);
+    wally_tx_free(prev);
+  }
+}
+
 /* ================================================================
  * Sighash and fee-percentage tests
  * ================================================================ */
@@ -1557,6 +1657,69 @@ static void test_sign_refuses_unsupported_sighash(void) {
     FAIL("signed an input with an unsupported sighash");
   else
     PASS();
+}
+
+/* Every output has something to show: its address, the address of a witness
+ * version Kern does not use, or the raw script. */
+static void check_destination(const char *name, const uint8_t *spk,
+                              size_t spk_len, psbt_destination_kind_t want,
+                              const char *prefix) {
+  TEST(name);
+  psbt_destination_kind_t kind = PSBT_DEST_ADDRESS;
+  char *dest = psbt_output_destination(spk, spk_len, false, &kind);
+  char *hex = NULL;
+  if (want == PSBT_DEST_SCRIPT &&
+      wally_hex_from_bytes(spk, spk_len, &hex) != WALLY_OK)
+    hex = NULL;
+  if (!dest)
+    FAIL("no destination");
+  else if (kind != want)
+    FAIL("wrong kind");
+  else if (want == PSBT_DEST_SCRIPT && (!hex || strcmp(dest, hex) != 0))
+    FAIL("script should be shown as hex");
+  else if (prefix && strncmp(dest, prefix, strlen(prefix)) != 0)
+    FAIL("unexpected address prefix");
+  else
+    PASS();
+  wally_free_string(hex);
+  wally_free_string(dest);
+}
+
+static void test_output_destination(void) {
+  uint8_t p2pk[35] = {0x21, 0x02};
+  p2pk[34] = OP_CHECKSIG;
+  uint8_t p2pk_u[67] = {0x41, 0x04};
+  p2pk_u[66] = OP_CHECKSIG;
+  uint8_t bare_ms[37] = {OP_1, 0x21, 0x02};
+  bare_ms[35] = OP_1;
+  bare_ms[36] = OP_CHECKMULTISIG;
+  const uint8_t p2a[] = {OP_1, 0x02, 0x4e, 0x73};
+  uint8_t v2_32[34] = {OP_2, 0x20, 0x11};
+  uint8_t v1_20[22] = {OP_1, 0x14, 0x22};
+  uint8_t v16_40[42] = {OP_16, 0x28, 0x33};
+  uint8_t v0_16[18] = {OP_0, 0x10, 0x44};
+  const uint8_t op1_equal[] = {OP_1, OP_EQUAL};
+
+  check_destination("destination: P2WPKH is an address", REF_SPK_P2WPKH,
+                    sizeof(REF_SPK_P2WPKH), PSBT_DEST_ADDRESS, "bc1q");
+  check_destination("destination: P2PK shows its script", p2pk, sizeof(p2pk),
+                    PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: uncompressed P2PK shows its script", p2pk_u,
+                    sizeof(p2pk_u), PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: bare 1-of-1 multisig shows its script",
+                    bare_ms, sizeof(bare_ms), PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: P2A is an unknown witness program", p2a,
+                    sizeof(p2a), PSBT_DEST_UNKNOWN_WITNESS, "bc1pfeessrawgf");
+  check_destination("destination: v2 32-byte program", v2_32, sizeof(v2_32),
+                    PSBT_DEST_UNKNOWN_WITNESS, "bc1z");
+  check_destination("destination: v1 20-byte program", v1_20, sizeof(v1_20),
+                    PSBT_DEST_UNKNOWN_WITNESS, "bc1p");
+  check_destination("destination: v16 40-byte program", v16_40, sizeof(v16_40),
+                    PSBT_DEST_UNKNOWN_WITNESS, "bc1s");
+  check_destination("destination: malformed v0 program shows its script", v0_16,
+                    sizeof(v0_16), PSBT_DEST_SCRIPT, NULL);
+  check_destination("destination: OP_1 OP_EQUAL shows its script", op1_equal,
+                    sizeof(op1_equal), PSBT_DEST_SCRIPT, NULL);
 }
 
 static void test_fee_percent(void) {
@@ -1737,6 +1900,1257 @@ static void test_classify_output_psbt_v2(void) {
   }
 
   wally_psbt_free(psbt);
+}
+
+#define WSH_MULTIPATH_DESC                                                     \
+  "wsh(sortedmulti(2,"                                                         \
+  "[00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*,"                                \
+  "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*"                                 \
+  "))"
+
+/* One output paying entry `e` at (multi_index, child_num), with our keypath
+ * 48'/0'/0'/2'/<chain>/<child_num> and our key at that path on it. */
+static struct wally_psbt *
+make_registry_output_psbt_at(const registry_entry_t *e, uint32_t multi_index,
+                             uint32_t chain, uint32_t child_num) {
+  uint8_t spk[34];
+  uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t written = 0;
+  if (wally_descriptor_to_script(e->desc, 0, 0, 0, multi_index, child_num, 0,
+                                 work, sizeof(work), &written) != WALLY_OK ||
+      written > sizeof(spk))
+    return NULL;
+  memcpy(spk, work, written);
+
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK)
+    return NULL;
+  uint8_t txid[32] = {0};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_output(tx, 50000, spk, written, 0);
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK)
+    return NULL;
+
+  uint8_t kp_val[4 + 6 * 4] = {0};
+  const uint32_t path[] = {0x80000030, 0x80000000, 0x80000000,
+                           0x80000002, chain,      child_num};
+  for (size_t i = 0; i < 6; i++)
+    for (size_t b = 0; b < 4; b++)
+      kp_val[4 + i * 4 + b] = (uint8_t)(path[i] >> (8 * b));
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key_components(path, 6, &derived)) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  wally_map_add(&psbt->outputs[0].keypaths, derived->pub_key, EC_PUBLIC_KEY_LEN,
+                kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return psbt;
+}
+
+static struct wally_psbt *make_registry_output_psbt(const registry_entry_t *e,
+                                                    uint32_t multi_index,
+                                                    uint32_t child_num) {
+  return make_registry_output_psbt_at(e, multi_index, multi_index, child_num);
+}
+
+static output_ownership_t classify_registry_output(const registry_entry_t *e,
+                                                   uint32_t multi_index,
+                                                   uint32_t child_num,
+                                                   bool *built) {
+  output_ownership_t r = {0};
+  struct wally_psbt *psbt =
+      make_registry_output_psbt(e, multi_index, child_num);
+  *built = psbt != NULL;
+  if (psbt) {
+    r = psbt_classify_output(psbt, 0, false);
+    wally_psbt_free(psbt);
+  }
+  return r;
+}
+
+/* Change past the output cap is still ours, but no gap-limited wallet scan
+ * would find it: the same hidden-funds case the whitelist cap exists for. */
+static void test_registry_change_index_cap(void) {
+  registry_clear();
+  if (!registry_add_from_string("t", WSH_MULTIPATH_DESC, STORAGE_FLASH,
+                                false)) {
+    TEST("registry change cap: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const registry_entry_t *e = registry_find_by_id("t");
+  bool built = false;
+
+  TEST("psbt_classify_output: registry change at /1/199 -> OWNED_SAFE");
+  output_ownership_t r = classify_registry_output(e, 1, 199, &built);
+  if (!built)
+    FAIL("fixture");
+  else if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+           r.source.kind != CLAIM_REGISTRY || r.source.registry.entry != e)
+    FAIL("expected an OWNED_SAFE registry claim");
+  else
+    PASS();
+
+  TEST("psbt_classify_output: registry change at /1/200 -> OWNED_UNSAFE");
+  r = classify_registry_output(e, 1, SS_MAX_OUT_ADDR_INDEX, &built);
+  char path[80];
+  if (!built)
+    FAIL("fixture");
+  else if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE)
+    FAIL("expected OWNED_UNSAFE");
+  else if (!psbt_format_keypath(r.raw_keypath, r.raw_keypath_len, path,
+                                sizeof(path)) ||
+           strcmp(path, "m/48'/0'/0'/2'/1/200") != 0)
+    FAIL("raw keypath should name the capped path");
+  else
+    PASS();
+
+  TEST("psbt_classify_output: registry receive at /0/2000000000 capped too");
+  r = classify_registry_output(e, 0, 2000000000u, &built);
+  if (!built)
+    FAIL("fixture");
+  else if (r.ownership != PSBT_OWNERSHIP_OWNED_UNSAFE)
+    FAIL("expected OWNED_UNSAFE");
+  else
+    PASS();
+
+  registry_clear();
+}
+
+/* ================================================================
+ * Taproot fixtures, built by libwally from tr() descriptors and taken
+ * through serialize + parse, so every taproot field Kern reads directly
+ * (taproot_leaf_paths, taproot_leaf_signatures, TAP_KEY_SIG in psbt_fields)
+ * is where libwally's own parser puts it.
+ * ================================================================ */
+
+#define NUMS_H                                                                 \
+  "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+#define TR_BIP86_OURS "tr([00000000/86'/0'/0']" XPUB_86 "/<0;1>/*)"
+#define TR_BIP86_FOREIGN "tr([deadbeef/86'/0'/0']" XPUB_86 "/<0;1>/*)"
+#define TR_LEAF_OURS "tr(" NUMS_H ",pk([00000000/86'/0'/0']" XPUB_86 "/0/*))"
+#define TR_LEAF_FOREIGN "tr(" NUMS_H ",pk([deadbeef/86'/0'/0']" XPUB_86 "/0/*))"
+
+static const uint32_t PSBT_VERSIONS[] = {WALLY_PSBT_VERSION_0,
+                                         WALLY_PSBT_VERSION_2};
+
+static struct wally_descriptor *parse_mainnet(const char *desc) {
+  struct wally_descriptor *d = NULL;
+  if (wallet_descriptor_parse(desc, NULL, WALLY_NETWORK_BITCOIN_MAINNET, &d) !=
+      WALLY_OK)
+    return NULL;
+  return d;
+}
+
+/* Re-encode at `version` and parse back; frees `psbt`. */
+static struct wally_psbt *psbt_roundtrip(struct wally_psbt *psbt,
+                                         uint32_t version) {
+  struct wally_psbt *out = NULL;
+  size_t len = 0, written = 0;
+  unsigned char *bytes = NULL;
+  if (psbt && wally_psbt_set_version(psbt, 0, version) == WALLY_OK &&
+      wally_psbt_get_length(psbt, 0, &len) == WALLY_OK &&
+      (bytes = malloc(len)) != NULL &&
+      wally_psbt_to_bytes(psbt, 0, bytes, len, &written) == WALLY_OK &&
+      written == len)
+    wally_psbt_from_bytes(bytes, len, 0, &out);
+  free(bytes);
+  wally_psbt_free(psbt);
+  return out;
+}
+
+/* One input per descriptor, each on its own prevout, funded with the
+ * descriptor's script at (multi_index, child_num) and populated from it by
+ * libwally; one OP_RETURN output. */
+static struct wally_psbt *make_tr_psbt(const char *const *descs, size_t n,
+                                       uint32_t multi_index, uint32_t child_num,
+                                       uint32_t version) {
+  struct wally_tx *tx = NULL;
+  struct wally_psbt *psbt = NULL;
+  uint8_t op_return[] = {0x6a};
+  if (wally_tx_init_alloc(2, 0, n, 1, &tx) != WALLY_OK)
+    return NULL;
+  for (size_t i = 0; i < n; i++) {
+    uint8_t txid[32] = {0};
+    txid[0] = (uint8_t)(i + 1);
+    wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xfffffffd, NULL, 0, NULL,
+                           0);
+  }
+  wally_tx_add_raw_output(tx, 1000, op_return, sizeof(op_return), 0);
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK)
+    return NULL;
+
+  for (size_t i = 0; i < n; i++) {
+    struct wally_descriptor *d = parse_mainnet(descs[i]);
+    uint8_t spk[34];
+    size_t spk_len = 0;
+    struct wally_tx_output *utxo = NULL;
+    bool ok =
+        d &&
+        wally_descriptor_to_script(d, 0, 0, 0, multi_index, child_num, 0, spk,
+                                   sizeof(spk), &spk_len) == WALLY_OK &&
+        spk_len == sizeof(spk) &&
+        wally_tx_output_init_alloc(100000, spk, spk_len, &utxo) == WALLY_OK &&
+        wally_psbt_set_input_witness_utxo(psbt, i, utxo) == WALLY_OK &&
+        wally_psbt_input_populate_taproot_from_descriptor(
+            psbt, i, d, multi_index, child_num, 0) == WALLY_OK;
+    wally_tx_output_free(utxo);
+    /* An origin-less key (the NUMS internal key) is listed with a bare
+     * 00000000 fingerprint, which is the test key's stub fingerprint. */
+    struct wally_map *paths = &psbt->inputs[i].taproot_leaf_paths;
+    for (size_t j = paths->num_items; ok && j-- > 0;)
+      if (paths->items[j].value_len == BIP32_KEY_FINGERPRINT_LEN)
+        ok = wally_map_remove(paths, paths->items[j].key,
+                              paths->items[j].key_len) == WALLY_OK;
+    wally_descriptor_free(d);
+    if (!ok) {
+      wally_psbt_free(psbt);
+      return NULL;
+    }
+  }
+  return psbt_roundtrip(psbt, version);
+}
+
+static size_t tap_key_sig_len(const struct wally_psbt *psbt, size_t i) {
+  size_t len = 0;
+  if (wally_psbt_get_input_taproot_signature_len(psbt, i, &len) != WALLY_OK)
+    return 0;
+  return len;
+}
+
+static void test_tr_bip86_input_owned(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: BIP86 input is OWNED_SAFE whitelist",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {TR_BIP86_OURS};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    input_ownership_t r = psbt_classify_input(psbt, 0, false);
+    if (psbt->inputs[0].keypaths.num_items != 0 ||
+        psbt->inputs[0].taproot_leaf_paths.num_items != 1)
+      FAIL("derivation should be in the taproot map only");
+    else if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+             r.claim.kind != CLAIM_WHITELIST ||
+             r.claim.whitelist.script != SS_SCRIPT_P2TR)
+      FAIL("expected an OWNED_SAFE BIP86 whitelist claim");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  TEST("taproot: BIP86 derivation that lists a leaf hash still matches");
+  struct ext_key *derived = NULL;
+  const char *descs[] = {TR_BIP86_OURS};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  const uint32_t path[] = {0x80000056, 0x80000000, 0x80000000, 0, 0};
+  const uint8_t fp[4] = {0};
+  uint8_t leaf_hash[32];
+  memset(leaf_hash, 0x5a, sizeof(leaf_hash));
+  if (!psbt || !key_get_derived_key("m/86'/0'/0'/0/0", &derived)) {
+    FAIL("fixture");
+  } else {
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_paths);
+    if (wally_psbt_add_input_taproot_keypath(
+            psbt, 0, 0, derived->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN,
+            leaf_hash, sizeof(leaf_hash), fp, sizeof(fp), path, 5) != WALLY_OK)
+      FAIL("add keypath");
+    else if (psbt_classify_input(psbt, 0, false).ownership !=
+             PSBT_OWNERSHIP_OWNED_SAFE)
+      FAIL("expected OWNED_SAFE");
+    else
+      PASS();
+  }
+  bip32_key_free(derived);
+  wally_psbt_free(psbt);
+}
+
+/* Two inputs on the same key; input 1 claims another seed's fingerprint, so
+ * the policy refuses it, but wally_psbt_sign() would key-path sign it too. */
+static void test_tr_keypath_denied_input(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: key-path sig on a denied input is discarded",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {TR_BIP86_OURS, TR_BIP86_FOREIGN};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 2, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    psbt_sign_policy_t policy = {0};
+    psbt_sign_result_t res;
+    size_t n = psbt_sign(psbt, false, policy, &res);
+    if (n != 1 || res.attempted != 1 || res.signed_ok != 1 || res.blocked != 1)
+      FAIL("expected one signed input and one blocked");
+    else if (tap_key_sig_len(psbt, 0) != 64)
+      FAIL("input 0 should hold a 64-byte TAP_KEY_SIG");
+    else if (tap_key_sig_len(psbt, 1) != 0)
+      FAIL("input 1 kept a signature");
+    else
+      PASS();
+
+    if (PSBT_VERSIONS[v] == WALLY_PSBT_VERSION_0) {
+      TEST("taproot v0: psbt_trim keeps the TAP_KEY_SIG");
+      struct wally_psbt *trimmed = psbt_trim(psbt);
+      if (!trimmed)
+        FAIL("psbt_trim");
+      else if (tap_key_sig_len(trimmed, 0) != 64 ||
+               tap_key_sig_len(trimmed, 1) != 0)
+        FAIL("trimmed PSBT lost or gained a key-path signature");
+      else
+        PASS();
+      wally_psbt_free(trimmed);
+    }
+    wally_psbt_free(psbt);
+  }
+}
+
+static void test_tr_change_output_owned(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: P2TR change with TAP_BIP32_DERIVATION is owned",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    struct wally_descriptor *d = parse_mainnet(TR_BIP86_OURS);
+    struct wally_tx *tx = NULL;
+    struct wally_psbt *psbt = NULL;
+    uint8_t spk[34];
+    size_t spk_len = 0;
+    uint8_t txid[32] = {1}; /* v2 refuses to serialize an all-zero txid */
+    if (d &&
+        wally_descriptor_to_script(d, 0, 0, 0, 1, 0, 0, spk, sizeof(spk),
+                                   &spk_len) == WALLY_OK &&
+        wally_tx_init_alloc(2, 0, 1, 1, &tx) == WALLY_OK &&
+        wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xfffffffd, NULL, 0,
+                               NULL, 0) == WALLY_OK &&
+        wally_tx_add_raw_output(tx, 5000, spk, spk_len, 0) == WALLY_OK &&
+        wally_psbt_from_tx(tx, 0, 0, &psbt) == WALLY_OK &&
+        wally_psbt_output_populate_taproot_from_descriptor(psbt, 0, d, 1, 0,
+                                                           0) == WALLY_OK)
+      psbt = psbt_roundtrip(psbt, PSBT_VERSIONS[v]);
+    else {
+      wally_psbt_free(psbt);
+      psbt = NULL;
+    }
+    wally_tx_free(tx);
+    wally_descriptor_free(d);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    output_ownership_t r = psbt_classify_output(psbt, 0, false);
+    if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+        r.source.kind != CLAIM_WHITELIST || r.source.whitelist.chain != 1)
+      FAIL("expected OWNED_SAFE change on chain 1");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+}
+
+/* Script path: input 0 spends our registered tr(NUMS,pk(ours)) leaf; input 1
+ * the same leaf under another seed's fingerprint, so it is denied. */
+static void test_tr_script_path_denied_input(void) {
+  registry_clear();
+  if (!registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false)) {
+    TEST("taproot script path: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name),
+             "taproot v%u: script-path sig on a denied input is discarded",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {TR_LEAF_OURS, TR_LEAF_FOREIGN};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 2, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    input_ownership_t r0 = psbt_classify_input(psbt, 0, false);
+    input_ownership_t r1 = psbt_classify_input(psbt, 1, false);
+    psbt_sign_policy_t policy = {0};
+    psbt_sign_result_t res;
+    size_t n = psbt_sign(psbt, false, policy, &res);
+    if (r0.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+        r0.claim.kind != CLAIM_REGISTRY)
+      FAIL("input 0 should be an OWNED_SAFE registry claim");
+    else if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL)
+      FAIL("input 1 should be EXTERNAL");
+    else if (n != 1 || res.signed_ok != 1 || res.blocked != 1)
+      FAIL("expected one signed input and one blocked");
+    else if (tap_key_sig_len(psbt, 0) != 0 || tap_key_sig_len(psbt, 1) != 0)
+      FAIL("a NUMS internal key must never get a key-path signature");
+    else if (psbt->inputs[0].taproot_leaf_signatures.num_items != 1 ||
+             psbt->inputs[1].taproot_leaf_signatures.num_items != 0)
+      FAIL("expected leaf signature counts 1 and 0");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+  registry_clear();
+}
+
+/* BIP371 PSBT_IN_TAP_MERKLE_ROOT */
+#define TAP_MERKLE_ROOT_FIELD 0x18
+#define TR_OURS_WITH_TREE                                                      \
+  "tr([00000000/86'/0'/0']" XPUB_86 "/0/*,pk([11111111/86'/0'/0']" XPUB_84     \
+  "/0/*))"
+#define TR_OURS_INTERNAL_AND_LEAF                                              \
+  "tr([00000000/86'/0'/0']" XPUB_86 "/0/*,pk([00000000/86'/0'/0']" XPUB_86     \
+  "/1/*))"
+
+static bool sign_one(struct wally_psbt *psbt, psbt_sign_result_t *res) {
+  psbt_sign_policy_t policy = {0};
+  return psbt_sign(psbt, false, policy, res) > 0;
+}
+
+/* libwally tweaks the key-path key from the PSBT's own taproot fields: a
+ * signature made for another key must not be counted or exported. */
+static void test_tr_key_path_verified(void) {
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    uint8_t junk[32];
+    memset(junk, 0x42, sizeof(junk));
+    psbt_sign_result_t res;
+
+    snprintf(name, sizeof(name), "key path v%u: BIP86 signature verifies",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *bip86[] = {TR_BIP86_OURS};
+    struct wally_psbt *psbt = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
+    if (!psbt || !sign_one(psbt, &res))
+      FAIL("signing failed");
+    else if (res.signed_ok != 1 || res.bad_keypath != 0 ||
+             tap_key_sig_len(psbt, 0) != 64)
+      FAIL("expected one valid key-path signature");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+
+    snprintf(name, sizeof(name),
+             "key path v%u: BIP86 with a stray merkle root is dropped",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    psbt = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
+    if (psbt)
+      wally_map_add_integer(&psbt->inputs[0].psbt_fields, TAP_MERKLE_ROOT_FIELD,
+                            junk, sizeof(junk));
+    res.bad_keypath = 0;
+    if (!psbt)
+      FAIL("fixture");
+    else if (sign_one(psbt, &res), res.bad_keypath != 1 || res.signed_ok != 0 ||
+                                       tap_key_sig_len(psbt, 0) != 0)
+      FAIL("expected the signature dropped and nothing signed");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  registry_clear();
+  psbt_sign_result_t res;
+  if (!registry_add_from_string("tree", TR_OURS_WITH_TREE, STORAGE_FLASH,
+                                false) ||
+      !registry_add_from_string("both", TR_OURS_INTERNAL_AND_LEAF,
+                                STORAGE_FLASH, false) ||
+      !registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false)) {
+    TEST("key path: registry setup");
+    FAIL("registry_add_from_string");
+    registry_clear();
+    return;
+  }
+
+  TEST("key path: tr(ours,tree) with its merkle root signs");
+  const char *tree[] = {TR_OURS_WITH_TREE};
+  struct wally_psbt *psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (!psbt || !sign_one(psbt, &res) || res.bad_keypath != 0 ||
+      res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64)
+    FAIL("expected one valid key-path signature");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: tr(ours,tree) with the merkle root dropped");
+  psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (psbt)
+    wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
+                             TAP_MERKLE_ROOT_FIELD);
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res),
+           res.bad_keypath != 1 || tap_key_sig_len(psbt, 0) != 0)
+    FAIL("expected the signature dropped");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: tr(ours,tree) with a bogus merkle root");
+  psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  uint8_t bogus[32];
+  memset(bogus, 0x5c, sizeof(bogus));
+  if (psbt) {
+    wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
+                             TAP_MERKLE_ROOT_FIELD);
+    wally_map_add_integer(&psbt->inputs[0].psbt_fields, TAP_MERKLE_ROOT_FIELD,
+                          bogus, sizeof(bogus));
+  }
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res), res.bad_keypath != 1 ||
+                                     tap_key_sig_len(psbt, 0) != 0 ||
+                                     res.signed_ok != 0)
+    FAIL("expected the signature dropped and nothing signed");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: leaf key listed with no leaf hash and no internal key");
+  const char *leaf[] = {TR_LEAF_OURS};
+  psbt = make_tr_psbt(leaf, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (psbt) {
+    wally_psbt_set_input_taproot_internal_key(psbt, 0, NULL, 0);
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
+  }
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res),
+           tap_key_sig_len(psbt, 0) != 0 || res.signed_ok != 0)
+    FAIL("expected no key-path signature and nothing signed");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: internal and leaf key both sign");
+  const char *both_ok[] = {TR_OURS_INTERNAL_AND_LEAF};
+  psbt = make_tr_psbt(both_ok, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (!psbt || !sign_one(psbt, &res) || res.bad_keypath != 0 ||
+      res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64 ||
+      psbt->inputs[0].taproot_leaf_signatures.num_items != 1)
+    FAIL("expected a key-path and a leaf signature");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("key path: internal and leaf key, root dropped, leaf signature kept");
+  const char *both[] = {TR_OURS_INTERNAL_AND_LEAF};
+  psbt = make_tr_psbt(both, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (psbt)
+    wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
+                             TAP_MERKLE_ROOT_FIELD);
+  res.bad_keypath = 0;
+  if (!psbt)
+    FAIL("fixture");
+  else if (sign_one(psbt, &res),
+           res.bad_keypath != 1 || tap_key_sig_len(psbt, 0) != 0 ||
+               psbt->inputs[0].taproot_leaf_signatures.num_items != 1)
+    FAIL("expected the key-path signature dropped and the leaf one kept");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
+/* Out of memory once signing is done: restoring a denied input must not need
+ * an allocation, or our signature stays on it while the UI says it was
+ * discarded. */
+static bool fail_mallocs;
+static bool fail_after_signing;
+void *__real_malloc(size_t size);
+void *__wrap_malloc(size_t size) {
+  return fail_mallocs ? NULL : __real_malloc(size);
+}
+int __real_wally_psbt_signing_cache_disable(struct wally_psbt *psbt);
+int __wrap_wally_psbt_signing_cache_disable(struct wally_psbt *psbt) {
+  int ret = __real_wally_psbt_signing_cache_disable(psbt);
+  if (fail_after_signing)
+    fail_mallocs = true;
+  return ret;
+}
+
+static size_t sign_out_of_memory_after_signing(struct wally_psbt *psbt,
+                                               psbt_sign_result_t *res) {
+  psbt_sign_policy_t policy = {0};
+  fail_after_signing = true;
+  size_t n = psbt_sign(psbt, false, policy, res);
+  fail_mallocs = false;
+  fail_after_signing = false;
+  return n;
+}
+
+static void test_restore_without_memory(void) {
+  TEST("restore under OOM: ECDSA denied input keeps only the cosigner sig");
+  struct ext_key *ours = NULL, *cosigner = NULL;
+  struct wally_psbt *psbt = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &ours) ||
+      !key_get_derived_key("m/84'/0'/0'/0/1", &cosigner)) {
+    FAIL("key derivation failed");
+  } else {
+    uint8_t kp_ours[24] = {0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80,
+                           0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80};
+    uint8_t kp_foreign[24];
+    memcpy(kp_foreign, kp_ours, sizeof(kp_foreign));
+    kp_foreign[0] = 0xde;
+    psbt = make_two_input_psbt(
+        REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), ours->pub_key,
+        EC_PUBLIC_KEY_LEN, kp_ours, sizeof(kp_ours), REF_SPK_P2WPKH,
+        sizeof(REF_SPK_P2WPKH), ours->pub_key, EC_PUBLIC_KEY_LEN, kp_foreign,
+        sizeof(kp_foreign));
+    uint8_t hash[32] = {1}, sig[EC_SIGNATURE_LEN];
+    uint8_t der[EC_SIGNATURE_DER_MAX_LEN + 1];
+    size_t der_len = 0;
+    psbt_sign_result_t res = {0};
+    if (!psbt ||
+        wally_ec_sig_from_bytes(cosigner->priv_key + 1, EC_PRIVATE_KEY_LEN,
+                                hash, sizeof(hash), EC_FLAG_ECDSA, sig,
+                                sizeof(sig)) != WALLY_OK ||
+        wally_ec_sig_to_der(sig, sizeof(sig), der, sizeof(der) - 1, &der_len) !=
+            WALLY_OK) {
+      FAIL("fixture");
+    } else {
+      der[der_len++] = WALLY_SIGHASH_ALL;
+      wally_psbt_add_input_signature(psbt, 1, cosigner->pub_key,
+                                     EC_PUBLIC_KEY_LEN, der, der_len);
+      sign_out_of_memory_after_signing(psbt, &res);
+      size_t idx = 0;
+      bool ours_left =
+          wally_map_find(&psbt->inputs[1].signatures, ours->pub_key,
+                         EC_PUBLIC_KEY_LEN, &idx) == WALLY_OK &&
+          idx != 0;
+      if (res.blocked != 1 || ours_left ||
+          psbt->inputs[1].signatures.num_items != 1)
+        FAIL("our signature leaked onto the denied input");
+      else
+        PASS();
+    }
+  }
+  wally_psbt_free(psbt);
+  bip32_key_free(ours);
+  bip32_key_free(cosigner);
+
+  TEST("restore under OOM: taproot denied input keeps no key-path sig");
+  const char *descs[] = {TR_BIP86_OURS, TR_BIP86_FOREIGN};
+  psbt = make_tr_psbt(descs, 2, 0, 0, WALLY_PSBT_VERSION_0);
+  psbt_sign_result_t res = {0};
+  size_t internal_len = 0;
+  if (!psbt) {
+    FAIL("fixture");
+  } else {
+    sign_out_of_memory_after_signing(psbt, &res);
+    if (res.blocked != 1 || tap_key_sig_len(psbt, 1) != 0)
+      FAIL("our signature leaked onto the denied input");
+    else if (wally_psbt_get_input_taproot_internal_key_len(
+                 psbt, 1, &internal_len) != WALLY_OK ||
+             internal_len != EC_XONLY_PUBLIC_KEY_LEN)
+      FAIL("the denied input lost its internal key");
+    else
+      PASS();
+  }
+  wally_psbt_free(psbt);
+}
+
+/* Known-answer signatures. libwally signs deterministically, as on the device
+ * (RFC6979, and BIP340 with no aux randomness), so these pin BIP143 and BIP341
+ * sighashes and signing end to end, whichever hashing backend is built. The
+ * P2WPKH one is Bitcoin Core's (CKey::Sign: RFC6979, low-R grinding, low-S),
+ * checked with an independent reimplementation; its first nonce has a high R,
+ * so it pins the grinding too. The two taproot ones were checked once against
+ * an independent pure-Python BIP340/341/342 implementation: valid, and the
+ * leaf commits to the output key. */
+static void hex_of(const unsigned char *b, size_t n, char *out) {
+  for (size_t i = 0; i < n; i++)
+    sprintf(out + 2 * i, "%02x", b[i]);
+}
+
+static void expect_signature(const char *name, const unsigned char *sig,
+                             size_t len, const char *want) {
+  char hex[2 * 80 + 1];
+  TEST(name);
+  if (!sig || len > 80) {
+    FAIL("no signature");
+    return;
+  }
+  hex_of(sig, len, hex);
+  if (strcmp(hex, want) == 0)
+    PASS();
+  else
+    FAIL(hex);
+}
+
+static void test_known_answer_signatures(void) {
+  psbt_sign_policy_t policy = {0};
+
+  struct wally_psbt *psbt = make_safe_psbt();
+  const struct wally_map_item *it = NULL;
+  if (psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
+      psbt->inputs[0].signatures.num_items == 1)
+    it = &psbt->inputs[0].signatures.items[0];
+  expect_signature(
+      "KAT: P2WPKH (BIP143) signature", it ? it->value : NULL,
+      it ? it->value_len : 0,
+      "3044022072639180bbbaec17bee9427d14c7d8a6ae218700b04a2fb248503d44bf07f6"
+      "c902207da0d3365fe76f44bb0a2b6b4f639f07fb34194cb691225633c873b7bb95902c"
+      "01");
+  wally_psbt_free(psbt);
+
+  const char *bip86[] = {TR_BIP86_OURS};
+  psbt = make_tr_psbt(bip86, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  unsigned char sig[65];
+  size_t n = 0;
+  bool signed_kp = psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
+                   wally_psbt_get_input_taproot_signature(
+                       psbt, 0, sig, sizeof(sig), &n) == WALLY_OK;
+  expect_signature(
+      "KAT: taproot key-path (BIP341) signature", signed_kp ? sig : NULL, n,
+      "abfdae8f79070b7ffafe4a8c2b25734df93b0ab465ae73b533d904ef93ed3fe76ddf98"
+      "f68d637e9e95cae8d71337b502ea3913b23bf54e6cce5c499d64f8cbe7");
+  wally_psbt_free(psbt);
+
+  registry_clear();
+  it = NULL;
+  psbt = NULL;
+  const char *leaf[] = {TR_LEAF_OURS};
+  if (registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false) &&
+      (psbt = make_tr_psbt(leaf, 1, 0, 0, WALLY_PSBT_VERSION_0)) &&
+      psbt_sign(psbt, false, policy, NULL) == 1 &&
+      psbt->inputs[0].taproot_leaf_signatures.num_items == 1)
+    it = &psbt->inputs[0].taproot_leaf_signatures.items[0];
+  expect_signature(
+      "KAT: taproot script-path (BIP342) signature", it ? it->value : NULL,
+      it ? it->value_len : 0,
+      "b374394027acae385967663d3c47e6d2b5fc34ba0820b7a2cd4bfebb9dd11fb12e6afb"
+      "0fb45ae35556e4b0e8e73ad11aabd513f416099beee95e1de860208f27");
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
+/* What the coordinator needs back from a taproot spend survives the trim, in
+ * both PSBT versions: key-path and script-path signatures alike. */
+static void test_trim_keeps_taproot_signatures(void) {
+  psbt_sign_policy_t policy = {0};
+  registry_clear();
+  if (!registry_add_from_string("leaf", TR_LEAF_OURS, STORAGE_FLASH, false)) {
+    TEST("trim taproot: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    const char *bip86[] = {TR_BIP86_OURS};
+    const char *leaf[] = {TR_LEAF_OURS};
+    struct wally_psbt *kp = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
+    struct wally_psbt *sp = make_tr_psbt(leaf, 1, 0, 0, PSBT_VERSIONS[v]);
+    struct wally_psbt *kp_trim = NULL, *sp_trim = NULL;
+    if (kp && psbt_sign(kp, false, policy, NULL) == 1)
+      kp_trim = psbt_trim(kp);
+    if (sp && psbt_sign(sp, false, policy, NULL) == 1)
+      sp_trim = psbt_trim(sp);
+
+    snprintf(name, sizeof(name), "trim v%u: TAP_KEY_SIG survives",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    if (kp_trim && tap_key_sig_len(kp_trim, 0) == 64 &&
+        kp_trim->inputs[0].taproot_leaf_paths.num_items == 0)
+      PASS();
+    else
+      FAIL("key-path signature lost, or derivations kept");
+
+    snprintf(name, sizeof(name), "trim v%u: TAP_SCRIPT_SIG survives",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    if (sp_trim && sp_trim->inputs[0].taproot_leaf_signatures.num_items == 1 &&
+        sp_trim->inputs[0].taproot_leaf_scripts.num_items == 0)
+      PASS();
+    else
+      FAIL("script-path signature lost, or leaf scripts kept");
+
+    wally_psbt_free(kp_trim);
+    wally_psbt_free(sp_trim);
+    wally_psbt_free(kp);
+    wally_psbt_free(sp);
+  }
+  registry_clear();
+}
+
+/* One seed in two multipath groups of one policy: a primary <0;1> key and a
+ * recovery <2;3> key, the Liana same-signer layout. Every own key of the
+ * claimed descriptor at the input's index must sign, and an input still
+ * missing one of them is not complete. */
+static char k48_xpub[128];
+
+static const char *two_group_desc(char *buf, size_t len, bool taproot) {
+  if (taproot)
+    snprintf(buf, len,
+             "tr(" NUMS_H ",{and_v(v:pk([00000000/48'/0'/0'/2']%s/<0;1>/*),"
+             "pk([11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*)),"
+             "and_v(v:pk([00000000/48'/0'/0'/2']%s/<2;3>/*),older(144))})",
+             k48_xpub, k48_xpub);
+  else
+    snprintf(buf, len,
+             "wsh(or_d(multi(2,[00000000/48'/0'/0'/2']%s/<0;1>/*,"
+             "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*),"
+             "and_v(v:pkh([00000000/48'/0'/0'/2']%s/<2;3>/*),older(144))))",
+             k48_xpub, k48_xpub);
+  return buf;
+}
+
+static bool load_k48_xpub(void) {
+  char *xpub = NULL;
+  if (!key_get_xpub("m/48'/0'/0'/2'", &xpub))
+    return false;
+  snprintf(k48_xpub, sizeof(k48_xpub), "%s", xpub);
+  wally_free_string(xpub);
+  return true;
+}
+
+static void k48_pubkey(uint32_t chain, uint32_t index,
+                       unsigned char out[EC_PUBLIC_KEY_LEN]) {
+  char path[64];
+  struct ext_key *k = NULL;
+  snprintf(path, sizeof(path), "m/48'/0'/0'/2'/%u/%u", (unsigned)chain,
+           (unsigned)index);
+  memset(out, 0, EC_PUBLIC_KEY_LEN);
+  if (key_get_derived_key(path, &k)) {
+    memcpy(out, k->pub_key, EC_PUBLIC_KEY_LEN);
+    bip32_key_free(k);
+  }
+}
+
+static void add_k48_keypath(struct wally_psbt *psbt, uint32_t chain,
+                            uint32_t index) {
+  unsigned char pub[EC_PUBLIC_KEY_LEN];
+  const uint32_t path[] = {0x80000030, 0x80000000, 0x80000000,
+                           0x80000002, chain,      index};
+  const unsigned char fp[4] = {0};
+  k48_pubkey(chain, index, pub);
+  wally_psbt_add_input_keypath(psbt, 0, pub, sizeof(pub), fp, sizeof(fp), path,
+                               6);
+}
+
+/* One input on the wsh two-group policy at (0, 3), listing our key at the
+ * given chains only. */
+static struct wally_psbt *make_two_group_wsh_psbt(const registry_entry_t *e,
+                                                  const uint32_t *chains,
+                                                  size_t num_chains) {
+  uint8_t spk[34], witness[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t spk_len = 0, witness_len = 0;
+  if (wally_descriptor_to_script(e->desc, 1, 0, 0, 0, 3, 0, witness,
+                                 sizeof(witness), &witness_len) != WALLY_OK ||
+      witness_len > sizeof(witness) ||
+      wally_witness_program_from_bytes(witness, witness_len,
+                                       WALLY_SCRIPT_SHA256, spk, sizeof(spk),
+                                       &spk_len) != WALLY_OK)
+    return NULL;
+  struct wally_psbt *psbt = make_test_psbt(spk, spk_len, NULL, 0, NULL, 0);
+  if (!psbt)
+    return NULL;
+  wally_map_clear(&psbt->inputs[0].keypaths);
+  if (wally_psbt_set_input_witness_script(psbt, 0, witness, witness_len) !=
+      WALLY_OK) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  for (size_t i = 0; i < num_chains; i++)
+    add_k48_keypath(psbt, chains[i], 3);
+  return psbt;
+}
+
+static bool has_partial_sig(const struct wally_psbt *psbt, uint32_t chain) {
+  unsigned char pub[EC_PUBLIC_KEY_LEN];
+  size_t idx = 0;
+  k48_pubkey(chain, 3, pub);
+  return wally_map_find(&psbt->inputs[0].signatures, pub, sizeof(pub), &idx) ==
+             WALLY_OK &&
+         idx != 0;
+}
+
+static void test_sign_every_own_key_wsh(void) {
+  char desc[1024];
+  registry_clear();
+  if (!registry_add_from_string("liana",
+                                two_group_desc(desc, sizeof(desc), false),
+                                STORAGE_FLASH, false)) {
+    TEST("two-group wsh: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const registry_entry_t *e = registry_find_by_id("liana");
+
+  TEST("two-group wsh: both own keys sign");
+  const uint32_t both[] = {0, 2};
+  struct wally_psbt *psbt = make_two_group_wsh_psbt(e, both, 2);
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_classify_input(psbt, 0, false).ownership !=
+           PSBT_OWNERSHIP_OWNED_SAFE)
+    FAIL("expected OWNED_SAFE");
+  else if (psbt_sign(psbt, false, policy, &res) == 0 || res.signed_ok != 1 ||
+           res.missing_keys != 0)
+    FAIL("expected a complete input");
+  else if (!has_partial_sig(psbt, 0) || !has_partial_sig(psbt, 2))
+    FAIL("expected partial signatures by K/0/3 and K/2/3");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("two-group wsh: PSBT pruned to the recovery key signs it");
+  const uint32_t recovery[] = {2};
+  psbt = make_two_group_wsh_psbt(e, recovery, 1);
+  input_ownership_t own = {0};
+  if (psbt)
+    own = psbt_classify_input(psbt, 0, false);
+  if (!psbt)
+    FAIL("fixture");
+  else if (own.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+           own.claim.registry.multi_index != 0 ||
+           own.claim.registry.child_num != 3)
+    FAIL("expected an OWNED_SAFE claim at group 0, index 3");
+  else if (psbt_sign(psbt, false, policy, &res) == 0 || res.signed_ok != 1)
+    FAIL("expected a complete input");
+  else if (!has_partial_sig(psbt, 2) ||
+           psbt->inputs[0].signatures.num_items != 1)
+    FAIL("expected only the K/2/3 signature");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
+static void test_sign_every_own_key_tr(void) {
+  char desc[1024];
+  registry_clear();
+  two_group_desc(desc, sizeof(desc), true);
+  if (!registry_add_from_string("liana", desc, STORAGE_FLASH, false)) {
+    TEST("two-group tr: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (size_t v = 0; v < 2; v++) {
+    char name[96];
+    snprintf(name, sizeof(name), "two-group tr v%u: both leaves signed",
+             (unsigned)PSBT_VERSIONS[v]);
+    TEST(name);
+    const char *descs[] = {desc};
+    struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 3, PSBT_VERSIONS[v]);
+    psbt_sign_policy_t policy = {0};
+    psbt_sign_result_t res;
+    if (!psbt)
+      FAIL("fixture");
+    else if (psbt_sign(psbt, false, policy, &res) == 0 || res.signed_ok != 1 ||
+             res.missing_keys != 0)
+      FAIL("expected a complete input");
+    else if (psbt->inputs[0].taproot_leaf_signatures.num_items != 2)
+      FAIL("expected a TAP_SCRIPT_SIG on each leaf");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  /* Our key both as the internal key and in a leaf: libwally ignores an
+   * input's taproot keys once it holds a key-path signature, so the leaf key
+   * must sign first. */
+  TEST("two-group tr: internal and leaf key of ours both sign");
+  const char *both[] = {"tr([00000000/86'/0'/0']" XPUB_86
+                        "/0/*,pk([00000000/86'/0'/0']" XPUB_86 "/1/*))"};
+  registry_clear();
+  struct wally_psbt *bpsbt = NULL;
+  psbt_sign_policy_t bpolicy = {0};
+  psbt_sign_result_t bres;
+  if (!registry_add_from_string("both", both[0], STORAGE_FLASH, false) ||
+      !(bpsbt = make_tr_psbt(both, 1, 0, 0, WALLY_PSBT_VERSION_0)))
+    FAIL("fixture");
+  else if (psbt_sign(bpsbt, false, bpolicy, &bres) == 0 ||
+           bres.signed_ok != 1 || tap_key_sig_len(bpsbt, 0) != 64 ||
+           bpsbt->inputs[0].taproot_leaf_signatures.num_items != 1)
+    FAIL("expected a key-path and a leaf signature");
+  else
+    PASS();
+  wally_psbt_free(bpsbt);
+  registry_clear();
+  if (!registry_add_from_string("liana", desc, STORAGE_FLASH, false)) {
+    FAIL("re-register two-group policy");
+    return;
+  }
+
+  /* Without the recovery leaf's script libwally cannot sign it, though the
+   * PSBT lists our recovery key: the input is not complete. */
+  TEST("two-group tr: an unsignable listed key leaves the input incomplete");
+  const char *descs[] = {desc};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 3, WALLY_PSBT_VERSION_0);
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  if (!psbt || psbt->inputs[0].taproot_leaf_scripts.num_items != 2) {
+    FAIL("fixture");
+  } else {
+    /* Drop the leaf whose script ends in OP_CSV (older(144)). */
+    struct wally_map *leaves = &psbt->inputs[0].taproot_leaf_scripts;
+    for (size_t j = 0; j < leaves->num_items; j++) {
+      const struct wally_map_item *it = &leaves->items[j];
+      if (it->value_len &&
+          it->value[it->value_len - 1] == OP_CHECKSEQUENCEVERIFY) {
+        wally_map_remove(leaves, it->key, it->key_len);
+        break;
+      }
+    }
+    if (leaves->num_items != 1)
+      FAIL("fixture: recovery leaf not found");
+    else if (psbt_sign(psbt, false, policy, &res) == 0 || res.attempted != 1 ||
+             res.signed_ok != 0 || res.missing_keys != 1)
+      FAIL("expected one input missing a key");
+    else
+      PASS();
+  }
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
+/* A segwit input may carry only its previous transaction. The pinned fork
+ * signs it with the BIP143 sighash; upstream libwally used the
+ * legacy one there, an invalid signature counted as signed. */
+static void test_sign_non_witness_utxo_only_segwit(void) {
+  TEST("psbt_sign: P2WPKH with only non_witness_utxo signs BIP143");
+
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    FAIL("key derivation failed");
+    return;
+  }
+  const uint64_t amount = 100000;
+  struct wally_tx *prev = NULL;
+  struct wally_tx *tx = NULL;
+  struct wally_psbt *psbt = NULL;
+  const char *err = NULL;
+
+  uint8_t zero_txid[32] = {0};
+  uint8_t prev_txid[32];
+  uint8_t op_return[] = {0x6a};
+  if (wally_tx_init_alloc(2, 0, 1, 1, &prev) != WALLY_OK ||
+      wally_tx_add_raw_input(prev, zero_txid, sizeof(zero_txid), 0, 0xffffffff,
+                             NULL, 0, NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(prev, amount, REF_SPK_P2WPKH,
+                              sizeof(REF_SPK_P2WPKH), 0) != WALLY_OK ||
+      wally_tx_get_txid(prev, prev_txid, sizeof(prev_txid)) != WALLY_OK ||
+      wally_tx_init_alloc(2, 0, 1, 1, &tx) != WALLY_OK ||
+      wally_tx_add_raw_input(tx, prev_txid, sizeof(prev_txid), 0, 0xfffffffd,
+                             NULL, 0, NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(tx, 90000, op_return, sizeof(op_return), 0) !=
+          WALLY_OK ||
+      wally_psbt_from_tx(tx, 0, 0, &psbt) != WALLY_OK ||
+      wally_psbt_set_input_utxo(psbt, 0, prev) != WALLY_OK) {
+    err = "fixture";
+    goto done;
+  }
+
+  const uint8_t kp_val[] = {
+      0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  wally_map_add(&psbt->inputs[0].keypaths, derived->pub_key, EC_PUBLIC_KEY_LEN,
+                kp_val, sizeof(kp_val));
+
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t result;
+  if (psbt_sign(psbt, false, policy, &result) != 1 || result.signed_ok != 1) {
+    err = "expected one signature";
+    goto done;
+  }
+
+  const struct wally_map *sigs = &psbt->inputs[0].signatures;
+  if (sigs->num_items != 1 || sigs->items[0].value_len < 2) {
+    err = "no partial signature";
+    goto done;
+  }
+  const struct wally_map_item *sig = &sigs->items[0];
+  uint8_t compact[EC_SIGNATURE_LEN];
+  if (sig->value[sig->value_len - 1] != WALLY_SIGHASH_ALL ||
+      wally_ec_sig_from_der(sig->value, sig->value_len - 1, compact,
+                            sizeof(compact)) != WALLY_OK) {
+    err = "signature does not decode";
+    goto done;
+  }
+
+  /* BIP143 scriptCode of P2WPKH: the P2PKH script of the same key hash. */
+  uint8_t script_code[25] = {0x76, 0xa9, 0x14};
+  memcpy(script_code + 3, REF_SPK_P2WPKH + 2, 20);
+  script_code[23] = 0x88;
+  script_code[24] = 0xac;
+  uint8_t bip143[SHA256_LEN], legacy[SHA256_LEN];
+  if (wally_tx_get_btc_signature_hash(
+          tx, 0, script_code, sizeof(script_code), amount, WALLY_SIGHASH_ALL,
+          WALLY_TX_FLAG_USE_WITNESS, bip143, sizeof(bip143)) != WALLY_OK ||
+      wally_tx_get_btc_signature_hash(tx, 0, script_code, sizeof(script_code),
+                                      amount, WALLY_SIGHASH_ALL, 0, legacy,
+                                      sizeof(legacy)) != WALLY_OK) {
+    err = "sighash";
+    goto done;
+  }
+  if (wally_ec_sig_verify(derived->pub_key, EC_PUBLIC_KEY_LEN, bip143,
+                          sizeof(bip143), EC_FLAG_ECDSA, compact,
+                          sizeof(compact)) != WALLY_OK)
+    err = "signature does not verify against the BIP143 sighash";
+  else if (wally_ec_sig_verify(derived->pub_key, EC_PUBLIC_KEY_LEN, legacy,
+                               sizeof(legacy), EC_FLAG_ECDSA, compact,
+                               sizeof(compact)) == WALLY_OK)
+    err = "signature verifies against the legacy sighash";
+
+done:
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  wally_tx_free(tx);
+  wally_tx_free(prev);
+  bip32_key_free(derived);
+}
+
+/* The group a keypath belongs to is a position in the <a;b> tuple, not the
+ * path value: with <1;0> receive sits at /1, with <2;3> change at /3. */
+static void test_registry_claim_tuple_position(void) {
+  static const struct {
+    const char *name;
+    const char *tuple;
+    uint32_t multi_index;
+    uint32_t chain;
+  } cases[] = {
+      {"registry claim: <1;0> receive at /1 regenerates group 0", "<1;0>", 0,
+       1},
+      {"registry claim: <2;3> change at /3 regenerates group 1", "<2;3>", 1, 3},
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+    char desc[512];
+    snprintf(desc, sizeof(desc),
+             "wsh(sortedmulti(2,[00000000/48'/0'/0'/2']" XPUB_84 "/%s/*,"
+             "[11111111/48'/0'/0'/2']" XPUB_86 "/%s/*))",
+             cases[i].tuple, cases[i].tuple);
+    TEST(cases[i].name);
+    registry_clear();
+    if (!registry_add_from_string("t", desc, STORAGE_FLASH, false)) {
+      FAIL("registry_add_from_string");
+      continue;
+    }
+    const registry_entry_t *e = registry_find_by_id("t");
+    struct wally_psbt *psbt = make_registry_output_psbt_at(
+        e, cases[i].multi_index, cases[i].chain, 12);
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    output_ownership_t r = psbt_classify_output(psbt, 0, false);
+    wally_psbt_free(psbt);
+    if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+        r.source.registry.multi_index != cases[i].multi_index ||
+        r.source.registry.child_num != 12)
+      FAIL("expected an OWNED_SAFE claim at the tuple position");
+    else
+      PASS();
+  }
+  registry_clear();
+}
+
+/* Change is only change when it returns to the wallet the inputs spend from:
+ * any other provably-owned output is a transfer between wallets. */
+static void test_claims_share_policy(void) {
+  claim_t a = {.kind = CLAIM_WHITELIST,
+               .whitelist = {.script = SS_SCRIPT_P2WPKH,
+                             .purpose = 84,
+                             .coin = 0,
+                             .account = 0,
+                             .chain = 0,
+                             .index = 5}};
+  claim_t b = a;
+  b.whitelist.chain = 1;
+  b.whitelist.index = 17;
+
+  TEST("psbt_claims_share_policy: same single-sig account, other chain");
+  if (psbt_claims_share_policy(&a, &b))
+    PASS();
+  else
+    FAIL("expected a shared policy");
+
+  TEST("psbt_claims_share_policy: other account is another wallet");
+  b.whitelist.account = 1;
+  if (!psbt_claims_share_policy(&a, &b))
+    PASS();
+  else
+    FAIL("account 0 and account 1 must not share a policy");
+
+  TEST("psbt_claims_share_policy: other script type is another wallet");
+  b.whitelist.account = 0;
+  b.whitelist.script = SS_SCRIPT_P2TR;
+  b.whitelist.purpose = 86;
+  if (!psbt_claims_share_policy(&a, &b))
+    PASS();
+  else
+    FAIL("BIP84 and BIP86 must not share a policy");
+
+  registry_clear();
+  if (!registry_add_from_string("a", WSH_MULTIPATH_DESC, STORAGE_FLASH,
+                                false) ||
+      !registry_add_from_string("b",
+                                "wsh(sortedmulti(2,"
+                                "[00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*,"
+                                "[22222222/48'/0'/0'/2']" XPUB_86 "/<0;1>/*))",
+                                STORAGE_FLASH, false)) {
+    TEST("psbt_claims_share_policy: registry setup");
+    FAIL("registry_add_from_string");
+    registry_clear();
+    return;
+  }
+  claim_t ra = {.kind = CLAIM_REGISTRY,
+                .registry = {.entry = registry_find_by_id("a"),
+                             .multi_index = 0,
+                             .child_num = 3}};
+  claim_t ra_change = ra;
+  ra_change.registry.multi_index = 1;
+  claim_t rb = {.kind = CLAIM_REGISTRY,
+                .registry = {.entry = registry_find_by_id("b"),
+                             .multi_index = 1,
+                             .child_num = 3}};
+
+  TEST("psbt_claims_share_policy: same registered descriptor");
+  if (psbt_claims_share_policy(&ra, &ra_change))
+    PASS();
+  else
+    FAIL("expected a shared policy");
+
+  TEST("psbt_claims_share_policy: other registered descriptor");
+  if (!psbt_claims_share_policy(&ra, &rb))
+    PASS();
+  else
+    FAIL("entries a and b must not share a policy");
+
+  TEST("psbt_claims_share_policy: registry vs single-sig");
+  if (!psbt_claims_share_policy(&ra, &a))
+    PASS();
+  else
+    FAIL("a registry claim and a whitelist claim must not share a policy");
+
+  registry_clear();
 }
 
 /* Two inputs spending the same address: one key, two UTXOs. Every field is
@@ -1959,6 +3373,111 @@ static void test_trim_leaves_out_previous_transactions(void) {
  * place. It must stay v2, keep the flags the signer set and every signature,
  * and still describe the same transaction, or the coordinator cannot merge it.
  */
+/* A v0 PSBT is trimmed like a v2 one, on a copy: every signature, final
+ * field and witness_utxo survives, whatever its sighash byte. */
+static void test_trim_v0_keeps_signatures(void) {
+  TEST("psbt_trim v0: signatures, final fields and witness_utxo survive");
+  struct ext_key *ours = NULL, *cosigner = NULL;
+  struct wally_tx *prev = NULL;
+  struct wally_psbt *psbt = NULL, *trimmed = NULL, *reparsed = NULL;
+  const char *err = NULL;
+  uint8_t funding_txid[32] = {0xaa};
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &ours) ||
+      !key_get_derived_key("m/84'/0'/0'/0/1", &cosigner) ||
+      !(psbt = make_reused_address_psbt()) ||
+      wally_tx_init_alloc(2, 0, 1, 1, &prev) != WALLY_OK ||
+      wally_tx_add_raw_input(prev, funding_txid, sizeof(funding_txid), 0,
+                             0xffffffff, NULL, 0, NULL, 0) != WALLY_OK ||
+      wally_tx_add_raw_output(prev, 100000, REF_SPK_P2WPKH,
+                              sizeof(REF_SPK_P2WPKH), 0) != WALLY_OK) {
+    err = "fixture";
+    goto done;
+  }
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  if (psbt_sign(psbt, false, policy, &res) == 0) {
+    err = "signing";
+    goto done;
+  }
+  /* Added after signing, which would refuse its txid: trim drops it. */
+  wally_psbt_set_input_utxo(psbt, 0, prev);
+  uint8_t hash[32] = {2}, sig[EC_SIGNATURE_LEN];
+  uint8_t der[EC_SIGNATURE_DER_MAX_LEN + 1];
+  size_t der_len = 0;
+  if (wally_ec_sig_from_bytes(cosigner->priv_key + 1, EC_PRIVATE_KEY_LEN, hash,
+                              sizeof(hash), EC_FLAG_ECDSA, sig,
+                              sizeof(sig)) != WALLY_OK ||
+      wally_ec_sig_to_der(sig, sizeof(sig), der, sizeof(der) - 1, &der_len) !=
+          WALLY_OK) {
+    err = "cosigner signature";
+    goto done;
+  }
+  /* A sighash byte of 0: libwally parses it but its setter refuses it, and
+   * the old rebuild dropped it through that setter. */
+  der[der_len++] = 0x00;
+  if (wally_map_add(&psbt->inputs[0].signatures, cosigner->pub_key,
+                    EC_PUBLIC_KEY_LEN, der, der_len) != WALLY_OK) {
+    err = "cosigner signature map";
+    goto done;
+  }
+  struct wally_tx_witness_stack *stack = NULL;
+  wally_tx_witness_stack_init_alloc(2, &stack);
+  wally_tx_witness_stack_add(stack, der, der_len);
+  wally_tx_witness_stack_add(stack, cosigner->pub_key, EC_PUBLIC_KEY_LEN);
+  wally_psbt_set_input_final_witness(psbt, 1, stack);
+  wally_tx_witness_stack_free(stack);
+
+  size_t full_len = 0, trimmed_len = 0, written = 0, version = 0;
+  unsigned char *bytes = NULL;
+  if (!(trimmed = psbt_trim(psbt)) ||
+      wally_psbt_get_length(psbt, 0, &full_len) != WALLY_OK ||
+      wally_psbt_get_length(trimmed, 0, &trimmed_len) != WALLY_OK ||
+      !(bytes = malloc(trimmed_len)) ||
+      wally_psbt_to_bytes(trimmed, 0, bytes, trimmed_len, &written) !=
+          WALLY_OK ||
+      wally_psbt_from_bytes(bytes, written, 0, &reparsed) != WALLY_OK) {
+    free(bytes);
+    err = "trim or reparse";
+    goto done;
+  }
+  free(bytes);
+  size_t idx_ours = 0, idx_cos = 0, final_len = 0;
+  wally_map_find(&reparsed->inputs[0].signatures, ours->pub_key,
+                 EC_PUBLIC_KEY_LEN, &idx_ours);
+  wally_map_find(&reparsed->inputs[0].signatures, cosigner->pub_key,
+                 EC_PUBLIC_KEY_LEN, &idx_cos);
+  if (reparsed->inputs[1].final_witness)
+    final_len = reparsed->inputs[1].final_witness->num_items;
+  wally_psbt_get_version(reparsed, &version);
+  if (version != WALLY_PSBT_VERSION_0)
+    err = "version changed";
+  else if (!idx_ours || !idx_cos)
+    err = "a partial signature was lost";
+  else if (final_len != 2)
+    err = "the final witness was lost";
+  else if (!reparsed->inputs[0].witness_utxo)
+    err = "the witness_utxo was lost";
+  else if (reparsed->inputs[0].utxo)
+    err = "the previous transaction came back";
+  else if (reparsed->inputs[0].keypaths.num_items ||
+           reparsed->inputs[1].keypaths.num_items)
+    err = "keypaths came back";
+  else if (trimmed_len >= full_len)
+    err = "the payload did not shrink";
+
+done:
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(reparsed);
+  wally_psbt_free(trimmed);
+  wally_psbt_free(psbt);
+  wally_tx_free(prev);
+  bip32_key_free(ours);
+  bip32_key_free(cosigner);
+}
+
 static void test_trim_psbt_v2_in_place(void) {
   TEST("psbt_trim: a v2 PSBT is trimmed in place");
 
@@ -2453,6 +3972,71 @@ static void test_psbt_classify_registry_miniscript_tampered(void) {
   PASS();
 }
 
+/* A keypath of nine components is longer than any path Kern derives. libwally
+ * reports it as WALLY_OK without copying it into a too-small buffer, so it
+ * used to be classified from whatever that buffer held, typically the keypath
+ * of the input classified just before. */
+static void test_overlong_keypaths_skipped(void) {
+  static const unsigned char fp[4] = {0x12, 0x34, 0x56, 0x78};
+  memcpy(stub_fp, fp, sizeof(fp));
+  struct ext_key *derived = NULL;
+  struct wally_psbt *psbt = NULL;
+  if (!key_get_derived_key("m/84'/0'/0'/0/0", &derived)) {
+    TEST("overlong keypaths: setup");
+    FAIL("key derivation failed");
+    memset(stub_fp, 0, sizeof(stub_fp));
+    return;
+  }
+  uint8_t kp_owned[24] = {0x12, 0x34, 0x56, 0x78, 0x54, 0x00, 0x00, 0x80,
+                          0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80};
+  uint8_t kp_deep_foreign[4 + 9 * 4] = {0xde, 0xad, 0xbe, 0xef};
+  uint8_t kp_deep_ours[4 + 9 * 4] = {0x12, 0x34, 0x56, 0x78};
+  uint8_t other_pub[EC_PUBLIC_KEY_LEN];
+  memcpy(other_pub, derived->pub_key, sizeof(other_pub));
+  other_pub[0] = derived->pub_key[0] == 0x02 ? 0x03 : 0x02;
+  psbt = make_two_input_psbt(
+      REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH), derived->pub_key,
+      EC_PUBLIC_KEY_LEN, kp_owned, sizeof(kp_owned), REF_SPK_P2WPKH,
+      sizeof(REF_SPK_P2WPKH), other_pub, sizeof(other_pub), kp_deep_foreign,
+      sizeof(kp_deep_foreign));
+
+  TEST("overlong keypaths: owned input, then a 9-deep foreign one");
+  if (!psbt) {
+    FAIL("fixture");
+  } else {
+    input_ownership_t r0 = psbt_classify_input(psbt, 0, false);
+    input_ownership_t r1 = psbt_classify_input(psbt, 1, false);
+    if (r0.ownership != PSBT_OWNERSHIP_OWNED_SAFE)
+      FAIL("input 0 should be OWNED_SAFE");
+    else if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL)
+      FAIL("a 9-deep foreign keypath must classify EXTERNAL");
+    else
+      PASS();
+
+    TEST("overlong keypaths: 9-deep foreign output keypath");
+    wally_map_add(&psbt->outputs[0].keypaths, other_pub, sizeof(other_pub),
+                  kp_deep_foreign, sizeof(kp_deep_foreign));
+    if (psbt_classify_output(psbt, 0, false).ownership !=
+        PSBT_OWNERSHIP_EXTERNAL)
+      FAIL("expected EXTERNAL");
+    else
+      PASS();
+
+    TEST("overlong keypaths: 9-deep taproot path of ours is not truncated");
+    wally_map_clear(&psbt->inputs[1].keypaths);
+    wally_map_add(&psbt->inputs[1].taproot_leaf_paths, other_pub + 1,
+                  EC_XONLY_PUBLIC_KEY_LEN, kp_deep_ours, sizeof(kp_deep_ours));
+    r1 = psbt_classify_input(psbt, 1, false);
+    if (r1.ownership != PSBT_OWNERSHIP_EXTERNAL || r1.raw_keypath_len != 0)
+      FAIL("expected EXTERNAL with no remembered keypath");
+    else
+      PASS();
+  }
+  wally_psbt_free(psbt);
+  bip32_key_free(derived);
+  memset(stub_fp, 0, sizeof(stub_fp));
+}
+
 /* Mixed two-input PSBT: input 0 is OWNED_SAFE (BIP84 verified), input 1 is
  * EXTERNAL (foreign fp). Verifies each input is classified independently and
  * that the per-input policy gate in psbt_sign signs exactly one of them. */
@@ -2661,6 +4245,238 @@ static void test_registry_claim(const char *test_name, const char *desc_str,
   PASS();
 }
 
+/* Counts libwally script generations, to pin how much work a claim costs. */
+static size_t to_script_calls;
+int __real_wally_descriptor_to_script(const struct wally_descriptor *desc,
+                                      uint32_t depth, uint32_t index,
+                                      uint32_t variant, uint32_t multi_index,
+                                      uint32_t child_num, uint32_t flags,
+                                      unsigned char *bytes_out, size_t len,
+                                      size_t *written);
+int __wrap_wally_descriptor_to_script(const struct wally_descriptor *desc,
+                                      uint32_t depth, uint32_t index,
+                                      uint32_t variant, uint32_t multi_index,
+                                      uint32_t child_num, uint32_t flags,
+                                      unsigned char *bytes_out, size_t len,
+                                      size_t *written) {
+  to_script_calls++;
+  return __real_wally_descriptor_to_script(desc, depth, index, variant,
+                                           multi_index, child_num, flags,
+                                           bytes_out, len, written);
+}
+
+/* A claim is one generation of the innermost script, hashed locally into
+ * each wrapper; the result must be the scriptPubKey libwally builds itself. */
+static void test_claim_local_wrap(void) {
+  static const char *const descs[] = {
+      "wsh(sortedmulti(2,[00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*,"
+      "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*))",
+      "sh(multi(1,[00000000/48'/0'/0'/1']" XPUB_84 "/<0;1>/*,"
+      "[11111111/48'/0'/0'/1']" XPUB_86 "/<0;1>/*))",
+      "sh(wsh(sortedmulti(1,[00000000/48'/0'/0'/1']" XPUB_84 "/<0;1>/*,"
+      "[11111111/48'/0'/0'/1']" XPUB_86 "/<0;1>/*)))",
+      "wsh(or_d(pk([00000000/48'/0'/0'/2']" XPUB_84 "/<0;1>/*),"
+      "and_v(v:pkh([11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*),older(144))))",
+  };
+  for (size_t i = 0; i < sizeof(descs) / sizeof(descs[0]); i++) {
+    char name[64];
+    snprintf(name, sizeof(name), "claim: local wrap matches libwally (%zu)", i);
+    TEST(name);
+    expected_scripts_t out = {0};
+    uint8_t ref[PSBT_MAX_INNER_SCRIPT_LEN];
+    size_t ref_len = 0;
+    registry_clear();
+    bool added = registry_add_from_string("t", descs[i], STORAGE_FLASH, false);
+    const registry_entry_t *e = registry_find_by_id("t");
+    claim_t claim = {
+        .kind = CLAIM_REGISTRY,
+        .registry = {.entry = e, .multi_index = 1, .child_num = 7}};
+    to_script_calls = 0;
+    bool regenerated = added && e && claim_regenerate(&claim, false, &out);
+    size_t calls = to_script_calls;
+    if (!regenerated)
+      FAIL("claim_regenerate failed");
+    else if (wally_descriptor_to_script(e->desc, 0, 0, 0, 1, 7, 0, ref,
+                                        sizeof(ref), &ref_len) != WALLY_OK ||
+             ref_len != out.spk_len || memcmp(ref, out.spk, ref_len) != 0)
+      FAIL("scriptPubKey differs from libwally's");
+    else if (calls != 1)
+      FAIL("expected a single generation per claim");
+    else
+      PASS();
+  }
+  registry_clear();
+}
+
+/* A P2TR scriptPubKey cannot come from a wsh() entry: no script is generated
+ * to find that out. */
+static void test_claim_shape_prefilter(void) {
+  TEST("claim: a P2TR output never generates a wsh() entry's scripts");
+  registry_clear();
+  if (!registry_add_from_string("w",
+                                "wsh(sortedmulti(2,[00000000/87'/0'/0']" XPUB_84
+                                "/<0;1>/*,"
+                                "[11111111/87'/0'/0']" XPUB_86 "/<0;1>/*))",
+                                STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const char *descs[] = {"tr([00000000/87'/0'/0']" XPUB_86 "/<0;1>/*)"};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  to_script_calls = 0;
+  input_ownership_t r = {0};
+  if (psbt)
+    r = psbt_classify_input(psbt, 0, false);
+  if (!psbt)
+    FAIL("fixture");
+  else if (to_script_calls != 0)
+    FAIL("the wsh() entry's scripts were generated");
+  else if (r.ownership == PSBT_OWNERSHIP_OWNED_SAFE)
+    FAIL("a wsh() entry cannot claim a P2TR input");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
+/* Keypaths that claim our fingerprint but list another key cannot be signed
+ * for, so they cost no claim attempt: a PSBT padded with them must not
+ * multiply derivations and script generations. */
+static void test_bogus_keypaths_cost_nothing(void) {
+  registry_clear();
+  if (!registry_add_from_string("t", WSH_REGISTRY_DESC, STORAGE_FLASH, false) ||
+      !registry_add_from_string("tr",
+                                "tr([00000000/87'/0'/0']" XPUB_86 "/<0;1>/*)",
+                                STORAGE_FLASH, false)) {
+    TEST("bogus keypaths: setup");
+    FAIL("registry_add_from_string");
+    return;
+  }
+  for (int with_genuine = 0; with_genuine <= 1; with_genuine++) {
+    TEST(with_genuine ? "bogus keypaths next to the genuine one: OWNED_SAFE"
+                      : "40 bogus keypaths: no script generated");
+    struct wally_psbt *psbt =
+        make_wsh_registry_psbt(REF_WSH_SPK, sizeof(REF_WSH_SPK),
+                               REF_WSH_WITNESS, sizeof(REF_WSH_WITNESS));
+    if (!psbt) {
+      FAIL("fixture");
+      continue;
+    }
+    if (!with_genuine)
+      wally_map_clear(&psbt->inputs[0].keypaths);
+    for (uint32_t k = 0; k < 40; k++) {
+      /* Path .../0/k, but the key at .../1/k. */
+      const uint32_t listed[] = {0x80000030, 0x80000000, 0x80000000,
+                                 0x80000002, 0,          k};
+      const uint32_t real[] = {0x80000030, 0x80000000, 0x80000000,
+                               0x80000002, 1,          k};
+      const unsigned char fp[4] = {0};
+      struct ext_key *other = NULL;
+      if (key_get_derived_key_components(real, 6, &other)) {
+        wally_psbt_add_input_keypath(psbt, 0, other->pub_key, EC_PUBLIC_KEY_LEN,
+                                     fp, sizeof(fp), listed, 6);
+        bip32_key_free(other);
+      }
+    }
+    to_script_calls = 0;
+    input_ownership_t r = psbt_classify_input(psbt, 0, false);
+    if (with_genuine ? r.ownership != PSBT_OWNERSHIP_OWNED_SAFE
+                     : (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED ||
+                        to_script_calls != 0))
+      FAIL(with_genuine ? "the genuine keypath no longer claims"
+                        : "bogus keypaths were tried as claims");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+
+  TEST("bogus taproot keypaths: no script generated");
+  const char *descs[] = {"tr([00000000/87'/0'/0']" XPUB_86 "/<0;1>/*)"};
+  struct wally_psbt *psbt = make_tr_psbt(descs, 1, 0, 0, WALLY_PSBT_VERSION_0);
+  if (!psbt) {
+    FAIL("fixture");
+  } else {
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_paths);
+    wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
+    for (uint32_t k = 0; k < 40; k++) {
+      const uint32_t listed[] = {0x80000057, 0x80000000, 0x80000000, 0, k};
+      const uint32_t real[] = {0x80000057, 0x80000000, 0x80000000, 1, k};
+      const unsigned char fp[4] = {0};
+      struct ext_key *other = NULL;
+      if (key_get_derived_key_components(real, 5, &other)) {
+        wally_psbt_add_input_taproot_keypath(psbt, 0, 0, other->pub_key + 1,
+                                             EC_XONLY_PUBLIC_KEY_LEN, NULL, 0,
+                                             fp, sizeof(fp), listed, 5);
+        bip32_key_free(other);
+      }
+    }
+    to_script_calls = 0;
+    input_ownership_t r = psbt_classify_input(psbt, 0, false);
+    if (r.ownership == PSBT_OWNERSHIP_OWNED_SAFE || to_script_calls != 0)
+      FAIL("bogus taproot keypaths were tried as claims");
+    else
+      PASS();
+    wally_psbt_free(psbt);
+  }
+  registry_clear();
+}
+
+/* Golden scriptPubKeys computed independently of libwally (BIP341 by hand),
+ * not captured from a libwally run: they catch a wrong tweak or leaf hash in
+ * the code that builds receive addresses. Origins do not affect scripts. */
+#define GOLDEN_NUMS                                                            \
+  "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+#define GOLDEN_K84 "[00000000/84'/0'/0']" XPUB_84 "/<0;1>/*"
+#define GOLDEN_K86 "[00000000/86'/0'/0']" XPUB_86 "/<0;1>/*"
+
+static void test_golden_spk(const char *name, const char *desc,
+                            uint32_t multi_index, uint32_t child_num,
+                            const char *spk_hex) {
+  uint8_t want[34];
+  size_t want_len = 0;
+  expected_scripts_t out = {0};
+  if (wally_hex_to_bytes(spk_hex, want, sizeof(want), &want_len) != WALLY_OK) {
+    TEST(name);
+    FAIL("bad reference hex");
+    return;
+  }
+  TEST(name);
+  const char *err = regen_registry_scripts(desc, multi_index, child_num, &out);
+  if (err)
+    FAIL(err);
+  else if (out.spk_len != want_len || memcmp(out.spk, want, want_len) != 0)
+    FAIL("scriptPubKey differs from the independent value");
+  else
+    PASS();
+}
+
+static void test_golden_taproot_vectors(void) {
+  const char *tree =
+      "tr(" GOLDEN_NUMS ",{pk(" GOLDEN_K84 "),pk(" GOLDEN_K86 ")})";
+  test_golden_spk("golden: tr(NUMS,{pk,pk}) receive 0", tree, 0, 0,
+                  "512076134a01924170a8367a71bb2a41b567b5785d8b5be34c4cbc7bca2"
+                  "b0abc6db3");
+  test_golden_spk("golden: tr(NUMS,{pk,pk}) receive 1", tree, 0, 1,
+                  "51206a0df9393b4d618fe3441b0d4342020c677b0f29a5567c02fd3157e"
+                  "30cd74d0e");
+  test_golden_spk(
+      "golden: tr(NUMS,multi_a(2,...)) receive 1",
+      "tr(" GOLDEN_NUMS ",multi_a(2," GOLDEN_K84 "," GOLDEN_K86 "))", 0, 1,
+      "51209d35535e8a054a170d3fce7c7fe26649b500bfcc168cf57a655028716d4055e1");
+  test_golden_spk(
+      "golden: tr(NUMS,sortedmulti_a(2,...)) receive 1",
+      "tr(" GOLDEN_NUMS ",sortedmulti_a(2," GOLDEN_K84 "," GOLDEN_K86 "))", 0,
+      1,
+      "5120adbd03c553f26e7cc2e84f8aeec66043eeefe406d9e55a252bf5d891e310e4e6");
+  test_golden_spk(
+      "golden: tr(NUMS,{and_v(v:pk,older(144)),pk}) receive 0",
+      "tr(" GOLDEN_NUMS ",{and_v(v:pk(" GOLDEN_K84
+      "),older(144)),pk(" GOLDEN_K86 ")})",
+      0, 0,
+      "5120540a6ecccac18ed07d0114c39a24e28a9ff102fac60974379cbd411d4c40215a");
+  registry_clear();
+}
+
 /* sortedmulti witness script size: 3 + 34 * num_keys. 15 keys (513 bytes) is
  * libwally's generation maximum: CHECKMULTISIG is capped at 15 keys and
  * sh()/wsh() inner scripts at 520 bytes (PSBT_MAX_INNER_SCRIPT_LEN). */
@@ -2719,7 +4535,223 @@ static void test_registry_claim_oversize_wsh_fails(void) {
 
 /* ------------------------------------------------------------------ */
 
+/* ================================================================
+ * Pre-review gate order
+ * ================================================================ */
+
+/* Two inputs (60000 and 50000 sats, witness_utxo of `spk0` and P2WPKH) paying
+ * 100000 to one P2WPKH output. */
+static struct wally_psbt *make_gate_psbt(const uint8_t *spk0, size_t spk0_len) {
+  struct wally_tx *tx = NULL;
+  if (wally_tx_init_alloc(2, 0, 2, 1, &tx) != WALLY_OK)
+    return NULL;
+  uint8_t txid[32] = {0xbb};
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 0, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_input(tx, txid, sizeof(txid), 1, 0xffffffff, NULL, 0, NULL,
+                         0);
+  wally_tx_add_raw_output(tx, 100000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                          0);
+  struct wally_psbt *psbt = NULL;
+  int ret = wally_psbt_from_tx(tx, 0, 0, &psbt);
+  wally_tx_free(tx);
+  if (ret != WALLY_OK)
+    return NULL;
+
+  struct wally_tx_output *utxo = NULL;
+  wally_tx_output_init_alloc(60000, spk0, spk0_len, &utxo);
+  wally_psbt_set_input_witness_utxo(psbt, 0, utxo);
+  wally_tx_output_free(utxo);
+  wally_tx_output_init_alloc(50000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                             &utxo);
+  wally_psbt_set_input_witness_utxo(psbt, 1, utxo);
+  wally_tx_output_free(utxo);
+  return psbt;
+}
+
+static void gate_add_output(struct wally_psbt *psbt, uint64_t satoshi,
+                            const uint8_t *spk, size_t spk_len) {
+  struct wally_tx_output out = {0};
+  out.satoshi = satoshi;
+  out.script = (unsigned char *)spk;
+  out.script_len = spk_len;
+  wally_psbt_add_tx_output_at(psbt, (uint32_t)psbt->num_outputs, 0, &out);
+}
+
+typedef struct {
+  input_ownership_t inputs[3];
+  output_ownership_t outputs[3];
+  psbt_gate_settings_t settings;
+} gate_case_t;
+
+static void gate_case_init(gate_case_t *c) {
+  memset(c, 0, sizeof(*c));
+  for (size_t i = 0; i < 3; i++) {
+    c->inputs[i].ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    c->outputs[i].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  }
+}
+
+static psbt_gate_t gate_run(struct wally_psbt *psbt, const gate_case_t *c,
+                            psbt_gate_report_t *report) {
+  return psbt_gate_check(psbt, c->inputs, c->outputs, &c->settings, report);
+}
+
+static void test_gate_order(void) {
+  TEST("psbt_gate_check: each gate fires in order, the first one reported");
+
+  struct wally_psbt *psbt =
+      make_gate_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH));
+  if (!psbt) {
+    FAIL("make_gate_psbt");
+    return;
+  }
+  gate_case_t c;
+  psbt_gate_report_t r;
+  const char *err = NULL;
+
+  gate_case_init(&c);
+  if (gate_run(psbt, &c, &r) != PSBT_GATE_ALLOW)
+    err = "a clean PSBT should pass";
+
+  /* Each lower gate is armed with every one above it, then the one above is
+   * cleared: partial < permissive < expected-owned. */
+  gate_case_init(&c);
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_PARTIAL ||
+               r.external_count != 1 || r.external_inputs[0] != 1))
+    err = "an external input should need partial signing";
+  c.settings.partial = true;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_ALLOW)
+    err = "partial signing should lift the external input";
+
+  gate_case_init(&c);
+  c.inputs[0].ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_PERMISSIVE ||
+               !r.flagged_is_input || r.flagged_index != 0))
+    err = "permissive should outrank partial and name input 0";
+  c.settings.permissive = true;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_PARTIAL)
+    err = "with permissive on, partial should fire next";
+
+  gate_case_init(&c);
+  c.inputs[0].ownership = PSBT_OWNERSHIP_OWNED_UNSAFE;
+  c.outputs[0].ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_EXPECTED_OWNED ||
+               r.flagged_is_input || r.flagged_index != 0))
+    err = "expected-owned should outrank permissive and name output 0";
+  c.settings.expected_owned = true;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_PERMISSIVE)
+    err = "with expected-owned on, permissive should fire next";
+
+  /* Every input external: nothing else is worth reporting. */
+  gate_case_init(&c);
+  c.inputs[0].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_NONE);
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_NOTHING_SIGNABLE)
+    err = "no signable input should be reported first";
+
+  gate_case_init(&c);
+  c.outputs[0].ownership = PSBT_OWNERSHIP_EXPECTED_OWNED;
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_UNSUPPORTED_SIGHASH ||
+               r.sighash.first_unsupported != 0))
+    err = "an unsupported sighash should outrank expected-owned";
+  wally_psbt_set_input_sighash(psbt, 0, 0);
+
+  /* Outputs above inputs, then an input whose amounts disagree. */
+  gate_add_output(psbt, 20000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH));
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_IMPOSSIBLE_FEE ||
+               r.amounts.total != 110000 || r.total_output != 120000))
+    err = "a negative fee should outrank expected-owned";
+
+  struct wally_tx *forged = NULL;
+  wally_tx_init_alloc(2, 0, 1, 1, &forged);
+  uint8_t funding_txid[32] = {0xcc};
+  wally_tx_add_raw_input(forged, funding_txid, sizeof(funding_txid), 0,
+                         0xffffffff, NULL, 0, NULL, 0);
+  wally_tx_add_raw_output(forged, 1000, REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                          0);
+  wally_psbt_set_input_utxo(psbt, 1, forged);
+  wally_tx_free(forged);
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_INVALID_AMOUNT ||
+               r.amounts.first_invalid != 1))
+    err = "a contradicted amount should outrank the negative fee";
+
+  wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_SINGLE);
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_UNSUPPORTED_SIGHASH)
+    err = "an unsupported sighash should outrank a contradicted amount";
+
+  uint8_t long_script[PSBT_MAX_SHOWN_SCRIPT_LEN + 1];
+  memset(long_script, 0x51, sizeof(long_script));
+  gate_add_output(psbt, 0, long_script, sizeof(long_script));
+  if (!err && (gate_run(psbt, &c, &r) != PSBT_GATE_UNSHOWABLE_OUTPUT ||
+               r.unshowable_index != 2 ||
+               r.unshowable_script_len != sizeof(long_script)))
+    err = "an unshowable output should outrank an unsupported sighash";
+
+  if (!err && wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK)
+    err = "could not convert the fixture to v2";
+  if (!err) {
+    psbt->outputs[0].amount = UINT64_MAX;
+    if (gate_run(psbt, &c, &r) != PSBT_GATE_UNBUILDABLE_TX)
+      err = "an unbuildable transaction should outrank an unshowable output";
+  }
+
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(psbt);
+}
+
+static void test_gate_taproot_missing_amount(void) {
+  TEST("psbt_gate_check: a taproot input refuses a missing amount before the "
+       "settings gates");
+
+  struct wally_psbt *psbt = make_gate_psbt(REF_SPK_P2TR, sizeof(REF_SPK_P2TR));
+  struct wally_psbt *segwit =
+      make_gate_psbt(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH));
+  if (!psbt || !segwit) {
+    FAIL("make_gate_psbt");
+    wally_psbt_free(psbt);
+    wally_psbt_free(segwit);
+    return;
+  }
+  wally_psbt_set_input_witness_utxo(psbt, 1, NULL);
+  wally_psbt_set_input_witness_utxo(segwit, 1, NULL);
+
+  gate_case_t c;
+  gate_case_init(&c);
+  c.inputs[1].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  psbt_gate_report_t r;
+  const char *err = NULL;
+  if (gate_run(psbt, &c, &r) != PSBT_GATE_TAPROOT_MISSING_AMOUNT ||
+      r.amounts.first_missing != 1)
+    err = "taproot with a missing amount should outrank partial";
+  else if (gate_run(segwit, &c, &r) != PSBT_GATE_PARTIAL)
+    err = "a missing amount alone should not block a segwit v0 input";
+
+  c.inputs[0].ownership = PSBT_OWNERSHIP_EXTERNAL;
+  c.inputs[1].ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+  if (!err && gate_run(psbt, &c, &r) != PSBT_GATE_PARTIAL)
+    err = "an external taproot input is not ours to sign";
+
+  if (err)
+    FAIL(err);
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  wally_psbt_free(segwit);
+}
+
 int main(void) {
+  /* Set up libwally as the firmware does, hooks included. */
+  if (!crypto_init()) {
+    printf("ABORT: crypto_init failed\n");
+    return 1;
+  }
   printf("=== claim_regenerate whitelist tests ===\n\n");
 
   TEST("key_load_from_mnemonic");
@@ -2798,6 +4830,8 @@ int main(void) {
       "wsh(sortedmulti 8-of-15): 513-byte witness regenerates (max)",
       "wsh(sortedmulti(8," MS_15_KEYS "))", 513);
   test_registry_claim_oversize_wsh_fails();
+  test_golden_taproot_vectors();
+  test_claim_local_wrap();
 
   printf("\n=== psbt_classify_input tests ===\n\n");
 
@@ -2841,6 +4875,8 @@ int main(void) {
   test_amount_understated_witness_loses();
   test_amount_audit_mixed();
   test_fee_trust_by_input_count();
+  test_fee_trust_taproot_signing();
+  test_sign_refuses_invalid_amount();
 
   printf("\n=== sighash and fee tests ===\n\n");
 
@@ -2848,6 +4884,7 @@ int main(void) {
   test_sighash_audit_flags_input();
   test_sign_refuses_unsupported_sighash();
   test_fee_percent();
+  test_output_destination();
   test_dust_threshold();
   test_total_output_value();
 
@@ -2858,11 +4895,39 @@ int main(void) {
   test_psbt_sign_gate_expected_blocked();
   test_psbt_sign_gate_external_always_skipped();
   test_psbt_classify_multi_input_mixed();
+  test_overlong_keypaths_skipped();
   test_psbt_sign_denied_input_keeps_no_signature();
   test_psbt_classify_registry_wsh_owned();
   test_psbt_classify_registry_wsh_tampered_witness();
   test_psbt_classify_registry_miniscript_owned();
   test_psbt_classify_registry_miniscript_tampered();
+  test_registry_change_index_cap();
+  test_claims_share_policy();
+  test_registry_claim_tuple_position();
+  test_sign_non_witness_utxo_only_segwit();
+
+  printf("\n=== taproot parse/sign tests ===\n\n");
+
+  test_tr_bip86_input_owned();
+  test_tr_keypath_denied_input();
+  test_tr_change_output_owned();
+  test_tr_script_path_denied_input();
+  test_tr_key_path_verified();
+  test_claim_shape_prefilter();
+  test_bogus_keypaths_cost_nothing();
+  test_restore_without_memory();
+  test_known_answer_signatures();
+  test_trim_keeps_taproot_signatures();
+
+  printf("\n=== multi-key signing tests ===\n\n");
+
+  if (!load_k48_xpub()) {
+    TEST("load K xpub");
+    FAIL("key_get_xpub");
+  } else {
+    test_sign_every_own_key_wsh();
+    test_sign_every_own_key_tr();
+  }
 
   printf("\n=== PSBTv2 tests ===\n\n");
 
@@ -2870,8 +4935,11 @@ int main(void) {
   test_sign_clears_tx_modifiable();
   test_sign_counts_reused_address();
   test_tx_alloc_rejects_bad_amount();
+  test_gate_order();
+  test_gate_taproot_missing_amount();
   test_trim_leaves_out_previous_transactions();
   test_trim_psbt_v2_in_place();
+  test_trim_v0_keeps_signatures();
 
   key_unload();
 

@@ -21,19 +21,20 @@ static const uint8_t approval_tag[] = "kern-approval";
 static const uint32_t approval_path[] = {0x4B45524Eu | BIP32_PATH_HARDENED,
                                          138u | BIP32_PATH_HARDENED};
 
-static uint32_t wallet_wally_network(void) {
-  return wallet_get_network() == WALLET_NETWORK_MAINNET
-             ? WALLY_NETWORK_BITCOIN_MAINNET
-             : WALLY_NETWORK_BITCOIN_TESTNET;
+/* Kept between hold and release, so a scan of many backups derives it once. */
+static uint8_t held_approval_key[32];
+static bool approval_key_held;
+static bool approval_key_cached;
+
+void bip138_backup_hold_approval_key(void) { approval_key_held = true; }
+
+void bip138_backup_release_approval_key(void) {
+  secure_memzero(held_approval_key, sizeof(held_approval_key));
+  approval_key_held = false;
+  approval_key_cached = false;
 }
 
-static uint32_t other_network(uint32_t network) {
-  return network == WALLY_NETWORK_BITCOIN_MAINNET
-             ? WALLY_NETWORK_BITCOIN_TESTNET
-             : WALLY_NETWORK_BITCOIN_MAINNET;
-}
-
-static bool approval_key(uint8_t out[32]) {
+static bool derive_approval_key(uint8_t out[32]) {
   struct ext_key *key = NULL;
   if (!key_get_derived_key_components(
           approval_path, sizeof(approval_path) / sizeof(approval_path[0]),
@@ -43,6 +44,20 @@ static bool approval_key(uint8_t out[32]) {
                                      APPROVAL_KEY_TAG, out, 32) == WALLY_OK;
   bip32_key_free(key);
   return ok;
+}
+
+static bool approval_key(uint8_t out[32]) {
+  if (approval_key_cached) {
+    memcpy(out, held_approval_key, sizeof(held_approval_key));
+    return true;
+  }
+  if (!derive_approval_key(out))
+    return false;
+  if (approval_key_held) {
+    memcpy(held_approval_key, out, sizeof(held_approval_key));
+    approval_key_cached = true;
+  }
+  return true;
 }
 
 static bool approval_mac(const uint8_t *descriptor, size_t len,
@@ -59,8 +74,8 @@ static bool approval_mac(const uint8_t *descriptor, size_t len,
 bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
                            size_t *blob_len) {
   uint8_t keys[BIP138_KEYS_MAX * BIP138_KEY_LEN];
-  bip138_key_origin origins[BIP138_KEYS_MAX];
-  bip138_path paths[BIP138_KEYS_MAX];
+  bip138_key_origin origins[BIP138_BACKUP_MAX_PATHS];
+  bip138_path paths[BIP138_BACKUP_MAX_PATHS];
   uint8_t mac[HMAC_SHA256_LEN];
   size_t count = 0;
   size_t n_paths = 0;
@@ -68,17 +83,17 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
   if (!descriptor || !blob_out || !blob_len)
     return false;
   uint32_t network = wallet_wally_network();
-  if (!bip138_keys_from_descriptor(descriptor, network, keys, origins,
-                                   BIP138_KEYS_MAX, &count) &&
-      !bip138_keys_from_descriptor(descriptor, other_network(network), keys,
-                                   origins, BIP138_KEYS_MAX, &count))
+  if (!bip138_keys_from_descriptor(descriptor, network, keys, NULL,
+                                   BIP138_KEYS_MAX, &count))
+    network = wallet_wally_other_network(network);
+  if (!bip138_keys_from_descriptor(descriptor, network, keys, NULL,
+                                   BIP138_KEYS_MAX, &count) ||
+      !bip138_origins_from_descriptor(descriptor, network, origins,
+                                      BIP138_BACKUP_MAX_PATHS, &n_paths))
     return false;
-  for (size_t i = 0; i < count; i++) {
-    if (origins[i].depth > 0) {
-      paths[n_paths].child = origins[i].child;
-      paths[n_paths].depth = origins[i].depth;
-      n_paths++;
-    }
+  for (size_t i = 0; i < n_paths; i++) {
+    paths[i].child = origins[i].child;
+    paths[i].depth = origins[i].depth;
   }
   size_t descriptor_len = strlen(descriptor);
   if (!approval_mac((const uint8_t *)descriptor, descriptor_len, mac))
@@ -119,19 +134,12 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
 
 static bool candidate_key(const uint32_t *child, size_t depth,
                           uint8_t xonly[32]) {
-  char path[BIP138_KEYS_MAX_DEPTH * 12 + 2];
-  char *xpub = NULL;
-  if (!bip32_path_format(child, depth, path, sizeof(path)) ||
-      !key_get_xpub(path, &xpub))
-    return false;
   struct ext_key *key = NULL;
-  bool ok = bip32_key_from_base58_alloc(xpub, &key) == WALLY_OK;
-  if (ok) {
-    memcpy(xonly, key->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN);
-    bip32_key_free(key);
-  }
-  wally_free_string(xpub);
-  return ok;
+  if (!key_get_derived_key_components(child, depth, &key))
+    return false;
+  memcpy(xonly, key->pub_key + 1, EC_XONLY_PUBLIC_KEY_LEN);
+  bip32_key_free(key);
+  return true;
 }
 
 /* Common-path xpubs, derived once per loaded key rather than once per file. */
@@ -143,6 +151,21 @@ typedef struct {
 } common_cache_t;
 
 static common_cache_t common_cache;
+
+void bip138_backup_forget_keys(void) {
+  secure_memzero(&common_cache, sizeof(common_cache));
+  bip138_backup_release_approval_key();
+}
+
+#ifdef BIP138_BACKUP_TESTING
+bool bip138_backup_cache_is_empty(void) {
+  const uint8_t *p = (const uint8_t *)&common_cache;
+  for (size_t i = 0; i < sizeof(common_cache); i++)
+    if (p[i])
+      return false;
+  return true;
+}
+#endif
 
 static bool common_candidate(size_t index, uint8_t xonly[32]) {
   uint8_t fingerprint[BIP32_KEY_FINGERPRINT_LEN];
@@ -233,8 +256,9 @@ static bool mark_is_valid(const bip138_item *descriptor_item,
   return diff == 0;
 }
 
-bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
-                           char **descriptor_out, bool *approved_out) {
+static bool decrypt_impl(const uint8_t *blob, size_t blob_len,
+                         char **descriptor_out, bool *approved_out,
+                         bool walk_common) {
   bip138_container cont;
   hint_path_t hints[BIP138_BACKUP_MAX_PATHS];
   uint8_t xonly[BIP138_KEY_LEN];
@@ -256,7 +280,7 @@ bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
   if (!pt)
     return false;
 
-  size_t candidates = n_hints + bip138_common_path_count();
+  size_t candidates = n_hints + (walk_common ? bip138_common_path_count() : 0);
   for (size_t i = 0; i < candidates && !found; i++) {
     bool have = i < n_hints
                     ? candidate_key(hints[i].child, hints[i].depth, xonly)
@@ -284,27 +308,45 @@ bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
   return ok;
 }
 
+bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
+                           char **descriptor_out, bool *approved_out) {
+  return decrypt_impl(blob, blob_len, descriptor_out, approved_out, true);
+}
+
 bool bip138_backup_detect(const uint8_t *data, size_t len) {
   static const char base64_magic[] = "QklQMTM4"; /* base64("BIP138") */
   return bip138_is_container(data, len) ||
          (data && len >= 8 && memcmp(data, base64_magic, 8) == 0);
 }
 
-bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
-                               char **descriptor_out, bool *approved_out) {
+static bool decrypt_any_impl(const uint8_t *data, size_t len,
+                             char **descriptor_out, bool *approved_out,
+                             bool walk_common) {
   if (approved_out)
     *approved_out = false;
   if (!data || len == 0 || len > BIP138_BACKUP_MAX_LEN * 2)
     return false;
   if (bip138_is_container(data, len))
-    return bip138_backup_decrypt(data, len, descriptor_out, approved_out);
+    return decrypt_impl(data, len, descriptor_out, approved_out, walk_common);
   size_t cap = BIP138_BASE64_DECODED_MAX(len);
   uint8_t *blob = malloc(cap);
   size_t blob_len = 0;
-  bool ok = blob &&
-            bip138_base64_decode((const char *)data, len, blob, cap,
-                                 &blob_len) == BIP138_OK &&
-            bip138_backup_decrypt(blob, blob_len, descriptor_out, approved_out);
+  bool ok =
+      blob &&
+      bip138_base64_decode((const char *)data, len, blob, cap, &blob_len) ==
+          BIP138_OK &&
+      decrypt_impl(blob, blob_len, descriptor_out, approved_out, walk_common);
   free(blob);
   return ok;
+}
+
+bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
+                               char **descriptor_out, bool *approved_out) {
+  return decrypt_any_impl(data, len, descriptor_out, approved_out, true);
+}
+
+bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
+                                      char **descriptor_out,
+                                      bool *approved_out) {
+  return decrypt_any_impl(data, len, descriptor_out, approved_out, false);
 }

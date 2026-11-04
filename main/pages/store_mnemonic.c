@@ -154,8 +154,7 @@ void store_mnemonic_page_create(lv_obj_t *parent, void (*return_cb)(void),
       mnemonic_to_compact_seedqr(mnemonic, &compact_seedqr_len);
 
   /* Securely free mnemonic immediately */
-  secure_memzero(mnemonic, strlen(mnemonic));
-  wally_free_string(mnemonic);
+  SECURE_FREE_STRING(mnemonic);
 
   if (!compact_seedqr_data) {
     dialog_show_error_timeout("Failed to prepare data", return_cb, 0);

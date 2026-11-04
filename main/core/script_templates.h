@@ -17,6 +17,10 @@ typedef enum {
 #define SCRIPT_TEMPLATE_P2SH_P2WPKH_REDEEM_LEN 22
 #define SCRIPT_TEMPLATE_P2SH_P2WPKH_SPK_LEN 23
 
+/* The single-key script a BIP purpose (44, 49, 84 or 86) pays to. */
+KERN_WARN_UNUSED_RESULT bool
+script_template_for_purpose(uint32_t purpose, script_template_type_t *out);
+
 KERN_WARN_UNUSED_RESULT bool script_template_from_pubkey(
     script_template_type_t type, const uint8_t *pubkey, size_t pubkey_len,
     uint8_t *spk_out, size_t *spk_len, uint8_t *redeem_out, size_t *redeem_len);

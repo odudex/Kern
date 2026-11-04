@@ -3,6 +3,7 @@
  */
 
 #include "../../core/psbt.h"
+#include "../../core/secp_hardening.h"
 #include "../../core/settings.h"
 #include "../../qr/parser.h"
 #include "../../qr/viewer.h"
@@ -46,6 +47,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
       .allow_expected_owned = settings_get_expected_owned_signing(),
   };
   psbt_sign_result_t sign_result;
+  secp_blind_refresh();
   size_t signatures_added =
       psbt_sign(scan_ctx.psbt, scan_ctx.is_testnet, sign_policy, &sign_result);
 
@@ -60,8 +62,8 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     scan_ctx.signed_psbt_base64 = NULL;
   }
 
-  // Trimming rebuilds the PSBT from its tx and drops global unknowns, which
-  // would strip the BIP322 message field — export those untrimmed (tiny).
+  // Trimming drops global unknowns, which would strip the BIP322 message
+  // field — export those untrimmed (tiny).
   struct wally_psbt *trimmed_psbt =
       scan_ctx.is_bip322 ? NULL : psbt_trim(scan_ctx.psbt);
   struct wally_psbt *export_psbt = trimmed_psbt ? trimmed_psbt : scan_ctx.psbt;
@@ -99,19 +101,46 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
+  // The key-path signatures were made for a key other than the one the
+  // output commits to, so the coordinator's taproot data is wrong; they were
+  // dropped rather than exported for a finalizer to prefer.
+  if (sign_result.bad_keypath) {
+    char body[320];
+    snprintf(body, sizeof(body),
+             "%zu taproot signature%s did not match the address being spent "
+             "and %s discarded.\n\n"
+             "The PSBT's taproot data (internal key or script tree) is wrong. "
+             "Re-export it from the coordinator.",
+             sign_result.bad_keypath, sign_result.bad_keypath == 1 ? "" : "s",
+             sign_result.bad_keypath == 1 ? "was" : "were");
+    dialog_show_info("Signatures discarded", body, partial_sign_ack_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
+  }
+
   // Exporting a partly-signed PSBT without saying so is what an attacker
   // harvesting one signature per session relies on: each round looks like a
   // clean success. Name the shortfall before the export menu appears.
   if (sign_result.signed_ok < sign_result.attempted) {
+    size_t shortfall = sign_result.attempted - sign_result.signed_ok;
     char body[320];
-    snprintf(body, sizeof(body),
-             "%zu of %zu inputs belonging to this wallet did not receive a "
-             "signature.\n\n"
-             "The exported PSBT is incomplete. If you did not expect this, do "
-             "not treat the transaction as reviewed -- re-export it from the "
-             "coordinator with full previous transactions and try again.",
-             sign_result.attempted - sign_result.signed_ok,
-             sign_result.attempted);
+    if (sign_result.missing_keys == shortfall)
+      snprintf(body, sizeof(body),
+               "%zu of %zu inputs belonging to this wallet were signed by only "
+               "some of the keys of this wallet they list.\n\n"
+               "The exported PSBT is incomplete: a spending path that needs "
+               "another key of this wallet, such as a recovery path, is "
+               "still unsigned.",
+               shortfall, sign_result.attempted);
+    else
+      snprintf(body, sizeof(body),
+               "%zu of %zu inputs belonging to this wallet did not receive a "
+               "signature.\n\n"
+               "The exported PSBT is incomplete. If you did not expect this, "
+               "do not treat the transaction as reviewed -- re-export it from "
+               "the coordinator with full previous transactions and try "
+               "again.",
+               shortfall, sign_result.attempted);
     dialog_show_info("Incomplete signing", body, partial_sign_ack_cb, NULL,
                      DIALOG_STYLE_FULLSCREEN);
     return;

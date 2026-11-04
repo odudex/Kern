@@ -104,4 +104,14 @@ KERN_WARN_UNUSED_RESULT int bip39_filter_last_word_by_prefix(
     const char entered_words[24][16], int word_count, const char *prefix,
     int prefix_len, const char **out_words, int max_words);
 
+/**
+ * Replace the last word with the checksum-valid word that keeps its entropy
+ * bits (all zero when it is not a BIP39 word), given the words before it.
+ * @param entered_words All word_count words
+ * @param word_count 12, 15, 18, 21 or 24
+ * @return false if a word before the last is not a BIP39 word
+ */
+KERN_WARN_UNUSED_RESULT bool
+bip39_filter_complete_last_word(char entered_words[24][16], int word_count);
+
 #endif // BIP39_FILTER_H

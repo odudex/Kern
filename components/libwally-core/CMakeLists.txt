@@ -9,58 +9,24 @@ idf_component_register(SRCS
                        "upstream"
                        "upstream/src"
                        "upstream/src/ccan"
-                       "upstream/src/secp256k1"
-                       "upstream/src/secp256k1/src"
                        "upstream/src/secp256k1/include"
-                       "upstream/src/secp256k1/src/modules/ecdh"
-                       "upstream/src/secp256k1/src/modules/ecdsa_adaptor"
-                       "upstream/src/secp256k1/src/modules/ecdsa_s2c"
-                       "upstream/src/secp256k1/src/modules/extrakeys"
-                       "upstream/src/secp256k1/src/modules/generator"
-                       "upstream/src/secp256k1/src/modules/musig"
-                       "upstream/src/secp256k1/src/modules/rangeproof"
-                       "upstream/src/secp256k1/src/modules/recovery"
-                       "upstream/src/secp256k1/src/modules/schnorrsig"
-                       "upstream/src/secp256k1/src/modules/surjection"
-                       "upstream/src/secp256k1/src/modules/whitelist"
-                       PRIV_REQUIRES mbedtls mbedtls_compat secure_memory)
+                       PRIV_REQUIRES mbedtls secure_memory)
 
 set_source_files_properties(
     upstream/src/amalgamation/combined.c
     PROPERTIES COMPILE_FLAGS
-    "-Wno-nonnull-compare -Wno-unused-function -Wno-error=maybe-uninitialized -Wno-type-limits -Wno-error=array-parameter -Wno-unterminated-string-initialization"
+    "-Wno-error=maybe-uninitialized -Wno-error=array-parameter"
     )
 
-if(CONFIG_AMALGAMATED_BUILD)
-    target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DWALLY_NO_AMALGAMATION=1")
-endif()
-
-# fortify/performance flags
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE NDEBUG=1)
-target_compile_options(${COMPONENT_TARGET} PRIVATE "-fstack-protector-strong")
-target_link_options(${COMPONENT_TARGET} PRIVATE -Wl,-z,relro -Wl,-z,now)
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE _FORTIFY_SOURCE=2)
 
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_ELEMENTS=0")
+# libwally tests BUILD_ELEMENTS with #ifdef: defining it, even as 0, enables Elements.
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_MINIMAL=1")
+# Drops the Elements fields from the public structs. It changes their layout,
+# so it is PUBLIC: every user of the headers must see it.
+target_compile_definitions(${COMPONENT_TARGET} PUBLIC "-DWALLY_ABI_NO_ELEMENTS")
 # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_STANDARD_SECP=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_MBEDTLS_SHA256_H")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_MBEDTLS_SHA512_H")
-
-# libsecp flags
+target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_PSA_CRYPTO_H")
+# The secp256k1 module set is combined.c's.
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DECMULT_WINDOW_SIZE=8")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_ECDH=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_ECDSA_S2C=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_EXTRAKEYS=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_GENERATOR=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_RANGEPROOF=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_RECOVERY=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_SCHNORRSIG=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_SURJECTIONPROOF=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DENABLE_MODULE_WHITELIST=1")
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_BUILTIN_POPCOUNT=1")
-
-add_custom_command(TARGET ${COMPONENT_LIB}
-                   POST_BUILD
-                   COMMAND ${CMAKE_OBJCOPY} --strip-unneeded -W sha256_init -W sha256_done -W sha512_init -W sha512_done ${CMAKE_CURRENT_BINARY_DIR}/liblibwally-core.a)

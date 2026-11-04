@@ -79,6 +79,11 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet);
 
+// True when two claims name the same wallet: one registered descriptor, or one
+// single-sig purpose, coin and account. Chain and index may differ.
+KERN_WARN_UNUSED_RESULT bool psbt_claims_share_policy(const claim_t *a,
+                                                      const claim_t *b);
+
 KERN_WARN_UNUSED_RESULT bool
 psbt_input_utxo_script(const struct wally_psbt *psbt, size_t input_i,
                        unsigned char *out, size_t out_cap, size_t *out_len);
@@ -122,6 +127,7 @@ typedef struct {
    * that category is empty. Used to name a concrete input in the warning. */
   size_t first_unproven;
   size_t first_invalid;
+  size_t first_missing;
 } psbt_amount_audit_t;
 
 // Resolve an input's amount and how well it is backed. Prefers the value from
@@ -132,6 +138,10 @@ psbt_input_amount_t psbt_get_input_amount(const struct wally_psbt *psbt,
 // Same, across every input.
 void psbt_audit_input_amounts(const struct wally_psbt *psbt,
                               psbt_amount_audit_t *out);
+// Same, also writing each input's resolved value to values[i] (one per
+// input).
+void psbt_audit_input_values(const struct wally_psbt *psbt,
+                             psbt_amount_audit_t *out, uint64_t *values);
 
 // True when every input's amount is backed by its previous transaction, i.e.
 // the displayed fee is arithmetic on verified numbers.
@@ -140,11 +150,11 @@ static inline bool psbt_amounts_are_proven(const psbt_amount_audit_t *audit) {
 }
 
 // True when the displayed fee cannot be manipulated by lying about an
-// asserted amount. A signature commits to its own input's amount (BIP143) or
-// to every input's (BIP341), so a lie about a single-input transaction yields
-// only an invalid signature. Stealing fee needs two inputs signed in two
-// rounds with the lie moved between them, and needs ALL/DEFAULT sighash, which
-// psbt_sighash_is_supported() enforces. Counts every input, not only owned
+// asserted amount, whatever is signed. A BIP143 signature commits to its own
+// input's amount only, so a lie about a single-input transaction yields only
+// an invalid signature, but stealing fee works with two inputs signed in two
+// rounds with the lie moved between them (under ALL/DEFAULT sighash, which
+// psbt_sighash_is_supported() enforces). Counts every input, not only owned
 // ones: the two-round attack can hide ownership of the other input per round.
 // Contradictory or absent data is never trusted, whatever the count.
 static inline bool psbt_fee_is_trusted(const psbt_amount_audit_t *audit) {
@@ -152,6 +162,19 @@ static inline bool psbt_fee_is_trusted(const psbt_amount_audit_t *audit) {
     return false;
   return audit->num_inputs == 1 || psbt_amounts_are_proven(audit);
 }
+
+// Same, knowing which inputs will be signed (`signing[i]`, one per input).
+// When every one of them is taproot under SIGHASH_DEFAULT or ALL, each
+// signature commits to every input's amount (BIP341): a lie about any amount
+// only makes the signatures invalid, so asserted amounts can be trusted.
+KERN_WARN_UNUSED_RESULT bool
+psbt_fee_is_trusted_for_signing(const struct wally_psbt *psbt,
+                                const psbt_amount_audit_t *audit,
+                                const bool *signing);
+
+// True when input i is spent with a taproot (BIP341) signature.
+KERN_WARN_UNUSED_RESULT bool
+psbt_input_is_taproot(const struct wally_psbt *psbt, size_t i);
 
 // Get input value in satoshis
 uint64_t psbt_get_input_value(const struct wally_psbt *psbt, size_t index);
@@ -210,6 +233,23 @@ KERN_WARN_UNUSED_RESULT char *
 psbt_scriptpubkey_to_address(const unsigned char *script, size_t script_len,
                              bool is_testnet);
 
+typedef enum {
+  PSBT_DEST_ADDRESS,         /* a standard script's address, or OP_RETURN */
+  PSBT_DEST_UNKNOWN_WITNESS, /* a witness version or length Kern does not use */
+  PSBT_DEST_SCRIPT,          /* no address form: the script itself, as hex */
+} psbt_destination_kind_t;
+
+// Scripts past this many bytes with no address form are too long to show.
+#define PSBT_MAX_SHOWN_SCRIPT_LEN 520
+
+// What an output pays, for the review screen: always something to show, since
+// a spend shown with no destination is not reviewable. Free like
+// psbt_scriptpubkey_to_address's result. NULL only for an empty script or out
+// of memory.
+KERN_WARN_UNUSED_RESULT char *
+psbt_output_destination(const unsigned char *spk, size_t spk_len,
+                        bool is_testnet, psbt_destination_kind_t *kind);
+
 // Per-call signing policy. Mirrors the user-facing settings toggles
 // (Settings > Wallet) and is enforced inside `psbt_sign()` per-input,
 // so a forgotten UI gate cannot leak signatures on UNSAFE/EXPECTED_OWNED
@@ -226,6 +266,15 @@ typedef struct {
 // since silently exporting a partly-signed PSBT is exactly what an attacker
 // harvesting one signature per session wants.
 //
+// `missing_keys` counts inputs that gained a signature but still list a key of
+// ours, from another multipath group of the same policy say, that signed
+// nothing; they are not in `signed_ok`.
+//
+// `bad_keypath` counts taproot key-path signatures discarded because they do
+// not verify against the output key being spent: libwally tweaks the key from
+// the PSBT's TAP_INTERNAL_KEY and TAP_MERKLE_ROOT, which a coordinator can get
+// wrong.
+//
 // `blocked` counts inputs the policy refused that libwally signed anyway
 // because they name a key used elsewhere in the transaction, and whose
 // signature was therefore discarded. A PSBT arranged that way is not something
@@ -233,6 +282,8 @@ typedef struct {
 typedef struct {
   size_t attempted;
   size_t signed_ok;
+  size_t missing_keys;
+  size_t bad_keypath;
   size_t blocked;
 } psbt_sign_result_t;
 

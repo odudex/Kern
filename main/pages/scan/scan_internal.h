@@ -31,7 +31,6 @@ typedef struct {
   lv_obj_t *progress_dialog;
 
   struct wally_psbt *psbt;
-  char *psbt_base64;
   char *signed_psbt_base64;
   bool is_testnet;
   int qr_format;

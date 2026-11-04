@@ -74,6 +74,13 @@ static bool desc_compute_checksum(const char *str, size_t len, char out[9]) {
   return true;
 }
 
+bool descriptor_checksum_matches(const char *body, size_t len,
+                                 const char cs[8]) {
+  char expected[9];
+  return body && cs && desc_compute_checksum(body, len, expected) &&
+         memcmp(expected, cs, 8) == 0;
+}
+
 bool descriptor_text_has_uppercase_hardened(const char *s) {
   if (!s)
     return false;

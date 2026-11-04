@@ -1,4 +1,9 @@
-file(GLOB_RECURSE SOURCES "*.c")
+# IDF also runs this file in script mode, which rejects CONFIGURE_DEPENDS.
+if(CMAKE_SCRIPT_MODE_FILE)
+  file(GLOB_RECURSE SOURCES "*.c")
+else()
+  file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "*.c")
+endif()
 list(FILTER SOURCES EXCLUDE REGEX ".*/core/test/.*")
 list(FILTER SOURCES EXCLUDE REGEX ".*/qr/test/.*")
 

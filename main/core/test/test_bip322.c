@@ -183,6 +183,12 @@ static void test_message_characters(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   uint8_t raw[512];
   size_t raw_len = hex_decode(PSBT_HEX, raw, sizeof(raw));
 

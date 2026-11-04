@@ -1,15 +1,17 @@
 /*
- * PBKDF2-HMAC-SHA256 for the ESP32-P4.
+ * PBKDF2-HMAC-SHA256 and PBKDF2-HMAC-SHA512 for the ESP32-P4.
  *
- * Two implementations behind one contract, selected by
- * CONFIG_KERN_PBKDF2_HW_SHA in crypto_pbkdf2_sha256(). Both take the same
- * arguments and return the same bytes; only the cost differs.
+ * Two implementations of each behind one contract, selected by
+ * CONFIG_KERN_PBKDF2_HW_SHA in crypto_pbkdf2_sha256() and
+ * crypto_pbkdf2_sha512(). Both take the same arguments and return the same
+ * bytes; only the cost differs.
  */
 
 #ifndef PBKDF2_H
 #define PBKDF2_H
 
 #include "../utils/attributes.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,6 +39,23 @@ KERN_WARN_UNUSED_RESULT int
 pbkdf2_hw_sha256(const uint8_t *password, size_t password_len,
                  const uint8_t *salt, size_t salt_len, uint32_t iterations,
                  uint8_t *key_out, size_t key_len);
+
+/* The same two implementations over SHA-512, for BIP39 seeds. */
+KERN_WARN_UNUSED_RESULT int
+pbkdf2_psa_sha512(const uint8_t *password, size_t password_len,
+                  const uint8_t *salt, size_t salt_len, uint32_t iterations,
+                  uint8_t *key_out, size_t key_len);
+KERN_WARN_UNUSED_RESULT int
+pbkdf2_hw_sha512(const uint8_t *password, size_t password_len,
+                 const uint8_t *salt, size_t salt_len, uint32_t iterations,
+                 uint8_t *key_out, size_t key_len);
+
+/*
+ * Whether the accelerated path passes its known-answer check for both hashes.
+ * When it does not, pbkdf2_hw_*() run the PSA reference instead: the same
+ * bytes, only slower, so this is the one place the fallback shows.
+ */
+KERN_WARN_UNUSED_RESULT bool pbkdf2_hw_active(void);
 
 #ifdef CONFIG_KERN_PBKDF2_SELFTEST
 /*

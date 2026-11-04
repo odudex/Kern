@@ -8,12 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef SIMULATOR
-/* Host mbedTLS predates PSA PBKDF2 (added in 3.5); use the legacy pkcs5 API
- * there. The simulator's force-included mbedtls_compat.h wraps it for 2.x. */
-#include <mbedtls/pkcs5.h>
-#endif
-
 static bool ensure_psa_init(void) { return psa_crypto_init() == PSA_SUCCESS; }
 
 static psa_status_t aes_key_import(const uint8_t key[CRYPTO_AES_KEY_SIZE],
@@ -74,16 +68,28 @@ int crypto_pbkdf2_sha256(const uint8_t *password, size_t password_len,
     return CRYPTO_ERR_INVALID_ARG;
   }
 
-#ifdef SIMULATOR
-  int ret = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256, password,
-                                          password_len, salt, salt_len,
-                                          iterations, key_len, key_out);
-  return (ret == 0) ? CRYPTO_OK : CRYPTO_ERR_INTERNAL;
-#elif defined(CONFIG_KERN_PBKDF2_HW_SHA)
+#ifdef CONFIG_KERN_PBKDF2_HW_SHA
   return pbkdf2_hw_sha256(password, password_len, salt, salt_len, iterations,
                           key_out, key_len);
 #else
   return pbkdf2_psa_sha256(password, password_len, salt, salt_len, iterations,
+                           key_out, key_len);
+#endif
+}
+
+int crypto_pbkdf2_sha512(const uint8_t *password, size_t password_len,
+                         const uint8_t *salt, size_t salt_len,
+                         uint32_t iterations, uint8_t *key_out,
+                         size_t key_len) {
+  if (!password || !salt || !key_out || iterations == 0 || key_len == 0) {
+    return CRYPTO_ERR_INVALID_ARG;
+  }
+
+#ifdef CONFIG_KERN_PBKDF2_HW_SHA
+  return pbkdf2_hw_sha512(password, password_len, salt, salt_len, iterations,
+                          key_out, key_len);
+#else
+  return pbkdf2_psa_sha512(password, password_len, salt, salt_len, iterations,
                            key_out, key_len);
 #endif
 }

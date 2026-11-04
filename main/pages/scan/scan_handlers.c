@@ -4,6 +4,7 @@
 
 #include "../../core/key.h"
 #include "../../core/registry.h"
+#include "../../core/secp_hardening.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
 #include "../../ui/assets/icons.h"
@@ -96,6 +97,7 @@ static void mnemonic_confirm_cb(bool confirmed, void *user_data) {
     return;
   }
 
+  secp_blind_refresh();
   registry_init(net == WALLET_NETWORK_TESTNET);
 
   SECURE_FREE_STRING(scan_ctx.scanned_mnemonic);
@@ -103,12 +105,12 @@ static void mnemonic_confirm_cb(bool confirmed, void *user_data) {
   // Return to home — it will recreate with new key info
   if (scan_ctx.return_cb)
     scan_ctx.return_cb();
+  descriptor_loader_show_rejected_notice();
 }
 
 void scan_handle_mnemonic(const char *data, size_t len) {
   char *mnemonic = mnemonic_qr_to_mnemonic(data, len, NULL);
-  if (!mnemonic || bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    SECURE_FREE_STRING(mnemonic);
+  if (!mnemonic) {
     dialog_show_error_timeout("Invalid mnemonic", scan_ctx.return_cb, 0);
     return;
   }

@@ -31,14 +31,12 @@ typedef enum {
    * '\'' and 'h' are accepted; coordinators emitting 'H' must be reconfigured.
    */
   VALIDATION_INVALID_HARDENED_NOTATION,
-  /* Descriptor contains miniscript that is not wrapped in a plain wsh().
-   * Only segwit v0 wsh(miniscript) is supported (no tapminiscript, no
-   * sh(wsh()) wrapping, no bare miniscript). */
+  /* Descriptor contains miniscript that is not wrapped in a plain wsh() or
+   * tr() (no sh(wsh()) wrapping, no bare miniscript). */
   VALIDATION_UNSUPPORTED_MINISCRIPT,
-  /* Descriptor parses but libwally cannot generate its scripts: more than
-   * 15 multi()/sortedmulti() keys, or an sh()/wsh() inner script over
-   * PSBT_MAX_INNER_SCRIPT_LEN (520) bytes. Without this check the descriptor
-   * would register but fail at address derivation and signing. */
+  /* Descriptor has an sh()/wsh() inner script over PSBT_MAX_INNER_SCRIPT_LEN
+   * (520) bytes, e.g. more than 15 multi()/sortedmulti() keys. Without this
+   * check the descriptor would register but fail at signing. */
   VALIDATION_UNSUPPORTED_SCRIPT,
   /* tr() script-tree descriptor whose internal (key-path) key is a bare key
    * with no origin that is not a known NUMS point: it is neither provably
@@ -48,6 +46,19 @@ typedef enum {
   /* Descriptor carries a private key (xprv/tprv). A signing device never
    * needs one in a descriptor, and a backup would leak it. */
   VALIDATION_PRIVATE_KEY,
+  /* More distinct keys than DESCRIPTOR_INFO_MAX_KEYS letter IDs, or more than
+   * MINISCRIPT_POLICY_MAX_KEY_EXPRS key expressions. Only tr() gets there:
+   * sh()/wsh() hit the inner script cap first. */
+  VALIDATION_TOO_MANY_KEYS,
+  /* A key carrying the wallet fingerprint has an origin Kern cannot use. The
+   * registry tracks the first one, which must be an xpub one to
+   * MAX_KEYPATH_ORIGIN_DEPTH steps deep; the others may be up to
+   * KEY_MAX_DERIVATION_DEPTH steps. */
+  VALIDATION_UNSUPPORTED_KEY_ORIGIN,
+  /* Top level is not pkh(), wpkh(), sh(), wsh() or tr(): a bare multi(),
+   * sortedmulti() or pk() parses but has no address, and its scriptPubKey is
+   * longer than signing reads. */
+  VALIDATION_UNSUPPORTED_TOP_LEVEL,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,
@@ -70,9 +81,9 @@ typedef enum {
   TR_KEYPATH_EXTERNAL, /* internal key is an external key — can spend alone */
 } tr_keypath_class_t;
 
-/* Descriptor info for confirmation display. One letter ID per key; the
- * script-size validation (VALIDATION_UNSUPPORTED_SCRIPT) guarantees loadable
- * descriptors stay well under this cap. */
+/* Descriptor info for confirmation display. One letter ID per distinct key
+ * (see miniscript_policy_key_letters), listed by its first expression; more
+ * keys are rejected as VALIDATION_TOO_MANY_KEYS. */
 #define DESCRIPTOR_INFO_MAX_KEYS MINISCRIPT_POLICY_MAX_KEYS
 typedef struct {
   bool is_multisig;
@@ -85,10 +96,14 @@ typedef struct {
     char derivation[64];
   } keys[DESCRIPTOR_INFO_MAX_KEYS];
   /* Miniscript only: descriptor with key expressions replaced by their
-   * letter IDs (A, B, ...). Empty if unavailable. */
-  char policy[512];
+   * letter IDs (A, B, ...), freed by the validator when the flow ends. NULL
+   * if unavailable. */
+  char *policy;
   /* tr() only: classification of the taproot internal (key-path) key. */
   tr_keypath_class_t tr_keypath;
+  /* Outer script: "pkh", "wpkh", "sh(wpkh)", "sh", "sh(wsh)", "wsh" or "tr";
+   * NULL if none of these. */
+  const char *script_type;
 } descriptor_info_t;
 
 // UI-agnostic info confirmation callback: show descriptor info, call proceed()
@@ -105,13 +120,14 @@ typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
                                                      void *user_data),
                                      void *user_data);
 
-// Validate descriptor against wallet key and load if valid.
-// Checks fingerprint, derivation path attributes, and xpub match.
-// On purpose/script binding mismatch, uses confirm_cb to prompt the user
-// (NULL = auto-decline).
-// After xpub match, uses info_confirm_cb to show descriptor info
-// (NULL = auto-confirm).
-// Calls callback with result (may be async if user confirmation needed).
+// Validate a descriptor against the loaded key and load it into the session
+// registry. Runs the checks of descriptor_validate_keyed, then rejects a
+// session duplicate. On purpose/script binding mismatch, uses confirm_cb to
+// prompt the user (NULL = auto-decline). Then uses info_confirm_cb to show
+// descriptor info (NULL = auto-confirm). Calls callback with the result (async
+// when the user is asked).
+// The descriptor is registered as parsed, with the first key carrying our
+// fingerprint, verified as below, as the registry's own key.
 void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
@@ -129,8 +145,9 @@ descriptor_infer_network(const char *descriptor_str,
                          wallet_network_t *network_out);
 
 /* Watch-only (keyless) variant of descriptor_validate_and_load: validates and
- * loads a descriptor for address viewing without a loaded master key. Skips the
- * key precondition, fingerprint match, and xpub verification; otherwise reuses
+ * loads a descriptor for address viewing without a loaded master key, and
+ * refuses (VALIDATION_INTERNAL_ERROR) while one is loaded. Skips the
+ * fingerprint match and xpub verification; otherwise reuses
  * the same parse/script checks, the same "Load?" info dialog (info_confirm_cb),
  * and session dedup. The caller must have set the watch-only network first (via
  * wallet_set_watch_only). On confirm the descriptor is registered watch-only.
@@ -141,12 +158,25 @@ void descriptor_validate_and_load_watch_only(
     void *user_data);
 
 /* Synchronous, UI-free keyed validation shared by the interactive load and the
- * boot scan: notation, parse for the wallet network, private-key rejection,
- * miniscript wrapper, script generatability, taproot internal key, wallet
- * fingerprint membership and xpub match at the key's origin. Requires a loaded
- * key. On success *key_index_out (optional) receives our key's index. */
+ * boot scan. Checks the hardened notation, parses for the wallet network, and
+ * rejects private keys, an unsupported top level or miniscript wrapper, inner
+ * scripts over 520 bytes, more than DESCRIPTOR_INFO_MAX_KEYS keys
+ * (VALIDATION_TOO_MANY_KEYS) and an unprovable taproot internal key. Then
+ * every key carrying our fingerprint must be ours by key material: an xpub
+ * matches our key's pub_key and chain_code at its parsed origin, a raw key
+ * our public key at its origin, which is its full path (x-only in tr()).
+ * The first such key, which registry_add_parsed() records as the registry's
+ * own key, must be an xpub 1 to MAX_KEYPATH_ORIGIN_DEPTH steps deep
+ * (VALIDATION_UNSUPPORTED_KEY_ORIGIN otherwise). Requires a loaded key. On
+ * success *key_index_out (optional) receives that first key's index. */
 KERN_WARN_UNUSED_RESULT descriptor_validation_result_t
 descriptor_validate_keyed(const char *descriptor_str, int *key_index_out);
+/* Same, handing the parsed descriptor over on success (free with
+ * wally_descriptor_free, or pass it to registry_add_parsed). */
+KERN_WARN_UNUSED_RESULT descriptor_validation_result_t
+descriptor_validate_keyed_parsed(const char *descriptor_str,
+                                 struct wally_descriptor **descriptor_out,
+                                 int *key_index_out);
 
 /* When a VALIDATION_DUPLICATE result has just been delivered, copy the ID of
  * the existing registry entry into `out` and return true. Returns false if no

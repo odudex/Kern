@@ -86,6 +86,26 @@ ss_scriptpubkey_with_redeem(ss_script_type_t script, uint32_t account,
                             uint8_t *spk_out, size_t *spk_len,
                             uint8_t *redeem_out, size_t *redeem_len);
 
+/* One single-sig chain, m/purpose'/coin'/account'/chain, held as a public
+ * key: each index then costs one public derivation instead of five private
+ * ones from the master. */
+typedef struct {
+  struct ext_key *key;
+  ss_script_type_t script;
+  bool is_testnet;
+} ss_chain_t;
+
+KERN_WARN_UNUSED_RESULT bool ss_chain_open(ss_script_type_t script,
+                                           uint32_t account, uint32_t chain,
+                                           bool is_testnet, ss_chain_t *out);
+KERN_WARN_UNUSED_RESULT bool ss_chain_scriptpubkey(const ss_chain_t *c,
+                                                   uint32_t index, uint8_t *out,
+                                                   size_t *out_len);
+KERN_WARN_UNUSED_RESULT bool ss_chain_address(const ss_chain_t *c,
+                                              uint32_t index, char *out,
+                                              size_t out_len);
+void ss_chain_close(ss_chain_t *c);
+
 /* Maximum buffer size for ss_address output (covers all script types + null).
  */
 #define SS_ADDRESS_MAX_LEN 75

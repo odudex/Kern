@@ -21,8 +21,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
+#include <wally_descriptor.h>
 
 static int tests_run = 0;
 static int tests_failed = 0;
@@ -101,6 +103,7 @@ static void *done_user_data;
 
 static int info_calls;
 static descriptor_info_t info_seen;
+static char policy_seen[4096];
 static void (*info_proceed)(bool, void *);
 static bool info_auto;
 static bool info_answer;
@@ -117,6 +120,8 @@ static void capture_reset(void) {
   done_user_data = NULL;
   info_calls = 0;
   memset(&info_seen, 0, sizeof(info_seen));
+  policy_seen[0] = '\0';
+  info_seen.policy = policy_seen;
   info_proceed = NULL;
   info_auto = true;
   info_answer = true;
@@ -137,6 +142,10 @@ static void info_cb(const descriptor_info_t *info,
                     void (*proceed)(bool, void *)) {
   info_calls++;
   info_seen = *info;
+  /* The validator frees its policy when the flow completes. */
+  snprintf(policy_seen, sizeof(policy_seen), "%s",
+           info->policy ? info->policy : "");
+  info_seen.policy = policy_seen;
   if (info_auto)
     proceed(info_answer, NULL);
   else
@@ -182,8 +191,47 @@ static const char *xpub_at(const char *path) {
   return slot;
 }
 
+/* The xpub at `path` as a coordinator rebuilds it from a UR hd-key without the
+ * parent fingerprint: same key and chain code, different base58. */
+static const char *xpub_without_parent(const char *path) {
+  struct ext_key k;
+  char *xpub = NULL;
+  if (bip32_key_from_base58(xpub_at(path), &k) != WALLY_OK)
+    return "";
+  memset(k.parent160, 0, sizeof(k.parent160));
+  if (bip32_key_to_base58(&k, BIP32_FLAG_KEY_PUBLIC, &xpub) != WALLY_OK)
+    return "";
+  char *slot = xpub_buf[xpub_next++ % 16];
+  snprintf(slot, sizeof(xpub_buf[0]), "%s", xpub);
+  wally_free_string(xpub);
+  return slot;
+}
+
+static char pub_buf[4][67];
+static int pub_next;
+
+/* Our public key at `path` as raw hex, x-only when `xonly`. */
+static const char *pub_at(const char *path, bool xonly) {
+  char *slot = pub_buf[pub_next++ % 4];
+  struct ext_key *k = NULL;
+  char *hex = NULL;
+  slot[0] = '\0';
+  if (!key_get_derived_key(path, &k))
+    return slot;
+  size_t skip = xonly ? 1 : 0;
+  if (wally_hex_from_bytes(k->pub_key + skip, sizeof(k->pub_key) - skip,
+                           &hex) == WALLY_OK) {
+    snprintf(slot, sizeof(pub_buf[0]), "%s", hex);
+    wally_free_string(hex);
+  }
+  bip32_key_free(k);
+  return slot;
+}
+
 /* Captured while a key is loaded, for the keyless watch-only stage. */
 static char X84_0[120], X84_1[120], X86_0[120], X86_1[120];
+/* Distinct cosigner xpubs, m/86'/0'/<2 + i>', for the key-count tests. */
+static char XCOS[DESCRIPTOR_INFO_MAX_KEYS][120];
 
 static char desc_buf[4][4096];
 static int desc_next;
@@ -195,6 +243,19 @@ static const char *descf(const char *fmt, ...) {
   vsnprintf(slot, sizeof(desc_buf[0]), fmt, ap);
   va_end(ap);
   return slot;
+}
+
+/* Appends at *n; a fixture that outgrows its buffer stops the run. */
+static void appendf(char *out, size_t len, size_t *n, const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int written = vsnprintf(out + *n, len - *n, fmt, ap);
+  va_end(ap);
+  if (written < 0 || (size_t)written >= len - *n) {
+    fprintf(stderr, "test fixture does not fit its buffer\n");
+    abort();
+  }
+  *n += (size_t)written;
 }
 
 static const char *wpkh84(void) {
@@ -229,6 +290,11 @@ static void test_preconditions(void) {
   snprintf(X84_1, sizeof(X84_1), "%s", xpub_at("m/84'/0'/1'"));
   snprintf(X86_0, sizeof(X86_0), "%s", xpub_at("m/86'/0'/0'"));
   snprintf(X86_1, sizeof(X86_1), "%s", xpub_at("m/86'/0'/1'"));
+  for (int i = 0; i < DESCRIPTOR_INFO_MAX_KEYS; i++) {
+    char path[32];
+    snprintf(path, sizeof(path), "m/86'/0'/%d'", 2 + i);
+    snprintf(XCOS[i], sizeof(XCOS[i]), "%s", xpub_at(path));
+  }
   check("BIP84 account xpub matches the reference vector",
         strcmp(xpub_at("m/84'/0'/0'"),
                "xpub6CatWdiZiodmUeTDp8LT5or8nmbKNcuyvz7WyksVFkKB4RHwCD3XyuvPEb"
@@ -274,19 +340,188 @@ static void test_static_gates(void) {
         run(sh_wsh_ms) == VALIDATION_UNSUPPORTED_MINISCRIPT);
 
   char big[4096];
-  size_t n = snprintf(big, sizeof(big), "wsh(sortedmulti(1");
+  size_t n = 0;
+  appendf(big, sizeof(big), &n, "wsh(sortedmulti(1");
   for (int i = 0; i < 16; i++) {
     char path[32];
     snprintf(path, sizeof(path), "m/48'/0'/%d'/2'", i);
-    n += snprintf(big + n, sizeof(big) - n, ",[%s/48'/0'/%d'/2']%s/0/*",
-                  i == 0 ? FP : "deadbeef", i, xpub_at(path));
+    appendf(big, sizeof(big), &n, ",[%s/48'/0'/%d'/2']%s/0/*",
+            i == 0 ? FP : "deadbeef", i, xpub_at(path));
   }
-  snprintf(big + n, sizeof(big) - n, "))");
+  appendf(big, sizeof(big), &n, "))");
   descriptor_validation_result_t r = run(big);
   check("sixteen-key multisig rejected as unsupported script",
         r == VALIDATION_UNSUPPORTED_SCRIPT);
   check("static rejections never reach the dialogs",
         info_calls == 0 && warn_calls == 0 && registry_count() == 0);
+}
+
+/* The pinned libwally fork rejects non-sane miniscript by default (repeated
+ * keys, height and time timelocks mixed in one branch, a branch spendable
+ * without any signature). A re-point that drops that default would still
+ * compile and pass every other test, so pin each shape here. Each descf()
+ * result is used at once: descf rotates only four buffers. */
+static void check_non_sane(const char *name, const char *desc) {
+  struct wally_descriptor *d = NULL;
+  bool parses_when_allowed =
+      wally_descriptor_parse(desc, NULL, WALLY_NETWORK_BITCOIN_MAINNET,
+                             WALLY_MINISCRIPT_ALLOW_NON_SANE, &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  registry_clear();
+  check(name, parses_when_allowed && run(desc) == VALIDATION_PARSE_ERROR &&
+                  registry_count() == 0 && info_calls == 0);
+}
+
+static void test_non_sane_miniscript(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+
+  check_non_sane("non-sane: multi() with a repeated key",
+                 descf("wsh(multi(2,[" FP "/48'/0'/0'/2']%s/0/*,"
+                       "[deadbeef/48'/0'/1'/2']%s/0/*,"
+                       "[deadbeef/48'/0'/1'/2']%s/0/*))",
+                       a, b, b));
+  check_non_sane("non-sane: and_v(v:pk(A),pk(A))",
+                 descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "pk([" FP "/48'/0'/0'/2']%s/0/*)))",
+                       a, a));
+  check_non_sane("non-sane: height and time after() in one branch",
+                 descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "and_v(v:after(100),after(500000001))))",
+                       a));
+  check_non_sane("non-sane: height and time older() in one branch",
+                 descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "and_v(v:older(10),older(4194305))))",
+                       a));
+  check_non_sane("non-sane: mixed timelocks in an or_d recovery branch",
+                 descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                       "and_v(v:pk([deadbeef/48'/0'/1'/2']%s/0/*),"
+                       "and_v(v:after(100),after(500000001)))))",
+                       a, b));
+  check_non_sane(
+      "non-sane: or_d recovery branch needs no signature",
+      descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/0/*),older(144)))", a));
+
+  registry_clear();
+  check("sane control: distinct keys, one timelock kind",
+        run(descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/0/*),"
+                  "and_v(v:pk([deadbeef/48'/0'/1'/2']%s/0/*),older(144))))",
+                  a, b)) == VALIDATION_SUCCESS &&
+            registry_count() == 1);
+  registry_clear();
+
+  /* A hardened step after the multipath tuple is not derivable from an xpub;
+   * the pinned fork refuses it at parse time. */
+  const char *hardened_tail =
+      descf("wpkh([" FP "/84'/0'/0']%s/<0;1h>/*)", xpub_at("m/84'/0'/0'"));
+  check("xpub/<0;1h>/* not accepted",
+        run(hardened_tail) != VALIDATION_SUCCESS && registry_count() == 0);
+  registry_clear();
+}
+
+/* The pinned fork derives keys to find a repeated one however it is written,
+ * and still parses a key reused on disjoint paths. */
+static void check_duplicate_key(const char *name, const char *desc,
+                                bool duplicate) {
+  struct wally_descriptor *d = NULL;
+  bool parses = wallet_descriptor_parse(
+                    desc, NULL, WALLY_NETWORK_BITCOIN_MAINNET, &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  check(name, parses != duplicate);
+}
+
+static void test_duplicate_keys(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *b_child = xpub_at("m/48'/0'/1'/2'/1");
+  const char *b_hex = pub_at("m/48'/0'/1'/2'", false);
+
+  check_duplicate_key(
+      "duplicate key: B/0/* then B/<0;1>/*",
+      descf("wsh(multi(2,%s/<0;1>/*,%s/0/*,%s/<0;1>/*))", a, b, b), true);
+  check_duplicate_key("duplicate key: B/0/* and B/00/*",
+                      descf("wsh(multi(2,%s/0/*,%s/0/*,%s/00/*))", a, b, b),
+                      true);
+  check_duplicate_key("duplicate key: B and its public key in hex",
+                      descf("wsh(multi(2,%s,%s,%s))", a, b, b_hex), true);
+  check_duplicate_key("duplicate key: B/1/* and B's child xpub at 1",
+                      descf("wsh(multi(2,%s/1/*,%s/1/*,%s/*))", a, b, b_child),
+                      true);
+  check_duplicate_key(
+      "disjoint reuse: B/<0;1>/* and B/<2;3>/*",
+      descf("wsh(multi(2,%s/<0;1>/*,%s/<0;1>/*,%s/<2;3>/*))", a, b, b), false);
+  check_duplicate_key(
+      "disjoint reuse: B/7/<0;1>/* and B/8/<0;1>/*",
+      descf("wsh(multi(2,%s/<0;1>/*,%s/7/<0;1>/*,%s/8/<0;1>/*))", a, b, b),
+      false);
+}
+
+/* Every parse is depth-capped; libwally alone would take a deeper nesting. */
+static void test_depth_cap(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  char deep[8192], shallow[8192];
+  size_t levels[2] = {KERN_DESCRIPTOR_MAX_DEPTH + 8,
+                      KERN_DESCRIPTOR_MAX_DEPTH / 2};
+  char *out[2] = {deep, shallow};
+  for (int k = 0; k < 2; k++) {
+    size_t n = 0;
+    appendf(out[k], sizeof(deep), &n, "wsh(");
+    for (size_t i = 0; i < levels[k]; i++)
+      appendf(out[k], sizeof(deep), &n, "and_v(v:older(%zu),", i + 1);
+    appendf(out[k], sizeof(deep), &n, "pk([" FP "/48'/0'/0'/2']%s/0/*)", a);
+    for (size_t i = 0; i < levels[k]; i++)
+      appendf(out[k], sizeof(deep), &n, ")");
+    appendf(out[k], sizeof(deep), &n, ")");
+  }
+  struct wally_descriptor *d = NULL;
+  bool raw_ok =
+      wally_descriptor_parse(deep, NULL, WALLY_NETWORK_BITCOIN_MAINNET, 0,
+                             &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  d = NULL;
+  bool capped = wallet_descriptor_parse(
+                    deep, NULL, WALLY_NETWORK_BITCOIN_MAINNET, &d) != WALLY_OK;
+  wally_descriptor_free(d);
+  d = NULL;
+  bool shallow_ok =
+      wallet_descriptor_parse(shallow, NULL, WALLY_NETWORK_BITCOIN_MAINNET,
+                              &d) == WALLY_OK;
+  wally_descriptor_free(d);
+  check("nesting past KERN_DESCRIPTOR_MAX_DEPTH is refused",
+        raw_ok && capped && shallow_ok);
+}
+
+/* Bare top-level scripts parse, but have no address and a scriptPubKey too
+ * long for signing to read: refused before any dialog. */
+static void test_bare_top_level(void) {
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *cases[][2] = {
+      {"bare multi() refused", "multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[deadbeef/48'/0'/1'/2']%s/0/*)"},
+      {"bare sortedmulti() refused",
+       "sortedmulti(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+       "[deadbeef/48'/0'/1'/2']%s/0/*)"},
+      {"bare pk() refused", "pk([" FP "/48'/0'/0'/2']%s/0/*)"},
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+    registry_clear();
+    const char *desc = descf(cases[i][1], a, b);
+    descriptor_validation_result_t loaded = run(desc);
+    bool silent = info_calls == 0 && warn_calls == 0;
+    check(cases[i][0], loaded == VALIDATION_UNSUPPORTED_TOP_LEVEL && silent &&
+                           descriptor_validate_keyed(desc, NULL) ==
+                               VALIDATION_UNSUPPORTED_TOP_LEVEL &&
+                           registry_count() == 0);
+  }
+  registry_clear();
+  check("sh(multi()) control accepted",
+        run(descf("sh(multi(1,[" FP "/48'/0'/0'/1']%s/0/*,"
+                  "[deadbeef/48'/0'/1'/1']%s/0/*))",
+                  xpub_at("m/48'/0'/0'/1'"), b)) == VALIDATION_SUCCESS);
+  check("sh(multi()) script type",
+        info_seen.script_type && strcmp(info_seen.script_type, "sh") == 0);
+  registry_clear();
 }
 
 static void test_key_matching(void) {
@@ -309,6 +544,194 @@ static void test_key_matching(void) {
   check("nothing registered after rejections", registry_count() == 0);
 }
 
+/* Every key carrying our fingerprint is verified, not only the first. */
+static void test_own_keys(void) {
+  registry_clear();
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *c = xpub_at("m/48'/0'/2'/2'");
+  int idx = -1;
+
+  const char *fake_later =
+      descf("wsh(sortedmulti(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+            "[" FP "/48'/0'/1'/2']%s/0/*))",
+            a, c);
+  check("later key claiming our fingerprint rejected",
+        run(fake_later) == VALIDATION_XPUB_MISMATCH && info_calls == 0);
+  check("keyed validation rejects it too",
+        descriptor_validate_keyed(fake_later, NULL) ==
+            VALIDATION_XPUB_MISMATCH);
+
+  const char *fake_first =
+      descf("wsh(sortedmulti(1,[" FP "/48'/0'/1'/2']%s/0/*,"
+            "[" FP "/48'/0'/0'/2']%s/0/*))",
+            c, a);
+  check("fake first own key still rejected",
+        run(fake_first) == VALIDATION_XPUB_MISMATCH);
+
+  const char *fake_same_origin =
+      descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/<0;1>/*),"
+            "and_v(v:pk([" FP "/48'/0'/0'/2']%s/<2;3>/*),older(144))))",
+            a, b);
+  check("same-origin key with another xpub rejected",
+        run(fake_same_origin) == VALIDATION_XPUB_MISMATCH &&
+            descriptor_validate_keyed(fake_same_origin, NULL) ==
+                VALIDATION_XPUB_MISMATCH);
+
+  const char *fake_leaf = descf("tr(" NUMS_H ",multi_a(1,[" FP
+                                "/86'/0'/0']%s/0/*,[" FP "/86'/0'/1']%s/0/*))",
+                                xpub_at("m/86'/0'/0'"), xpub_at("m/86'/0'/2'"));
+  check("taproot leaf key claiming our fingerprint rejected",
+        run(fake_leaf) == VALIDATION_XPUB_MISMATCH);
+  check("no fake registered", registry_count() == 0);
+
+  const char *raw_cosigner = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                                   "[deadbeef/48'/0'/1'/2']02" XONLY_G "))",
+                                   a);
+  check("raw cosigner key accepted", run(raw_cosigner) == VALIDATION_SUCCESS);
+  const char *raw_ours = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[" FP "/48'/0'/1'/2']02" XONLY_G "))",
+                               a);
+  check("raw key claiming our fingerprint rejected",
+        run(raw_ours) == VALIDATION_XPUB_MISMATCH);
+
+  const char *two_ours = descf("wsh(sortedmulti(2,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[" FP "/48'/0'/1'/2']%s/0/*,"
+                               "[deadbeef/48'/0'/2'/2']%s/0/*))",
+                               a, b, c);
+  check("two genuine own keys accepted", run(two_ours) == VALIDATION_SUCCESS);
+  check("keyed validation reports the first own key",
+        descriptor_validate_keyed(two_ours, &idx) == VALIDATION_SUCCESS &&
+            idx == 0);
+
+  const char *reuse =
+      descf("wsh(or_d(pk([" FP "/48'/0'/0'/2']%s/<0;1>/*),"
+            "and_v(v:pk([" FP "/48'/0'/0'/2']%s/<2;3>/*),older(144))))",
+            a, a);
+  check("own key reused across spending paths accepted",
+        run(reuse) == VALIDATION_SUCCESS);
+  check("only the genuine descriptors registered", registry_count() == 3);
+  registry_clear();
+}
+
+/* Own keys are compared by key material at the parsed origin path. */
+static void test_own_key_material(void) {
+  registry_clear();
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+
+  const char *rebuilt = xpub_without_parent("m/84'/0'/0'");
+  check("rebuilt xpub differs in base58",
+        rebuilt[0] && strcmp(rebuilt, xpub_at("m/84'/0'/0'")) != 0);
+  const char *no_parent = descf("wpkh([" FP "/84'/0'/0']%s/0/*)", rebuilt);
+  check("xpub without its parent fingerprint accepted",
+        run(no_parent) == VALIDATION_SUCCESS &&
+            descriptor_validate_keyed(no_parent, NULL) == VALIDATION_SUCCESS);
+
+  const char *long_origin = "2147483647'/2147483647'/2147483647'/"
+                            "2147483647'/2147483647'/2147483647'";
+  char long_path[80];
+  snprintf(long_path, sizeof(long_path), "m/%s", long_origin);
+  const char *long_desc =
+      descf("wpkh([" FP "/%s]%s/0/*)", long_origin, xpub_at(long_path));
+  check("origin over 69 characters verified at its full path",
+        strlen(long_origin) > 69 && run(long_desc) == VALIDATION_SUCCESS);
+
+  const char *master = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                             "[" FP "]%s/0/*))",
+                             a, xpub_at("m"));
+  check("master key carrying our fingerprint accepted",
+        run(master) == VALIDATION_SUCCESS);
+
+  const char *deepest = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                              "[" FP "/0/1/2/3/4/5/6/7/8/9]%s/0/*))",
+                              a, xpub_at("m/0/1/2/3/4/5/6/7/8/9"));
+  check("origin at the derivation limit accepted",
+        run(deepest) == VALIDATION_SUCCESS);
+  const char *too_deep = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                               "[" FP "/0/1/2/3/4/5/6/7/8/9/10]%s/0/*))",
+                               a, xpub_at("m/0/1/2/3/4/5/6/7/8/9"));
+  check("origin deeper than the derivation limit rejected",
+        run(too_deep) == VALIDATION_UNSUPPORTED_KEY_ORIGIN && info_calls == 0 &&
+            descriptor_validate_keyed(too_deep, NULL) ==
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
+  check("four descriptors registered", registry_count() == 4);
+  registry_clear();
+}
+
+/* A raw own key is checked against our public key at its full origin path. The
+ * first own key is the registry's, so it must be an xpub with an origin of one
+ * to six steps. */
+static void test_raw_and_registry_keys(void) {
+  registry_clear();
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  const char *t = xpub_at("m/86'/0'/0'");
+  const char *raw = pub_at("m/48'/0'/1'/2'/0/0", false);
+
+  const char *raw_later = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                                "[" FP "/48'/0'/1'/2'/0/0]%s))",
+                                a, raw);
+  check("genuine raw own key accepted",
+        run(raw_later) == VALIDATION_SUCCESS &&
+            descriptor_validate_keyed(raw_later, NULL) == VALIDATION_SUCCESS);
+  const char *raw_moved = descf("wsh(multi(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                                "[" FP "/48'/0'/1'/2'/0/1]%s))",
+                                a, raw);
+  check("raw own key at another path rejected",
+        run(raw_moved) == VALIDATION_XPUB_MISMATCH);
+
+  const char *leaf = descf("tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*,"
+                           "[" FP "/86'/0'/1'/0/0]%s))",
+                           t, pub_at("m/86'/0'/1'/0/0", true));
+  check("genuine x-only own leaf key accepted",
+        run(leaf) == VALIDATION_SUCCESS);
+  const char *leaf_compressed =
+      descf("tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*,"
+            "[" FP "/86'/0'/1'/0/1]%s))",
+            t, pub_at("m/86'/0'/1'/0/1", false));
+  check("compressed own leaf key compared as x-only",
+        run(leaf_compressed) == VALIDATION_SUCCESS);
+  const char *leaf_moved = descf("tr(" NUMS_H ",multi_a(1,[" FP
+                                 "/86'/0'/0']%s/0/*,[" FP "/86'/0'/1'/0/0]%s))",
+                                 t, pub_at("m/86'/0'/1'/0/2", true));
+  check("x-only own leaf key at another path rejected",
+        run(leaf_moved) == VALIDATION_XPUB_MISMATCH);
+  const char *internal_and_leaf =
+      descf("tr([" FP "/86'/0'/0']%s/0/*,pk([" FP "/86'/0'/1']%s/0/*))", t,
+            xpub_at("m/86'/0'/1'"));
+  check("own internal and leaf keys accepted",
+        run(internal_and_leaf) == VALIDATION_SUCCESS &&
+            info_seen.tr_keypath == TR_KEYPATH_OURS);
+
+  const char *raw_first = descf("wsh(multi(1,[" FP "/48'/0'/1'/2'/0/0]%s,"
+                                "[" FP "/48'/0'/0'/2']%s/0/*))",
+                                raw, a);
+  check("raw first own key rejected before any dialog",
+        run(raw_first) == VALIDATION_UNSUPPORTED_KEY_ORIGIN &&
+            info_calls == 0 &&
+            descriptor_validate_keyed(raw_first, NULL) ==
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
+  const char *master_first = descf("wsh(multi(1,[" FP "]%s/0/*,"
+                                   "[deadbeef/48'/0'/1'/2']%s/0/*))",
+                                   xpub_at("m"), b);
+  check("master first own key rejected before any dialog",
+        run(master_first) == VALIDATION_UNSUPPORTED_KEY_ORIGIN &&
+            info_calls == 0 &&
+            descriptor_validate_keyed(master_first, NULL) ==
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
+  const char *deep_first =
+      descf("wsh(multi(1,[" FP "/48'/0'/0'/2'/0'/0'/0']%s/0/*,"
+            "[deadbeef/48'/0'/1'/2']%s/0/*))",
+            xpub_at("m/48'/0'/0'/2'/0'/0'/0'"), b);
+  check("first own key origin over six steps rejected before any dialog",
+        run(deep_first) == VALIDATION_UNSUPPORTED_KEY_ORIGIN &&
+            info_calls == 0 &&
+            descriptor_validate_keyed(deep_first, NULL) ==
+                VALIDATION_UNSUPPORTED_KEY_ORIGIN);
+  check("only the accepted descriptors registered", registry_count() == 4);
+  registry_clear();
+}
+
 static void test_single_sig_success(void) {
   registry_clear();
   check("single-sig wpkh accepted", run(wpkh84()) == VALIDATION_SUCCESS);
@@ -325,8 +748,11 @@ static void test_single_sig_success(void) {
   check("info: xpub",
         strcmp(info_seen.keys[0].xpub, xpub_at("m/84'/0'/0'")) == 0);
   check("info: not taproot", info_seen.tr_keypath == TR_KEYPATH_NONE);
+  check("info: script type wpkh",
+        info_seen.script_type && strcmp(info_seen.script_type, "wpkh") == 0);
   check("registered once in the session", registry_count() == 1);
-  check("session label is Single-sig", registry_has_label("Single-sig"));
+  check("session label names the script type",
+        registry_has_label("Single-sig (wpkh)"));
   check("session id derives from the checksum",
         strncmp(registry_get(0)->id, "desc_", 5) == 0 &&
             strlen(registry_get(0)->id) == 13);
@@ -349,13 +775,16 @@ static void test_single_sig_success(void) {
   const char *pkh =
       descf("pkh([" FP "/44'/0'/0']%s/0/*)", xpub_at("m/44'/0'/0'"));
   check("legacy pkh accepted", run(pkh) == VALIDATION_SUCCESS);
+  check("pkh labelled", registry_has_label("Single-sig (pkh)"));
   const char *sh_wpkh =
       descf("sh(wpkh([" FP "/49'/0'/0']%s/0/*))", xpub_at("m/49'/0'/0'"));
   check("nested sh(wpkh) accepted", run(sh_wpkh) == VALIDATION_SUCCESS);
+  check("sh(wpkh) labelled", registry_has_label("Single-sig (sh(wpkh))"));
   const char *tr86 =
       descf("tr([" FP "/86'/0'/0']%s/0/*)", xpub_at("m/86'/0'/0'"));
   check("BIP86 tr accepted", run(tr86) == VALIDATION_SUCCESS);
   check("BIP86 key-path is ours", info_seen.tr_keypath == TR_KEYPATH_OURS);
+  check("tr labelled", registry_has_label("Single-sig (tr)"));
   check("three descriptors registered", registry_count() == 3);
 }
 
@@ -477,6 +906,24 @@ static void test_taproot_keypath(void) {
         run(nums_internal) == VALIDATION_SUCCESS);
   check("info: key-path classified NUMS",
         info_seen.tr_keypath == TR_KEYPATH_NUMS);
+  check("info: pk() leaf is a policy, not a multisig",
+        info_seen.is_miniscript && !info_seen.is_multisig &&
+            strcmp(info_seen.policy, "tr(A,pk(B))") == 0);
+  check("session label Miniscript (2 keys)",
+        registry_has_label("Miniscript (2 keys)"));
+  registry_clear();
+
+  const char *pk_tree = descf("tr(" NUMS_H ",{pk([" FP "/86'/0'/0']%s/0/*),"
+                              "pk([deadbeef/86'/0'/1']%s/0/*)})",
+                              ours, other);
+  check("NUMS tree of two pk() leaves accepted",
+        run(pk_tree) == VALIDATION_SUCCESS);
+  check("info: pk() tree is a policy, not a multisig",
+        info_seen.is_miniscript && !info_seen.is_multisig &&
+            info_seen.threshold == 0 &&
+            strcmp(info_seen.policy, "tr(A,{pk(B),pk(C)})") == 0);
+  check("pk() tree session label Miniscript (3 keys)",
+        registry_has_label("Miniscript (3 keys)"));
 
   const char *nums_compressed =
       descf("tr(02" NUMS_H ",pk([" FP "/86'/0'/0']%s/0/*))", ours);
@@ -498,12 +945,86 @@ static void test_taproot_keypath(void) {
   check("our key as internal with a tree accepted",
         run(ours_internal) == VALIDATION_SUCCESS &&
             info_seen.tr_keypath == TR_KEYPATH_OURS);
+  check("info: our internal key with a pk() leaf is a policy",
+        info_seen.is_miniscript && !info_seen.is_multisig &&
+            strcmp(info_seen.policy, "tr(A,pk(B))") == 0);
 
   const char *multi_a =
       descf("tr(" NUMS_H ",multi_a(2,[" FP "/86'/0'/0']%s/0/*,"
             "[deadbeef/86'/0'/1']%s/0/*))",
             ours, other);
   check("tr multi_a leaf accepted", run(multi_a) == VALIDATION_SUCCESS);
+  registry_clear();
+}
+
+/* tr(NUMS, multi_a(1, ours, cosigner...)) with num_keys distinct keys in all,
+ * or, when `repeat`, one cosigner xpub at a different path in each slot. */
+static const char *tr_multi_a_keys(char *out, size_t len, int num_keys,
+                                   bool repeat) {
+  size_t n = 0;
+  appendf(out, len, &n, "tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*",
+          X86_0);
+  for (int i = 2; i < num_keys; i++)
+    appendf(out, len, &n, ",[deadbeef/86'/0'/1']%s/%d/*",
+            repeat ? X86_1 : XCOS[i - 2], i);
+  appendf(out, len, &n, "))");
+  return out;
+}
+
+static const char *tr_multi_a(char *out, size_t len, int num_keys) {
+  return tr_multi_a_keys(out, len, num_keys, false);
+}
+
+/* Keys are shown by letter ID, A to Z, but tr() can hold more keys. */
+static void test_key_cap(void) {
+  registry_clear();
+  char buf[8192];
+  const char *over = tr_multi_a(buf, sizeof(buf), DESCRIPTOR_INFO_MAX_KEYS + 1);
+  check("27 keys rejected as too many keys",
+        run(over) == VALIDATION_TOO_MANY_KEYS && info_calls == 0);
+  check("keyed validation rejects 27 keys too",
+        descriptor_validate_keyed(over, NULL) == VALIDATION_TOO_MANY_KEYS);
+
+  const char *full = tr_multi_a(buf, sizeof(buf), DESCRIPTOR_INFO_MAX_KEYS);
+  check("26 keys accepted", run(full) == VALIDATION_SUCCESS);
+  check("info: all 26 keys listed with a policy",
+        info_seen.num_keys == DESCRIPTOR_INFO_MAX_KEYS &&
+            strcmp(info_seen.keys[25].fingerprint_hex, "DEADBEEF") == 0 &&
+            strstr(info_seen.policy, ",Y,Z))") != NULL);
+  check("only the 26-key descriptor registered", registry_count() == 1);
+  registry_clear();
+
+  /* The cap counts keys, not the expressions that use them. */
+  const char *reused = tr_multi_a_keys(buf, sizeof(buf), 30, true);
+  check("three keys over 30 expressions accepted",
+        run(reused) == VALIDATION_SUCCESS && info_seen.num_keys == 3 &&
+            strncmp(info_seen.policy, "tr(A,multi_a(1,B,C,C,", 21) == 0 &&
+            strstr(info_seen.policy, "D") == NULL);
+  check("info: a reused key is listed once",
+        strcmp(info_seen.keys[2].fingerprint_hex, "DEADBEEF") == 0 &&
+            strcmp(info_seen.keys[2].xpub, X86_1) == 0);
+  registry_clear();
+}
+
+/* The load dialog gets the whole policy, however long. */
+static void test_long_policy(void) {
+  registry_clear();
+  char tail[1024], expected[1024];
+  size_t n = 0;
+  for (int i = 1; i <= 7; i++) {
+    char hash[65];
+    memset(hash, '0' + i, 64);
+    hash[64] = '\0';
+    appendf(tail, sizeof(tail), &n,
+            i < 7 ? "and_v(v:sha256(%s)," : "sha256(%s)))))))))", hash);
+  }
+  snprintf(expected, sizeof(expected), "tr(A,and_v(v:pk(B),%s", tail);
+  const char *desc = descf(
+      "tr(" NUMS_H ",and_v(v:pk([" FP "/86'/0'/0']%s/0/*),%s", X86_0, tail);
+  check("long tr() policy accepted", run(desc) == VALIDATION_SUCCESS);
+  check("info: policy longer than 511 characters kept whole",
+        strlen(info_seen.policy) > 511 &&
+            strcmp(info_seen.policy, expected) == 0);
   registry_clear();
 }
 
@@ -564,6 +1085,23 @@ static void test_dedup(void) {
   check("h-notation variant is the same descriptor",
         run(h_variant) == VALIDATION_DUPLICATE);
   check("still exactly one entry", registry_count() == 1);
+
+  const char *upper =
+      descf("wpkh([" FP_UPPER "/84'/0'/0']%s/0/*)", xpub_at("m/84'/0'/0'"));
+  check("uppercase fingerprint is the same descriptor",
+        run(upper) == VALIDATION_DUPLICATE);
+
+  const char *a = xpub_at("m/48'/0'/0'/2'");
+  const char *b = xpub_at("m/48'/0'/1'/2'");
+  check("sortedmulti loads",
+        run(descf("wsh(sortedmulti(1,[" FP "/48'/0'/0'/2']%s/0/*,"
+                  "[deadbeef/48'/0'/1'/2']%s/0/*))",
+                  a, b)) == VALIDATION_SUCCESS);
+  check("sortedmulti with its keys in another order is the same descriptor",
+        run(descf("wsh(sortedmulti(1,[deadbeef/48'/0'/1'/2']%s/0/*,"
+                  "[" FP "/48'/0'/0'/2']%s/0/*))",
+                  b, a)) == VALIDATION_DUPLICATE);
+  check("drop the sortedmulti entry", registry_remove_at(1));
 
   const char *other =
       descf("wpkh([" FP "/84'/0'/1']%s/0/*)", xpub_at("m/84'/0'/1'"));
@@ -644,11 +1182,16 @@ static void test_generation_guard(void) {
 
 static void test_watch_only(void) {
   registry_clear();
+  const char *foreign = descf("wpkh([deadbeef/84'/0'/0']%s/0/*)", X84_0);
+  check("watch-only refused while a key is loaded",
+        run_watch(foreign, WALLET_NETWORK_MAINNET) ==
+                VALIDATION_INTERNAL_ERROR &&
+            info_calls == 0 && registry_count() == 0);
+
   key_unload();
   wallet_cleanup();
   wallet_set_watch_only(WALLET_NETWORK_MAINNET);
 
-  const char *foreign = descf("wpkh([deadbeef/84'/0'/0']%s/0/*)", X84_0);
   check("keyed validation without a key is an internal error",
         run(foreign) == VALIDATION_INTERNAL_ERROR);
 
@@ -658,11 +1201,14 @@ static void test_watch_only(void) {
   check("watch-only info: foreign fingerprint reported",
         strcmp(info_seen.keys[0].fingerprint_hex, "DEADBEEF") == 0);
   check("watch-only entry registered", registry_count() == 1);
-  check("watch-only entry labelled Single-sig",
-        registry_has_label("Single-sig"));
+  check("watch-only entry labelled with its script type",
+        registry_has_label("Single-sig (wpkh)"));
 
   check("watch-only dedup",
         run_watch(foreign, WALLET_NETWORK_MAINNET) == VALIDATION_DUPLICATE);
+  check("watch-only dedup ignores the key origin",
+        run_watch(descf("wpkh(%s/0/*)", X84_0), WALLET_NETWORK_MAINNET) ==
+            VALIDATION_DUPLICATE);
 
   capture_reset();
   info_answer = false;
@@ -691,6 +1237,11 @@ static void test_watch_only(void) {
         run_watch(tr_bare, WALLET_NETWORK_MAINNET) ==
             VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE);
 
+  char buf[8192];
+  check("watch-only rejects more keys than letter IDs",
+        run_watch(tr_multi_a(buf, sizeof(buf), DESCRIPTOR_INFO_MAX_KEYS + 1),
+                  WALLET_NETWORK_MAINNET) == VALIDATION_TOO_MANY_KEYS);
+
   check("watch-only hardened notation gate",
         run_watch(descf("wpkh([deadbeef/84H/0H/0H]%s/0/*)", X84_0),
                   WALLET_NETWORK_MAINNET) ==
@@ -701,15 +1252,30 @@ static void test_watch_only(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== descriptor_validator tests ===\n\n");
 
   test_preconditions();
   test_static_gates();
+  test_non_sane_miniscript();
+  test_duplicate_keys();
+  test_depth_cap();
+  test_bare_top_level();
   test_key_matching();
+  test_own_keys();
+  test_own_key_material();
+  test_raw_and_registry_keys();
   test_single_sig_success();
   test_purpose_binding_warning();
   test_multisig_and_miniscript();
   test_taproot_keypath();
+  test_key_cap();
+  test_long_policy();
   test_network();
   test_dedup();
   test_generation_guard();

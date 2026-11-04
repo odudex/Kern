@@ -1,4 +1,5 @@
 #include "bus_timeout.h"
+#include "core/crypto_init.h"
 #include "core/entropy_pool.h"
 #include "core/fw_update.h"
 #include "core/nvs_secure.h"
@@ -21,7 +22,6 @@
 #include <freertos/task.h>
 #include <lvgl.h>
 #include <nvs_flash.h>
-#include <wally_core.h>
 
 static const char *TAG = "KERN_MAIN";
 
@@ -105,8 +105,7 @@ void app_main(void) {
   vTaskDelay(pdMS_TO_TICKS(3000));
 
   // Initialize other libraries while displaying the splash screen
-  const int wally_res = wally_init(0);
-  if (wally_res != WALLY_OK) {
+  if (!crypto_init()) {
     abort();
   }
 

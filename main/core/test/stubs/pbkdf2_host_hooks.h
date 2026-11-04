@@ -16,12 +16,13 @@ typedef struct {
   size_t salt_len;
   uint8_t password[256];
   size_t password_len;
+  size_t hash_len;
   uint32_t next_block; /* PBKDF2 block index of the next output byte */
   size_t block_used;   /* bytes of the current block already emitted */
-  uint8_t block[32];
+  uint8_t block[64];
 } host_kdf_t;
 
-#define HOST_KDF_INIT ((host_kdf_t){.next_block = 1, .block_used = 32})
+#define HOST_KDF_INIT ((host_kdf_t){.next_block = 1})
 
 psa_status_t host_kdf_setup(host_kdf_t *op, psa_algorithm_t alg);
 psa_status_t host_kdf_input_integer(host_kdf_t *op, int step, uint64_t value);
@@ -31,7 +32,8 @@ psa_status_t host_kdf_output_bytes(host_kdf_t *op, uint8_t *out, size_t len);
 psa_status_t host_kdf_abort(host_kdf_t *op);
 
 #define HOST_ALG_PBKDF2_HMAC_SHA256 0x08800109u
-#define PSA_ALG_PBKDF2_HMAC(hash) HOST_ALG_PBKDF2_HMAC_SHA256
+#define HOST_ALG_PBKDF2_HMAC_SHA512 0x0880010bu
+#define PSA_ALG_PBKDF2_HMAC(hash) (0x08800100u | ((hash) & 0xffu))
 #define PSA_KEY_DERIVATION_INPUT_COST 0x0301
 #define PSA_KEY_DERIVATION_INPUT_PASSWORD 0x0302
 #define HOST_KDF_INPUT_SALT 0x0303

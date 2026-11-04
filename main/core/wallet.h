@@ -33,6 +33,13 @@ KERN_WARN_UNUSED_RESULT int
 wallet_descriptor_parse(const char *descriptor, const struct wally_map *vars_in,
                         uint32_t network, struct wally_descriptor **output);
 
+/* libwally's WALLY_NETWORK_BITCOIN_* constant for a wallet network, for the
+ * loaded wallet's network, and for the other of the two. */
+KERN_WARN_UNUSED_RESULT uint32_t
+wallet_wally_network_of(wallet_network_t network);
+KERN_WARN_UNUSED_RESULT uint32_t wallet_wally_network(void);
+KERN_WARN_UNUSED_RESULT uint32_t wallet_wally_other_network(uint32_t network);
+
 KERN_WARN_UNUSED_RESULT bool wallet_init(wallet_network_t network);
 KERN_WARN_UNUSED_RESULT bool wallet_is_initialized(void);
 wallet_network_t wallet_get_network(void);

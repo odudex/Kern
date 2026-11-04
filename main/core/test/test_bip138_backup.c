@@ -165,6 +165,21 @@ static const char *TEST_MNEMONIC =
   "tpubDEPBvXvhta3pjVaKokqC3eeMQnszj9ehFaA2zD5nSdkaccwGAizu8jVB2NeSpvmP2P52M"  \
   "BoZvNCixqXRJnTyXx51FQzARR63tjxQSyP3Btw"
 
+/* Counts descriptor parses, to pin how often the boot scan parses a backup. */
+static int parse_calls;
+int __real_wally_descriptor_parse(const char *miniscript,
+                                  const struct wally_map *vars_in,
+                                  uint32_t network, uint32_t flags,
+                                  struct wally_descriptor **output);
+int __wrap_wally_descriptor_parse(const char *miniscript,
+                                  const struct wally_map *vars_in,
+                                  uint32_t network, uint32_t flags,
+                                  struct wally_descriptor **output) {
+  parse_calls++;
+  return __real_wally_descriptor_parse(miniscript, vars_in, network, flags,
+                                       output);
+}
+
 static bool build_wpkh(const char *path, char *out, size_t out_size) {
   char fp[9];
   char *xpub = NULL;
@@ -238,6 +253,82 @@ static void test_uncommon_account(void) {
         bip138_backup_decrypt(blob, blob_len, &recovered, NULL));
   check("descriptor round-trips",
         recovered && strcmp(recovered, descriptor) == 0);
+  free(recovered);
+  free(blob);
+}
+
+/* Our xpub twice: first with no origin, then under our real origin, which is
+ * not a common path. Only the second occurrence's origin can reopen the
+ * backup, so it has to be stored as a hint too. */
+static void test_repeated_key_hint(void) {
+  char fp[9], descriptor[512];
+  char *xpub = NULL;
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  char *recovered = NULL;
+  bip138_container cont;
+  if (!key_get_fingerprint_hex(fp) || !key_get_xpub("m/84'/0'/26'", &xpub))
+    abort();
+  snprintf(descriptor, sizeof(descriptor),
+           "wsh(or_d(pk(%s/<0;1>/*),and_v(v:pk([%s/84'/0'/26']%s/<2;3>/*),"
+           "older(10))))",
+           xpub, fp, xpub);
+  wally_free_string(xpub);
+  check("repeated key: encrypts",
+        bip138_backup_encrypt(descriptor, &blob, &blob_len));
+  check("repeated key: the later occurrence's origin is a hint",
+        blob && bip138_parse(blob, blob_len, &cont) == BIP138_OK &&
+            cont.path_count == 1);
+  check("repeated key: reopens through that hint",
+        blob && bip138_backup_decrypt(blob, blob_len, &recovered, NULL) &&
+            strcmp(recovered, descriptor) == 0);
+  free(recovered);
+  free(blob);
+}
+
+/* The common-path keys describe the loaded seed; unloading the wallet wipes
+ * them like the rest of the session. */
+static void test_unload_forgets_common_keys(void) {
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  char *recovered = NULL;
+  check("forget: foreign backup fills the cache",
+        bip138_backup_encrypt("wpkh(" FOREIGN_KEY "/<0;1>/*)", &blob,
+                              &blob_len) &&
+            !bip138_backup_decrypt(blob, blob_len, &recovered, NULL) &&
+            !bip138_backup_cache_is_empty());
+  free(blob);
+  wallet_unload();
+  check("forget: wallet_unload wipes the cache",
+        bip138_backup_cache_is_empty());
+  if (!key_load_from_mnemonic(TEST_MNEMONIC, "", false) ||
+      !wallet_init(WALLET_NETWORK_MAINNET))
+    abort();
+}
+
+/* The boot scan opens registered backups through their stored paths only: a
+ * backup another seed wrote is skipped without walking the common paths. */
+static void test_hinted_skips_common_walk(void) {
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+  char *recovered = NULL;
+  bip138_backup_forget_keys();
+  check(
+      "hinted: foreign backup is not opened",
+      bip138_backup_encrypt("wpkh(" FOREIGN_KEY "/<0;1>/*)", &blob,
+                            &blob_len) &&
+          !bip138_backup_decrypt_any_hinted(blob, blob_len, &recovered, NULL));
+  check("hinted: no common path was derived", bip138_backup_cache_is_empty());
+  free(blob);
+  blob = NULL;
+
+  char descriptor[256];
+  check(
+      "hinted: own common-account backup opens",
+      build_wpkh("m/84'/0'/0'", descriptor, sizeof(descriptor)) &&
+          bip138_backup_encrypt(descriptor, &blob, &blob_len) &&
+          bip138_backup_decrypt_any_hinted(blob, blob_len, &recovered, NULL) &&
+          strcmp(recovered, descriptor) == 0);
   free(recovered);
   free(blob);
 }
@@ -325,10 +416,12 @@ static void test_registry_persistence(void) {
             registry_session_has_duplicate(recovered, NULL, 0));
   free(recovered);
 
+  parse_calls = 0;
   registry_init(false);
   check("boot scan registers the stored descriptor",
         registry_count() == 1 && (entry = registry_get(0)) != NULL &&
             strcmp(entry->id, "ColdVault") == 0 && entry->persisted);
+  check("boot scan parses the backup once", parse_calls == 1);
 
   check("another seed loads",
         key_load_from_mnemonic("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo "
@@ -467,6 +560,7 @@ static void test_approval_and_forgery(void) {
   /* Simulate the explicit confirmation and registration path. The fixture
    * holds one flash file, so the unmarked one is replaced by the new one. */
   stub_storage_reset();
+  blob = NULL;
   check(
       "confirmed old descriptor can be registered with a new approval mark",
       registry_add_from_string("confirmed", recovered, STORAGE_FLASH, false) &&
@@ -494,6 +588,66 @@ static void test_approval_and_forgery(void) {
             !approved);
   free(recovered);
   free(blob);
+}
+
+/* A registered backup that no longer validates is skipped and counted. */
+static void test_rejected_count(void) {
+  char fp[9];
+  char descriptor[512];
+  char *ours = NULL;
+  char *other = NULL;
+  uint8_t *blob = NULL;
+  size_t blob_len = 0;
+
+  stub_storage_reset();
+  registry_clear();
+  check("forged own key fixture builds",
+        key_get_fingerprint_hex(fp) && key_get_xpub("m/48'/0'/0'/2'", &ours) &&
+            key_get_xpub("m/48'/0'/2'/2'", &other));
+  snprintf(descriptor, sizeof(descriptor),
+           "wsh(sortedmulti(1,[%s/48'/0'/0'/2']%s/<0;1>/*,"
+           "[%s/48'/0'/1'/2']%s/<0;1>/*))",
+           fp, ours, fp, other);
+  wally_free_string(ours);
+  wally_free_string(other);
+  check("unapproved backup of it is staged",
+        forge_backup(descriptor, &blob, &blob_len) &&
+            storage_save_descriptor(STORAGE_FLASH, "Forged", blob, blob_len,
+                                    STORAGE_DESCRIPTOR_BIP138) == ESP_OK);
+  free(blob);
+  blob = NULL;
+  registry_init(false);
+  check("an unapproved backup is not counted",
+        registry_count() == 0 && registry_rejected_count() == 0);
+
+  check("approved backup of it is staged",
+        bip138_backup_encrypt(descriptor, &blob, &blob_len) &&
+            storage_save_descriptor(STORAGE_FLASH, "Forged", blob, blob_len,
+                                    STORAGE_DESCRIPTOR_BIP138) == ESP_OK);
+  free(blob);
+  registry_init(false);
+  check("boot scan skips and counts a registration that fails validation",
+        registry_count() == 0 && registry_rejected_count() == 1 &&
+            stub_files[0].present);
+  stub_storage_reset();
+  registry_init(false);
+  check("the count resets on the next scan", registry_rejected_count() == 0);
+
+  check("mainnet registration",
+        build_wpkh("m/84'/0'/2'", descriptor, sizeof(descriptor)) &&
+            registry_add_from_string("Main", descriptor, STORAGE_FLASH, true));
+  check("switch to testnet",
+        key_set_network(true) && wallet_init(WALLET_NETWORK_TESTNET));
+  registry_init(true);
+  check("another network's registration is skipped but not counted",
+        registry_count() == 0 && registry_rejected_count() == 0);
+  check("switch back to mainnet",
+        key_set_network(false) && wallet_init(WALLET_NETWORK_MAINNET));
+  registry_init(false);
+  check("it loads again on its own network",
+        registry_count() == 1 && registry_rejected_count() == 0);
+  registry_clear();
+  stub_storage_reset();
 }
 
 static void test_private_key_rejected(void) {
@@ -677,16 +831,26 @@ static void test_many_origins(void) {
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   check("test mnemonic loads",
         key_load_from_mnemonic(TEST_MNEMONIC, "", false));
   check("wallet initialises", wallet_init(WALLET_NETWORK_MAINNET));
   test_common_account();
   test_uncommon_account();
+  test_repeated_key_hint();
+  test_unload_forgets_common_keys();
+  test_hinted_skips_common_walk();
   test_foreign_key();
   test_text_form();
   test_rejections();
   test_registry_persistence();
   test_approval_and_forgery();
+  test_rejected_count();
   test_private_key_rejected();
   test_overwrite_and_duplicates();
   test_deregister();

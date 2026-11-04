@@ -5,12 +5,11 @@
 #include "psbt.h"
 #include <wally_script.h>
 
-/* Largest redeem/witness script the wallet regenerates and compares.
- * libwally's script generation enforces this same 520-byte bound
- * (MAX_SCRIPT_ELEMENT_SIZE) on sh()/wsh() inner scripts, including witness
- * scripts (an upstream limitation: P2WSH standardness allows 3600). Descriptor
- * validation trial-generates scripts at load time against this limit, so
- * anything registered is regenerable here. */
+/* Largest redeem/witness script the wallet regenerates and compares: the
+ * 520-byte sh() bound (MAX_SCRIPT_ELEMENT_SIZE), which Kern also applies to
+ * wsh() witness scripts although libwally generates them up to the 3600-byte
+ * P2WSH standardness limit. Descriptor validation trial-generates scripts at
+ * load time against this limit, so anything registered is regenerable here. */
 #define PSBT_MAX_INNER_SCRIPT_LEN WALLY_SCRIPTSIG_MAX_LEN
 
 typedef struct {

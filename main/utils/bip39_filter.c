@@ -2,6 +2,8 @@
 
 #include "bip39_filter.h"
 #include "kern_wally.h"
+#include "secure_mem.h"
+#include <stdio.h>
 #include <string.h>
 #include <wally_bip39.h>
 #include <wally_core.h>
@@ -95,7 +97,33 @@ int bip39_filter_get_word_index(const char *word) {
   return -1;
 }
 
-void bip39_filter_clear_last_word_cache(void) { valid_last_words_count = 0; }
+/* Appends the low `nbits` of `value` to `packed` at *bit_pos, MSB first. */
+static void pack_bits(uint8_t packed[32], int *bit_pos, uint32_t value,
+                      int nbits) {
+  for (int b = nbits - 1; b >= 0; b--, (*bit_pos)++) {
+    uint8_t mask = (uint8_t)(1u << (7 - (*bit_pos % 8)));
+    if (value & (1u << b))
+      packed[*bit_pos / 8] |= mask;
+    else
+      packed[*bit_pos / 8] &= (uint8_t)~mask;
+  }
+}
+
+static bool pack_words(const char entered_words[24][16], int count,
+                       uint8_t packed[32], int *bit_pos) {
+  for (int i = 0; i < count; i++) {
+    int idx = bip39_filter_get_word_index(entered_words[i]);
+    if (idx < 0)
+      return false;
+    pack_bits(packed, bit_pos, (uint32_t)idx, 11);
+  }
+  return true;
+}
+
+void bip39_filter_clear_last_word_cache(void) {
+  memset(valid_last_words_cache, 0, sizeof(valid_last_words_cache));
+  valid_last_words_count = 0;
+}
 
 /* Warms valid_last_words_cache and returns how many entries it holds. */
 static int ensure_last_word_cache(const char entered_words[24][16],
@@ -123,42 +151,25 @@ int bip39_filter_get_valid_last_words(const char entered_words[24][16],
   size_t last_word_entropy_bits = 11 - checksum_bits;
   int num_possibilities = 1 << last_word_entropy_bits;
 
-  // Pack word indices (11 bits each) from first N-1 words
+  // Pack word indices (11 bits each) from first N-1 words. Both buffers hold
+  // all but a few bits of the seed's entropy.
   uint8_t packed[32] = {0};
+  uint8_t test_packed[32];
   int bit_pos = 0;
-
-  for (int i = 0; i < word_count - 1; i++) {
-    int idx = bip39_filter_get_word_index(entered_words[i]);
-    if (idx < 0)
-      return 0;
-
-    for (int b = 10; b >= 0; b--) {
-      int byte_idx = bit_pos / 8;
-      int bit_idx = 7 - (bit_pos % 8);
-      if (idx & (1 << b))
-        packed[byte_idx] |= (1 << bit_idx);
-      bit_pos++;
-    }
-  }
-
   int count = 0;
+
+  if (!pack_words(entered_words, word_count - 1, packed, &bit_pos))
+    goto cleanup;
+
   valid_last_words_count = 0;
 
   for (int entropy_val = 0;
        entropy_val < num_possibilities && count < max_words; entropy_val++) {
-    uint8_t test_packed[32];
     memcpy(test_packed, packed, sizeof(test_packed));
 
     int test_bit_pos = bit_pos;
-    for (int b = last_word_entropy_bits - 1; b >= 0; b--) {
-      int byte_idx = test_bit_pos / 8;
-      int bit_idx = 7 - (test_bit_pos % 8);
-      if (entropy_val & (1 << b))
-        test_packed[byte_idx] |= (1 << bit_idx);
-      else
-        test_packed[byte_idx] &= ~(1 << bit_idx);
-      test_bit_pos++;
-    }
+    pack_bits(test_packed, &test_bit_pos, (uint32_t)entropy_val,
+              (int)last_word_entropy_bits);
 
     char *new_mnemonic = NULL;
     if (kern_bip39_mnemonic_from_bytes(NULL, test_packed, entropy_bytes,
@@ -176,9 +187,12 @@ int bip39_filter_get_valid_last_words(const char entered_words[24][16],
       }
     }
 
-    wally_free_string(new_mnemonic);
+    SECURE_FREE_STRING(new_mnemonic);
   }
 
+cleanup:
+  secure_memzero(packed, sizeof(packed));
+  secure_memzero(test_packed, sizeof(test_packed));
   return count;
 }
 
@@ -246,4 +260,41 @@ int bip39_filter_last_word_by_prefix(const char entered_words[24][16],
   }
 
   return count;
+}
+
+bool bip39_filter_complete_last_word(char entered_words[24][16],
+                                     int word_count) {
+  if (!wordlist || !entered_words || word_count < 12 || word_count > 24 ||
+      word_count % 3 != 0)
+    return false;
+
+  int checksum_bits = word_count / 3;
+  size_t entropy_bytes = (size_t)((word_count * 11) - checksum_bits) / 8;
+  uint8_t packed[32] = {0};
+  int bit_pos = 0;
+  char *mnemonic = NULL;
+  bool ok = false;
+
+  if (!pack_words(entered_words, word_count - 1, packed, &bit_pos))
+    goto cleanup;
+  int last_idx = bip39_filter_get_word_index(entered_words[word_count - 1]);
+  if (last_idx >= 0)
+    pack_bits(packed, &bit_pos, (uint32_t)last_idx >> checksum_bits,
+              11 - checksum_bits);
+
+  if (kern_bip39_mnemonic_from_bytes(NULL, packed, entropy_bytes, &mnemonic) !=
+          WALLY_OK ||
+      !mnemonic)
+    goto cleanup;
+  const char *last = strrchr(mnemonic, ' ');
+  if (last) {
+    snprintf(entered_words[word_count - 1], sizeof(entered_words[0]), "%s",
+             last + 1);
+    ok = true;
+  }
+
+cleanup:
+  SECURE_FREE_STRING(mnemonic);
+  secure_memzero(packed, sizeof(packed));
+  return ok;
 }

@@ -59,6 +59,10 @@ static int filtered_count = 0;
 static editor_mode_t current_mode = MODE_WORD_GRID;
 static char pending_word[16] = {0};
 static bool is_new_mnemonic = false;
+/* The fingerprint costs a PBKDF2 run, so it is computed once per word change.
+ * An empty string means no fingerprint (invalid checksum). */
+static bool fingerprint_cached = false;
+static char cached_fingerprint[9];
 
 static void create_ui(void);
 static void create_word_grid(void);
@@ -91,7 +95,7 @@ static bool is_checksum_valid(void) {
             sizeof(mnemonic) - strlen(mnemonic) - 1);
   }
 
-  bool valid = bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK;
+  bool valid = kern_bip39_mnemonic_validate(NULL, mnemonic) == WALLY_OK;
   secure_memzero(mnemonic, sizeof(mnemonic));
   return valid;
 }
@@ -115,64 +119,9 @@ static bool get_mnemonic_fingerprint_hex(char *hex_out) {
 }
 
 static bool recalculate_last_word(void) {
-  if (total_words < 12)
+  if (!bip39_filter_complete_last_word(entered_words, total_words))
     return false;
-
-  // Calculate entropy and checksum sizes based on word count
-  // 12 words: 128 bits entropy + 4 bits checksum = 132 bits total
-  // 24 words: 256 bits entropy + 8 bits checksum = 264 bits total
-  size_t checksum_bits = total_words / 3; // 4 for 12 words, 8 for 24 words
-  size_t entropy_bits = (total_words * 11) - checksum_bits;
-  size_t entropy_bytes = entropy_bits / 8;
-  size_t last_word_entropy_bits = 11 - checksum_bits; // 7 for 12, 3 for 24
-
-  // Pack word indices (11 bits each) from first N-1 words
-  uint8_t packed[32] = {0};
-  int bit_pos = 0;
-
-  for (int i = 0; i < total_words - 1; i++) {
-    int idx = bip39_filter_get_word_index(entered_words[i]);
-    if (idx < 0)
-      return false;
-
-    // Pack 11 bits into packed array
-    for (int b = 10; b >= 0; b--) {
-      int byte_idx = bit_pos / 8;
-      int bit_idx = 7 - (bit_pos % 8);
-      if (idx & (1 << b))
-        packed[byte_idx] |= (1 << bit_idx);
-      bit_pos++;
-    }
-  }
-
-  // Pack the entropy bits from the current last word (top bits only)
-  int last_idx = bip39_filter_get_word_index(entered_words[total_words - 1]);
-  if (last_idx >= 0) {
-    for (int b = 10; b > (int)(10 - last_word_entropy_bits); b--) {
-      int byte_idx = bit_pos / 8;
-      int bit_idx = 7 - (bit_pos % 8);
-      if (last_idx & (1 << b))
-        packed[byte_idx] |= (1 << bit_idx);
-      bit_pos++;
-    }
-  }
-
-  // Generate mnemonic from entropy using libwally
-  char *new_mnemonic = NULL;
-  if (kern_bip39_mnemonic_from_bytes(NULL, packed, entropy_bytes,
-                                     &new_mnemonic) != WALLY_OK) {
-    return false;
-  }
-
-  // Extract last word from generated mnemonic
-  char *last_space = strrchr(new_mnemonic, ' ');
-  if (last_space) {
-    strncpy(entered_words[total_words - 1], last_space + 1,
-            sizeof(entered_words[0]) - 1);
-    entered_words[total_words - 1][sizeof(entered_words[0]) - 1] = '\0';
-  }
-
-  wally_free_string(new_mnemonic);
+  fingerprint_cached = false;
   return true;
 }
 
@@ -180,16 +129,18 @@ static void update_fingerprint_display(void) {
   if (!fingerprint_label)
     return;
 
-  if (is_checksum_valid()) {
-    char fp_hex[9];
-    if (get_mnemonic_fingerprint_hex(fp_hex)) {
-      char buf[24];
-      snprintf(buf, sizeof(buf), ICON_FINGERPRINT " %s", fp_hex);
-      lv_label_set_text(fingerprint_label, buf);
-      lv_obj_clear_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
-    }
+  if (!fingerprint_cached) {
+    if (!is_checksum_valid() ||
+        !get_mnemonic_fingerprint_hex(cached_fingerprint))
+      cached_fingerprint[0] = '\0';
+    fingerprint_cached = true;
+  }
+
+  if (cached_fingerprint[0]) {
+    char buf[24];
+    snprintf(buf, sizeof(buf), ICON_FINGERPRINT " %s", cached_fingerprint);
+    lv_label_set_text(fingerprint_label, buf);
+    lv_obj_clear_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(fingerprint_label, LV_OBJ_FLAG_HIDDEN);
   }
@@ -228,6 +179,7 @@ static void filter_words_by_prefix(void) {
 
 static void parse_mnemonic(const char *mnemonic) {
   total_words = 0;
+  fingerprint_cached = false;
   secure_memzero(entered_words, sizeof(entered_words));
   secure_memzero(original_words, sizeof(original_words));
 
@@ -272,6 +224,7 @@ static void update_word_label(int index) {
   char text[32];
   snprintf(text, sizeof(text), "%2d. %s", index + 1, entered_words[index]);
   lv_label_set_text(word_labels[index], text);
+  secure_memzero(text, sizeof(text));
 
   bool changed = strcmp(entered_words[index], original_words[index]) != 0;
   lv_obj_set_style_text_color(word_labels[index],
@@ -381,6 +334,7 @@ static void show_word_confirmation(const char *word) {
   snprintf(msg, sizeof(msg), "Word %d: %s", editing_word_index + 1, word);
 
   dialog_show_confirm(msg, word_confirmation_cb, NULL, DIALOG_STYLE_OVERLAY);
+  secure_memzero(msg, sizeof(msg));
 }
 
 static void word_confirmation_cb(bool confirmed, void *user_data) {
@@ -390,6 +344,7 @@ static void word_confirmation_cb(bool confirmed, void *user_data) {
     snprintf(entered_words[editing_word_index], sizeof(entered_words[0]), "%s",
              pending_word);
     pending_word[0] = '\0';
+    fingerprint_cached = false;
     update_word_label(editing_word_index);
 
     if (is_new_mnemonic) {
@@ -532,7 +487,7 @@ static void load_btn_cb(lv_event_t *e) {
             sizeof(mnemonic) - strlen(mnemonic) - 1);
   }
 
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
+  if (kern_bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
     secure_memzero(mnemonic, sizeof(mnemonic));
     return;
   }
@@ -578,6 +533,7 @@ static lv_obj_t *create_word_button(lv_obj_t *parent, int index, int height,
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, text);
+  secure_memzero(text, sizeof(text));
   lv_obj_align(label, LV_ALIGN_LEFT_MID, -10, 0);
   lv_obj_set_style_text_font(label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(label, primary_color(), 0);
@@ -744,6 +700,8 @@ void mnemonic_editor_page_destroy(void) {
   load_label = NULL;
   header_container = NULL;
   fingerprint_label = NULL;
+  fingerprint_cached = false;
+  cached_fingerprint[0] = '\0';
   is_new_mnemonic = false;
   memset(word_labels, 0, sizeof(word_labels));
   secure_memzero(entered_words, sizeof(entered_words));

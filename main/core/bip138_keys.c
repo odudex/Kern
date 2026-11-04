@@ -94,42 +94,57 @@ static bool key_origin(const struct wally_descriptor *desc, size_t index,
   return ok;
 }
 
+/* Parses a descriptor without private keys. */
+static struct wally_descriptor *parse_public(const char *descriptor,
+                                             uint32_t wally_network,
+                                             uint32_t *num_keys) {
+  struct wally_descriptor *desc = NULL;
+  uint32_t features = 0;
+  if (wallet_descriptor_parse(descriptor, NULL, wally_network, &desc) !=
+          WALLY_OK ||
+      wally_descriptor_get_num_keys(desc, num_keys) != WALLY_OK ||
+      wally_descriptor_get_features(desc, &features) != WALLY_OK ||
+      (features & WALLY_MS_IS_PRIVATE)) {
+    wally_descriptor_free(desc);
+    return NULL;
+  }
+  return desc;
+}
+
+/* The recipient key of key expression `i`, if it has one. */
+static bool recipient_key(const struct wally_descriptor *desc, size_t i,
+                          uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN]) {
+  size_t child_len = 0;
+  char *key_str = NULL;
+  char xpub[XPUB_MAX_LEN];
+  if (wally_descriptor_get_key_child_path_str_len(desc, i, &child_len) !=
+          WALLY_OK ||
+      child_len == 0 || wally_descriptor_get_key(desc, i, &key_str) != WALLY_OK)
+    return false;
+  bool ok = split_key(key_str, xpub, sizeof(xpub)) != NULL &&
+            xpub_to_xonly(xpub, xonly);
+  wally_free_string(key_str);
+  return ok;
+}
+
 bool bip138_keys_from_descriptor(const char *descriptor, uint32_t wally_network,
                                  uint8_t *keys_out,
                                  bip138_key_origin *origins_out,
                                  size_t max_keys, size_t *count_out) {
-  struct wally_descriptor *desc = NULL;
   uint32_t num_keys = 0;
   size_t count = 0;
   bool ok = true;
 
   if (!descriptor || !keys_out || !count_out || max_keys == 0)
     return false;
-  uint32_t features = 0;
-  if (wallet_descriptor_parse(descriptor, NULL, wally_network, &desc) !=
-          WALLY_OK ||
-      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
-      wally_descriptor_get_features(desc, &features) != WALLY_OK ||
-      (features & WALLY_MS_IS_PRIVATE)) {
-    wally_descriptor_free(desc);
+  struct wally_descriptor *desc =
+      parse_public(descriptor, wally_network, &num_keys);
+  if (!desc)
     return false;
-  }
 
   for (size_t i = 0; ok && i < num_keys; i++) {
-    size_t child_len = 0;
-    char *key_str = NULL;
-    char xpub[XPUB_MAX_LEN];
     uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN];
-    if (wally_descriptor_get_key_child_path_str_len(desc, i, &child_len) !=
-            WALLY_OK ||
-        child_len == 0)
-      continue;
-    if (wally_descriptor_get_key(desc, i, &key_str) != WALLY_OK)
-      continue;
-    bool have_key = split_key(key_str, xpub, sizeof(xpub)) != NULL &&
-                    xpub_to_xonly(xpub, xonly);
-    wally_free_string(key_str);
-    if (!have_key)
+    if (!recipient_key(desc, i, xonly))
       continue;
     size_t j = 0;
     while (j < count &&
@@ -148,6 +163,49 @@ bool bip138_keys_from_descriptor(const char *descriptor, uint32_t wally_network,
   }
   wally_descriptor_free(desc);
   if (!ok || count == 0)
+    return false;
+  *count_out = count;
+  return true;
+}
+
+bool bip138_origins_from_descriptor(const char *descriptor,
+                                    uint32_t wally_network,
+                                    bip138_key_origin *origins_out,
+                                    size_t max_origins, size_t *count_out) {
+  uint32_t num_keys = 0;
+  size_t count = 0;
+  bool ok = true;
+
+  if (!descriptor || !origins_out || !count_out)
+    return false;
+  struct wally_descriptor *desc =
+      parse_public(descriptor, wally_network, &num_keys);
+  if (!desc)
+    return false;
+
+  for (size_t i = 0; ok && i < num_keys; i++) {
+    uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN];
+    bip138_key_origin origin;
+    if (!recipient_key(desc, i, xonly))
+      continue;
+    ok = key_origin(desc, i, &origin);
+    if (!ok || origin.depth == 0)
+      continue;
+    size_t j = 0;
+    while (j < count && (origins_out[j].depth != origin.depth ||
+                         memcmp(origins_out[j].child, origin.child,
+                                origin.depth * sizeof(origin.child[0])) != 0))
+      j++;
+    if (j < count)
+      continue;
+    if (count == max_origins) {
+      ok = false;
+      break;
+    }
+    origins_out[count++] = origin;
+  }
+  wally_descriptor_free(desc);
+  if (!ok)
     return false;
   *count_out = count;
   return true;

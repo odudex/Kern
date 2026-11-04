@@ -115,6 +115,8 @@ static void show_hash_display(void) {
 
   lv_obj_t *hash_label = lv_label_create(hash_container);
   lv_label_set_text(hash_label, display_text);
+  secure_memzero(hex_hash, sizeof(hex_hash));
+  secure_memzero(display_text, sizeof(display_text));
   lv_obj_set_width(hash_label, LV_PCT(100));
   lv_label_set_long_mode(hash_label, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(hash_label, LV_TEXT_ALIGN_CENTER, 0);
@@ -149,12 +151,6 @@ static void proceed_cb(lv_event_t *e) {
                                      &mnemonic) != WALLY_OK ||
       !mnemonic) {
     dialog_show_error_timeout("Failed to generate mnemonic", NULL, 0);
-    return;
-  }
-
-  if (bip39_mnemonic_validate(NULL, mnemonic) != WALLY_OK) {
-    wally_free_string(mnemonic);
-    dialog_show_error_timeout("Invalid mnemonic generated", NULL, 0);
     return;
   }
 

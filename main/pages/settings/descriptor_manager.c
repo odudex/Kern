@@ -44,6 +44,7 @@ static lv_obj_t *qr_export_back_btn = NULL;
 static lv_obj_t *qr_type_dropdown = NULL;
 static lv_obj_t *qr_code = NULL;
 static lv_obj_t *qr_container = NULL;
+static lv_obj_t *qr_unavailable_label = NULL;
 
 static char *descriptor_string = NULL;
 static descriptor_qr_format_t current_format = FORMAT_PLAINTEXT_DESC;
@@ -117,79 +118,84 @@ static void animation_timer_cb(lv_timer_t *timer) {
   }
 }
 
-static void update_qr_display(void) {
-  if (!qr_code || !descriptor_string)
-    return;
+static bool encode_bbqr_parts(void) {
+  bbqr_parts =
+      bbqr_encode((const uint8_t *)descriptor_string, strlen(descriptor_string),
+                  BBQR_TYPE_UNICODE, MAX_QR_CHARS_PER_FRAME);
+  return bbqr_parts && bbqr_parts->count > 0;
+}
 
-  cleanup_qr_state();
-
-  if (current_format == FORMAT_PLAINTEXT_DESC) {
-    qr_update_optimal(qr_code, descriptor_string, NULL);
-    return;
-  }
-
-  if (current_format == FORMAT_BBQR_DESC) {
-    bbqr_parts = bbqr_encode((const uint8_t *)descriptor_string,
-                             strlen(descriptor_string), BBQR_TYPE_UNICODE,
-                             MAX_QR_CHARS_PER_FRAME);
-    if (!bbqr_parts)
-      return;
-
-    qr_update_optimal(qr_code, bbqr_parts->parts[0], NULL);
-
-    if (bbqr_parts->count > 1) {
-      animation_timer =
-          lv_timer_create(animation_timer_cb, ANIMATION_INTERVAL_MS, NULL);
-    }
-    return;
-  }
-
+static bool encode_ur_parts(void) {
   output_data_t *output = output_from_descriptor_string(descriptor_string);
   if (!output)
-    return;
+    return false;
 
   size_t cbor_len = 0;
   uint8_t *cbor_data = output_to_cbor(output, &cbor_len);
   output_free(output);
   if (!cbor_data)
-    return;
+    return false;
 
   ur_encoder_t *encoder = ur_encoder_new("crypto-output", cbor_data, cbor_len,
                                          UR_MAX_FRAGMENT_LEN, 0, 10);
   free(cbor_data);
   if (!encoder)
-    return;
+    return false;
 
   size_t seq_len = ur_encoder_seq_len(encoder);
   size_t parts_count = ur_encoder_is_single_part(encoder)
                            ? 1
                            : (seq_len * 2 > 100 ? 100 : seq_len * 2);
 
-  ur_parts = malloc(parts_count * sizeof(char *));
-  if (!ur_parts) {
-    ur_encoder_free(encoder);
+  ur_parts = calloc(parts_count, sizeof(char *));
+  bool ok = ur_parts != NULL;
+  for (size_t i = 0; ok && i < parts_count; i++) {
+    ok = ur_encoder_next_part(encoder, &ur_parts[i]);
+    if (ok)
+      ur_parts_count = (int)i + 1;
+  }
+  ur_encoder_free(encoder);
+  if (!ok)
+    cleanup_ur();
+  return ok;
+}
+
+static void update_qr_display(void) {
+  if (!qr_code || !descriptor_string)
+    return;
+
+  cleanup_qr_state();
+
+  const char *first = NULL;
+  int parts = 1;
+  if (current_format == FORMAT_PLAINTEXT_DESC) {
+    first = descriptor_string;
+  } else if (current_format == FORMAT_BBQR_DESC) {
+    if (encode_bbqr_parts()) {
+      first = bbqr_parts->parts[0];
+      parts = bbqr_parts->count;
+    }
+  } else if (encode_ur_parts()) {
+    first = ur_parts[0];
+    parts = ur_parts_count;
+  }
+
+  if (!first || qr_update_optimal(qr_code, first, NULL) != LV_RESULT_OK) {
+    cleanup_qr_state();
+    lv_obj_add_flag(qr_container, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(qr_unavailable_label,
+                      current_format == FORMAT_UR_DESC
+                          ? "UR not available for this descriptor"
+                          : "QR not available for this descriptor");
+    lv_obj_clear_flag(qr_unavailable_label, LV_OBJ_FLAG_HIDDEN);
     return;
   }
 
-  for (size_t i = 0; i < parts_count; i++) {
-    if (!ur_encoder_next_part(encoder, &ur_parts[i])) {
-      for (size_t j = 0; j < i; j++)
-        free(ur_parts[j]);
-      free(ur_parts);
-      ur_parts = NULL;
-      ur_encoder_free(encoder);
-      return;
-    }
-  }
-  ur_parts_count = (int)parts_count;
-  ur_encoder_free(encoder);
-
-  qr_update_optimal(qr_code, ur_parts[0], NULL);
-
-  if (ur_parts_count > 1) {
+  lv_obj_add_flag(qr_unavailable_label, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(qr_container, LV_OBJ_FLAG_HIDDEN);
+  if (parts > 1)
     animation_timer =
         lv_timer_create(animation_timer_cb, ANIMATION_INTERVAL_MS, NULL);
-  }
 }
 
 static void dropdown_cb(lv_event_t *e) {
@@ -216,6 +222,7 @@ static void qr_export_back_cb(lv_event_t *e) {
   qr_type_dropdown = NULL;
   qr_code = NULL;
   qr_container = NULL;
+  qr_unavailable_label = NULL;
   current_format = FORMAT_PLAINTEXT_DESC;
 
   descriptor_manager_page_show();
@@ -276,6 +283,11 @@ static void show_qr_export(void) {
   int32_t qr_widget_size = lv_obj_get_content_width(qr_container);
 
   qr_code = qr_create_optimal(qr_container, qr_widget_size, NULL);
+
+  qr_unavailable_label = theme_create_label(content_area, "", true);
+  lv_obj_set_width(qr_unavailable_label, LV_PCT(90));
+  lv_obj_set_style_text_align(qr_unavailable_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_add_flag(qr_unavailable_label, LV_OBJ_FLAG_HIDDEN);
 
   current_format = FORMAT_PLAINTEXT_DESC;
   update_qr_display();
@@ -568,6 +580,7 @@ void descriptor_manager_page_destroy(void) {
   qr_type_dropdown = NULL;
   qr_code = NULL;
   qr_container = NULL;
+  qr_unavailable_label = NULL;
 
   if (main_menu) {
     ui_menu_destroy(main_menu);

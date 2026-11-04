@@ -11,13 +11,13 @@
 #include "ui/theme.h"
 #include "ui/theme_widgets.h"
 #include "ui/assets/kern_logo_lvgl.h"
+#include "core/crypto_init.h"
 #include "core/nvs_secure.h"
 #include "core/settings.h"
 #include "core/pin.h"
 #include "pages/session_lock.h"
 #include "esp_lvgl_port.h"
 #include "utils/bip39_filter.h"
-#include <wally_core.h>
 #include <nvs_flash.h>
 #include <esp_err.h>
 #include "sim_video.h"
@@ -155,9 +155,8 @@ int main(int argc, char *argv[]) {
 
     printf("Kern Simulator starting (%dx%d)\n", sim_width, sim_height);
 
-    /* Initialize libwally-core */
-    if (wally_init(0) != WALLY_OK) {
-        fprintf(stderr, "wally_init failed\n");
+    if (!crypto_init()) {
+        fprintf(stderr, "crypto_init failed\n");
         return 1;
     }
 

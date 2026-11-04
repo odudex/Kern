@@ -1,6 +1,7 @@
 // Address Checker — shared address verification via sweep
 
 #include "address_checker.h"
+#include "../../core/address_match.h"
 #include "../../core/registry.h"
 #include "../../core/ss_whitelist.h"
 #include "../../core/wallet.h"
@@ -14,12 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <wally_address.h>
-#include <wally_core.h>
 
 #define SEARCH_BATCH 100
 
-static char *checked_address = NULL;
+static uint8_t checked_spk[ADDRESS_MATCH_SPK_MAX];
+static size_t checked_spk_len = 0;
 static uint32_t search_start = 0;
 static uint32_t search_limit = SEARCH_BATCH;
 static void (*on_found)(void) = NULL;
@@ -142,78 +142,27 @@ static void perform_sweep_deferred(lv_timer_t *timer) {
     }
   }
 
-  // Search receive addresses (chain = 0)
-  for (uint32_t i = search_start; i < search_limit; i++) {
-    char addr_buf[SS_ADDRESS_MAX_LEN];
-    char *dyn = NULL;
-    bool success = false;
-
-    if (reg_entry) {
-      uint32_t mp = 0;
-      int ret = wally_descriptor_to_address(reg_entry->desc, 0, mp, i, 0, &dyn);
-      success = (ret == WALLY_OK) && dyn;
-    } else {
-      // Fixed account: user selected it in the picker; do not iterate accounts.
-      ss_script_type_t script =
-          wallet_source_picker_script_type(ac_source.source);
-      success = ss_address(script, ac_source.account, 0, i, is_testnet,
-                           addr_buf, sizeof(addr_buf));
-    }
-    if (!success)
-      continue;
-
-    const char *addr = dyn ? dyn : addr_buf;
-    if (strcasecmp(addr, checked_address) == 0) {
-      if (dyn)
-        wally_free_string(dyn);
-      dismiss_progress();
-      char msg[64];
-      snprintf(msg, sizeof(msg), "Receive #%u", i);
-      dialog_show_info("Address Verified", msg, found_info_cb, NULL,
-                       DIALOG_STYLE_FULLSCREEN);
-      return;
-    }
-    if (dyn) {
-      wally_free_string(dyn);
-      dyn = NULL;
-    }
+  address_match_t match;
+  bool found;
+  if (reg_entry) {
+    found = address_match_descriptor(reg_entry->desc, reg_entry->num_paths,
+                                     checked_spk, checked_spk_len, search_start,
+                                     search_limit, &match);
+  } else {
+    // Fixed account: user selected it in the picker; do not iterate accounts.
+    found = address_match_singlesig(
+        wallet_source_picker_script_type(ac_source.source), ac_source.account,
+        is_testnet, checked_spk, checked_spk_len, search_start, search_limit,
+        &match);
   }
-
-  // Search change addresses (chain = 1)
-  for (uint32_t i = search_start; i < search_limit; i++) {
-    char addr_buf[SS_ADDRESS_MAX_LEN];
-    char *dyn = NULL;
-    bool success = false;
-
-    if (reg_entry) {
-      uint32_t mp = (reg_entry->num_paths <= 1) ? 0 : 1;
-      int ret = wally_descriptor_to_address(reg_entry->desc, 0, mp, i, 0, &dyn);
-      success = (ret == WALLY_OK) && dyn;
-    } else {
-      // Fixed account: same rationale as receive loop above.
-      ss_script_type_t script =
-          wallet_source_picker_script_type(ac_source.source);
-      success = ss_address(script, ac_source.account, 1, i, is_testnet,
-                           addr_buf, sizeof(addr_buf));
-    }
-    if (!success)
-      continue;
-
-    const char *addr = dyn ? dyn : addr_buf;
-    if (strcasecmp(addr, checked_address) == 0) {
-      if (dyn)
-        wally_free_string(dyn);
-      dismiss_progress();
-      char msg[64];
-      snprintf(msg, sizeof(msg), "Change #%u", i);
-      dialog_show_info("Address Verified", msg, found_info_cb, NULL,
-                       DIALOG_STYLE_FULLSCREEN);
-      return;
-    }
-    if (dyn) {
-      wally_free_string(dyn);
-      dyn = NULL;
-    }
+  if (found) {
+    dismiss_progress();
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%s #%u", match.chain ? "Change" : "Receive",
+             match.index);
+    dialog_show_info("Address Verified", msg, found_info_cb, NULL,
+                     DIALOG_STYLE_FULLSCREEN);
+    return;
   }
 
   dismiss_progress();
@@ -221,10 +170,12 @@ static void perform_sweep_deferred(lv_timer_t *timer) {
   // Not found — offer to search another batch
   char msg[192];
   snprintf(msg, sizeof(msg),
-           "Address not found in first %u addresses.\n\n"
+           "Address not found in first %u %saddresses.\n\n"
            "(Check if loaded wallet settings match coordinator's)\n\n"
            "Search %u more?",
-           search_limit, SEARCH_BATCH);
+           search_limit,
+           reg_entry && reg_entry->num_paths <= 1 ? "receive " : "",
+           SEARCH_BATCH);
   dialog_show_confirm(msg, not_found_confirm_cb, NULL, DIALOG_STYLE_FULLSCREEN);
 }
 
@@ -250,26 +201,15 @@ void address_checker_check(const char *raw_content, void (*found_cb)(void),
     content[addr_len] = '\0';
   }
 
-  // Validate address using libwally
-  const char *hrp =
-      (wallet_get_network() == WALLET_NETWORK_MAINNET) ? "bc" : "tb";
-  uint32_t wally_net = (wallet_get_network() == WALLET_NETWORK_MAINNET)
-                           ? WALLY_NETWORK_BITCOIN_MAINNET
-                           : WALLY_NETWORK_BITCOIN_TESTNET;
-  unsigned char script[128];
-  size_t written = 0;
-  bool valid =
-      (wally_addr_segwit_to_bytes(content, hrp, 0, script, sizeof(script),
-                                  &written) == WALLY_OK) ||
-      (wally_address_to_scriptpubkey(content, wally_net, script, sizeof(script),
-                                     &written) == WALLY_OK);
+  bool valid = address_match_decode(
+      content, wallet_get_network() == WALLET_NETWORK_TESTNET, checked_spk,
+      sizeof(checked_spk), &checked_spk_len);
+  free(content);
   if (!valid) {
-    free(content);
     dialog_show_error_timeout("Invalid address", invalid_address_cb, 0);
     return;
   }
 
-  checked_address = content;
   search_start = 0;
   search_limit = SEARCH_BATCH;
   on_found = found_cb;
@@ -290,10 +230,8 @@ void address_checker_destroy(void) {
   ui_oneshot_cancel(&sweep_timer);
   dismiss_progress();
   destroy_source_picker();
-  if (checked_address) {
-    free(checked_address);
-    checked_address = NULL;
-  }
+  memset(checked_spk, 0, sizeof(checked_spk));
+  checked_spk_len = 0;
   search_start = 0;
   search_limit = SEARCH_BATCH;
   on_found = NULL;

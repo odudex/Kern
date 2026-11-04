@@ -10,8 +10,10 @@
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
+#include <wally_crypto.h>
 #include <wally_descriptor.h>
 
+#include "bip32_path.h"
 #include "descriptor_checksum.h"
 #include "miniscript_policy.h"
 #include "psbt_internal.h"
@@ -35,6 +37,9 @@ typedef struct {
   validation_id_loc_cb id_loc_cb;
   void *user_data;
   descriptor_info_t info;
+  /* Keyed loads keep the parsed descriptor for registry_add_parsed. */
+  struct wally_descriptor *descriptor;
+  int key_index;
   char descriptor_checksum[9];
   bool watch_only;                /* keyless: skip key/xpub stages */
   wallet_network_t watch_network; /* network for the watch-only registry add */
@@ -62,18 +67,6 @@ static char last_duplicate_id[REGISTRY_ID_MAX_LEN];
 /* Session id of the descriptor registered by the last successful load. */
 static char last_loaded_id[REGISTRY_ID_MAX_LEN];
 
-static uint32_t wallet_descriptor_network(void) {
-  return (wallet_get_network() == WALLET_NETWORK_MAINNET)
-             ? WALLY_NETWORK_BITCOIN_MAINNET
-             : WALLY_NETWORK_BITCOIN_TESTNET;
-}
-
-static uint32_t alternate_descriptor_network(uint32_t network) {
-  return (network == WALLY_NETWORK_BITCOIN_MAINNET)
-             ? WALLY_NETWORK_BITCOIN_TESTNET
-             : WALLY_NETWORK_BITCOIN_MAINNET;
-}
-
 static descriptor_validation_result_t
 parse_descriptor_for_wallet(const char *descriptor_str,
                             struct wally_descriptor **descriptor_out) {
@@ -81,7 +74,7 @@ parse_descriptor_for_wallet(const char *descriptor_str,
     return VALIDATION_INTERNAL_ERROR;
 
   *descriptor_out = NULL;
-  uint32_t wally_network = wallet_descriptor_network();
+  uint32_t wally_network = wallet_wally_network();
   int ret = wallet_descriptor_parse(descriptor_str, NULL, wally_network,
                                     descriptor_out);
   if (ret == WALLY_OK)
@@ -89,7 +82,7 @@ parse_descriptor_for_wallet(const char *descriptor_str,
 
   struct wally_descriptor *other_desc = NULL;
   if (wallet_descriptor_parse(descriptor_str, NULL,
-                              alternate_descriptor_network(wally_network),
+                              wallet_wally_other_network(wally_network),
                               &other_desc) == WALLY_OK) {
     wally_descriptor_free(other_desc);
     return VALIDATION_NETWORK_MISMATCH;
@@ -109,6 +102,8 @@ static void cleanup_context(void) {
     if (current_ctx->descriptor_str) {
       free(current_ctx->descriptor_str);
     }
+    wally_descriptor_free(current_ctx->descriptor);
+    free(current_ctx->info.policy);
     free(current_ctx);
     current_ctx = NULL;
   }
@@ -128,9 +123,10 @@ static void complete_validation(descriptor_validation_result_t result) {
 
 void descriptor_validation_cancel(void) { cleanup_context(); }
 
-// Find key index in descriptor that matches our fingerprint
+// Find the first key at or after `start` that carries our fingerprint
 // Returns -1 if not found
-static int find_matching_key_index(struct wally_descriptor *descriptor) {
+static int find_matching_key_index(const struct wally_descriptor *descriptor,
+                                   uint32_t start) {
   unsigned char wallet_fp[BIP32_KEY_FINGERPRINT_LEN];
   if (!key_get_fingerprint(wallet_fp)) {
     return -1;
@@ -141,7 +137,7 @@ static int find_matching_key_index(struct wally_descriptor *descriptor) {
     return -1;
   }
 
-  for (uint32_t i = 0; i < num_keys; i++) {
+  for (uint32_t i = start; i < num_keys; i++) {
     unsigned char key_fp[BIP32_KEY_FINGERPRINT_LEN];
     int ret = wally_descriptor_get_key_origin_fingerprint(
         descriptor, i, key_fp, BIP32_KEY_FINGERPRINT_LEN);
@@ -155,45 +151,12 @@ static int find_matching_key_index(struct wally_descriptor *descriptor) {
   return -1;
 }
 
-// Extract xpub from key string
-// Key format: "[fingerprint/path]xpub..." or just "xpub..."
-static char *extract_xpub_from_key(const char *key_str) {
-  if (!key_str) {
-    return NULL;
-  }
-
-  // Find start of xpub (skip origin info if present)
-  const char *xpub_start = key_str;
-  if (key_str[0] == '[') {
-    const char *close = strchr(key_str, ']');
-    if (close) {
-      xpub_start = close + 1;
-    }
-  }
-
-  // Find xpub prefix (xpub or tpub)
-  const char *prefix = strstr(xpub_start, "pub");
-  if (!prefix || prefix == xpub_start) {
-    return NULL;
-  }
-  prefix--; // Back up to 'x' or 't'
-
-  // Find end of xpub (stop at / or end of string)
-  const char *end = prefix;
-  while (*end && *end != '/' && *end != ')' && *end != ',' && *end != '<') {
-    end++;
-  }
-
-  size_t len = end - prefix;
-  char *xpub = malloc(len + 1);
-  if (!xpub) {
-    return NULL;
-  }
-
-  memcpy(xpub, prefix, len);
-  xpub[len] = '\0';
-
-  return xpub;
+static bool key_is_raw(const struct wally_descriptor *descriptor,
+                       uint32_t index) {
+  uint32_t features = 0;
+  return wally_descriptor_get_key_features(descriptor, index, &features) ==
+             WALLY_OK &&
+         (features & WALLY_MS_IS_RAW);
 }
 
 static bool descriptor_has_private_key(const struct wally_descriptor *desc) {
@@ -202,43 +165,44 @@ static bool descriptor_has_private_key(const struct wally_descriptor *desc) {
          (features & WALLY_MS_IS_PRIVATE);
 }
 
-// True if the parsed descriptor contains miniscript-only fragments.
-// libwally sets WALLY_MS_IS_DESCRIPTOR at parse start and clears it when a
-// non-descriptor (miniscript) fragment is found; multi()/sortedmulti() keep it.
-static bool descriptor_is_miniscript(const struct wally_descriptor *desc) {
-  uint32_t features = 0;
-  if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
-    return false;
-  return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
-}
-
-// Miniscript is supported wrapped in a plain wsh() (segwit v0) or tr()
-// (taproot script-path). Bare miniscript and other wrappers are rejected.
-static bool
-miniscript_wrapper_is_supported(const struct wally_descriptor *desc) {
+// Top-level shapes Kern signs and shows addresses for. Miniscript is supported
+// wrapped in a plain wsh() (segwit v0) or tr() (taproot script-path); bare
+// miniscript and other wrappers are rejected, and so are bare multi(),
+// sortedmulti(), pk() and other descriptors without an address.
+static descriptor_validation_result_t
+check_top_level(const struct wally_descriptor *desc) {
+  static const char *const supported[] = {"pkh(", "wpkh(", "sh(", "wsh(",
+                                          "tr("};
   char *canon = NULL;
   if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
                                     &canon) != WALLY_OK ||
       !canon)
-    return false;
-  bool supported =
+    return VALIDATION_INTERNAL_ERROR;
+  bool known = false;
+  for (size_t i = 0; i < sizeof(supported) / sizeof(supported[0]); i++)
+    if (strncmp(canon, supported[i], strlen(supported[i])) == 0)
+      known = true;
+  bool miniscript_wrapper =
       strncmp(canon, "wsh(", 4) == 0 || strncmp(canon, "tr(", 3) == 0;
   wally_free_string(canon);
-  return supported;
+  if (miniscript_policy_is_miniscript(desc) && !miniscript_wrapper)
+    return VALIDATION_UNSUPPORTED_MINISCRIPT;
+  return known ? VALIDATION_SUCCESS : VALIDATION_UNSUPPORTED_TOP_LEVEL;
 }
 
-// libwally accepts descriptors at parse time that its script generator later
-// rejects: multi()/sortedmulti() above 15 keys and sh()/wsh() inner scripts
-// over PSBT_MAX_INNER_SCRIPT_LEN (520) bytes. Trial-generate the scriptPubKey
-// so unusable descriptors fail at load time instead of at address derivation
-// or signing time. A too-small buffer is reported as WALLY_OK with written >
-// len, hence the explicit written check.
+// Signing regenerates sh()/wsh() inner scripts into PSBT_MAX_INNER_SCRIPT_LEN
+// (520) byte buffers, but libwally generates wsh() witness scripts up to 3600
+// bytes. libwally reports a too-small buffer as WALLY_OK with written > len,
+// so trial-generating the innermost script, as claim_regenerate does, into a
+// 520-byte buffer rejects larger inner scripts at load time instead of at
+// signing time.
 static bool
 descriptor_scripts_are_generatable(const struct wally_descriptor *desc) {
   uint8_t work[PSBT_MAX_INNER_SCRIPT_LEN];
   size_t written = 0;
-  return wally_descriptor_to_script(desc, 0, 0, 0, 0, 0, 0, work, sizeof(work),
-                                    &written) == WALLY_OK &&
+  uint32_t depth = registry_wrapper_depth(registry_descriptor_wrapper(desc));
+  return wally_descriptor_to_script(desc, depth, 0, 0, 0, 0, 0, work,
+                                    sizeof(work), &written) == WALLY_OK &&
          written <= sizeof(work);
 }
 
@@ -277,8 +241,8 @@ static bool xonly_hex_is_nums(const char *xonly) {
 }
 
 /* True if the tr() internal key (descriptor key index 0) is a known NUMS point.
- * Handles both the bare-pubkey form (x-only 64 hex / compressed 66 hex) and the
- * extended-key form used by coordinators (an xpub whose base public key is H,
+ * Handles both a raw key (written x-only or compressed) and the extended-key
+ * form used by coordinators (an xpub whose base public key is H,
  * e.g. xpub6...QuVxqNUS); non-hardened derivation only tweaks H, so comparing
  * the xpub's base key to H is sufficient — matches Krux/embit's NUMS check. */
 static bool tr_internal_key_is_nums(struct wally_descriptor *descriptor) {
@@ -286,24 +250,15 @@ static bool tr_internal_key_is_nums(struct wally_descriptor *descriptor) {
   if (wally_descriptor_get_key(descriptor, 0, &key_str) != WALLY_OK || !key_str)
     return false;
 
-  const char *p = key_str;
-  if (*p == '[') { /* skip any [origin] prefix */
-    const char *close = strchr(p, ']');
-    if (close)
-      p = close + 1;
-  }
-
+  /* libwally lists the key bare, with no origin or path; a raw tr() key is
+   * x-only even when written compressed. */
   bool is_nums = false;
-  size_t len = strlen(p);
-  if (len == 64) {
-    is_nums = xonly_hex_is_nums(p);
-  } else if (len == 66 &&
-             (strncmp(p, "02", 2) == 0 || strncmp(p, "03", 2) == 0)) {
-    is_nums = xonly_hex_is_nums(p + 2);
+  if (key_is_raw(descriptor, 0)) {
+    is_nums = strlen(key_str) == 64 && xonly_hex_is_nums(key_str);
   } else {
     /* Extended key: decode and compare its base pubkey's x coordinate to H. */
     struct ext_key xkey;
-    if (bip32_key_from_base58(p, &xkey) == WALLY_OK) {
+    if (bip32_key_from_base58(key_str, &xkey) == WALLY_OK) {
       char xonly[65];
       for (int i = 0; i < 32; i++)
         snprintf(xonly + i * 2, 3, "%02x", xkey.pub_key[i + 1]);
@@ -323,9 +278,9 @@ static bool descriptor_is_tr(const struct wally_descriptor *descriptor) {
 }
 
 /* True if the descriptor is tr() carrying a script tree, i.e. tr(KEY,<tree>)
- * rather than plain key-path tr(KEY) (BIP86).
- * Note: descriptor_is_miniscript() is unreliable here — a taptree of pure
- * descriptor leaves (pk/multi_a) keeps WALLY_MS_IS_DESCRIPTOR set. */
+ * rather than plain key-path tr(KEY) (BIP86). WALLY_MS_IS_DESCRIPTOR cannot
+ * tell: a tree whose leaves are all pk() or pkh() keeps it set (multi_a
+ * clears it). */
 static bool tr_has_script_tree(const struct wally_descriptor *descriptor) {
   uint32_t features = 0;
   if (wally_descriptor_get_features(descriptor, &features) != WALLY_OK)
@@ -379,76 +334,102 @@ classify_tr_keypath(struct wally_descriptor *descriptor, int our_key_index) {
   return TR_KEYPATH_EXTERNAL;
 }
 
+// Outer script as the canonical form names it, NULL for anything else.
+static const char *descriptor_script_type(struct wally_descriptor *descriptor) {
+  static const struct {
+    const char *prefix;
+    const char *name;
+  } types[] = {
+      {"sh(wpkh(", "sh(wpkh)"},
+      {"sh(wsh(", "sh(wsh)"},
+      {"sh(", "sh"},
+      {"wpkh(", "wpkh"},
+      {"wsh(", "wsh"},
+      {"pkh(", "pkh"},
+      {"tr(", "tr"},
+  };
+  char *canon = NULL;
+  if (wally_descriptor_canonicalize(descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM,
+                                    &canon) != WALLY_OK ||
+      !canon)
+    return NULL;
+  const char *name = NULL;
+  for (size_t i = 0; i < sizeof(types) / sizeof(types[0]) && !name; i++)
+    if (strncmp(canon, types[i].prefix, strlen(types[i].prefix)) == 0)
+      name = types[i].name;
+  wally_free_string(canon);
+  return name;
+}
+
 static bool extract_descriptor_info(struct wally_descriptor *descriptor,
                                     const char *descriptor_str,
                                     int our_key_index,
                                     descriptor_info_t *info) {
   memset(info, 0, sizeof(descriptor_info_t));
 
-  uint32_t num_keys = 0;
-  if (wally_descriptor_get_num_keys(descriptor, &num_keys) != WALLY_OK) {
+  /* static_checks rejects more keys than letter IDs; this guards keys[]. */
+  uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS];
+  uint32_t num_exprs = 0;
+  uint32_t num_keys =
+      (uint32_t)miniscript_policy_key_letters(descriptor, letters, &num_exprs);
+  if (num_keys == 0 || num_keys > DESCRIPTOR_INFO_MAX_KEYS)
     return false;
-  }
 
-  info->is_miniscript = descriptor_is_miniscript(descriptor);
+  info->is_miniscript = miniscript_policy_is_miniscript(descriptor);
   info->is_multisig = !info->is_miniscript && (num_keys > 1);
   info->tr_keypath = classify_tr_keypath(descriptor, our_key_index);
+  info->script_type = descriptor_script_type(descriptor);
 
-  if (info->is_miniscript) {
-    char *policy = miniscript_policy_string(descriptor);
-    if (policy) {
-      snprintf(info->policy, sizeof(info->policy), "%s", policy);
-      free(policy);
-    }
-  }
-  /* Unreachable for loadable descriptors: the script-size guard caps key
-   * counts well below DESCRIPTOR_INFO_MAX_KEYS. Defensive bound for keys[]. */
-  if (num_keys > DESCRIPTOR_INFO_MAX_KEYS) {
-    return false;
-  }
+  if (info->is_miniscript)
+    info->policy = miniscript_policy_string(descriptor);
   info->num_keys = num_keys;
 
   if (info->is_multisig) {
     info->threshold = parse_multisig_threshold(descriptor_str);
   }
 
-  for (uint32_t i = 0; i < info->num_keys; i++) {
+  /* Each distinct key is listed by its first expression. */
+  for (uint32_t e = 0; e < num_exprs; e++) {
+    uint32_t k = letters[e];
+    bool first = true;
+    for (uint32_t prev = 0; prev < e && first; prev++)
+      first = letters[prev] != k;
+    if (!first)
+      continue;
+
     // Fingerprint
     unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
     if (wally_descriptor_get_key_origin_fingerprint(
-            descriptor, i, fp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK) {
-      snprintf(info->keys[i].fingerprint_hex,
-               sizeof(info->keys[i].fingerprint_hex), "%02X%02X%02X%02X", fp[0],
+            descriptor, e, fp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK) {
+      snprintf(info->keys[k].fingerprint_hex,
+               sizeof(info->keys[k].fingerprint_hex), "%02X%02X%02X%02X", fp[0],
                fp[1], fp[2], fp[3]);
     } else {
-      strncpy(info->keys[i].fingerprint_hex, "N/A",
-              sizeof(info->keys[i].fingerprint_hex));
+      strncpy(info->keys[k].fingerprint_hex, "N/A",
+              sizeof(info->keys[k].fingerprint_hex));
     }
 
-    // Xpub
+    // Xpub; raw keys have none. libwally lists the key bare.
     char *key_str = NULL;
-    if (wally_descriptor_get_key(descriptor, i, &key_str) == WALLY_OK) {
-      char *xpub = extract_xpub_from_key(key_str);
-      if (xpub) {
-        strncpy(info->keys[i].xpub, xpub, sizeof(info->keys[i].xpub) - 1);
-        info->keys[i].xpub[sizeof(info->keys[i].xpub) - 1] = '\0';
-        free(xpub);
-      }
+    if (!key_is_raw(descriptor, e) &&
+        wally_descriptor_get_key(descriptor, e, &key_str) == WALLY_OK) {
+      strncpy(info->keys[k].xpub, key_str, sizeof(info->keys[k].xpub) - 1);
+      info->keys[k].xpub[sizeof(info->keys[k].xpub) - 1] = '\0';
       wally_free_string(key_str);
     }
 
     // Derivation path
     char *path_str = NULL;
-    if (wally_descriptor_get_key_origin_path_str(descriptor, i, &path_str) ==
+    if (wally_descriptor_get_key_origin_path_str(descriptor, e, &path_str) ==
             WALLY_OK &&
         path_str && path_str[0] != '\0') {
-      snprintf(info->keys[i].derivation, sizeof(info->keys[i].derivation),
+      snprintf(info->keys[k].derivation, sizeof(info->keys[k].derivation),
                "m/%s", path_str);
       wally_free_string(path_str);
     } else {
       wally_free_string(path_str);
-      strncpy(info->keys[i].derivation, "N/A",
-              sizeof(info->keys[i].derivation));
+      strncpy(info->keys[k].derivation, "N/A",
+              sizeof(info->keys[k].derivation));
     }
   }
 
@@ -465,7 +446,10 @@ static void id_loc_proceed(const char *id, storage_location_t loc,
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
-  if (!registry_add_from_string(id, current_ctx->descriptor_str, loc, true)) {
+  bool added = registry_add_parsed(id, current_ctx->descriptor,
+                                   (size_t)current_ctx->key_index, loc, true);
+  current_ctx->descriptor = NULL;
+  if (!added) {
     ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
     complete_validation(VALIDATION_INTERNAL_ERROR);
     return;
@@ -504,6 +488,9 @@ static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
   } else if (current_ctx->info.is_multisig) {
     snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
              current_ctx->info.threshold, current_ctx->info.num_keys);
+  } else if (current_ctx->info.script_type) {
+    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig (%s)",
+             current_ctx->info.script_type);
   } else {
     snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig");
   }
@@ -517,11 +504,16 @@ static void session_register_current_descriptor(void) {
     return;
   }
 
-  bool added = current_ctx->watch_only
-                   ? registry_add_watch_only(id, current_ctx->descriptor_str,
-                                             current_ctx->watch_network)
-                   : registry_add_from_string(id, current_ctx->descriptor_str,
-                                              STORAGE_FLASH, false);
+  bool added = false;
+  if (current_ctx->watch_only) {
+    added = registry_add_watch_only(id, current_ctx->descriptor_str,
+                                    current_ctx->watch_network);
+  } else {
+    added = registry_add_parsed(id, current_ctx->descriptor,
+                                (size_t)current_ctx->key_index, STORAGE_FLASH,
+                                false);
+    current_ctx->descriptor = NULL;
+  }
   if (!added) {
     ESP_LOGE(TAG, "Failed to load session descriptor '%s'", id);
     complete_validation(VALIDATION_INTERNAL_ERROR);
@@ -600,91 +592,118 @@ static void proceed_psb_or_info(void) {
 /* Keyless structural checks applied to every parsed descriptor. */
 static descriptor_validation_result_t
 static_checks(struct wally_descriptor *descriptor) {
+  uint32_t num_exprs = 0;
   if (descriptor_has_private_key(descriptor))
     return VALIDATION_PRIVATE_KEY;
-  if (descriptor_is_miniscript(descriptor) &&
-      !miniscript_wrapper_is_supported(descriptor))
-    return VALIDATION_UNSUPPORTED_MINISCRIPT;
+  descriptor_validation_result_t top = check_top_level(descriptor);
+  if (top != VALIDATION_SUCCESS)
+    return top;
   if (!descriptor_scripts_are_generatable(descriptor))
     return VALIDATION_UNSUPPORTED_SCRIPT;
+  uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS];
+  if (miniscript_policy_key_letters(descriptor, letters, &num_exprs) == 0)
+    return VALIDATION_TOO_MANY_KEYS;
   if (tr_internal_keypath_unprovable(descriptor))
     return VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE;
   return VALIDATION_SUCCESS;
 }
 
-/* The wallet's xpub at key_index's origin path must equal the descriptor's. A
- * matching fingerprint alone is attacker-controllable text. */
-static descriptor_validation_result_t
-verify_xpub_match(const struct wally_descriptor *descriptor, int key_index) {
-  char *key_str = NULL;
-  if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK)
-    return VALIDATION_INTERNAL_ERROR;
-  char *descriptor_xpub = extract_xpub_from_key(key_str);
-  wally_free_string(key_str);
-  if (!descriptor_xpub)
-    return VALIDATION_PARSE_ERROR;
-
-  char *origin_path_str = NULL;
-  char full_path[72];
-  if (wally_descriptor_get_key_origin_path_str(descriptor, (uint32_t)key_index,
-                                               &origin_path_str) != WALLY_OK ||
-      !origin_path_str) {
-    free(descriptor_xpub);
-    return VALIDATION_INTERNAL_ERROR;
-  }
-  snprintf(full_path, sizeof(full_path), "m/%s", origin_path_str);
-  wally_free_string(origin_path_str);
-
-  char *wallet_xpub = NULL;
-  if (!key_get_xpub(full_path, &wallet_xpub)) {
-    free(descriptor_xpub);
-    return VALIDATION_INTERNAL_ERROR;
-  }
-  bool xpub_match = strcmp(descriptor_xpub, wallet_xpub) == 0;
-  free(descriptor_xpub);
-  wally_free_string(wallet_xpub);
-  if (!xpub_match)
-    ESP_LOGE(TAG, "XPub mismatch");
-  return xpub_match ? VALIDATION_SUCCESS : VALIDATION_XPUB_MISMATCH;
+/* Depth, parent fingerprint and child number are metadata that coordinators
+ * rebuild, e.g. from a UR hd-key without the parent fingerprint: compare the
+ * key and chain code only. */
+static bool xpub_matches(const char *xpub, const struct ext_key *ours) {
+  struct ext_key xkey;
+  if (bip32_key_from_base58(xpub, &xkey) != WALLY_OK)
+    return false;
+  bool match =
+      memcmp(xkey.pub_key, ours->pub_key, sizeof(xkey.pub_key)) == 0 &&
+      memcmp(xkey.chain_code, ours->chain_code, sizeof(xkey.chain_code)) == 0;
+  wally_bzero(&xkey, sizeof(xkey));
+  return match;
 }
 
-// Verify xpub matches wallet, extract info, and show it.
-static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
-                                      int key_index) {
-  descriptor_validation_result_t xpub_result =
-      verify_xpub_match(descriptor, key_index);
-  if (xpub_result != VALIDATION_SUCCESS) {
-    wally_descriptor_free(descriptor);
-    complete_validation(xpub_result);
-    return;
-  }
+/* A raw key is compressed, or x-only in tr(). */
+static bool raw_key_matches(const char *hex, const struct ext_key *ours) {
+  unsigned char pub[EC_PUBLIC_KEY_UNCOMPRESSED_LEN];
+  size_t len = 0;
+  if (wally_hex_to_bytes(hex, pub, sizeof(pub), &len) != WALLY_OK)
+    return false;
+  if (len == EC_XONLY_PUBLIC_KEY_LEN)
+    return memcmp(pub, ours->pub_key + 1, len) == 0;
+  return len == EC_PUBLIC_KEY_LEN && memcmp(pub, ours->pub_key, len) == 0;
+}
 
+/* Our key at key_index's origin path must be the descriptor's key; a raw key's
+ * origin is its full path. A matching fingerprint alone is
+ * attacker-controllable text. */
+static descriptor_validation_result_t
+verify_own_key(const struct wally_descriptor *descriptor, int key_index,
+               bool registry_key) {
+  uint32_t features = 0;
+  char *path_str = NULL;
+  if (wally_descriptor_get_key_features(descriptor, key_index, &features) !=
+          WALLY_OK ||
+      wally_descriptor_get_key_origin_path_str(descriptor, (uint32_t)key_index,
+                                               &path_str) != WALLY_OK ||
+      !path_str)
+    return VALIDATION_INTERNAL_ERROR;
+  uint32_t path[KEY_MAX_DERIVATION_DEPTH] = {0};
+  size_t depth = 0;
+  bool path_ok =
+      path_str[0] == '\0' ||
+      bip32_path_parse(path_str, path, &depth, KEY_MAX_DERIVATION_DEPTH);
+  wally_free_string(path_str);
+  bool raw = (features & WALLY_MS_IS_RAW) != 0;
+  /* registry_add_from_string() tracks the first own key by its origin, which
+   * must parse within MAX_KEYPATH_ORIGIN_DEPTH; registry_match_keypath() needs
+   * a child path after it, which a raw key lacks. Refuse before any dialog. */
+  if (!path_ok ||
+      (registry_key && (raw || depth == 0 || depth > MAX_KEYPATH_ORIGIN_DEPTH)))
+    return VALIDATION_UNSUPPORTED_KEY_ORIGIN;
+
+  char *key_str = NULL;
+  struct ext_key *ours = NULL;
+  if (wally_descriptor_get_key(descriptor, key_index, &key_str) != WALLY_OK ||
+      !key_get_derived_key_components(path, depth, &ours)) {
+    wally_free_string(key_str);
+    return VALIDATION_INTERNAL_ERROR;
+  }
+  bool match =
+      raw ? raw_key_matches(key_str, ours) : xpub_matches(key_str, ours);
+  bip32_key_free(ours);
+  wally_free_string(key_str);
+  if (!match)
+    ESP_LOGE(TAG, "XPub mismatch");
+  return match ? VALIDATION_SUCCESS : VALIDATION_XPUB_MISMATCH;
+}
+
+/* Verify every key carrying our fingerprint, not just the first: the UI shows
+ * each of them as the wallet's. */
+static descriptor_validation_result_t
+verify_own_keys(const struct wally_descriptor *descriptor) {
+  int first = find_matching_key_index(descriptor, 0);
+  for (int i = first; i >= 0;
+       i = find_matching_key_index(descriptor, (uint32_t)i + 1)) {
+    descriptor_validation_result_t result =
+        verify_own_key(descriptor, i, i == first);
+    if (result != VALIDATION_SUCCESS)
+      return result;
+  }
+  return VALIDATION_SUCCESS;
+}
+
+// Extract info from a descriptor whose keys are verified, and show it.
+static void show_keyed_info(struct wally_descriptor *descriptor,
+                            int key_index) {
   // Run soft purpose-script binding check before freeing the descriptor.
   psb_result_t psb_result = purpose_script_binding_check_soft(descriptor);
 
   // Build the WARN message while the descriptor is still available.
   char psb_msg[128] = {0};
   if (psb_result == PSB_WARN) {
-    // Determine outer script name from canonical form.
-    const char *script_name = "unknown";
-    char *canon = NULL;
-    if (wally_descriptor_canonicalize(
-            descriptor, WALLY_MS_CANONICAL_NO_CHECKSUM, &canon) == WALLY_OK &&
-        canon) {
-      if (strncmp(canon, "sh(wpkh(", 8) == 0)
-        script_name = "sh(wpkh)";
-      else if (strncmp(canon, "sh(wsh(", 7) == 0)
-        script_name = "sh(wsh)";
-      else if (strncmp(canon, "wpkh(", 5) == 0)
-        script_name = "wpkh";
-      else if (strncmp(canon, "wsh(", 4) == 0)
-        script_name = "wsh";
-      else if (strncmp(canon, "pkh(", 4) == 0)
-        script_name = "pkh";
-      else if (strncmp(canon, "tr(", 3) == 0)
-        script_name = "tr";
-      wally_free_string(canon);
-    }
+    const char *script_name = descriptor_script_type(descriptor);
+    if (!script_name)
+      script_name = "unknown";
     // Extract purpose number from key[0] origin path.
     uint32_t purpose = 0;
     char *path = NULL;
@@ -704,10 +723,14 @@ static void verify_xpub_and_show_info(struct wally_descriptor *descriptor,
              purpose, script_name);
   }
 
-  // Extract descriptor info before freeing.
-  extract_descriptor_info(descriptor, current_ctx->descriptor_str, key_index,
-                          &current_ctx->info);
-  wally_descriptor_free(descriptor);
+  bool have_info = extract_descriptor_info(
+      descriptor, current_ctx->descriptor_str, key_index, &current_ctx->info);
+  current_ctx->descriptor = descriptor;
+  current_ctx->key_index = key_index;
+  if (!have_info) {
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
 
   // Stash the purpose-script binding warning to run after the keypath gate.
   current_ctx->psb_warn = (psb_result == PSB_WARN);
@@ -784,7 +807,21 @@ validation_begin(const char *descriptor_str, validation_complete_cb callback,
 
 descriptor_validation_result_t
 descriptor_validate_keyed(const char *descriptor_str, int *key_index_out) {
-  if (!descriptor_str || !key_is_loaded() || !wallet_is_initialized())
+  struct wally_descriptor *descriptor = NULL;
+  descriptor_validation_result_t result = descriptor_validate_keyed_parsed(
+      descriptor_str, &descriptor, key_index_out);
+  wally_descriptor_free(descriptor);
+  return result;
+}
+
+descriptor_validation_result_t
+descriptor_validate_keyed_parsed(const char *descriptor_str,
+                                 struct wally_descriptor **descriptor_out,
+                                 int *key_index_out) {
+  if (descriptor_out)
+    *descriptor_out = NULL;
+  if (!descriptor_str || !descriptor_out || !key_is_loaded() ||
+      !wallet_is_initialized())
     return VALIDATION_INTERNAL_ERROR;
   if (descriptor_text_has_uppercase_hardened(descriptor_str))
     return VALIDATION_INVALID_HARDENED_NOTATION;
@@ -798,23 +835,27 @@ descriptor_validate_keyed(const char *descriptor_str, int *key_index_out) {
   result = static_checks(descriptor);
   int key_index = -1;
   if (result == VALIDATION_SUCCESS) {
-    key_index = find_matching_key_index(descriptor);
+    key_index = find_matching_key_index(descriptor, 0);
     if (key_index < 0)
       result = VALIDATION_FINGERPRINT_NOT_FOUND;
   }
   if (result == VALIDATION_SUCCESS)
-    result = verify_xpub_match(descriptor, key_index);
-  wally_descriptor_free(descriptor);
-  if (result == VALIDATION_SUCCESS && key_index_out)
+    result = verify_own_keys(descriptor);
+  if (result != VALIDATION_SUCCESS) {
+    wally_descriptor_free(descriptor);
+    return result;
+  }
+  *descriptor_out = descriptor;
+  if (key_index_out)
     *key_index_out = key_index;
   return result;
 }
 
-/* Store the descriptor checksum, then reject duplicates already in the
- * in-memory session (h-normalized BIP-380 checksum match). Descriptor files on
- * flash/SD are explicit import sources, not registered descriptors, so dedup is
- * session-scoped. On failure frees `descriptor`, delivers the result, and
- * returns false; the caller must stop. */
+/* Store the descriptor checksum, which names the session entry, then reject
+ * a descriptor already in the in-memory session that pays the same scripts.
+ * Descriptor files on flash/SD are explicit import sources, not registered
+ * descriptors, so dedup is session-scoped. On failure frees `descriptor`,
+ * delivers the result, and returns false; the caller must stop. */
 static bool checksum_and_dedup(struct wally_descriptor *descriptor) {
   if (!descriptor_checksum_from_descriptor(descriptor,
                                            current_ctx->descriptor_checksum)) {
@@ -824,8 +865,8 @@ static bool checksum_and_dedup(struct wally_descriptor *descriptor) {
   }
 
   char existing_id[REGISTRY_ID_MAX_LEN];
-  if (registry_session_has_duplicate_checksum(
-          current_ctx->descriptor_checksum, existing_id, sizeof(existing_id))) {
+  if (registry_session_has_duplicate_scripts(descriptor, existing_id,
+                                             sizeof(existing_id))) {
     wally_descriptor_free(descriptor);
     strncpy(last_duplicate_id, existing_id, sizeof(last_duplicate_id) - 1);
     last_duplicate_id[sizeof(last_duplicate_id) - 1] = '\0';
@@ -856,7 +897,7 @@ void descriptor_validate_and_load(const char *descriptor_str,
   current_ctx->confirm_cb = confirm_cb;
   current_ctx->id_loc_cb = id_loc_cb;
 
-  int key_index = find_matching_key_index(descriptor);
+  int key_index = find_matching_key_index(descriptor, 0);
   if (key_index < 0) {
     ESP_LOGE(TAG, "Wallet fingerprint not found in descriptor");
     wally_descriptor_free(descriptor);
@@ -864,18 +905,31 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
   }
 
+  /* Before the duplicate check: a forged variant of a loaded descriptor pays
+   * the same scripts, and should be named as forged. */
+  descriptor_validation_result_t keys_result = verify_own_keys(descriptor);
+  if (keys_result != VALIDATION_SUCCESS) {
+    wally_descriptor_free(descriptor);
+    complete_validation(keys_result);
+    return;
+  }
+
   if (!checksum_and_dedup(descriptor))
     return;
 
-  verify_xpub_and_show_info(descriptor, key_index);
+  show_keyed_info(descriptor, key_index);
 }
 
 // Watch-only: extract info and show the "Load?" dialog, skipping the xpub
 // verification and PSB warning that the keyed path performs.
 static void watch_only_show_info(struct wally_descriptor *descriptor) {
-  extract_descriptor_info(descriptor, current_ctx->descriptor_str, -1,
-                          &current_ctx->info);
+  bool have_info = extract_descriptor_info(
+      descriptor, current_ctx->descriptor_str, -1, &current_ctx->info);
   wally_descriptor_free(descriptor);
+  if (!have_info) {
+    complete_validation(VALIDATION_INTERNAL_ERROR);
+    return;
+  }
   show_info_or_auto_confirm();
 }
 
@@ -905,6 +959,14 @@ void descriptor_validate_and_load_watch_only(
     const char *descriptor_str, wallet_network_t network,
     validation_complete_cb callback, validation_info_confirm_cb info_confirm_cb,
     void *user_data) {
+  /* Watch-only skips xpub verification, so with a key loaded the views would
+   * mark keys that only claim its fingerprint as ours. */
+  if (descriptor_str && callback && key_is_loaded()) {
+    cleanup_context();
+    callback(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+
   struct wally_descriptor *descriptor = NULL;
   if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
                        &descriptor) != VALIDATION_SUCCESS)

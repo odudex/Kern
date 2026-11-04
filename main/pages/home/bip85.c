@@ -16,11 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <wally_bip32.h>
-#include <wally_bip39.h>
-#include <wally_bip85.h>
 #include <wally_core.h>
-#include <wally_crypto.h>
 
 #define BIP85_INDEX_MAX (BIP32_INITIAL_HARDENED_CHILD - 1)
 
@@ -72,37 +68,9 @@ static void cleanup_flow_ui(void) {
 }
 
 static bool derive_child_mnemonic(void) {
-  struct ext_key *master_key = NULL;
-  unsigned char entropy[HMAC_SHA512_LEN];
-  size_t written = 0;
-  char *mnemonic = NULL;
-  bool ok = false;
-
   clear_child_mnemonic();
-
-  if (!key_get_derived_key("m", &master_key))
-    goto cleanup;
-
-  if (bip85_get_bip39_entropy(master_key, NULL, (uint32_t)selected_word_count,
-                              selected_child_index, entropy, sizeof(entropy),
-                              &written) != WALLY_OK)
-    goto cleanup;
-
-  if (kern_bip39_mnemonic_from_bytes(NULL, entropy, written, &mnemonic) !=
-          WALLY_OK ||
-      !mnemonic)
-    goto cleanup;
-
-  child_mnemonic = mnemonic;
-  ok = true;
-
-cleanup:
-  if (!ok && mnemonic)
-    wally_free_string(mnemonic);
-  if (master_key)
-    bip32_key_free(master_key);
-  secure_memzero(entropy, sizeof(entropy));
-  return ok;
+  return key_get_bip85_mnemonic((uint32_t)selected_word_count,
+                                selected_child_index, &child_mnemonic);
 }
 
 static void append_words_to_buffer(char *out, size_t out_len, char **words,
@@ -111,10 +79,11 @@ static void append_words_to_buffer(char *out, size_t out_len, char **words,
   out[0] = '\0';
 
   for (int i = start; i < end; i++) {
-    offset += snprintf(out + offset, out_len - offset, "%s%d. %s",
-                       i > start ? "\n" : "", i + 1, words[i]);
-    if (offset >= out_len)
+    int written = snprintf(out + offset, out_len - offset, "%s%d. %s",
+                           i > start ? "\n" : "", i + 1, words[i]);
+    if (written < 0 || offset + (size_t)written >= out_len)
       break;
+    offset += (size_t)written;
   }
 }
 

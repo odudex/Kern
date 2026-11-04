@@ -1,6 +1,7 @@
 // Addresses Page - Displays receive and change addresses
 
 #include "addresses.h"
+#include "../../core/descriptor_branch.h"
 #include "../../core/registry.h"
 #include "../../core/ss_whitelist.h"
 #include "../../core/storage.h"
@@ -25,6 +26,7 @@
 #include <string.h>
 #include <wally_address.h>
 #include <wally_core.h>
+#include <wally_descriptor.h>
 
 #define NUM_ADDRESSES 8
 #define ADDRESS_INDEX_FIT_ALLOWANCE 6
@@ -53,6 +55,12 @@ static bool active_descriptor_only = false;
 
 static bool show_change = false;
 static uint32_t address_offset = 0;
+
+/* The branch copy of the registered descriptor the list last showed, kept
+ * while the page lives so paging costs one BIP32 step per key and address. */
+static struct wally_descriptor *branch_desc = NULL;
+static const struct wally_descriptor *branch_of = NULL;
+static uint32_t branch_multi_index = 0;
 
 static char stored_addresses[NUM_ADDRESSES][128];
 static uint32_t stored_indices[NUM_ADDRESSES];
@@ -251,6 +259,12 @@ static void address_button_cb(lv_event_t *e) {
   show_address_detail(index);
 }
 
+static void branch_cache_clear(void) {
+  wally_descriptor_free(branch_desc);
+  branch_desc = NULL;
+  branch_of = NULL;
+}
+
 static void refresh_address_list(void) {
   if (!address_list_container)
     return;
@@ -277,6 +291,20 @@ static void refresh_address_list(void) {
       return;
   }
 
+  uint32_t mp = (reg_entry && reg_entry->num_paths > 1) ? chain : 0;
+  if (reg_entry && (branch_of != reg_entry->desc || branch_multi_index != mp)) {
+    branch_cache_clear();
+    branch_desc = descriptor_branch_alloc(reg_entry->desc, mp);
+    branch_of = reg_entry->desc;
+    branch_multi_index = mp;
+  }
+
+  ss_chain_t ss_chain = {0};
+  if (!reg_entry &&
+      !ss_chain_open(wallet_source_picker_script_type(current_source.source),
+                     current_source.account, chain, is_testnet, &ss_chain))
+    return;
+
   for (uint32_t i = 0; i < NUM_ADDRESSES; i++) {
     uint32_t idx = address_offset + i;
     char addr_buf[SS_ADDRESS_MAX_LEN];
@@ -284,15 +312,14 @@ static void refresh_address_list(void) {
     bool success = false;
 
     if (reg_entry) {
-      uint32_t mp = (reg_entry->num_paths <= 1) ? 0 : chain;
-      int ret = wally_descriptor_to_address(reg_entry->desc, 0, mp, idx, 0,
-                                            &dynamic_addr);
+      int ret = branch_desc
+                    ? wally_descriptor_to_address(branch_desc, 0, 0, idx, 0,
+                                                  &dynamic_addr)
+                    : wally_descriptor_to_address(reg_entry->desc, 0, mp, idx,
+                                                  0, &dynamic_addr);
       success = (ret == WALLY_OK) && dynamic_addr;
     } else {
-      ss_script_type_t script =
-          wallet_source_picker_script_type(current_source.source);
-      success = ss_address(script, current_source.account, chain, idx,
-                           is_testnet, addr_buf, sizeof(addr_buf));
+      success = ss_chain_address(&ss_chain, idx, addr_buf, sizeof(addr_buf));
     }
 
     if (!success)
@@ -350,6 +377,7 @@ static void refresh_address_list(void) {
     lv_obj_add_event_cb(btn, address_button_cb, LV_EVENT_CLICKED,
                         (void *)(intptr_t)si);
   }
+  ss_chain_close(&ss_chain);
 }
 
 static lv_obj_t *create_nav_button(lv_obj_t *parent, const char *text,
@@ -549,5 +577,6 @@ void addresses_page_destroy(void) {
   descriptor_only_index = 0;
   active_descriptor_only = false;
   stored_count = 0;
+  branch_cache_clear();
   address_checker_destroy();
 }

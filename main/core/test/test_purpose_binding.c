@@ -55,6 +55,12 @@ static void test_soft(const char *name, const char *descriptor_str,
 }
 
 int main(void) {
+  /* The host libwally hashes through PSA, as the device does, which needs
+   * wally_init. */
+  if (wally_init(0) != WALLY_OK) {
+    printf("ABORT: wally_init failed\n");
+    return 1;
+  }
   printf("=== purpose_script_binding tests ===\n\n");
 
   printf("--- purpose_script_binding_check_soft ---\n");

@@ -2,18 +2,113 @@
 // and an indented tree rendering ported from Krux's MiniScriptIndenter.
 
 #include "miniscript_policy.h"
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <wally_core.h>
 #include <wally_descriptor.h>
 
-bool miniscript_policy_is_miniscript(const struct wally_descriptor *desc) {
-  uint32_t features = 0;
-  if (wally_descriptor_get_features(desc, &features) != WALLY_OK)
-    return false;
-  return (features & WALLY_MS_IS_DESCRIPTOR) == 0;
+static bool is_hash_fragment(const char *base, const char *open_paren) {
+  static const char *const names[] = {"sha256", "hash256", "ripemd160",
+                                      "hash160"};
+  const char *name = open_paren;
+  while (name > base && (isalnum((unsigned char)name[-1]) || name[-1] == '_'))
+    name--;
+  size_t len = (size_t)(open_paren - name);
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+    if (strlen(names[i]) == len && strncmp(name, names[i], len) == 0)
+      return true;
+  return false;
+}
+
+// Where key `key` (as libwally lists it) is written in `s` as a key expression,
+// not inside a hash argument that happens to have the same hex. *start_out is
+// the start of the expression, origin and an 02/03 prefix included; the return
+// value is the end of the key text, before any derivation suffix. libwally
+// returns raw keys as lowercase hex, x-only in tr(), but keeps them as written
+// in the canonical text. Extended keys are base58, so they must match exactly.
+static const char *find_key(const char *s, const char *key,
+                            const char **start_out) {
+  size_t len = strlen(key);
+  bool hex = strspn(key, "0123456789abcdef") == len;
+  for (const char *p = s; *p; p++) {
+    if ((hex ? strncasecmp(p, key, len) : strncmp(p, key, len)) != 0)
+      continue;
+    const char *after = p + len;
+    if (*after && !strchr("),/}", *after))
+      continue;
+    const char *start = p;
+    if (hex && len == 64 && p - s >= 2 && p[-2] == '0' &&
+        (p[-1] == '2' || p[-1] == '3'))
+      start = p - 2;
+    if (start > s && start[-1] == ']') {
+      const char *lb = start - 1;
+      while (lb > s && *lb != '[')
+        lb--;
+      if (*lb != '[')
+        continue;
+      start = lb;
+    }
+    char before = start > s ? start[-1] : '\0';
+    if (!strchr("(,{", before) ||
+        (before == '(' && is_hash_fragment(s, start - 1)))
+      continue;
+    *start_out = start;
+    return after;
+  }
+  return NULL;
+}
+
+// Hashes keep the case they were written in; lowercasing all text outside the
+// keys leaves the key letters as the only uppercase characters.
+static char *copy_lower(char *dst, const char *src, size_t len) {
+  for (size_t i = 0; i < len; i++)
+    dst[i] = (char)tolower((unsigned char)src[i]);
+  return dst + len;
+}
+
+size_t
+miniscript_policy_key_letters(const struct wally_descriptor *desc,
+                              uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS],
+                              uint32_t *num_exprs_out) {
+  uint32_t num_keys = 0;
+  if (!desc || !letters || !num_exprs_out ||
+      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
+      num_keys == 0 || num_keys > MINISCRIPT_POLICY_MAX_KEY_EXPRS)
+    return 0;
+
+  char *distinct[MINISCRIPT_POLICY_MAX_KEYS];
+  size_t num_distinct = 0;
+  bool ok = true;
+  for (uint32_t i = 0; i < num_keys && ok; i++) {
+    char *key = NULL;
+    if (wally_descriptor_get_key(desc, i, &key) != WALLY_OK || !key) {
+      ok = false;
+      break;
+    }
+    size_t j = 0;
+    while (j < num_distinct && strcmp(distinct[j], key) != 0)
+      j++;
+    if (j < num_distinct) {
+      wally_free_string(key);
+    } else if (num_distinct == MINISCRIPT_POLICY_MAX_KEYS) {
+      wally_free_string(key);
+      ok = false;
+      break;
+    } else {
+      distinct[num_distinct++] = key;
+    }
+    letters[i] = (uint8_t)j;
+  }
+  for (size_t j = 0; j < num_distinct; j++)
+    wally_free_string(distinct[j]);
+  if (!ok)
+    return 0;
+  *num_exprs_out = num_keys;
+  return num_distinct;
 }
 
 char *miniscript_policy_string(const struct wally_descriptor *desc) {
@@ -23,9 +118,9 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
       !canon)
     return NULL;
 
+  uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS];
   uint32_t num_keys = 0;
-  if (wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
-      num_keys == 0 || num_keys > MINISCRIPT_POLICY_MAX_KEYS) {
+  if (!miniscript_policy_key_letters(desc, letters, &num_keys)) {
     wally_free_string(canon);
     return NULL;
   }
@@ -46,24 +141,14 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
       ok = false;
       break;
     }
-    const char *hit = strstr(src, key_str);
-    if (!hit) {
+    const char *start = NULL;
+    const char *end = find_key(src, key_str, &start);
+    if (!end) {
       ok = false;
     } else {
-      // Include a preceding [origin] block in the replacement.
-      const char *start = hit;
-      if (start > src && start[-1] == ']') {
-        const char *lb = start - 1;
-        while (lb > src && *lb != '[')
-          lb--;
-        if (*lb == '[')
-          start = lb;
-      }
-      memcpy(dst, src, (size_t)(start - src));
-      dst += start - src;
-      *dst++ = (char)('A' + i);
+      dst = copy_lower(dst, src, (size_t)(start - src));
+      *dst++ = (char)('A' + letters[i]);
       // Skip the trailing derivation suffix (/<0;1>/* etc).
-      const char *end = hit + strlen(key_str);
       while (*end && strchr("/0123456789h'*<;>", *end))
         end++;
       src = end;
@@ -72,7 +157,7 @@ char *miniscript_policy_string(const struct wally_descriptor *desc) {
   }
 
   if (ok) {
-    strcpy(dst, src);
+    *copy_lower(dst, src, strlen(src)) = '\0';
   } else {
     free(out);
     out = NULL;
@@ -261,19 +346,21 @@ static void join_closing_parens(lines_t *l) {
   }
 }
 
-static bool node_to_lines(const ms_node_t *node, size_t max_width,
-                          lines_t *out);
-
-// First rendered line of a node, stripped of indentation.
-static char *node_first_line(const ms_node_t *node, size_t max_width) {
-  lines_t tmp = {0};
-  if (!node_to_lines(node, max_width, &tmp)) {
-    lines_free(&tmp);
-    return NULL;
+// A node and all its children on one line.
+static char *node_flat_text(const ms_node_t *node) {
+  if (node->num_children == 0)
+    return str_printf("%s", node->text);
+  char *line = str_printf("%s(", node->text);
+  for (size_t i = 0; line && i < node->num_children; i++) {
+    char *child = node_flat_text(node->children[i]);
+    char *next = child ? str_printf("%s%s%s", line, i ? "," : "", child) : NULL;
+    free(child);
+    free(line);
+    line = next;
   }
-  char *first = dup_trim(tmp.items[0], strlen(tmp.items[0]));
-  lines_free(&tmp);
-  return first;
+  char *flat = line ? str_printf("%s)", line) : NULL;
+  free(line);
+  return flat;
 }
 
 static bool node_to_lines(const ms_node_t *node, size_t max_width,
@@ -287,19 +374,9 @@ static bool node_to_lines(const ms_node_t *node, size_t max_width,
     if (node->children[i]->num_children == 0)
       any_leaf = true;
   if (any_leaf && node->level > 0) {
-    char *line = str_printf("%*s%s(", node->level, "", node->text);
-    for (size_t i = 0; line && i < node->num_children; i++) {
-      char *child = node_first_line(node->children[i], max_width);
-      char *next =
-          child ? str_printf("%s%s%s", line, i ? "," : "", child) : NULL;
-      free(child);
-      free(line);
-      line = next;
-    }
-    if (!line)
-      return false;
-    char *flat = str_printf("%s)", line);
-    free(line);
+    char *text = node_flat_text(node);
+    char *flat = text ? str_printf("%*s%s", node->level, "", text) : NULL;
+    free(text);
     if (!flat)
       return false;
     if (strlen(flat) <= max_width)

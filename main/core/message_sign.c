@@ -1,7 +1,9 @@
 #include "message_sign.h"
 #include "../utils/secure_mem.h"
+#include "bip32_path.h"
 #include "key.h"
 #include "message_validation.h"
+#include "script_templates.h"
 #include <esp_log.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,19 @@
 #include <wally_script.h>
 
 static const char *TAG = "message_sign";
+
+/* The script a message-signing path is shown as. Signatures are ECDSA with an
+ * Electrum-style header, so only the purposes of the single-key scripts they
+ * verify against are accepted: BIP44, BIP49 and BIP84. */
+static bool path_template(const char *path, script_template_type_t *out) {
+  uint32_t components[KEY_MAX_DERIVATION_DEPTH];
+  size_t depth = 0;
+  if (!bip32_path_parse(path, components, &depth, KEY_MAX_DERIVATION_DEPTH) ||
+      depth == 0 || !bip32_path_is_hardened(components[0]))
+    return false;
+  uint32_t purpose = bip32_path_unharden(components[0]);
+  return purpose != 86 && script_template_for_purpose(purpose, out);
+}
 
 bool message_sign_parse(const char *content, parsed_sign_message_t *result) {
   if (!content || !result) {
@@ -50,6 +65,12 @@ bool message_sign_parse(const char *content, parsed_sign_message_t *result) {
   }
   converted_path[out_idx] = '\0';
 
+  script_template_type_t type;
+  if (!path_template(converted_path, &type)) {
+    free(converted_path);
+    return false;
+  }
+
   // After space, expect "ascii:" prefix
   const char *msg_start = path_end + 1;
   if (strncmp(msg_start, "ascii:", 6) != 0) {
@@ -84,15 +105,9 @@ void message_sign_free_parsed(parsed_sign_message_t *parsed) {
   parsed->message = NULL;
 }
 
-bool message_sign_sign(const char *derivation_path, const char *message,
-                       char **signature_b64_out) {
-  if (!derivation_path || !message || !signature_b64_out) {
-    return false;
-  }
-
-  struct ext_key *derived_key = NULL;
-  if (!key_get_derived_key(derivation_path, &derived_key)) {
-    ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
+bool message_sign_with_key(const struct ext_key *key, const char *message,
+                           char **signature_b64_out) {
+  if (!key || !message || !signature_b64_out) {
     return false;
   }
 
@@ -104,7 +119,6 @@ bool message_sign_sign(const char *derivation_path, const char *message,
       BITCOIN_MESSAGE_FLAG_HASH, hash, sizeof(hash), &written);
   if (ret != WALLY_OK) {
     ESP_LOGE(TAG, "Failed to format bitcoin message: %d", ret);
-    bip32_key_free(derived_key);
     return false;
   }
 
@@ -115,12 +129,9 @@ bool message_sign_sign(const char *derivation_path, const char *message,
   // added.
   unsigned char sig[EC_SIGNATURE_RECOVERABLE_LEN];
   ret = wally_ec_sig_from_bytes(
-      derived_key->priv_key + 1, EC_PRIVATE_KEY_LEN, hash, EC_MESSAGE_HASH_LEN,
+      key->priv_key + 1, EC_PRIVATE_KEY_LEN, hash, EC_MESSAGE_HASH_LEN,
       EC_FLAG_ECDSA | EC_FLAG_RECOVERABLE, sig, sizeof(sig));
-
-  // Securely clear private key material
   secure_memzero(hash, sizeof(hash));
-  bip32_key_free(derived_key);
 
   if (ret != WALLY_OK) {
     ESP_LOGE(TAG, "Failed to sign message: %d", ret);
@@ -142,9 +153,9 @@ bool message_sign_sign(const char *derivation_path, const char *message,
   return true;
 }
 
-bool message_sign_get_address(const char *derivation_path, bool is_testnet,
-                              char **address_out) {
-  if (!derivation_path || !address_out) {
+bool message_sign_sign(const char *derivation_path, const char *message,
+                       char **signature_b64_out) {
+  if (!derivation_path || !message || !signature_b64_out) {
     return false;
   }
 
@@ -153,20 +164,35 @@ bool message_sign_get_address(const char *derivation_path, bool is_testnet,
     ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
     return false;
   }
-
-  unsigned char script[WALLY_WITNESSSCRIPT_MAX_LEN];
-  size_t script_len;
-
-  int ret = wally_witness_program_from_bytes(
-      derived_key->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, script,
-      sizeof(script), &script_len);
+  bool ok = message_sign_with_key(derived_key, message, signature_b64_out);
   bip32_key_free(derived_key);
+  return ok;
+}
 
-  if (ret != WALLY_OK) {
+bool message_sign_get_address(const char *derivation_path, bool is_testnet,
+                              char **address_out) {
+  if (!derivation_path || !address_out) {
     return false;
   }
 
-  const char *hrp = is_testnet ? "tb" : "bc";
-  ret = wally_addr_segwit_from_bytes(script, script_len, hrp, 0, address_out);
-  return (ret == WALLY_OK);
+  script_template_type_t type;
+  if (!path_template(derivation_path, &type))
+    return false;
+
+  struct ext_key *derived_key = NULL;
+  if (!key_get_derived_key(derivation_path, &derived_key)) {
+    ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
+    return false;
+  }
+
+  unsigned char spk[SCRIPT_TEMPLATE_MAX_SPK_LEN];
+  size_t spk_len = 0;
+  bool ok = script_template_from_pubkey(
+      type, derived_key->pub_key, EC_PUBLIC_KEY_LEN, spk, &spk_len, NULL, NULL);
+  bip32_key_free(derived_key);
+  if (!ok)
+    return false;
+
+  *address_out = script_template_address_from_spk(spk, spk_len, is_testnet);
+  return *address_out != NULL;
 }

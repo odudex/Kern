@@ -38,6 +38,15 @@ static int tests_failed = 0;
 #define XPUB_86                                                                \
   "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWc"                \
   "LteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+/* Uppercase hex, which libwally keeps as written in the canonical text */
+#define XONLY_G_UPPER                                                          \
+  "79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"
+#define SHA256_UPPER                                                           \
+  "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B85A"
+#define SHA256_LOWER                                                           \
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85a"
+#define HASH160_UPPER "E7D285B4817F83F724CD29394DA75DFC84FE639E"
+#define HASH160_LOWER "e7d285b4817f83f724cd29394da75dfc84fe639e"
 
 typedef struct {
   const char *input;
@@ -200,7 +209,104 @@ static void test_policy_string(void) {
                       "wsh(or_d(pk([00000000/48'/0'/0'/2']" XPUB_84 "/0/*),"
                       "and_v(v:pkh([00000000/48'/0'/0'/2']" XPUB_84 "/2/*),"
                       "older(144))))",
-                      "wsh(or_d(pk(A),and_v(v:pkh(B),older(144))))");
+                      "wsh(or_d(pk(A),and_v(v:pkh(A),older(144))))");
+}
+
+/* Only key letters may become KEY tokens, wherever the indenter breaks a
+ * hash. */
+static void check_key_tokens(const char *name, const char *descriptor,
+                             const char *expected_keys) {
+  TEST(name);
+  struct wally_descriptor *desc = parse_desc(descriptor);
+  char *policy = desc ? miniscript_policy_string(desc) : NULL;
+  if (desc)
+    wally_descriptor_free(desc);
+  if (!policy) {
+    FAIL("policy string is NULL");
+    return;
+  }
+  bool ok = true;
+  char keys[64] = "";
+  for (size_t width = 10; ok && width <= 80; width++) {
+    ms_policy_view_t view;
+    if (!miniscript_policy_view_build(policy, width, &view)) {
+      ok = false;
+      break;
+    }
+    keys[0] = '\0';
+    for (size_t i = 0; i < view.num_lines; i++)
+      for (size_t j = 0; j < view.lines[i].num_tokens; j++)
+        if (view.lines[i].tokens[j].kind == MS_TOKEN_KEY)
+          strncat(keys, view.lines[i].tokens[j].text,
+                  sizeof(keys) - strlen(keys) - 1);
+    ok = strcmp(keys, expected_keys) == 0;
+    miniscript_policy_view_free(&view);
+  }
+  free(policy);
+  if (!ok) {
+    printf("\n--- got keys '%s', expected '%s' ---\n", keys, expected_keys);
+    FAIL("mismatch");
+  } else {
+    PASS();
+  }
+}
+
+static void test_policy_case(void) {
+  const char *hashlock = "wsh(and_v(v:pk([00000000/48'/0'/0'/2']" XPUB_84
+                         "/<0;1>/*),sha256(" SHA256_UPPER ")))";
+  check_policy_string("policy string: uppercase hash lowercased", hashlock,
+                      "wsh(and_v(v:pk(A),sha256(" SHA256_LOWER ")))");
+  check_key_tokens("view: hex digits never painted as keys", hashlock, "A");
+
+  check_policy_string("policy string: uppercase raw key",
+                      "wsh(and_v(v:pk(02" XONLY_G_UPPER "),older(10)))",
+                      "wsh(and_v(v:pk(A),older(10)))");
+
+  const char *tr_upper =
+      "tr(" XONLY_G_UPPER ",and_v(v:pk([00000000/86'/0'/0']" XPUB_86
+      "/0/*),hash160(" HASH160_UPPER ")))";
+  check_policy_string("policy string: uppercase tr internal key and hash",
+                      tr_upper,
+                      "tr(A,and_v(v:pk(B),hash160(" HASH160_LOWER ")))");
+  check_key_tokens("view: tr keys only", tr_upper, "AB");
+}
+
+#define XONLY_G                                                                \
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+#define XONLY_2G                                                               \
+  "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+
+/* tr() keys are x-only in libwally but may be written compressed: the 02/03
+ * prefix and any origin belong to the key expression. */
+static void test_policy_compressed_tr_keys(void) {
+  check_policy_string("policy string: compressed tr internal and leaf keys",
+                      "tr(02" XONLY_G ",and_v(v:pk(03" XONLY_2G "),older(10)))",
+                      "tr(A,and_v(v:pk(B),older(10)))");
+  check_policy_string("policy string: compressed tr keys with origins",
+                      "tr([00000000/86'/0'/0']02" XONLY_G
+                      ",and_v(v:pk([11111111/86'/0'/0']03" XONLY_2G
+                      "),older(10)))",
+                      "tr(A,and_v(v:pk(B),older(10)))");
+}
+
+/* A hash argument equal to a later key's hex stays a hash. */
+static void test_policy_hash_equal_to_key(void) {
+  check_policy_string("policy string: hash equal to a later key stays a hash",
+                      "tr(" XONLY_G ",and_v(v:sha256(" XONLY_2G "),pk(" XONLY_2G
+                      ")))",
+                      "tr(A,and_v(v:sha256(" XONLY_2G "),pk(B)))");
+}
+
+/* A flattened thresh() must carry each child whole, not just its first line. */
+static void test_thresh_combinator_child(void) {
+  check_key_tokens("view: thresh keeps the keys under an or_b child",
+                   "wsh(thresh(2,pk(" XPUB_84 "/0/*),a:pk(" XPUB_84 "/1/*),"
+                   "a:or_b(pk(" XPUB_84 "/2/*),a:pk(" XPUB_84 "/3/*))))",
+                   "AAAA");
+  check_key_tokens("view: thresh keeps the keys under an and_b child",
+                   "wsh(thresh(1,pk(" XPUB_84 "/0/*),a:and_b(pk(" XPUB_84
+                   "/1/*),a:pk(" XPUB_84 "/2/*))))",
+                   "AAA");
 }
 
 static void test_is_miniscript(void) {
@@ -226,6 +332,28 @@ static void test_is_miniscript(void) {
     wally_descriptor_free(ms);
   if (sm)
     wally_descriptor_free(sm);
+
+  /* A taptree of pk() leaves keeps WALLY_MS_IS_DESCRIPTOR set but is a
+   * 1-of-N spend set, not a multisig; key-path-only tr() is single-sig. */
+  TEST("is_miniscript: tr() pk-only tree true, tr(KEY) false");
+  struct wally_descriptor *tree =
+      parse_desc("tr([00000000/86'/0'/0']" XPUB_86 "/0/*,"
+                 "{pk([11111111/86'/0'/0']" XPUB_84 "/0/*),"
+                 "pkh([22222222/86'/0'/0']" XPUB_84 "/1/*)})");
+  struct wally_descriptor *keypath =
+      parse_desc("tr([00000000/86'/0'/0']" XPUB_86 "/0/*)");
+  if (!tree || !keypath)
+    FAIL("descriptor parse failed");
+  else if (!miniscript_policy_is_miniscript(tree))
+    FAIL("pk-only taptree not detected as miniscript");
+  else if (miniscript_policy_is_miniscript(keypath))
+    FAIL("key-path tr() detected as miniscript");
+  else
+    PASS();
+  if (tree)
+    wally_descriptor_free(tree);
+  if (keypath)
+    wally_descriptor_free(keypath);
 }
 
 typedef struct {
@@ -386,6 +514,10 @@ int main(void) {
   printf("=== miniscript_policy tests ===\n\n");
   test_indenter();
   test_policy_string();
+  test_policy_case();
+  test_thresh_combinator_child();
+  test_policy_compressed_tr_keys();
+  test_policy_hash_equal_to_key();
   test_is_miniscript();
   test_view();
   test_timelock_notes();

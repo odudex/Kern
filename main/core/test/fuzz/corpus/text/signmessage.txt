@@ -1,0 +1,1 @@
+signmessage m/84h/0h/0h/0/0 ascii:hello world
