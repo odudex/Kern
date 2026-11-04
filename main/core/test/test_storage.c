@@ -14,6 +14,7 @@
 #include <dirent.h>
 #include <esp_partition.h>
 #include <esp_spiffs.h>
+#include <fcntl.h>
 #include <mbedtls/base64.h>
 #include <sd_card.h>
 #include <stdbool.h>
@@ -78,26 +79,25 @@ int host_storage_mkdir(const char *path, mode_t mode) {
   return mkdir(rebase(path, b, sizeof(b)), mode);
 }
 
-static void remove_tree(const char *path) {
-  DIR *dir = opendir(path);
-  if (!dir)
+static void remove_tree_at(int parent, const char *name) {
+  int fd =
+      openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    unlinkat(parent, name, 0);
     return;
+  }
+  DIR *dir = fdopendir(fd);
+  if (!dir) {
+    close(fd);
+    return;
+  }
   struct dirent *e;
   while ((e = readdir(dir)) != NULL) {
-    if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
-      continue;
-    char child[512];
-    snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
-    struct stat st;
-    if (lstat(child, &st) != 0)
-      continue;
-    if (S_ISDIR(st.st_mode))
-      remove_tree(child);
-    else
-      unlink(child);
+    if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0)
+      remove_tree_at(dirfd(dir), e->d_name);
   }
   closedir(dir);
-  rmdir(path);
+  unlinkat(parent, name, AT_REMOVEDIR);
 }
 
 static bool host_file_equals(const char *rel, const void *data, size_t len) {
@@ -203,7 +203,7 @@ esp_err_t esp_partition_erase_range(const esp_partition_t *partition,
   if (partition != &spiffs_part || offset != 0 || size != spiffs_part.size)
     return ESP_ERR_INVALID_ARG;
   char b[512];
-  remove_tree(rebase("/spiffs", b, sizeof(b)));
+  remove_tree_at(AT_FDCWD, rebase("/spiffs", b, sizeof(b)));
   return ESP_OK;
 }
 
@@ -883,7 +883,7 @@ int main(void) {
   test_sd_descriptors();
   test_display_name();
 
-  remove_tree(root);
+  remove_tree_at(AT_FDCWD, root);
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);
   return tests_failed == 0 ? 0 : 1;

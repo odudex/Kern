@@ -3,6 +3,7 @@
 #include "sim_flash.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,34 +34,25 @@ static int mkdir_p(const char *path) {
   return mkdir(tmp, 0700);
 }
 
-static void remove_tree(const char *path) {
-  DIR *dir = opendir(path);
-  if (!dir) {
+static void remove_tree_at(int parent, const char *name) {
+  int fd =
+      openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    unlinkat(parent, name, 0);
     return;
   }
-
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL) {
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-      continue;
-
-    char child[512];
-    snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-
-    struct stat st;
-    if (lstat(child, &st) != 0)
-      continue;
-
-    if (S_ISDIR(st.st_mode)) {
-      remove_tree(child);
-      rmdir(child);
-    } else {
-      unlink(child);
-    }
+  DIR *dir = fdopendir(fd);
+  if (!dir) {
+    close(fd);
+    return;
   }
-
+  struct dirent *e;
+  while ((e = readdir(dir)) != NULL) {
+    if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0)
+      remove_tree_at(dirfd(dir), e->d_name);
+  }
   closedir(dir);
-  rmdir(path);
+  unlinkat(parent, name, AT_REMOVEDIR);
 }
 
 static bool list_has(char **files, int count, const char *name) {
@@ -83,9 +75,8 @@ static int expect_loaded(const uint8_t *expected, size_t expected_len,
 }
 
 int main(void) {
-  char root[256];
-  snprintf(root, sizeof(root), "/tmp/kern-sim-storage-smoke-%ld",
-           (long)getpid());
+  char root[] = "/tmp/kern-sim-storage-smoke-XXXXXX";
+  CHECK(mkdtemp(root) != NULL, "create temp root");
 
   char flash_root[320];
   char nvs_root[320];
@@ -94,7 +85,6 @@ int main(void) {
   snprintf(nvs_root, sizeof(nvs_root), "%s/nvs", root);
   snprintf(sentinel, sizeof(sentinel), "%s/settings.nvs", nvs_root);
 
-  remove_tree(root);
   mkdir_p(nvs_root);
   FILE *nf = fopen(sentinel, "wb");
   CHECK(nf != NULL, "create NVS sentinel");
@@ -212,7 +202,7 @@ int main(void) {
   CHECK(stat(sentinel, &st) == 0, "NVS sentinel preserved");
 
   free(kef_blob);
-  remove_tree(root);
+  remove_tree_at(AT_FDCWD, root);
   puts("storage_smoke ok");
   return 0;
 }
