@@ -187,15 +187,16 @@ v4l2_capture_t *v4l2_capture_open(const char *device,
         fprintf(stderr, "v4l2_capture: refusing non-/dev path: %s\n", device);
         return NULL;
     }
-    struct stat dst;
-    if (stat(device, &dst) != 0 || !S_ISCHR(dst.st_mode)) {
-        fprintf(stderr, "v4l2_capture: %s is not a character device\n", device);
-        return NULL;
-    }
-
     int fd = open(device, O_RDWR | O_NONBLOCK);
     if (fd < 0) {
         fprintf(stderr, "v4l2_capture: cannot open %s: %s\n", device, strerror(errno));
+        return NULL;
+    }
+
+    struct stat dst;
+    if (fstat(fd, &dst) != 0 || !S_ISCHR(dst.st_mode)) {
+        fprintf(stderr, "v4l2_capture: %s is not a character device\n", device);
+        close(fd);
         return NULL;
     }
 
