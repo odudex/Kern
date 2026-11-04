@@ -187,17 +187,28 @@ char *multisig_setup_to_descriptor(const char *text) {
   if (!descriptor)
     goto cleanup;
 
-  int pos = snprintf(descriptor, desc_size, "%ssortedmulti(%u", wrapper_open,
-                     threshold);
-  for (unsigned int i = 0; i < num_keys; i++)
-    pos += snprintf(descriptor + pos, desc_size - pos, ",[%s/%s]%s",
-                    fingerprints[i], origins[i], xpubs[i]);
-  snprintf(descriptor + pos, desc_size - pos, ")%s", wrapper_close);
+  int written = snprintf(descriptor, desc_size, "%ssortedmulti(%u",
+                         wrapper_open, threshold);
+  if (written < 0 || (size_t)written >= desc_size)
+    goto truncated;
+  size_t pos = (size_t)written;
+  for (unsigned int i = 0; i < num_keys; i++) {
+    written = snprintf(descriptor + pos, desc_size - pos, ",[%s/%s]%s",
+                       fingerprints[i], origins[i], xpubs[i]);
+    if (written < 0 || pos + (size_t)written >= desc_size)
+      goto truncated;
+    pos += (size_t)written;
+  }
+  written = snprintf(descriptor + pos, desc_size - pos, ")%s", wrapper_close);
+  if (written < 0 || pos + (size_t)written >= desc_size)
+    goto truncated;
 
   for (unsigned int i = 0; i < found_keys; i++)
     free(xpubs[i]);
   return descriptor;
 
+truncated:
+  free(descriptor);
 cleanup:
   for (unsigned int i = 0; i < found_keys; i++)
     free(xpubs[i]);
