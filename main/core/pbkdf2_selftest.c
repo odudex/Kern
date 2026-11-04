@@ -1,10 +1,9 @@
 /*
  * On-device check and timing for the two PBKDF2 implementations.
  *
- * The host test suite cannot cover any of this: the simulator and
- * main/core/test both build crypto_utils.c with SIMULATOR, which routes
- * PBKDF2 through mbedTLS's pkcs5 API and never touches pbkdf2.c. The
- * accelerated path is only exercised on real silicon, so this is where it
+ * The host builds cannot cover any of this: they have no SHA accelerator,
+ * and the simulator derives through mbedTLS's pkcs5 API instead of pbkdf2.c.
+ * The accelerated path is only exercised on real silicon, so this is where it
  * gets proven.
  *
  * Three stages, in order, because timing a wrong derivation is worthless:

@@ -45,11 +45,12 @@ TEST_INCS = -I$(ROOT)/components/bip138/include -I$(WALLY_INC) -I$(WALLY_DIR) -I
 SIM_STUBS_INC = $(ROOT)/simulator/platform/esp_idf_stubs/include
 SIM_SDKCONFIG_INC = $(ROOT)/simulator/platform
 DEFLATE_DIR = $(ROOT)/components/deflate_codec/src
-# SIMULATOR routes PBKDF2 through mbedtls_pkcs5_pbkdf2_hmac_ext, since the host
-# mbedTLS predates the PSA key-derivation API the firmware uses.
 KEF_INCS = $(TEST_INCS) -I$(SIM_STUBS_INC) -I$(SIM_SDKCONFIG_INC) -I$(DEFLATE_DIR) \
-	-DSIMULATOR -include mbedtls_compat.h
+	-include mbedtls_compat.h
 MBEDTLS_COMPAT_H = $(SIM_STUBS_INC)/mbedtls_compat.h
+# The host mbedTLS predates the PSA key derivation pbkdf2.c uses, so every test
+# linking crypto_utils.c but not pbkdf2.c takes the simulator's PBKDF2.
+HOST_PBKDF2 = $(ROOT)/simulator/platform/esp_idf_stubs/pbkdf2_sim.c
 
 LIBWALLY = libwally.a
 
@@ -148,7 +149,7 @@ SRCS_CRYPTO_UTILS = test_crypto_utils.c
 TARGET_CRYPTO_UTILS = test_crypto_utils
 CRYPTO_UTILS_SRC = ../crypto_utils.c ../crypto_utils.h ../entropy_pool.c \
 	../entropy_pool.h ../pbkdf2.h ../../utils/secure_mem.h stubs/esp_hw_stub.c \
-	$(MBEDTLS_COMPAT_H)
+	$(HOST_PBKDF2) $(MBEDTLS_COMPAT_H)
 
 SRCS_PBKDF2 = test_pbkdf2.c
 TARGET_PBKDF2 = test_pbkdf2
@@ -157,7 +158,7 @@ PBKDF2_OBJ = test_pbkdf2_core.o
 # crypto_init() with the crypto it sets up, for tests built without KEF_INCS.
 CRYPTO_INIT_LIB = test_crypto_init.a
 CRYPTO_INIT_OBJS = crypto_init.o secp_hardening.o crypto_utils.o entropy_pool.o \
-	esp_hw_stub.o
+	esp_hw_stub.o pbkdf2_sim.o
 
 SRCS_KEF = test_kef.c
 TARGET_KEF = test_kef
@@ -268,7 +269,7 @@ $(TARGET_PIN_ATTEMPT): $(SRCS_PIN_ATTEMPT) ../pin_attempt.h ../pin.h
 
 $(TARGET_KEF): $(SRCS_KEF) $(KEF_SRC)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_KEF) ../kef.c ../base43.c \
-		../crypto_utils.c ../entropy_pool.c \
+		../crypto_utils.c ../entropy_pool.c $(HOST_PBKDF2) \
 		$(DEFLATE_DIR)/deflate_codec.c \
 		stubs/esp_hw_stub.c $(KEF_LIBS)
 
@@ -292,7 +293,7 @@ $(STORAGE_OBJ): ../storage.c ../storage.h ../crypto_utils.h ../kef.h stubs/stora
 
 $(TARGET_STORAGE): $(SRCS_STORAGE) $(STORAGE_OBJ) $(KEF_SRC)
 	$(CC) $(CFLAGS) $(KEF_INCS) -I$(SD_CARD_INC) -o $@ $(SRCS_STORAGE) $(STORAGE_OBJ) \
-		../kef.c ../base43.c ../crypto_utils.c ../entropy_pool.c \
+		../kef.c ../base43.c ../crypto_utils.c ../entropy_pool.c $(HOST_PBKDF2) \
 		$(DEFLATE_DIR)/deflate_codec.c stubs/esp_hw_stub.c $(KEF_LIBS)
 
 $(TARGET_KEY): $(SRCS_KEY) $(KEY_SRC) $(LIBWALLY)
@@ -300,7 +301,7 @@ $(TARGET_KEY): $(SRCS_KEY) $(KEY_SRC) $(LIBWALLY)
 
 $(TARGET_CRYPTO_UTILS): $(SRCS_CRYPTO_UTILS) $(CRYPTO_UTILS_SRC)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_CRYPTO_UTILS) ../crypto_utils.c \
-		../entropy_pool.c stubs/esp_hw_stub.c -lmbedcrypto
+		../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) -lmbedcrypto
 
 # pbkdf2.c is built unchanged with its PSA key-derivation calls routed to the
 # test (see stubs/pbkdf2_host_hooks.h): the host mbedTLS has no PSA PBKDF2.
@@ -309,7 +310,7 @@ $(PBKDF2_OBJ): ../pbkdf2.c ../pbkdf2.h ../crypto_utils.h ../../utils/secure_mem.
 
 $(CRYPTO_INIT_LIB): ../crypto_init.c ../crypto_init.h ../secp_hardening.c ../secp_hardening.h $(CRYPTO_UTILS_SRC)
 	$(CC) $(CFLAGS) $(KEF_INCS) -c ../crypto_init.c ../secp_hardening.c ../crypto_utils.c \
-		../entropy_pool.c stubs/esp_hw_stub.c
+		../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2)
 	ar rcs $@ $(CRYPTO_INIT_OBJS)
 
 $(TARGET_PBKDF2): $(SRCS_PBKDF2) $(PBKDF2_OBJ) $(CRYPTO_UTILS_SRC)
@@ -322,7 +323,7 @@ $(TARGET_BIP138_KEYS): $(SRCS_BIP138_KEYS) ../bip138_keys.c ../bip138_keys.h ../
 $(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_backup.h ../bip138_keys.c ../bip138_keys.h ../bip138_crypto.c ../bip138_crypto.h $(CRYPTO_UTILS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(DESC_VALIDATOR_SRC) $(BIP138_SRCS) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) $(BIP138_INCS) -DBIP138_BACKUP_TESTING -Wl,--wrap=wally_descriptor_parse -Wno-format-truncation -o $@ $(SRCS_BIP138_BACKUP) \
 		../bip138_backup.c ../bip138_keys.c ../bip138_crypto.c \
-		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c \
+		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) \
 		../wallet.c ../descriptor_parse.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
 		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c \
 		$(BIP138_SRCS) $(LIBWALLY) -lmbedcrypto $(KEF_LIBS)
@@ -335,13 +336,13 @@ $(TARGET_DESCRIPTOR_TEXT): $(SRCS_DESCRIPTOR_TEXT) $(DESCRIPTOR_TEXT_SRC) $(DESC
 
 $(TARGET_MESSAGE_SIGN): $(SRCS_MESSAGE_SIGN) ../message_sign.c ../message_sign.h ../message_validation.h ../crypto_init.c ../crypto_init.h ../secp_hardening.c ../secp_hardening.h $(KEY_SRC) $(SCRIPT_TEMPLATE_SRC) $(CRYPTO_UTILS_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_MESSAGE_SIGN) ../message_sign.c ../crypto_init.c ../secp_hardening.c ../key.c ../bip32_path.c ../script_templates.c \
-		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(LIBWALLY) -lmbedcrypto
+		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_SELF_TEST): $(SRCS_SELF_TEST) $(SELF_TEST_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_SELF_TEST) ../self_test.c ../crypto_init.c \
 		../secp_hardening.c ../message_sign.c ../dice_mnemonic.c ../descriptor_parse.c \
 		../key.c ../bip32_path.c ../script_templates.c ../crypto_utils.c ../entropy_pool.c \
-		stubs/esp_hw_stub.c $(LIBWALLY) -lmbedcrypto
+		stubs/esp_hw_stub.c $(HOST_PBKDF2) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_WALLY_DESCRIPTOR): $(SRCS_WALLY_DESCRIPTOR) $(LIBWALLY)
 	$(CC) $(CFLAGS) -I$(WALLY_DIR) -I$(WALLY_INC) -I$(WALLY_DIR)/upstream/src $(WALLY_DEFS) -o $@ $(SRCS_WALLY_DESCRIPTOR) $(LIBWALLY) -lmbedcrypto

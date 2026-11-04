@@ -31,6 +31,7 @@ secp_hardening.o
 crypto_utils.o
 entropy_pool.o
 esp_hw_stub.o
+pbkdf2_sim.o
 test_multisig_setup
 test_address_match
 test_descriptor_text
