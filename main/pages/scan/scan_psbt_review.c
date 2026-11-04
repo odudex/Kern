@@ -327,10 +327,9 @@ bool scan_psbt_check_mismatch(void) {
   snprintf(message, sizeof(message),
            "PSBT requires different settings for proper change detection:\n\n"
            "  Network:  %s -> %s\n"
-           "\nGo to Settings " LV_SYMBOL_SETTINGS
-           " to update\nconfiguration before signing.",
+           "\nGo to Settings %s to update\nconfiguration before signing.",
            wallet_is_testnet ? "Testnet" : "Mainnet",
-           scan_ctx.is_testnet ? "Testnet" : "Mainnet");
+           scan_ctx.is_testnet ? "Testnet" : "Mainnet", LV_SYMBOL_SETTINGS);
 
   dialog_show_info("Configuration Mismatch", message, mismatch_dialog_cb, NULL,
                    DIALOG_STYLE_FULLSCREEN);
