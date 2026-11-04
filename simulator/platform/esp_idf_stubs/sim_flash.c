@@ -10,6 +10,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,41 +121,41 @@ const char *sim_flash_resolve_path(const char *path, char *buf,
   return NULL;
 }
 
-static esp_err_t remove_tree_contents(const char *dir_path) {
-  DIR *dir = opendir(dir_path);
+static esp_err_t remove_dir_contents(int fd) {
+  DIR *dir = fdopendir(fd);
   if (!dir) {
-    return (errno == ENOENT) ? ESP_OK : ESP_FAIL;
+    close(fd);
+    return ESP_FAIL;
   }
 
   esp_err_t ret = ESP_OK;
   struct dirent *entry;
   while ((entry = readdir(dir)) != NULL) {
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+    const char *name = entry->d_name;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
       continue;
 
-    char child[1024];
-    int n = snprintf(child, sizeof(child), "%s/%s", dir_path, entry->d_name);
-    if (n < 0 || (size_t)n >= sizeof(child)) {
-      ret = ESP_ERR_INVALID_ARG;
-      continue;
-    }
-
-    struct stat st;
-    if (lstat(child, &st) != 0) {
-      ret = ESP_FAIL;
-      continue;
-    }
-
-    if (S_ISDIR(st.st_mode)) {
-      if (remove_tree_contents(child) != ESP_OK || rmdir(child) != 0)
+    int flags = 0;
+    int child = openat(dirfd(dir), name,
+                       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (child >= 0) {
+      if (remove_dir_contents(child) != ESP_OK)
         ret = ESP_FAIL;
-    } else if (unlink(child) != 0) {
-      ret = ESP_FAIL;
+      flags = AT_REMOVEDIR;
     }
+    if (unlinkat(dirfd(dir), name, flags) != 0)
+      ret = ESP_FAIL;
   }
 
   closedir(dir);
   return ret;
+}
+
+static esp_err_t remove_tree_contents(const char *dir_path) {
+  int fd = open(dir_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0)
+    return (errno == ENOENT) ? ESP_OK : ESP_FAIL;
+  return remove_dir_contents(fd);
 }
 
 esp_err_t sim_flash_spiffs_register(const esp_vfs_spiffs_conf_t *conf) {
