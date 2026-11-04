@@ -320,6 +320,7 @@ static void test_hinted_skips_common_walk(void) {
           !bip138_backup_decrypt_any_hinted(blob, blob_len, &recovered, NULL));
   check("hinted: no common path was derived", bip138_backup_cache_is_empty());
   free(blob);
+  blob = NULL;
 
   char descriptor[256];
   check(
@@ -559,6 +560,7 @@ static void test_approval_and_forgery(void) {
   /* Simulate the explicit confirmation and registration path. The fixture
    * holds one flash file, so the unmarked one is replaced by the new one. */
   stub_storage_reset();
+  blob = NULL;
   check(
       "confirmed old descriptor can be registered with a new approval mark",
       registry_add_from_string("confirmed", recovered, STORAGE_FLASH, false) &&
@@ -613,6 +615,7 @@ static void test_rejected_count(void) {
             storage_save_descriptor(STORAGE_FLASH, "Forged", blob, blob_len,
                                     STORAGE_DESCRIPTOR_BIP138) == ESP_OK);
   free(blob);
+  blob = NULL;
   registry_init(false);
   check("an unapproved backup is not counted",
         registry_count() == 0 && registry_rejected_count() == 0);

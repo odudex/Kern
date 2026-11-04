@@ -245,6 +245,19 @@ static const char *descf(const char *fmt, ...) {
   return slot;
 }
 
+/* Appends at *n; a fixture that outgrows its buffer stops the run. */
+static void appendf(char *out, size_t len, size_t *n, const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int written = vsnprintf(out + *n, len - *n, fmt, ap);
+  va_end(ap);
+  if (written < 0 || (size_t)written >= len - *n) {
+    fprintf(stderr, "test fixture does not fit its buffer\n");
+    abort();
+  }
+  *n += (size_t)written;
+}
+
 static const char *wpkh84(void) {
   return descf("wpkh([" FP "/84'/0'/0']%s/0/*)", xpub_at("m/84'/0'/0'"));
 }
@@ -327,14 +340,15 @@ static void test_static_gates(void) {
         run(sh_wsh_ms) == VALIDATION_UNSUPPORTED_MINISCRIPT);
 
   char big[4096];
-  size_t n = snprintf(big, sizeof(big), "wsh(sortedmulti(1");
+  size_t n = 0;
+  appendf(big, sizeof(big), &n, "wsh(sortedmulti(1");
   for (int i = 0; i < 16; i++) {
     char path[32];
     snprintf(path, sizeof(path), "m/48'/0'/%d'/2'", i);
-    n += snprintf(big + n, sizeof(big) - n, ",[%s/48'/0'/%d'/2']%s/0/*",
-                  i == 0 ? FP : "deadbeef", i, xpub_at(path));
+    appendf(big, sizeof(big), &n, ",[%s/48'/0'/%d'/2']%s/0/*",
+            i == 0 ? FP : "deadbeef", i, xpub_at(path));
   }
-  snprintf(big + n, sizeof(big) - n, "))");
+  appendf(big, sizeof(big), &n, "))");
   descriptor_validation_result_t r = run(big);
   check("sixteen-key multisig rejected as unsupported script",
         r == VALIDATION_UNSUPPORTED_SCRIPT);
@@ -450,14 +464,14 @@ static void test_depth_cap(void) {
                       KERN_DESCRIPTOR_MAX_DEPTH / 2};
   char *out[2] = {deep, shallow};
   for (int k = 0; k < 2; k++) {
-    size_t n = snprintf(out[k], sizeof(deep), "wsh(");
+    size_t n = 0;
+    appendf(out[k], sizeof(deep), &n, "wsh(");
     for (size_t i = 0; i < levels[k]; i++)
-      n += snprintf(out[k] + n, sizeof(deep) - n, "and_v(v:older(%zu),", i + 1);
-    n += snprintf(out[k] + n, sizeof(deep) - n,
-                  "pk([" FP "/48'/0'/0'/2']%s/0/*)", a);
+      appendf(out[k], sizeof(deep), &n, "and_v(v:older(%zu),", i + 1);
+    appendf(out[k], sizeof(deep), &n, "pk([" FP "/48'/0'/0'/2']%s/0/*)", a);
     for (size_t i = 0; i < levels[k]; i++)
-      n += snprintf(out[k] + n, sizeof(deep) - n, ")");
-    snprintf(out[k] + n, sizeof(deep) - n, ")");
+      appendf(out[k], sizeof(deep), &n, ")");
+    appendf(out[k], sizeof(deep), &n, ")");
   }
   struct wally_descriptor *d = NULL;
   bool raw_ok =
@@ -947,13 +961,13 @@ static void test_taproot_keypath(void) {
  * or, when `repeat`, one cosigner xpub at a different path in each slot. */
 static const char *tr_multi_a_keys(char *out, size_t len, int num_keys,
                                    bool repeat) {
-  size_t n = snprintf(
-      out, len, "tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*", X86_0);
-  for (int i = 2; i < num_keys && n < len; i++)
-    n += snprintf(out + n, len - n, ",[deadbeef/86'/0'/1']%s/%d/*",
-                  repeat ? X86_1 : XCOS[i - 2], i);
-  if (n < len)
-    snprintf(out + n, len - n, "))");
+  size_t n = 0;
+  appendf(out, len, &n, "tr(" NUMS_H ",multi_a(1,[" FP "/86'/0'/0']%s/0/*",
+          X86_0);
+  for (int i = 2; i < num_keys; i++)
+    appendf(out, len, &n, ",[deadbeef/86'/0'/1']%s/%d/*",
+            repeat ? X86_1 : XCOS[i - 2], i);
+  appendf(out, len, &n, "))");
   return out;
 }
 
@@ -1001,8 +1015,8 @@ static void test_long_policy(void) {
     char hash[65];
     memset(hash, '0' + i, 64);
     hash[64] = '\0';
-    n += snprintf(tail + n, sizeof(tail) - n,
-                  i < 7 ? "and_v(v:sha256(%s)," : "sha256(%s)))))))))", hash);
+    appendf(tail, sizeof(tail), &n,
+            i < 7 ? "and_v(v:sha256(%s)," : "sha256(%s)))))))))", hash);
   }
   snprintf(expected, sizeof(expected), "tr(A,and_v(v:pk(B),%s", tail);
   const char *desc = descf(
