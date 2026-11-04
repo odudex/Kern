@@ -324,19 +324,13 @@ bool scan_psbt_check_mismatch(void) {
   }
 
   char message[256];
-  int offset = 0;
-  offset += snprintf(
-      message + offset, sizeof(message) - offset,
-      "PSBT requires different settings for proper change detection:\n\n");
-
-  offset += snprintf(message + offset, sizeof(message) - offset,
-                     "  Network:  %s -> %s\n",
-                     wallet_is_testnet ? "Testnet" : "Mainnet",
-                     scan_ctx.is_testnet ? "Testnet" : "Mainnet");
-
-  snprintf(message + offset, sizeof(message) - offset,
+  snprintf(message, sizeof(message),
+           "PSBT requires different settings for proper change detection:\n\n"
+           "  Network:  %s -> %s\n"
            "\nGo to Settings " LV_SYMBOL_SETTINGS
-           " to update\nconfiguration before signing.");
+           " to update\nconfiguration before signing.",
+           wallet_is_testnet ? "Testnet" : "Mainnet",
+           scan_ctx.is_testnet ? "Testnet" : "Mainnet");
 
   dialog_show_info("Configuration Mismatch", message, mismatch_dialog_cb, NULL,
                    DIALOG_STYLE_FULLSCREEN);
