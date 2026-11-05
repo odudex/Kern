@@ -39,14 +39,14 @@ Kern is a research and development project. This list tracks what has been explo
 - ✅ BIP85 deterministic entropy
 - Policy types
   - ✅ Single-sig (BIP44/49/84/86 whitelist; no policy setting required)
-  - ✅ Multisig (session-loaded descriptors, with explicit flash + SD backup/import)
+  - ✅ Multisig (session-loaded or registered descriptors)
   - ✅ Miniscript (Native Segwit and Taproot)
 - Descriptors
   - ✅ Loading
   - ✅ Exporting
   - ✅ Saving
   - ✅ Encrypting/Decrypting
-  - ❌ Persistent registration with encrypted descriptor backups, using the public keys inside the descriptor as keys, following the Bitcoin Encrypted Backup proposal in bitcoin/bips#1951
+  - ✅ Persistent registration with encrypted descriptor backups on flash or SD card, using the public keys inside the descriptor as keys (BIP138)
 - Script type
   - ✅ Legacy
   - ✅ Native Segwit (P2WPKH, BIP84)
@@ -72,6 +72,9 @@ Kern is a research and development project. This list tracks what has been explo
 
 - Reliability
   - ✅ Simulator (desktop, with webcam QR scanning)
-  - ❌ Auto tests
+  - ✅ Auto tests
+    - ✅ Host tests on every commit in CI
+    - ✅ Fuzzing and sanitizer builds
+    - ✅ On-device self test (known-answer checks)
 
 - ❌ User's documentation
