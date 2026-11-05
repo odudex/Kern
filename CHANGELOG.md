@@ -1,9 +1,45 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.21] - 2026-11-05
 
 ### Added
-- Board target for the Waveshare ESP32-P4-Pico (`p4_pico`), a display-less module with Raspberry Pi style DSI and CSI connectors and no radio chip, paired with Waveshare's 5-DSI-TOUCH-A (720x1280). The display is the HX8394 panel of the ESP32-P4-WiFi6-Touch-LCD-5, so it shares that board's panel driver, now its own component; its MCU at I2C 0x45 drives the backlight, and the GT911 touch controller is probed at 0x5D and 0x14. Untested on hardware
+- ESP32-P4 v3.x silicon support: every board has a `<board>_v3` build, the web flasher picks the build matching the chip revision (esptool-js 0.7.0, kept at 115200 baud), and SD updates reject images for another revision. PSRAM runs at 200 MHz on v3.x with the core bus timeout disabled
+- Board target for the Waveshare ESP32-P4-Pico (`p4_pico`) with Waveshare's 5-DSI-TOUCH-A (720x1280), sharing wave_5's HX8394 driver, now its own component; the display MCU at I2C 0x45 drives power and backlight. Untested on hardware
+- Self Test in the pre-login Settings: known-answer checks for hashing, AES, PBKDF2 (and whether the SHA accelerator passes), BIP39/32/85, signing and dice
+- Single-sig descriptors name their script type on the load screen and in the session label
+- Fuzz targets and ASan/UBSan host builds for the code around libwally (`just fuzz`, `just test-asan`), and known-answer tests pinned to independent implementations
+
+### Changed
+- BIP39 seeds derive on the SHA accelerator: about 200 ms down to 26 ms per derivation on wave_43
+- Faster PSBT review and signing: one classification serves the gate and the review, outputs are read without copying the transaction (large batch PSBTs no longer freeze the UI), registry scripts are generated once per claim, and only keypaths naming our key are tried
+- Faster address list and check: single-sig derives from a public chain key, descriptors derive each key's branch once (a 100+100 check of a 2-of-3 on wave_43 drops from 6.4 s to 3.7 s)
+- PSBTs are parsed and cloned preferring PSRAM, sparing the internal RAM secrets rely on
+- The secp256k1 context's blinding is randomized at boot and refreshed before signing; signatures stay RFC6979/BIP340 deterministic
+- BIP138 backups save to SD as raw `.bip138`, as Liana writes them (`.bip138.txt` still reads); at login, registered backups open through their stored paths only
+- The OV5647 is windowed to the 800x800 the scanner crops
+- libwally hashes via PSA and drops the Elements struct fields. Updated libwally (wsh() scripts up to 3600 bytes, multi() up to 20 keys), cUR and k_quirc
+
+### Fixed
+- libwally was built with Elements on (`-DBUILD_ELEMENTS=0` enables it), so Liquid PSETs parsed and could be signed; removing it saves 47 KB
+- Only the first key with the wallet fingerprint was verified against the seed; every such key is now checked by key material at its parsed origin, raw keys and xpubs without a parent fingerprint included
+- PSBT signing: registry keypaths matched only `/<0;1>/*` after the first own key, so other multipath groups and single-path descriptors were refused; only one own key signed per input (Liana primary + recovery); a leaf key was skipped when the seed also held the taproot internal key
+- Taproot key-path signatures that fail to verify against the output key (stray or missing merkle root) are dropped instead of exported
+- Inputs whose witness_utxo contradicts the previous transaction are refused at signing, not only at review
+- Change shows only when it returns to the inputs' wallet; other owned outputs are listed as Self-Transfer. Registry change past index 200 needs Permissive signing, like single-sig
+- Every output shows a destination (address, unknown witness version or script hex); the fee is trusted when every signed input is taproot; an unsummable output total is refused
+- Keypaths of nine or more steps were classified from stale stack bytes
+- Out of memory while restoring denied inputs or trimming v0 PSBTs could keep a discarded signature or export one without ours
+- A Nunchuk taproot multisig's unhardened internal-key path made a testnet PSBT read as mainnet
+- Descriptor loading: a checksum was dropped unchecked when `/<0;1>/*` was added; bare multi(), sortedmulti() and pk() are refused; watch-only loads are refused while a key is loaded; unusable own-key origins report as unsupported, not malformed
+- Multisig setup files: each Derivation line and BlueWallet `# derivation:` comment applies to the keys below it, and testnet Vpub/Upub convert
+- Policy view: long policies were cut, thresh() children could drop keys, hash hex could be painted as key letters, and tr() trees of pk() leaves read as "Multisig (0 of N)". Each distinct key gets one letter (26 distinct keys, 64 expressions)
+- Registry: duplicates are found by the scripts a descriptor pays, not its text; backups failing verification at login now warn instead of vanishing; key replacement restores approved backups instead of leaving the registry empty
+- BIP138: a hint is stored for every origin of a recipient key, the key cache is wiped on wallet unload, and binary `.bip138` files open from Home > Load
+- The address checker matched Base58 case-insensitively, so a ground case variant could read as verified; it now compares scriptPubKeys. Single-path descriptors searched receive addresses twice
+- Message signing always showed a P2WPKH address; it now follows the path's purpose (44/49/84) and refuses others. Messages the review font cannot display are refused, for BIP322 too
+- Changing Network in Settings dropped a passphrase set on an earlier visit to the page
+- Secrets: seed material on the LVGL stack is wiped and lock scrubs its unused stack; libwally's mnemonic copies stay in secret memory; mnemonic, SeedQR and QR scratch buffers are wiped before freeing
+- Descriptor UR export kept showing the previous QR when cUR cannot encode the descriptor
 
 ## [0.0.20] - 2026-09-23
 
