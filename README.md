@@ -256,7 +256,7 @@ Pre-release firmware is provided **for research and testing purposes only**. Any
 
 ### Steps
 
-1. Download the zip for your device from the [Releases](https://github.com/odudex/Kern/releases) page (e.g. `kern-wave_4b-v0.0.3.zip`).
+1. Download the zip for your device from the [Releases](https://github.com/odudex/Kern/releases) page (e.g. `kern-wave_4b-v0.0.3.zip`). Boards with ESP32-P4 chip revision v3.x need the `_v3` zip (e.g. `kern-wave_4b_v3-v0.0.3.zip`); esptool prints the revision when it connects, as in `Chip type: ESP32-P4 (revision v3.2)`.
 
 2. Unzip the package:
 
@@ -288,7 +288,7 @@ esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-v0.0.3.hex
 
 ### Updating via SD card
 
-A device already running signed firmware updates without any computer: copy `firmware-signed.bin` from the zip onto a SD card, insert it, and go to **Settings → Firmware Update**. The device verifies the signature before installing and keeps the previous firmware as an automatic fallback.
+A device already running signed firmware updates without any computer: copy `firmware-signed.bin` from the zip (the `_v3` zip on v3.x chips) onto a SD card, insert it, and go to **Settings → Firmware Update**. The device verifies the signature and the chip revision before installing and keeps the previous firmware as an automatic fallback.
 
 ## Community
 
