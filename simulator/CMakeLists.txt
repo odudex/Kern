@@ -73,6 +73,11 @@ target_compile_definitions(wally PRIVATE
     ECMULT_WINDOW_SIZE=8
 )
 
+if(APPLE)
+    # macOS lacks explicit_bzero; wally_internal_bzero() tries memset_s first
+    target_compile_definitions(wally PRIVATE HAVE_MEMSET_S=1 __STDC_WANT_LIB_EXT1__=1)
+endif()
+
 # Changes the public struct layouts, so every user of the headers needs it.
 target_compile_definitions(wally PUBLIC WALLY_ABI_NO_ELEMENTS)
 
