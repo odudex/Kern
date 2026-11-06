@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Script to run clang-format on all .c and .h files in project source directories
 # Covers main/ and first-party components (excludes libwally-core)
