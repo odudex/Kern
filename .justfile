@@ -32,6 +32,20 @@ flash board="wave_4b": (_check_board board)
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}})" flash
 
+# The sdkconfig is regenerated every time so overlay edits always land.
+# Release image (sdkconfig.release overlay) in build_release_<board>/, as scripts/release.sh builds it
+build-release board="wave_4b": (_check_board board)
+    #!/usr/bin/env sh
+    set -e
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    rm -f build_release_{{board}}/sdkconfig
+    idf.py -B build_release_{{board}} -D SDKCONFIG=build_release_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.release" build
+
+flash-release board="wave_4b": (build-release board)
+    #!/usr/bin/env sh
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    idf.py -B build_release_{{board}} -D SDKCONFIG=build_release_{{board}}/sdkconfig flash
+
 monitor board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
@@ -72,6 +86,7 @@ clean:
     rm -fRd build_*_v3
     rm -fRd build_pbkdf2_*
     rm -fRd build_scanprof_*
+    rm -fRd build_release_*
     rm -f sdkconfig
     rm -fRd compile_commands.json
     rm -fRd .cache/
