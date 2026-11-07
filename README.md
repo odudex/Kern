@@ -98,6 +98,8 @@ just clean              # Wipe all build_<board> dirs + sdkconfig
 
 ESP32-P4 chip revision v3.x needs its own image: ESP-IDF builds for either v0.x/v1.x or v3.x silicon, never both. Append `_v3` to any board (`just build wave_43_v3`, `just flash wave_43_v3`) to build with the `sdkconfig.rev3` overlay into `build_<board>_v3/`. The web flasher reads the chip revision on connect and picks the matching build.
 
+Published releases are built with `just build-release <board>` (what `scripts/release.sh` runs for every board), which adds the `sdkconfig.release` overlay into `build_release_<board>/`: WARN-level logs, a silent reboot on panic instead of a register and stack dump, and silent assertions. Use it to reproduce a release image; `just build` is the development configuration.
+
 Or using `idf.py` directly:
 
 ```bash

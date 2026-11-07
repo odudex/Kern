@@ -35,9 +35,9 @@ for DEVICE in $DEVICES; do
     echo "========================================"
 
     # Delegate to justfile so the SDKCONFIG/build-dir layout stays in one place
-    just build "$DEVICE"
+    just build-release "$DEVICE"
 
-    BUILD_DIR="$REPO_ROOT/build_${DEVICE}"
+    BUILD_DIR="$REPO_ROOT/build_release_${DEVICE}"
     DEVICE_DIR="$RELEASE_DIR/${DEVICE}"
     mkdir -p "$DEVICE_DIR"
 

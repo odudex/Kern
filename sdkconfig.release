@@ -1,0 +1,9 @@
+# Release overlay, applied by `just build-release <board>` and scripts/release.sh.
+# Logs stay on at WARN: once secure boot pins the developer keys, release logs are the only diagnostics a user can send.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+# The RISC-V panic handler dumps raw stack memory, which can hold seed or signing buffers.
+CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+# Keep CONFIG_BOOT_ROM_LOG_ALWAYS_ON: every other choice burns UART_PRINT_CONTROL on first boot.
