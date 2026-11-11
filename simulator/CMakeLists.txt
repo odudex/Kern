@@ -137,6 +137,7 @@ set(STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/efuse_hmac_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/freertos_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/fw_update_sim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/secure_boot_sim.c
 )
 
 # --- Application utilities ---
@@ -277,6 +278,7 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/login/login_scan.c
     ${APP_PAGES_DIR}/login/login_settings.c
     ${APP_PAGES_DIR}/login/security_settings.c
+    ${APP_PAGES_DIR}/login/secure_boot_page.c
     ${APP_PAGES_DIR}/login/about.c
     # Load mnemonic
     ${APP_PAGES_DIR}/load_mnemonic/load_menu.c
@@ -388,6 +390,9 @@ add_executable(kern_simulator
     ${BIP138_SOURCES}
 )
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../main/core/sb_digests.cmake)
+kern_generate_sb_digests(${CMAKE_CURRENT_BINARY_DIR}/generated)
+
 # Include paths — order matters: simulator headers shadow ESP-IDF
 target_include_directories(kern_simulator PRIVATE
     # Simulator stubs (highest priority — shadow ESP-IDF headers)
@@ -400,6 +405,7 @@ target_include_directories(kern_simulator PRIVATE
     ${MBEDTLS_INCLUDE_DIR}
     # Application source tree
     ${CMAKE_CURRENT_SOURCE_DIR}/../main                 # ui/theme.h, core/, utils/, pages/
+    ${CMAKE_CURRENT_BINARY_DIR}/generated               # kern_sb_digests.h
     # Component headers (for kef.c -> deflate_codec, cUR, k_quirc, video)
     ${CMAKE_CURRENT_SOURCE_DIR}/../components
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src

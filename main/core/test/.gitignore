@@ -41,6 +41,7 @@ test_seedqr
 test_mnemonic_words
 test_descriptor_branch
 test_self_test
+test_sbv2
 fuzz_psbt
 fuzz_descriptor
 fuzz_text

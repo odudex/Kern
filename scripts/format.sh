@@ -37,6 +37,7 @@ fi
 
 DIRS=(
     "$REPO_ROOT/main"
+    "$REPO_ROOT/bootloader_components"
     "$REPO_ROOT/components/secure_memory"
     "$REPO_ROOT/components/bbqr"
     "$REPO_ROOT/components/bip138"

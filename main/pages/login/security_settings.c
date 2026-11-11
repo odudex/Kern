@@ -1,4 +1,4 @@
-// Security Settings Page - PIN management and session timeout
+// Security Settings Page - PIN management, session timeout and secure boot
 
 #include "security_settings.h"
 #include "../../core/pin.h"
@@ -10,6 +10,7 @@
 #include "../../utils/session_cleanup.h"
 #include "../pin/pin_page.h"
 #include "../pin/pin_settings.h"
+#include "secure_boot_page.h"
 #include <lvgl.h>
 
 // -- Top-level security menu --
@@ -102,6 +103,19 @@ static void destroy_timeout_page(void) {
   }
 }
 
+// ── Secure boot ──
+
+static void secure_boot_return(void) {
+  secure_boot_page_destroy();
+  ui_menu_show(security_menu);
+}
+
+static void secure_boot_cb(void) {
+  ui_menu_hide(security_menu);
+  secure_boot_page_create(lv_screen_active(), secure_boot_return);
+  secure_boot_page_show();
+}
+
 // ── Menu ──
 
 static void security_back_cb(void) {
@@ -121,6 +135,7 @@ static void rebuild_menu(void) {
     ui_menu_add_entry(security_menu, "Set Up PIN", setup_pin_cb);
   }
   ui_menu_add_entry(security_menu, "Session Timeout", show_timeout_page);
+  ui_menu_add_entry(security_menu, "Secure Boot", secure_boot_cb);
 }
 
 // ── Public lifecycle ──
@@ -147,6 +162,7 @@ void security_settings_page_hide(void) {
 void security_settings_page_destroy(void) {
   session_cleanup_unregister(security_settings_page_destroy);
   pin_settings_page_destroy();
+  secure_boot_page_destroy();
   destroy_timeout_page();
   if (security_menu) {
     ui_menu_destroy(security_menu);

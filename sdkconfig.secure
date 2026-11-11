@@ -1,0 +1,9 @@
+# Secure boot capable build: the bootloader verifies every app at boot once
+# secure boot is enabled. It never enables it by itself
+# (bootloader_components/secure_boot_opt_in); the app does, from Settings.
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+# The default, secure download mode, would be burned by every app at startup.
+# The Settings lockdown burns it together with SECURE_BOOT_EN.
+CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y

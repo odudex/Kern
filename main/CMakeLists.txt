@@ -45,7 +45,7 @@ idf_component_register(
                   crowpanel wave_7b p4_pico libwally-core cUR sd_card bbqr deflate_codec video spiffs
                   nvs_flash efuse esp_hw_support esp_app_format mbedtls bip138
                   esp_driver_ppa app_update bootloader_support secure_memory bsp_common
-                  bus_timeout
+                  bus_timeout spi_flash
 )
 
 # Ignoring a warn_unused_result return is a build error, not a warning. The
@@ -53,6 +53,10 @@ idf_component_register(
 # and nothing else.
 target_compile_options(${COMPONENT_LIB} PRIVATE -Werror=unused-result
                                               -Werror=vla)
+
+include(${CMAKE_CURRENT_LIST_DIR}/core/sb_digests.cmake)
+kern_generate_sb_digests(${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_include_directories(${COMPONENT_LIB} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
 if(DEFINED FONT_POLICY_WIDTH AND DEFINED FONT_POLICY_HEIGHT)
     find_program(PYTHON3_EXECUTABLE python3 REQUIRED)

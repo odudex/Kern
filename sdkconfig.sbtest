@@ -1,0 +1,3 @@
+# Secure boot dry run (`just sbtest-build`): eFuse writes go to a RAM copy and
+# vanish on reboot, so the Settings lockdown can run end to end on a real board.
+CONFIG_EFUSE_VIRTUAL=y
