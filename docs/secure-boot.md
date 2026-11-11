@@ -71,9 +71,7 @@ The ESP32-P4 provides six eFuse key blocks (BLOCK_KEY0–KEY5). Secure Boot v2 s
 | KEY1 (BLOCK_KEY1) | Secure Boot Digest 1 — first rotation/backup key | Available for rotation #1 |
 | KEY2 (BLOCK_KEY2) | Secure Boot Digest 2 — second rotation/backup key | Available for rotation #2 |
 
-KEY3 holds the flash-encryption key (Phase 5), KEY4 the NVS-encryption HMAC (Phase 3), and KEY5 the anti-phishing HMAC (Phase 2). All six blocks are allocated. Because **all three secure-boot digest slots are populated**, there is no free digest slot for an attacker to inject a rogue signing key.
-
-> **Flash-encryption interaction:** With three digest slots consuming KEY0–KEY2, only one key block (KEY3) is left for flash encryption. XTS-AES-256 normally needs two blocks. Kern keeps 256-bit strength by deploying the flash-encryption key through the ESP32-P4 **Key Manager** (Kconfig choice `SECURE_FLASH_ENCRYPTION_KEY_SOURCE`, option `..._KEY_MGR`), which stores the key outside the shared eFuse blocks. If the Key Manager path is not used, fall back to **XTS-AES-128** in KEY3 (single block). This is a Phase 5 decision — see [security-plan.md](security-plan.md).
+KEY4 holds the NVS-encryption HMAC (Phase 3) and KEY5 the anti-phishing HMAC (Phase 2). KEY3 is unused: Kern does not use flash encryption (see [security-plan.md](security-plan.md#phase-5-flash-encryption-dropped)). Because **all three secure-boot digest slots are populated**, there is no free digest slot for an attacker to inject a rogue signing key.
 
 ### Revocation
 
@@ -92,8 +90,9 @@ Once a revocation bit is set, the ROM bootloader will no longer accept signature
 Setting the `SECURE_BOOT_EN` eFuse bit permanently enables secure boot. From that moment:
 
 - Only firmware signed with a key whose digest matches a non-revoked eFuse slot will boot.
-- Serial flashing of unsigned firmware is blocked (UART download mode is restricted).
-- The device can only be updated via signed images (SD card OTA, in place since Phase 4).
+- Unsigned firmware written over serial no longer starts, and ROM download mode is restricted to secure download mode (no flash readout).
+- The device can only be updated with signed images: the app over SD card (in place since Phase 4), or a signed release over USB.
+- The second-stage bootloader on the device stays as it is. SD updates never write it, and replacing it over USB needs another bootloader signed by a non-revoked key. This is why Kern ships a **frozen bootloader** ([Section 4a](#4a-the-frozen-bootloader)).
 
 ---
 
@@ -197,6 +196,7 @@ kern-sb-key2-pub.pem       # Public key 2 (rotation #2)
 kern-sb-digest0.bin        # SHA-256 digest of key 0 (32 bytes, for eFuse)
 kern-sb-digest1.bin        # SHA-256 digest of key 1 (32 bytes, for eFuse)
 kern-sb-digest2.bin        # SHA-256 digest of key 2 (32 bytes, for eFuse)
+bootloaders/               # Frozen bootloaders and their manifest (Section 4a)
 SHA256SUMS                 # Checksums of all release artifacts
 SHA256SUMS.sig             # GPG or SSH signature of SHA256SUMS
 ```
@@ -221,6 +221,8 @@ sha256sum \
     kern-sb-digest0.bin \
     kern-sb-digest1.bin \
     kern-sb-digest2.bin \
+    bootloaders/BOOTLOADERS \
+    bootloaders/*/bootloader-signed.bin \
     > SHA256SUMS
 
 # Sign the checksums file with GPG
@@ -240,61 +242,9 @@ sha256sum -c SHA256SUMS
 
 The public key digests (SHA-256 of the public keys) are not secret — they are derived from the public keys and are safe to distribute. Kern embeds them directly in the firmware binary so that devices can activate secure boot without requiring external files.
 
-**Generated header:**
+**Embedded at build time:** `main/core/sb_digests.cmake` reads `kern_secure_boot/kern-sb-digest{0,1,2}.bin` when CMake configures the build and writes `kern_sb_digests.h` (`KERN_SB_DIGESTS[3][32]`) into the build tree. Only the `.bin` files are checked in, and `SHA256SUMS.sig` already covers them, so the firmware cannot drift from the published digests. Each file must equal `espsecure digest-sbv2-public-key` of the matching public key.
 
-A build-time script generates a header from the configured public keys:
-
-```bash
-# scripts/generate_sb_digests.h.py
-# Reads public key PEM files and outputs a C header with digest constants.
-# Usage: python scripts/generate_sb_digests.h.py \
-#            kern-sb-key0-pub.pem kern-sb-key1-pub.pem kern-sb-key2-pub.pem \
-#            > components/secure_boot/include/kern_sb_digests.h
-```
-
-The generated header contains:
-
-```c
-// kern_sb_digests.h — AUTO-GENERATED, DO NOT EDIT
-// Rebuild with: just generate-sb-digests
-
-#pragma once
-#include <stdint.h>
-
-// SHA-256 of kern-sb-key0-pub.pem (primary)
-static const uint8_t KERN_SB_DIGEST0[32] = {
-    0xa1, 0xb2, 0xc3, 0xd4, /* ... 32 bytes total ... */
-};
-
-// SHA-256 of kern-sb-key1-pub.pem (rotation #1)
-static const uint8_t KERN_SB_DIGEST1[32] = {
-    0xe5, 0xf6, 0x07, 0x18, /* ... 32 bytes total ... */
-};
-
-// SHA-256 of kern-sb-key2-pub.pem (rotation #2)
-static const uint8_t KERN_SB_DIGEST2[32] = {
-    0x29, 0x3a, 0x4b, 0x5c, /* ... 32 bytes total ... */
-};
-
-// Number of developer digest slots
-#define KERN_SB_DEVELOPER_DIGEST_COUNT 3
-```
-
-Note that the eFuse digest is a 32-byte SHA-256 regardless of the signature scheme, so the embedded-digest and on-device lockdown mechanics are identical whether the keys are RSA-3072 or ECDSA.
-
-**Build integration:**
-
-```bash
-# Justfile target
-generate-sb-digests:
-    python scripts/generate_sb_digests.h.py \
-        kern-sb-key0-pub.pem kern-sb-key1-pub.pem kern-sb-key2-pub.pem \
-        > components/secure_boot/include/kern_sb_digests.h
-```
-
-The generated header is checked into the repository. It changes only when the signing keys change (which should be extremely rare — ideally never after the initial key ceremony). CI can verify that the header matches the public keys in the repo.
-
-**Self-sovereign builds:** Users building from source with their own keys run `just generate-sb-digests` with their own public key files. The header is regenerated with their digests, and the firmware-driven lockdown menu (Section 5a) will burn those instead.
+**Self-sovereign builds:** replace the three `.bin` files with the digests of your own public keys (`espsecure digest-sbv2-public-key --keyfile my-keyN-pub.pem -o kern_secure_boot/kern-sb-digestN.bin`) and rebuild; the lockdown menu (Section 5a) then checks the app and bootloader against those keys and burns those digests instead. See Section 5b for the bootloader such a build needs.
 
 ### 3e. Key Ceremony Checklist
 
@@ -346,106 +296,170 @@ Signed by: ___________________________ (date: ____-__-__)
 
 ## 4. Developer Workflow
 
-### 4a. Signing Firmware
+### 4a. The Frozen Bootloader
 
-When `CONFIG_SECURE_BOOT=y` and the signing key path is configured in sdkconfig, the ESP-IDF build system automatically signs the bootloader and app images with the configured key.
+A locked device keeps the bootloader it was locked with. SD updates only write the app slot, and after lockdown the ROM accepts a bootloader only if a non-revoked key signed it. That bootloader also has to carry signatures from **all three** keys, or a later revocation could leave it with none that count (Section 6), and the lockdown menu refuses anything less (Section 5a).
 
-> **Sign the bootloader with all three keys.** The second-stage bootloader is frozen at initial flash — it is never updated by OTA. To survive key rotations, it must carry a signature from every key whose digest will remain valid after future revocations. Sign the bootloader with key0, key1, **and** key2 (appended signatures). The app only needs the current key, because a rotated app can be re-signed and re-deployed via SD card OTA.
+Signing a bootloader with all three keys means taking keys 1 and 2 out of cold storage. Doing that for every release would defeat the reason they are cold. So the bootloader is built, signed once in a key ceremony, and committed; every release after that ships those same bytes. Only the app is built and signed per release, with key 0.
 
-**Manual signing** (for air-gapped workflows where the build machine doesn't have the key):
+> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay and the dry run exist. The staging recipe, the freeze script, the release-script changes, the CI checks and the web flasher changes described below are planned and not implemented yet. No bootloader has been frozen.
 
-```bash
-# Sign the app image with the current primary key
-espsecure sign-data \
-    --version 2 \
-    --keyfile kern-sb-key0.pem \
-    --output kern-signed.bin \
-    build/kern.bin
+**Variants.** The bootloader does not depend on the display, touch or camera, so most boards share one. Two settings split it: the chip revision range (v1.x and v3.x need different builds, and the v3 bootloader runs a different CPU clock) and the flash mode (wave_35 uses DIO, the rest QIO). That gives four:
 
-# Sign the bootloader with ALL three keys (append each signature)
-espsecure sign-data \
-    --version 2 \
-    --keyfile kern-sb-key0.pem \
-    --output bl-tmp0.bin \
-    build/bootloader/bootloader.bin
-espsecure sign-data \
-    --version 2 \
-    --keyfile kern-sb-key1.pem \
-    --append-signatures \
-    --output bl-tmp1.bin \
-    bl-tmp0.bin
-espsecure sign-data \
-    --version 2 \
-    --keyfile kern-sb-key2.pem \
-    --append-signatures \
-    --output bootloader-signed.bin \
-    bl-tmp1.bin
+| Variant | Boards |
+|---------|--------|
+| `v1-qio` | wave_4b, wave_5, wave_43, wave_7b, crowpanel, p4_pico |
+| `v1-dio` | wave_35 |
+| `v3-qio` | the `_v3` builds of the `v1-qio` boards |
+| `v3-dio` | wave_35_v3 |
+
+Measured so far: the release bootloaders of wave_4b, wave_5 and crowpanel are byte-identical, and wave_35's differs. The other rows follow from the board configs and get confirmed when the staging recipe builds every board and groups them by hash. A new board joins an existing variant when its unsigned bootloader matches; otherwise it needs a freeze of its own.
+
+**What a freeze fixes.** These are properties of the bootloader, so on a locked device they change only through a new freeze and a USB reflash:
+
+- The ESP-IDF version the bootloader is built from, and its bugs.
+- `secure_boot_opt_in`, which keeps the bootloader from enabling secure boot by itself (Section 5a).
+- Anti-rollback: the boot-time refusal of an older app is bootloader code (Section 7).
+- The log level and other `sdkconfig.release` settings that reach the bootloader.
+- The partition table offset and the bootloader's size limit (56 KB).
+
+Each freeze gets a number in `CONFIG_BOOTLOADER_PROJECT_VER` (`sdkconfig.secure`), which lands in the bootloader's description block. The app can read it (`esp_ota_get_bootloader_description()`), so the Secure Boot page and bug reports can say which freeze a device runs.
+
+**Compatibility rule.** Every release must boot on every frozen bootloader still in the field. An app-side change that needs a newer bootloader is a breaking change for locked devices and needs a re-freeze plus a USB reflash by the user.
+
+**Where it lives.**
+
+```
+kern_secure_boot/bootloaders/
+    BOOTLOADERS                      # manifest
+    v1-qio/bootloader-signed.bin
+    v1-dio/bootloader-signed.bin
+    v3-qio/bootloader-signed.bin
+    v3-dio/bootloader-signed.bin
 ```
 
-**Verify a signature:**
+`BOOTLOADERS` has one line per variant: freeze number, git tag, ESP-IDF version, the boards it serves, and the SHA-256 of the unsigned image. `SHA256SUMS` covers the manifest and the binaries, so the existing `SHA256SUMS.sig` vouches for them together with the public keys.
+
+**Anyone can check it.** A secure build writes `bootloader/bootloader-unsigned.bin`, and that file comes out identical across build directories. Building the freeze tag with the manifest's ESP-IDF version must reproduce every byte of the frozen image up to its signature sector, and `espsecure verify-signature` checks the sector against each public key.
+
+**The freeze.**
+
+1. On the build machine, at the commit to freeze: `just bootloader-stage` builds only the bootloader (`sdkconfig.release` + `sdkconfig.secure`) for every board, groups the unsigned images by hash, and stages one per variant with a draft manifest.
+2. On the air-gapped signing machine, with all three private keys: `scripts/freeze_bootloader.sh` signs each staged image with key 0, appends key 1 and key 2, verifies the result against the three published public keys, and writes the manifest hashes. By hand that is:
 
 ```bash
+espsecure sign-data --version 2 --keyfile kern-sb-key0.pem \
+    --output bl-1sig.bin bootloader-unsigned.bin
+espsecure sign-data --version 2 --keyfile kern-sb-key1.pem --append-signatures \
+    --output bl-2sig.bin bl-1sig.bin
+espsecure sign-data --version 2 --keyfile kern-sb-key2.pem --append-signatures \
+    --output bootloader-signed.bin bl-2sig.bin
+
+for n in 0 1 2; do
+    espsecure verify-signature --version 2 \
+        --keyfile kern-sb-key${n}-pub.pem bootloader-signed.bin
+done
+```
+
+3. Back on the build machine: copy the result into `kern_secure_boot/bootloaders/`, regenerate `SHA256SUMS`, sign it with GPG, commit, and tag the commit `bootloader-<N>`.
+
+Fill this in at each freeze and keep it with the key ceremony record (Section 3e):
+
+```
+=== Kern Bootloader Freeze ===
+
+Date:            ____-__-__
+Freeze number:   ____            (CONFIG_BOOTLOADER_PROJECT_VER)
+Git commit/tag:  ___________________________
+ESP-IDF version: ___________________________
+Anti-rollback:   on / off
+
+Before the ceremony:
+  [ ] Dry run passed on this commit (Section 8)
+  [ ] An image from this commit was locked for real on a sacrificial board
+  [ ] That board took an SD update and a USB reflash after the lock
+
+Per variant (unsigned SHA-256, first 16 hex):
+  v1-qio  ________________    [ ] key0  [ ] key1  [ ] key2  [ ] verified
+  v1-dio  ________________    [ ] key0  [ ] key1  [ ] key2  [ ] verified
+  v3-qio  ________________    [ ] key0  [ ] key1  [ ] key2  [ ] verified
+  v3-dio  ________________    [ ] key0  [ ] key1  [ ] key2  [ ] verified
+
+After:
+  [ ] Keys 1 and 2 returned to cold storage
+  [ ] SHA256SUMS regenerated and signed
+  [ ] Committed and tagged bootloader-<N>
+
+Signed by: ___________________________
+```
+
+**Re-freeze.** Reasons to do it again: a bootloader bug or security fix, turning anti-rollback on, a new chip revision or flash mode, or an ESP-IDF update whose apps no longer boot on the old bootloader. A re-freeze is the same ceremony with the next number and whichever keys are not revoked. It reaches a device only when its owner reflashes over USB; devices that never do keep the old bootloader, which is why the compatibility rule above holds for as long as an old freeze is in use.
+
+### 4b. Signing a Release
+
+Per release, only the app is signed, and only with key 0. `scripts/release.sh` builds every board with `sdkconfig.release` + `sdkconfig.secure`; `scripts/sign_release.sh` runs on the air-gapped machine:
+
+```bash
+espsecure sign-data \
+    --version 2 \
+    --keyfile kern-sb-key0.pem \
+    --output firmware-signed.bin \
+    kern-unsigned.bin
+
 espsecure verify-signature \
     --version 2 \
     --keyfile kern-sb-key0-pub.pem \
-    kern-signed.bin
+    firmware-signed.bin
 ```
 
-### 4b. Dev vs. Production Builds
+The bootloader in each release zip is the frozen one for that board's variant, not the one the release build produced:
 
-Maintain two sdkconfig profiles:
+- `release.sh` picks the variant from the generated sdkconfig (chip revision range and flash mode) and packages `kern_secure_boot/bootloaders/<variant>/bootloader-signed.bin`.
+- It compares the freshly built `bootloader-unsigned.bin` with the frozen image and warns when they differ. A difference means the bootloader sources, their config or ESP-IDF moved since the freeze. The release still ships the frozen one; the warning is the prompt to ask whether a re-freeze is due.
+- `sign_release.sh` refuses to package a bootloader that does not verify against all three public keys. It needs no private key for that.
 
-| Profile | Secure Boot | Serial Flash | Use Case |
-|---------|-------------|-------------|----------|
-| `sdkconfig.defaults` | Disabled | Works | Daily development, debugging |
-| `sdkconfig.defaults` + `sdkconfig.secure` | Enabled | Blocked after lockdown | Production releases |
+Before publishing, boot the new app on each frozen variant, and install it over SD on the locked reference board.
 
-**Development build** (default):
+**Installing a lockable release.** The frozen bootloader reaches a device only over USB, with the web flasher or `esptool`. A device that was installed from an earlier release and kept up to date over SD still has its old bootloader, which does not verify apps at boot; the lockdown menu says so and refuses. One USB install of a release zip fixes that. It does not erase the device: the release image leaves NVS and storage alone.
 
-```bash
-idf.py build
-# or
-just build
+**USB flashing a locked device.** Secure download mode still writes flash; it refuses to read it. So a locked device can take a new signed app or a newer frozen bootloader over USB. Two things have to hold in the flasher:
+
+- It must write the bootloader unmodified. Rewriting the flash mode, frequency or size in the image header changes the signed bytes and the ROM then rejects the bootloader, so the flasher uses `keep` for all three.
+- It must work without the commands secure download mode removes (register reads, the flasher stub). The web flasher's chip-revision read fails there, so it has to tolerate that and ask which chip revision the board has.
+
+### 4c. Build Profiles
+
+| Build | Overlays | Bootloader | Use |
+|-------|----------|-----------|-----|
+| `just build <board>` | board defaults | Plain. Never verifies apps, cannot be locked | Daily development |
+| `just build-release <board>` | + `sdkconfig.release` | Plain | Release log and panic settings, for reproducing release behaviour |
+| `scripts/release.sh` | + `sdkconfig.release` + `sdkconfig.secure` | Frozen, from `kern_secure_boot/bootloaders/` | Published releases |
+| `just sbtest-flash <board>` | + `sdkconfig.secure` + `sdkconfig.sbtest` | Test-key signed, virtual eFuses | Dry run of the lockdown (Section 8) |
+
+`sdkconfig.secure` is described in [Section 8](#8-sdkconfigsecure-overlay). Development builds stay without it: `idf.py flash` skips the bootloader when secure boot is configured, and a secure-boot bootloader has no place on a board that is reflashed all day.
+
+### 4d. CI Pipeline
+
+CI builds and never signs; private keys stay off every networked machine.
+
 ```
-
-**Production build** (with secure boot overlay):
-
-```bash
-idf.py -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.secure" build
-```
-
-The `sdkconfig.secure` overlay is defined in [Section 8](#8-sdkconfigsecure-overlay).
-
-### 4c. CI Pipeline
-
-**Recommended approach: CI builds unsigned, developer signs locally.**
-
-This keeps private keys off any networked machine.
-
-```
-CI Pipeline:
-  1. Build firmware (no signing key configured)
-  2. Upload unsigned .bin as build artifact
-  3. Verify build reproducibility (optional)
+CI:
+  1. Build firmware for every board
+  2. Check the frozen bootloaders (below)
 
 Developer (air-gapped):
-  4. Download unsigned .bin
-  5. Sign with espsecure sign-data (bootloader with all 3 keys, app with primary)
-  6. Verify signature with public key
-  7. Upload signed .bin to GitHub Release
+  3. Sign each app with key 0 (scripts/sign_release.sh)
+  4. Verify signatures with the public keys
+  5. Publish the signed release
 ```
 
-**CI verification** (runs on every build, uses public key only):
+Checks on the frozen bootloaders, none of which needs a secret:
 
-```bash
-# CI can verify that a release binary was signed correctly
-espsecure verify-signature \
-    --version 2 \
-    --keyfile kern-sb-key0-pub.pem \
-    kern-signed.bin
-```
+- Every `bootloader-signed.bin` verifies against all three public keys, and the image before its signature sector hashes to the manifest value.
+- When CI's ESP-IDF version equals the manifest's, the bootloader built from the freeze tag matches the frozen one byte for byte. This is what ties the committed binaries to source.
+- On every build with `sdkconfig.secure`, a mismatch between the built and the frozen bootloader is reported, as in `release.sh`.
 
-**Alternative: CI signing with GitHub encrypted secrets.** The signing key is stored as a GitHub encrypted secret and used during CI builds. This is more convenient but increases the attack surface — a compromised CI pipeline or GitHub account could sign malicious firmware. Not recommended for a security-critical project like a signing device.
+Signing in CI with a key held as a repository secret would be more convenient and is not an option here: a compromised pipeline or account could then sign firmware.
 
 ---
 
@@ -461,7 +475,8 @@ The developer's public key digests are embedded in the firmware binary (see [Sec
 
 **Prerequisites:**
 
-- Device running signed Kern firmware (flashed via serial before lockdown).
+- A PIN is set up (it seals KEY4 and KEY5, which must be read-protected before secure boot).
+- The device was installed **over USB** from a release that ships the frozen bootloader (Section 4a). SD updates do not replace the bootloader, so a device that only ever updated over SD since an older release needs one USB install first.
 - The user has verified the release artifacts with GPG before flashing:
 
 ```bash
@@ -471,17 +486,19 @@ sha256sum -c SHA256SUMS
 
 **Steps:**
 
-1. Flash the signed firmware via serial (last time serial will work):
+1. Install the release over USB, with the web flasher or with `esptool` from the unpacked release zip:
 
 ```bash
-esptool --chip esp32p4 write-flash \
-    0x2000 bootloader-signed.bin \
-    0x20000 kern-signed.bin
+esptool --chip esp32p4 write-flash --flash-mode keep --flash-freq keep --flash-size keep \
+    0x2000 bootloader.bin \
+    0x10000 partition-table.bin \
+    0x1e000 ota_data_initial.bin \
+    0x20000 firmware-signed.bin
 ```
 
-> The ESP32-P4 second-stage bootloader lives at flash offset **0x2000** — not 0x0 or 0x1000 as on older chips. `0x20000` is the app slot (`ota_0` after the Phase 3 partition migration; previously `factory`). A blank chip additionally needs the partition table at `0x8000` and `ota_data_initial.bin` at the `otadata` offset.
+> The ESP32-P4 second-stage bootloader lives at flash offset **0x2000** — not 0x0 or 0x1000 as on older chips. `bootloader.bin` in a release zip is the frozen, triple-signed bootloader for that board. The `keep` options matter: letting esptool rewrite the header would change the signed bytes.
 
-2. Boot into Kern and navigate to **Settings → Secure Boot → Lock with Developer Keys**.
+2. Boot into Kern and navigate to **Settings → Security → Secure Boot** (the pre-login Settings).
 3. The device displays:
    - The hex representation of Digest 0, Digest 1, and Digest 2 (from the embedded constants).
    - A warning that this action is **irreversible**.
@@ -491,11 +508,11 @@ esptool --chip esp32p4 write-flash \
    - Verifies that `SECURE_BOOT_EN` is not already set.
    - Verifies that KEY0, KEY1, and KEY2 eFuse blocks are empty — or already contain exactly the three embedded digests, in which case it offers to **resume** an interrupted lockdown (see power-cut note below).
    - Verifies the running app carries a valid signature **and** that the signing key's digest matches one of the embedded digests — a valid signature from a non-matching key would still brick on reboot.
-   - Verifies the bootloader image in flash (offset 0x2000): every embedded digest must be covered by one of its appended signatures, because the bootloader can never be re-signed after lockdown.
+   - Verifies the bootloader image in flash (offset 0x2000): each of the three embedded keys must have a valid signature on it. This is a cryptographic check against the embedded keys, not a comparison of displayed hashes, and it is what ties the device to the frozen bootloader: a bootloader signed by fewer keys, by other keys, or built without secure boot support is refused.
    - Writes `KERN_SB_DIGEST0` to `BLOCK_KEY0` with purpose `SECURE_BOOT_DIGEST0`.
    - Writes `KERN_SB_DIGEST1` to `BLOCK_KEY1` with purpose `SECURE_BOOT_DIGEST1`.
    - Writes `KERN_SB_DIGEST2` to `BLOCK_KEY2` with purpose `SECURE_BOOT_DIGEST2`.
-   - Burns the hardening eFuses the stock bootloader would burn alongside secure boot: `DIS_DIRECT_BOOT`, the JTAG-disable set (`DIS_PAD_JTAG`, `DIS_USB_JTAG`, `SOFT_DIS_JTAG`), and secure ROM download mode (full download-mode disable is deferred to Phase 7).
+   - Burns the hardening eFuses the stock bootloader would burn alongside secure boot: `DIS_DIRECT_BOOT`, the JTAG-disable set (`DIS_PAD_JTAG`, `DIS_USB_JTAG`, `SOFT_DIS_JTAG`), and secure ROM download mode.
    - Burns the `SECURE_BOOT_EN` eFuse bit.
    - Write-protects `RD_DIS` — otherwise an attacker could later *read-protect* a digest block, blinding the ROM verifier: a permanent brick.
    - Displays confirmation with the final eFuse state.
@@ -503,64 +520,22 @@ esptool --chip esp32p4 write-flash \
 
 **Implementation notes:**
 
-The lockdown function should follow this sequence:
+`main/core/secure_boot.c` implements the checks and burns; `main/pages/login/secure_boot_page.c` is the menu. The page shows one of four states: not enabled, partially set up (digests burned, `SECURE_BOOT_EN` clear), enabled with the hardening set incomplete, or enabled with the burned digests. When a check fails it names the first one. The burn runs in two eFuse commits, so a power cut can never leave `SECURE_BOOT_EN` set without its digests:
 
-```c
-#include "esp_efuse.h"
-#include "esp_efuse_table.h"
-#include "esp_secure_boot.h"
-#include "kern_sb_digests.h"
+1. The empty digest slots (`esp_efuse_write_key`, batched), then a read-back of all three against the embedded digests. Anything but an exact match stops here.
+2. One BLK0 commit: `DIS_DIRECT_BOOT`, `DIS_PAD_JTAG`, `DIS_USB_JTAG`, `SOFT_DIS_JTAG` up to all three bits, secure download mode, `SECURE_BOOT_EN`, and the `RD_DIS` write-protect. Each write is a no-op on a bit that is already burned, so the step can be repeated.
 
-esp_err_t kern_secure_boot_lockdown(void) {
-    // 1. Pre-flight checks
-    //    - SECURE_BOOT_EN not already set
-    //    - KEY0/KEY1/KEY2 empty, or holding exactly the embedded digests (resume path)
-    //    - Running app: signature verifies AND its public-key digest matches an
-    //      embedded digest — esp_secure_boot_verify_rsa_signature_block().
-    //      (The generic esp_secure_boot_verify_signature_block() was removed in
-    //       ESP-IDF 6.0 — use the RSA-specific variant.)
-    //    - Bootloader image at 0x2000: every embedded digest covered by one of its
-    //      appended signatures (it can never be re-signed after lockdown)
+The signature checks use `main/core/sbv2.c`, not IDF's verifier: before lockdown IDF trusts the running app's own keys, so it cannot say whether each *embedded* key signed an image. `sbv2.c` checks a signature sector block by block against a chosen digest (magic, RSA scheme, CRC, image digest, key digest, RSA-PSS), over the image hashed up to its 4 KiB-aligned signature sector as the ROM does; `main/core/test/test_sbv2.c` runs it against espsecure-signed fixtures.
 
-    // 2. Burn digests (batch so a power cut can't leave a half-written set);
-    //    skipped when resuming an interrupted lockdown that already burned them
-    esp_efuse_batch_write_begin();
-    esp_efuse_write_key(EFUSE_BLK_KEY0,
-        ESP_EFUSE_KEY_PURPOSE_SECURE_BOOT_DIGEST0, KERN_SB_DIGEST0, 32);
-    esp_efuse_write_key(EFUSE_BLK_KEY1,
-        ESP_EFUSE_KEY_PURPOSE_SECURE_BOOT_DIGEST1, KERN_SB_DIGEST1, 32);
-    esp_efuse_write_key(EFUSE_BLK_KEY2,
-        ESP_EFUSE_KEY_PURPOSE_SECURE_BOOT_DIGEST2, KERN_SB_DIGEST2, 32);
-    esp_efuse_batch_write_commit();
+> **The bootloader waits for the menu.** After lockdown the second-stage bootloader must verify every app against the eFuse digests, and IDF only compiles that check with `CONFIG_SECURE_BOOT=y`. A stock `CONFIG_SECURE_BOOT=y` bootloader, however, calls `esp_secure_boot_v2_permanently_enable()` on every boot, and on a chip without `SECURE_BOOT_EN` it burns the digests of its own signature blocks and the hardening set by itself: flashing it would *be* the lockdown, with no PIN, no warning, and possibly before KEY4/KEY5 are sealed. `bootloader_components/secure_boot_opt_in` links that call to a wrapper (`--wrap`) that returns without touching eFuses while `SECURE_BOOT_EN` is clear and runs the stock code once it is set (which then returns at once). Every bootloader-side eFuse write sits behind that one function. Until secure boot is on, the bootloader still checks each app against the app's own signature, so an unsigned image will not boot even then. A bootloader built without `CONFIG_SECURE_BOOT` would pass the ROM after lockdown but boot any app, so the menu refuses on firmware built without it, and a freeze must only ever sign bootloaders built with it (Section 4a).
 
-    // 3. Hardening eFuses — mirror esp_secure_boot_enable_secure_features()
-    //    (esp-idf: components/bootloader_support/src/esp32p4/secure_boot_secure_features.c).
-    //    The stock bootloader burns these when *it* enables secure boot; a custom
-    //    lockdown flow that skips them leaves JTAG and serial flash readout wide open.
-    esp_efuse_write_field_bit(ESP_EFUSE_DIS_DIRECT_BOOT);
-    esp_efuse_write_field_bit(ESP_EFUSE_DIS_PAD_JTAG);
-    esp_efuse_write_field_bit(ESP_EFUSE_DIS_USB_JTAG);
-    esp_efuse_write_field_cnt(ESP_EFUSE_SOFT_DIS_JTAG, ESP_EFUSE_SOFT_DIS_JTAG[0]->bit_count);
-    esp_efuse_enable_rom_secure_download_mode();  // full disable deferred to Phase 7
-
-    // 4. Enable secure boot — POINT OF NO RETURN
-    esp_efuse_write_field_bit(ESP_EFUSE_SECURE_BOOT_EN);
-
-    // 5. Block post-hoc read-protection of the digest blocks (RD_DIS on a digest
-    //    block would blind the ROM verifier — a permanent brick vector)
-    esp_efuse_write_field_bit(ESP_EFUSE_WR_DIS_RD_DIS);
-
-    return ESP_OK;
-}
-```
-
-> **Why secure download mode, not full disable:** Profile A has no flash encryption, so leaving ROM download mode fully open would allow flash readout over serial. Secure download mode blocks read commands while keeping *signed* serial re-flash available as a recovery path. Disabling download mode entirely is a Phase 7 (Profile B) decision.
+> **Why secure download mode, not full disable:** flash is not encrypted, so an open ROM download mode would allow flash readout over serial. Secure download mode refuses read commands and keeps USB reflashing of *signed* images, which is the recovery path and the only way to replace a frozen bootloader. Kern does not plan to disable download mode entirely.
 
 **Power-cut resume:** the digest batch and `SECURE_BOOT_EN` are separate eFuse writes. A power cut between them leaves KEY0–KEY2 occupied with secure boot still off. The menu must detect this state (all three blocks match the embedded digests, `SECURE_BOOT_EN` clear) and offer to *complete* the lockdown — a plain "blocks not empty → refuse" guard would make lockdown permanently uncompletable on such a device.
 
 The menu system must enforce:
 
-- PIN entry before showing the lockdown option.
+- PIN entry before anything is burned (status and digests show without it).
 - Display of all three digest hex values for visual verification.
 - An explicit confirmation prompt warning of irreversibility.
 - Verification that the running app **and** the flashed bootloader are signed by keys matching the embedded digests before proceeding (a device that locks down with a mismatched or unsigned image will brick on next boot).
@@ -583,10 +558,9 @@ For advanced users who prefer command-line tools, or for development/testing:
 gpg --verify SHA256SUMS.sig SHA256SUMS
 sha256sum -c SHA256SUMS
 
-# 2. Flash the signed firmware via serial (last time serial will work)
-esptool --chip esp32p4 write-flash \
-    0x2000 bootloader-signed.bin \
-    0x20000 kern-signed.bin
+# 2. Install the release over USB as in step 1 of the on-device method.
+#    The bootloader must be the frozen one: after step 5 the ROM rejects
+#    any bootloader these keys did not sign.
 
 # 3. Burn the three signing key digests into KEY0, KEY1, KEY2
 espefuse --chip esp32p4 burn-key \
@@ -613,26 +587,45 @@ After step 5, only firmware signed with `kern-sb-key0.pem`, `kern-sb-key1.pem`, 
 
 ### 5b. User Builds from Source (Self-Sovereign)
 
-The user generates their own signing keys, builds firmware from source with `sdkconfig.secure`, and burns their own digests. They take full responsibility for key management and firmware signing.
+The user generates their own signing keys, replaces the embedded digests, and builds, signs and flashes both the app and the bootloader. They take full responsibility for key management and firmware signing. The frozen bootloaders in `kern_secure_boot/bootloaders/` are of no use here: they carry the developer's signatures, and the lockdown menu of a build with other digests refuses them.
 
 ```bash
 # Generate own keys
 for n in 0 1 2; do
     espsecure generate-signing-key --version 2 --scheme rsa3072 my-key${n}.pem
-    espsecure extract-public-key --keyfile my-key${n}.pem my-key${n}-pub.pem
 done
 
-# Generate the embedded digest header from the public keys
-just generate-sb-digests \
-    MY_KEY0_PUB=my-key0-pub.pem \
-    MY_KEY1_PUB=my-key1-pub.pem \
-    MY_KEY2_PUB=my-key2-pub.pem
+# Replace the embedded digests with your own
+for n in 0 1 2; do
+    espsecure digest-sbv2-public-key --keyfile my-key${n}.pem \
+        -o kern_secure_boot/kern-sb-digest${n}.bin
+done
 
-# Build with secure boot (configure key path in sdkconfig.secure)
-idf.py -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.secure" build
+# Build with secure boot support (wave_4b shown)
+idf.py -B build_secure -D SDKCONFIG=build_secure/sdkconfig \
+    -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.wave_4b;sdkconfig.release;sdkconfig.secure" build
+
+# Sign the app with key 0
+espsecure sign-data --version 2 --keyfile my-key0.pem \
+    -o firmware-signed.bin build_secure/kern-unsigned.bin
+
+# Sign the bootloader with all three keys
+espsecure sign-data --version 2 --keyfile my-key0.pem \
+    -o bl-1sig.bin build_secure/bootloader/bootloader-unsigned.bin
+espsecure sign-data --version 2 --keyfile my-key1.pem --append-signatures \
+    -o bl-2sig.bin bl-1sig.bin
+espsecure sign-data --version 2 --keyfile my-key2.pem --append-signatures \
+    -o bootloader-signed.bin bl-2sig.bin
+
+# Flash
+esptool --chip esp32p4 write-flash --flash-mode keep --flash-freq keep --flash-size keep \
+    0x2000 bootloader-signed.bin \
+    0x10000 build_secure/partition_table/partition-table.bin \
+    0x1e000 build_secure/ota_data_initial.bin \
+    0x20000 firmware-signed.bin
 ```
 
-After flashing, the user can activate secure boot via the on-device menu (**Settings → Secure Boot → Lock with Developer Keys**). The menu will display the user's own digests (since the header was regenerated from their keys). The flow is identical to 5a — the firmware doesn't distinguish between "developer" and "user" digests; it burns whatever is embedded.
+After flashing, the user activates secure boot from the on-device menu (**Settings → Security → Secure Boot**). The flow is the one in 5a: the firmware does not distinguish "developer" from "user" keys. It checks the running app and the flashed bootloader against whatever the three `.bin` files held at build time, shows those digests, and burns them. That bootloader is this user's own frozen bootloader: keep the signed file, since later app builds have to keep booting on it, and replacing it means signing a new one with the same keys.
 
 Alternatively, the user can burn digests manually with `espefuse` as described in the 5a alternative method, using their own digest `.bin` files.
 
@@ -658,6 +651,8 @@ espefuse --chip esp32p4 burn-key \
 # secure boot and write-protect RD_DIS as in steps 5-6 there
 espefuse --chip esp32p4 burn-efuse SECURE_BOOT_EN
 ```
+
+> The bootloader needs a valid signature from a burned, non-revoked key at all times. The published frozen bootloader is signed by the three developer keys only, so with one developer slot it survives only while that slot is not revoked; a user who wants independence from that signs their own bootloader with their own keys as in 5b.
 
 > If any digest slot is intentionally left **empty**, revoke it before enabling secure boot (`espefuse burn-efuse SECURE_BOOT_KEY_REVOKE2`), so an attacker with physical access cannot later burn their own digest into the free slot.
 
@@ -705,7 +700,8 @@ Second rotation (if ever needed): repeat with KEY1 -> KEY2, then
 **Constraints:**
 
 - Revocation is irreversible. Once `SECURE_BOOT_KEY_REVOKE0` is burned, KEY0 is permanently rejected.
-- The **bootloader must have been signed with the successor key at initial flash** (Section 4a). Because the bootloader is frozen and never updated by OTA, revoking a key that the bootloader was *not* signed with will not brick it, but revoking the only key the bootloader *was* signed with will. Signing the bootloader with all three keys up front avoids this entirely.
+- The **bootloader on the device must already carry the successor key's signature** (Section 4a). SD updates never replace it, so revoking the only key it was signed with bricks the device. The frozen bootloader carries all three signatures for exactly this reason, and the lockdown menu refuses a bootloader that does not.
+- A bootloader frozen after a revocation is signed with the remaining keys only. It still boots on devices that have not revoked yet.
 - The transitional firmware **must** be installed on all devices before revoking the outgoing key. Devices that miss the update and still run outgoing-key-only firmware will be bricked after revocation (on the next full boot verification).
 - Three slots allow two rotations. After both are spent, only KEY2 remains and no further rotation is possible.
 
@@ -721,6 +717,10 @@ Anti-rollback prevents downgrading to older firmware versions that may contain k
 - It compares this against an eFuse **monotonic counter**.
 - If the image's security version is lower than the eFuse counter, boot is rejected.
 - After successful boot, the eFuse counter is updated to match the image's security version (burning additional bits — irreversible).
+
+### It Is Part of the Frozen Bootloader
+
+The boot-time check is bootloader code, compiled in by `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`. A bootloader frozen without it never refuses an older signed app at boot, whatever the app is built with; the app-side check on SD updates would still run, but writing an older signed release over USB would get past them. Turning it on later means a re-freeze and a USB reflash on every device that wants it. So the on/off decision has to be made before the first freeze (Section 4a).
 
 ### Partition Layout Requirement
 
@@ -759,58 +759,43 @@ Example:
 
 ## 8. sdkconfig.secure Overlay
 
-This file is applied on top of `sdkconfig.defaults` for production builds:
-
-```bash
-idf.py -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.secure" build
-```
-
-**Contents of `sdkconfig.secure`:**
+`sdkconfig.secure` turns a build into one that can be locked from Settings. It is applied on top of the board defaults (and `sdkconfig.release` for releases):
 
 ```ini
-# ============================================================
-# Kern Secure Boot Configuration Overlay
-# Apply with: idf.py -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.secure" build
-# ============================================================
-
-# --- Secure Boot v2 (RSA-3072; ECDSA is non-functional on ESP32-P4) ---
 CONFIG_SECURE_BOOT=y
 CONFIG_SECURE_BOOT_V2_ENABLED=y
 CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
-CONFIG_SECURE_BOOT_SIGNING_KEY="kern-sb-key0.pem"
-
-# Leave aggressive key revocation OFF — revoking a good key on a single
-# failed verification would be a bricking hazard for a wallet.
-# CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE is not set
-
-# --- Anti-Rollback ---
-CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
-CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
-CONFIG_BOOTLOADER_APP_SECURE_VERSION=0
+CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y
 ```
 
-> **Verify every symbol landed.** A plain rebuild can keep stale values — remove `build_<board>/sdkconfig` and grep the generated `sdkconfig` to confirm `CONFIG_SECURE_BOOT`, `CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME`, and the anti-rollback options are set as expected before trusting the overlay.
+- `CONFIG_SECURE_INSECURE_ALLOW_DL_MODE` is not an opening: with `CONFIG_SECURE_BOOT` the default download-mode choice is secure download mode, which every app burns at startup (`esp_efuse_startup.c`), locked or not. The Settings lockdown burns it together with `SECURE_BOOT_EN` instead.
+- The hardening options IDF ties to `CONFIG_SECURE_BOOT` (JTAG, `RD_DIS`, unused-slot revokes) only act inside `esp_secure_boot_v2_permanently_enable()`, which `secure_boot_opt_in` defers until secure boot is on, and then returns early; the app burns that set itself.
+- `CONFIG_SECURE_BOOT_V2_ENABLED` selects `CONFIG_ESPTOOLPY_NO_STUB`, so `idf.py flash` runs without the stub and leaves the bootloader out; write it with esptool at `0x2000`.
+- Anti-rollback (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`) is not in this overlay yet: it burns `SECURE_VERSION` by itself whenever a newer app is confirmed, so it gets its own decision (Section 7). That decision is due before the first freeze, because the bootloader half of it cannot be added afterwards without a re-freeze.
+- Aggressive key revocation stays off: revoking a good key on a single failed verification would be a bricking hazard for a wallet.
+- Signing: builds sign with `dev_signing_key.pem`. Releases re-sign the app offline with key 0 and ship the frozen bootloader instead of the built one (Sections 4a, 4b).
+- `CONFIG_BOOTLOADER_PROJECT_VER` will carry the freeze number once the first freeze is prepared.
 
-> **Note:** The `CONFIG_SECURE_BOOT_SIGNING_KEY` path is relative to the project root and is only used for the build-system's automatic signing. For air-gapped signing workflows where the key is not on the build machine, remove this line and sign manually with `espsecure sign-data` after building (bootloader with all three keys — see Section 4a).
+> **Verify every symbol landed.** A plain rebuild can keep stale values. Remove `build_<board>/sdkconfig` and grep the generated `sdkconfig` before trusting the overlay.
 
----
+### Dry run with virtual eFuses
+
+`just sbtest-flash <board>` builds with `sdkconfig.secure` plus `sdkconfig.sbtest` (`CONFIG_EFUSE_VIRTUAL=y`), signs with test keys (`dev_signing_key.pem` plus two throwaway keys in `build_sbtest_<board>/keys`, whose digests replace the release ones), and flashes it. Every eFuse write in this build goes to a RAM copy of the real eFuses, so the whole Settings flow runs on real hardware and leaves nothing behind after the restart. The board needs a PIN set up with a normal build first: virtual KEY4/KEY5 would not reach the HMAC peripheral. Expect `secure_boot: Off until enabled in Settings` in the bootloader log. `just flash <board>` restores the normal firmware. What it cannot show is the ROM and bootloader enforcing the real digests after `SECURE_BOOT_EN`; that takes a board you are prepared to lock.
 
 ## 9. eFuse Burn Order Summary
 
-eFuses must be burned in a specific order. The critical rule: **every read-protected key (NVS-HMAC KEY4, flash-encryption XTS key) must be burned before `SECURE_BOOT_EN`** — enabling secure boot write-protects `RD_DIS`, after which no other key block can be read-protected. This is why NVS encryption (Phase 3) and flash encryption (Phase 5) precede secure boot (Phase 6) in the plan. See [security-plan.md](security-plan.md#the-hard-constraint-read-protected-keys-before-secure-boot).
+eFuses must be burned in a specific order. The critical rule: **the read-protected keys (KEY5, KEY4) must be burned before `SECURE_BOOT_EN`** — enabling secure boot write-protects `RD_DIS`, after which no key block can be read-protected. Both are burned during PIN setup, and the lockdown menu refuses to run until they are sealed. See [security-plan.md](security-plan.md#the-hard-constraint-read-protected-keys-before-secure-boot).
 
-| Order | Command | eFuse | Reversible? | Phase | Notes |
-|-------|---------|-------|-------------|-------|-------|
-| 1 | `burn-key BLOCK_KEY5 ... HMAC_UP` | KEY5 | **No** | Phase 2 | Anti-phishing HMAC (already done if Phase 2 complete) |
-| 2 | `burn-key BLOCK_KEY4 ... HMAC_UP` | KEY4 | **No** | Phase 3 | NVS-encryption HMAC — read-protected; must precede secure boot |
-| 3 | Flash-encryption key (Key Manager, or `burn-key BLOCK_KEY3 ... XTS_AES_128_KEY`) | KEY3 / Key Manager | **No** | Phase 5 | XTS-AES-256 via Key Manager (preferred) or XTS-AES-128 in KEY3; read-protected, must precede secure boot |
-| 4 | `burn-key BLOCK_KEY0 ... SECURE_BOOT_DIGEST0` | KEY0 | **No** | Phase 6 | Primary secure boot digest |
-| 5 | `burn-key BLOCK_KEY1 ... SECURE_BOOT_DIGEST1` | KEY1 | **No** | Phase 6 | Rotation #1 secure boot digest |
-| 6 | `burn-key BLOCK_KEY2 ... SECURE_BOOT_DIGEST2` | KEY2 | **No** | Phase 6 | Rotation #2 secure boot digest |
-| 7 | `burn-efuse SECURE_BOOT_EN` (+ hardening set) | Control | **No** | Phase 6 | **Enables secure boot permanently.** Burned together with `DIS_DIRECT_BOOT`, the JTAG-disable set, secure download mode, then the `RD_DIS` write-protect |
-| 8 | Flash-encryption release mode + secure/disabled serial download | Control | **No** | Phase 7 | Release lockdown — permanently disables plaintext serial flashing |
+| Order | Command | eFuse | Phase | Notes |
+|-------|---------|-------|-------|-------|
+| 1 | `burn-key BLOCK_KEY5 ... HMAC_UP` | KEY5 | Phase 2 | Anti-phishing HMAC, read-protected. Done by PIN setup |
+| 2 | `burn-key BLOCK_KEY4 ... HMAC_UP` | KEY4 | Phase 3 | NVS-encryption HMAC, read-protected. Done by PIN setup |
+| 3 | `burn-key BLOCK_KEY0 ... SECURE_BOOT_DIGEST0` | KEY0 | Phase 6 | Primary secure boot digest |
+| 4 | `burn-key BLOCK_KEY1 ... SECURE_BOOT_DIGEST1` | KEY1 | Phase 6 | Rotation #1 secure boot digest |
+| 5 | `burn-key BLOCK_KEY2 ... SECURE_BOOT_DIGEST2` | KEY2 | Phase 6 | Rotation #2 secure boot digest |
+| 6 | `burn-efuse SECURE_BOOT_EN` (+ hardening set) | Control | Phase 6 | **Enables secure boot permanently.** Burned together with `DIS_DIRECT_BOOT`, the JTAG-disable set, secure download mode, then the `RD_DIS` write-protect |
 
-> **Every eFuse burn is irreversible.** Double-check the digest files and key purposes before confirming. Use `espefuse summary` to inspect current eFuse state before and after each burn. Because all three secure-boot digest slots are used, there is no unused digest slot to revoke — but if you ever leave one empty (e.g. a custom hybrid layout), revoke it before enabling secure boot. For **Profile A** (on-device: PIN/NVS encryption + secure boot, no flash encryption) rows 3 and 8 are skipped, and the whole sequence — including the KEY4 (NVS) burn in row 2 — runs from on-device flows.
+> **Every eFuse burn is irreversible.** Use `espefuse summary` to inspect the eFuse state before and after. The whole sequence runs from on-device flows: rows 1–2 during PIN setup, rows 3–6 from the Secure Boot menu. If you ever leave a digest slot empty (a custom hybrid layout), revoke it before enabling secure boot.
 
 ---
 
@@ -822,15 +807,34 @@ Complete these steps on a **development board** before any production device.
 
 - [ ] Build production firmware with `sdkconfig.secure` overlay
 - [ ] Confirm the generated `sdkconfig` has `CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y` (not ECDSA)
-- [ ] Verify the signed image: `espsecure verify-signature --version 2 --keyfile kern-sb-key0-pub.pem kern-signed.bin`
+- [ ] Verify the signed image: `espsecure verify-signature --version 2 --keyfile kern-sb-key0-pub.pem firmware-signed.bin`
 - [ ] Confirm the bootloader carries all three signatures (key0/key1/key2)
-- [ ] Flash signed bootloader and app via serial — confirm device boots normally
+- [ ] Flash the bootloader and app over USB — confirm the device boots normally and the bootloader logs `Off until enabled in Settings`
+- [ ] `espefuse summary` after several boots — nothing burned by the bootloader or the app
 - [ ] Read eFuse state: `espefuse summary` — verify KEY0/KEY1/KEY2 are empty
-- [ ] Verify embedded digests match published digests: navigate to **Settings → Secure Boot** and compare displayed hex against release notes
+- [ ] Verify embedded digests match published digests: navigate to **Settings → Security → Secure Boot** and compare displayed hex against release notes
+
+### Frozen Bootloader (before each freeze, and its release gate)
+
+- [ ] Every board's unsigned release bootloader falls into one of the expected variants
+- [ ] Two builds of the same commit in different directories give the same `bootloader-unsigned.bin`
+- [ ] Each frozen image verifies against all three public keys and matches its manifest hash
+- [ ] A release zip contains the frozen bootloader for its board, byte for byte
+- [ ] A device installed from a pre-freeze release and updated over SD is refused by the lockdown menu with the bootloader message; one USB install of the release zip clears it
+- [ ] Each new release boots on every frozen variant still in the field
+- [ ] On a locked board: a later release installs over SD and boots
+- [ ] On a locked board: the web flasher writes a signed release zip (secure download mode) and the device boots
+- [ ] On a locked board: a bootloader with a modified header, or signed by other keys, is rejected by the ROM, and re-flashing the frozen one recovers the device
+
+### Dry Run (virtual eFuses)
+
+- [ ] `just sbtest-flash <board>` on a board with a PIN; the bootloader logs `Off until enabled in Settings` and `espefuse summary` shows nothing new
+- [ ] Settings → Security → Secure Boot shows the test-key fingerprints and offers Enable
+- [ ] Enable, confirm, enter the PIN: the burn and read-back succeed, the device restarts, real eFuses unchanged
 
 ### On-Device Lockdown (Primary Path)
 
-- [ ] Navigate to **Settings → Secure Boot → Lock with Developer Keys**
+- [ ] Navigate to **Settings → Security → Secure Boot**
 - [ ] Verify all three digest hex values are displayed correctly on screen
 - [ ] Verify PIN is required before proceeding
 - [ ] Verify warning about irreversibility is shown
@@ -871,7 +875,7 @@ Complete these steps on a **development board** before any production device.
 
 - [ ] Dual-sign firmware with key0 + key1, install, confirm boot
 - [ ] Burn `SECURE_BOOT_KEY_REVOKE0`, confirm key0-only firmware no longer boots
-- [ ] Confirm key1-signed firmware still boots (bootloader was signed with key1)
+- [ ] Confirm key1-signed firmware still boots (the frozen bootloader carries key1's signature)
 
 ### Anti-Rollback (eFuse-enforced from this phase; SD update path exists since Phase 4)
 
@@ -904,10 +908,14 @@ If all copies of a signing key are lost:
 - If the device only has that key's digest un-revoked, it becomes un-updatable.
 - **Mitigation**: Always maintain redundant backups (Section 3b) and burn three digests (KEY0 + KEY1 + KEY2), so a lost or compromised primary can be rotated out.
 
+### A Flaw in the Frozen Bootloader
+
+The frozen bootloader is the one piece of Kern's code an SD update cannot fix. A bug in it stays on every locked device until its owner reflashes a re-frozen bootloader over USB. It is therefore kept small (stock ESP-IDF plus the `secure_boot_opt_in` wrapper), validated on a board that is really locked before the freeze, and reproducible from a tagged commit so that others can review exactly what was signed.
+
 ### Supply Chain Attacks
 
 - A compromised build environment could inject malicious code before signing.
-- **Mitigation**: Build on a trusted, air-gapped machine. Reproducible builds (future work) would allow independent verification.
+- **Mitigation**: Build on a trusted, air-gapped machine. The frozen bootloader is reproducible from its tag today (Section 4a); reproducible app builds (future work) would extend that to every release.
 - Pre-flashed devices from untrusted sources could have attacker digests burned.
 - **Mitigation**: Users should verify eFuse state with `espefuse summary` before trusting a pre-flashed device, or flash and lock down the device themselves.
 
@@ -917,12 +925,13 @@ Secure boot alone does not protect against all threats:
 
 | Threat | Requires |
 |--------|----------|
-| Flash content extraction | Flash Encryption (Phase 5) |
 | NVS data readout (PIN hash) | NVS Encryption (Phase 3) |
 | Firmware downgrade | Anti-Rollback (this phase) + SD card updates (Phase 4) |
-| JTAG/debug access | Flash Encryption (Phase 5) — locks JTAG automatically |
+| JTAG/debug access | Burned off by the lockdown itself |
+| Flash readout by desoldering | Not covered: flash is not encrypted. Nothing secret is stored there in plaintext (PIN hash under NVS encryption, mnemonics as KEF); saved plaintext descriptors are a privacy exposure |
+| PSRAM probing on a running device | Not covered: secrets stay in internal RAM, working buffers do not |
 
-Secure boot provides firmware integrity. For full device security, all phases through Phase 7 (release lockdown) are needed.
+Secure boot provides firmware integrity and is the last lockdown step. The uncovered rows are accepted risks, listed in [security-plan.md](security-plan.md#accepted-residual-risks).
 
 ### Anti-Phishing Synergy
 
@@ -933,7 +942,6 @@ With secure boot enabled, the anti-phishing words (Phase 2) become a strong tamp
 ## 12. References
 
 - [ESP-IDF Secure Boot v2 Documentation (ESP32-P4)](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/security/secure-boot-v2.html) — includes the ECDSA "not functional on ESP32-P4" advisory
-- [ESP-IDF Flash Encryption (ESP32-P4)](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/security/flash-encryption.html) — Key Manager vs eFuse key source, XTS-AES-128/256
 - [ESP-IDF Anti-Rollback](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32p4/api-reference/system/ota.html#anti-rollback)
 - [ESP-IDF 6.0 Security Migration Guide](https://docs.espressif.com/projects/esp-idf/en/v6.0.2/esp32/migration-guides/release-6.x/6.0/security.html) — removed/renamed APIs, NISTP192 deprecation
 - [espefuse Reference](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/espefuse/)

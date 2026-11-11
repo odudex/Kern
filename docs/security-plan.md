@@ -14,39 +14,42 @@ This is a research plan. It documents the hardening approaches Kern explores on 
 | Threat | Attack vector | Mitigation |
 |--------|--------------|------------|
 | Firmware tampering | Malicious flash via UART/JTAG | **Secure Boot + JTAG lockdown** |
-| Flash readout | Physical extraction of flash chip | **Flash Encryption** |
+| Flash readout | Physical extraction of flash chip | **Nothing secret is stored in plaintext: NVS encryption (PIN hash), KEF (mnemonics); the firmware is public. Flash encryption is not used ([Phase 5](#phase-5-flash-encryption-dropped))** |
 | Evil maid / stolen device | Physical access while powered off | **PIN + encrypted storage** |
 | Device swap / evil maid | Replace device with lookalike | **Anti-phishing words (eFuse HMAC)** |
 | Evil maid tampering | "Evil maid" tamper device | **Anti-phishing words + secure boot** |
 | Shoulder surfing/theft at rest | Backup QR codes or stored data | **KEF encrypted backups** |
 | Firmware downgrade | Flash older vulnerable version | **Anti-rollback (eFuse counter)** |
 | Firmware downgrade via SD | Load older vulnerable firmware via update | **Anti-rollback (eFuse counter)** |
-| No update path after lockdown | Serial flash disabled in release mode | **Air-gapped SD card updates** |
-| RAM snooping via PSRAM | Probing external PSRAM bus | **Secrets allocated in internal SRAM (0c); PSRAM encryption (Phase 5) for working buffers** |
+| Updates after lockdown | Only signed images boot | **Air-gapped SD card updates; signed releases over USB** |
+| RAM snooping via PSRAM | Probing external PSRAM bus | **Secrets allocated in internal SRAM (0c); working buffers in PSRAM are an accepted risk (see below)** |
 | Cold boot / remanence | Reading RAM after power-off | **Secure memory wiping + session teardown (0c)** |
 | PIN-counter rewind | Snapshot/restore of external flash to reset failure counter | **Residual risk: PIN entropy is the backstop (see below)** |
 | Fault injection | Voltage/EM glitching of boot or PIN checks | **Residual risk: not a secure element (see below)** |
 
 ### Accepted Residual Risks
 
-The ESP32-P4 is not a secure element; two physical attacks remain open by construction and are accepted with mitigations rather than eliminated:
+The ESP32-P4 is not a secure element, and Kern does not encrypt flash or PSRAM. These exposures remain and are accepted with mitigations rather than eliminated:
 
-- **NVS replay (PIN-counter rewind).** XTS encryption provides confidentiality, not integrity or freshness. The flash is an external chip: an attacker who can rewrite it can snapshot the encrypted `nvs` partition, spend N−1 PIN attempts, restore the snapshot, and repeat, resetting the failure counter and exponential backoff indefinitely, even with NVS encryption, flash encryption, and secure boot all enabled. Wipe-after-N-failures and backoff therefore only hold against attackers who cannot rewrite flash. The backstop is PIN entropy: the device-bound PBKDF2 salt (eFuse KEY5) forces every guess through this specific chip, so a long PIN stays strong even against counter rewind.
+- **NVS replay (PIN-counter rewind).** XTS encryption provides confidentiality, not integrity or freshness. The flash is an external chip: an attacker who can rewrite it can snapshot the encrypted `nvs` partition, spend N−1 PIN attempts, restore the snapshot, and repeat, resetting the failure counter and exponential backoff indefinitely, even with NVS encryption and secure boot enabled. Wipe-after-N-failures and backoff therefore only hold against attackers who cannot rewrite flash. The backstop is PIN entropy: the device-bound PBKDF2 salt (eFuse KEY5) forces every guess through this specific chip, so a long PIN stays strong even against counter rewind.
 - **Fault injection / glitching.** Voltage and EM glitching have a public history on earlier ESP32 generations; the ESP32-P4 has no proven resistance and no anti-glitch hardware guarantees. Mitigations that limit the payoff: mnemonics exist only in RAM (session-only) or KEF-encrypted at rest, and the PIN itself is never stored, only its PBKDF2 hash.
-- **Plaintext SPIFFS residue.** Flash encryption never covers the `storage` partition (SPIFFS is incompatible with encrypted partitions, see [Cross-Phase Security Dependencies](#cross-phase-security-dependencies)). Mnemonics are always stored as KEF envelopes, but descriptors saved unencrypted (`.txt`), file names/sizes, and KEF header metadata (version, iterations, user-chosen label) remain readable via physical flash extraction even after full Phase 7 lockdown. This leaks xpubs and wallet structure: a privacy exposure, not key material.
+- **Plaintext flash.** A physical flash dump yields the firmware (public), the encrypted `nvs` partition, and the `storage` partition. Mnemonics in `storage` are always KEF envelopes, but descriptors saved unencrypted (`.txt`), file names and sizes, and KEF header metadata (version, iterations, user-chosen label) are readable. This leaks xpubs and wallet structure: a privacy exposure, not key material. Flash encryption would not have covered `storage` either (SPIFFS is incompatible with it).
+- **Plaintext PSRAM.** Secrets are kept in internal SRAM (0c), but working buffers that can carry secret-bearing data (compression state, QR/cUR payloads, camera and display frames, including SeedQR display and scan moments) may sit in external PSRAM while the device is powered and unlocked. Reading them takes probing the PSRAM bus of a running, unlocked device. Session teardown wipes them.
 
 ## ESP32-P4 Security Hardware Summary
 
 ### Usable for Kern
 - **Secure Boot v2**: **RSA-3072 (RSA-PSS)**, up to 3 key digest slots in eFuse. Kern burns all 3 (KEY0/1/2) to allow two key rotations. **ECDSA is not used**: ECDSA-based Secure Boot v2 is non-functional on ESP32-P4 silicon (chip errata; would require `CONFIG_SECURE_BOOT_INSECURE`). RSA-3072 is also the faster verifier here (~14.8 ms vs ~61.1 ms). See [secure-boot.md](secure-boot.md).
-- **Flash Encryption**: XTS-AES-128/256, auto-encrypts PSRAM too. The **Key Manager** could hold the XTS key outside the shared eFuse key blocks (Kconfig choice `SECURE_FLASH_ENCRYPTION_KEY_SOURCE`, option `..._KEY_MGR`), but IDF gates that option on ESP32-P4 silicon ≥ v3 (`depends on !(IDF_TARGET_ESP32P4 && ESP32P4_SELECTS_REV_LESS_V3)`); fielded Kern boards measured v1.0 (wave_4b) and v1.3 (wave_43), so Kern uses **XTS-AES-128 in eFuse KEY3** instead; see the key-block note below.
-- **NVS Encryption**: HMAC-based key derivation from eFuse (no separate key partition needed); independent of flash encryption
+- **NVS Encryption**: HMAC-based key derivation from eFuse (no separate key partition needed)
 - **RSA/MPI + Digital Signature peripherals**: hardware-accelerated RSA; used by Secure Boot v2 RSA-3072 verification at boot
 - **HMAC peripheral**: computes HMAC-SHA256 using eFuse keys without exposing them to software; used for anti-phishing word derivation (`esp_hmac_calculate()` with `HMAC_KEY5` purpose) and NVS key derivation (KEY4)
 - **AES/SHA hardware accelerators**: transparent via mbedTLS for AES and one-shot hashing. Not for iterated hashing: mbedTLS takes the shared SHA/AES crypto mutex, enables the bus clock and pulses the peripheral reset around every hash update crossing a block, roughly 6800 cycles of setup around 1150 cycles of work. PBKDF2 therefore drives the accelerator directly (`main/core/pbkdf2.c`), holding it across batches of iterations and reloading precomputed HMAC ipad/opad midstates: measured 12.2x on wave_4b, taking a 100k-iteration KEF or PIN derivation from 8.07 s to 0.66 s
 - **TRNG**: hardware entropy source for random numbers generation (mix with additional sources)
 - **Anti-rollback**: security version counter in eFuse
 - **JTAG/UART lockdown**: automatic only when the *stock bootloader* enables the security features; Kern's on-device lockdown flow must burn the same eFuse set itself (JTAG-disable set, download-mode restriction; see [secure-boot.md §5a](secure-boot.md#5-user-scenarios))
+
+### Available but not used
+- **Flash Encryption** (XTS-AES, also encrypts PSRAM): dropped, see [Phase 5](#phase-5-flash-encryption-dropped).
 
 ### NOT usable for Bitcoin
 - **ECDSA peripheral**: P-192/P-256 only, **secp256k1 not supported**. All Bitcoin signing uses software libsecp256k1 via libwally-core. (Separate from the ECDSA *secure-boot verification* defect noted above: that is a boot-ROM issue, this is about the signing curve.)
@@ -62,15 +65,11 @@ The ESP32-P4 is not a secure element; two physical attacks remain open by constr
 | KEY0 (BLK4) | Secure Boot Digest 0 (primary) | Phase 6 |
 | KEY1 (BLK5) | Secure Boot Digest 1 (rotation #1) | Phase 6 |
 | KEY2 (BLK6) | Secure Boot Digest 2 (rotation #2) | Phase 6 |
-| KEY3 (BLK7) | Flash Encryption XTS-AES key *as planned* — the bootloader actually takes KEY0 (see note) | Phase 5 |
+| KEY3 (BLK7) | Unused | — |
 | KEY4 (BLK8) | HMAC for NVS encryption (HMAC_UP) | Phase 3 |
 | KEY5 (BLK9) | HMAC for anti-phishing words (HMAC_UP) | Phase 2 |
 
-All 6 key blocks allocated. Kern spends **three** blocks on secure-boot digests (KEY0–KEY2) so it can rotate a compromised key twice instead of once. Because all three digest *slots* are populated, no free slot remains for an attacker to inject a rogue signing key. Both HMAC keys (KEY4, KEY5) use the `HMAC_UP` purpose: software can request HMAC computations but never reads the raw key material.
-
-**Flash-encryption note (decided July 2026):** With three digest slots taking KEY0–KEY2, only one key block (KEY3) is left, but XTS-AES-256 needs two. The hoped-for escape, deploying the key through the ESP32-P4 **Key Manager**, outside the eFuse blocks, turned out to be revision-gated: `SECURE_FLASH_ENCRYPTION_KEY_SOURCE_KEY_MGR` depends on `!(IDF_TARGET_ESP32P4 && ESP32P4_SELECTS_REV_LESS_V3)` (IDF 6.x), i.e. it is only offered to builds that mandate chip revision ≥ v3.0. Fielded boards measured **v1.0 (wave_4b) and v1.3 (wave_43)**, so raising the revision floor would drop existing hardware. **Plan of record: XTS-AES-128 in KEY3**, a single block, generated by the FE bootloader from TRNG on first boot and read-protected at burn time; the key never exists outside the chip. If the minimum supported revision ever moves to v3, the KM + XTS-AES-256 path can be revisited (leaving KEY3 spare). Beware: Kconfig **silently falls back** to the eFuse key source when the KM dependency is unmet, so any key-source change has to be verified in the generated sdkconfig.
-
-**Correction (measured August 2026):** the allocation above is what Kern *intended*; the bootloader does not honour it. Left to generate its own key it takes the **first free block**, which with KEY4/KEY5 already burned is **KEY0** — a secure-boot digest slot. Observed on the wave_4b test board: `KEY_PURPOSE_0 = XTS_AES_128_KEY`, read-protected, KEY3 untouched. A Profile B device provisioned this way would have two digest slots left (one rotation, not two), and the empty third slot is exactly the free slot the three-digest design exists to deny an attacker. Putting the key in KEY3 as planned means generating it on the host and pre-burning it before first FE boot, which gives up the "key never exists outside the chip" property. Unresolved; it must be settled before any device is provisioned, since neither choice can be revised afterwards. See [Phase 5b](#5b-enable-flash-encryption-development-mode-blocked--no-enablement-path-is-documented-for-now).
+Kern spends **three** blocks on secure-boot digests (KEY0–KEY2) so it can rotate a compromised key twice instead of once. Because all three digest *slots* are populated, no free slot remains for an attacker to inject a rogue signing key. Both HMAC keys (KEY4, KEY5) use the `HMAC_UP` purpose: software can request HMAC computations but never reads the raw key material. KEY3 was reserved for the flash-encryption key and stays empty; after lockdown only signed firmware runs and secure download mode gives no eFuse access, so nothing can burn it.
 
 ## Partition Table
 
@@ -104,7 +103,7 @@ storage   data  spiffs   0xC20000   0x3E0000   (~3.9M)
 
 **Why factory is dropped**: ESP-IDF's anti-rollback (Phase 6) assumes an OTA-only table; `bootloader_utility.c` states it outright: "When CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK is enabled factory partition should not be in partition table, only two ota_app are there." A factory image is frozen at flash time with security version 0, so the first eFuse counter increment would make it unbootable: the "known-good fallback" guarantee silently dies. The fallback role moves to the *previous OTA slot*: the SD update flow must self-test and call `esp_ota_mark_app_valid_cancel_rollback()`, otherwise the bootloader rolls back (see Phase 4). With empty `otadata`, the bootloader boots `ota_0` directly, which is where serial flashing writes the app.
 
-**Why the migration happens at Phase 3**: a partition table can only be rewritten over serial (OTA never touches it) and it is frozen for the life of the device once secure boot (Phase 6) restricts serial to signed images and release lockdown (Phase 7) disables serial entirely. Phase 3 already forces the one disruptive event for alpha testers (NVS wipe + fresh PIN + KEY4 burn), so the table migration rides the same re-flash instead of adding a second one.
+**Why the migration happens at Phase 3**: a partition table can only be rewritten over serial (OTA never touches it) and it should be treated as frozen once secure boot (Phase 6) is on: apps built for one layout cannot run on another, and SD updates can never move it. Phase 3 already forces the one disruptive event for alpha testers (NVS wipe + fresh PIN + KEY4 burn), so the table migration rides the same re-flash instead of adding a second one.
 
 **Layout choices**:
 
@@ -114,9 +113,9 @@ storage   data  spiffs   0xC20000   0x3E0000   (~3.9M)
 - NVS grows 24KB → 84KB, filling the space up to `ota_0` exactly. More pages improve wear-leveling for the failure-counter write on every PIN attempt. Note that old NVS content **survives** the resize: NVS pages are self-contained 4K units, so the old pages parse fine inside the larger partition, and flashing never writes the `nvs` region. A pre-existing plaintext PIN is therefore still present after the update, handled by the firmware-side migration in 3a.
 - `phy_init` is dropped: the ESP32-P4 has no radio, no `CONFIG_ESP_PHY*` option is set, and the partition was never read.
 
-### Bootloader-headroom revision (pre-Phase 5, July 2026): current layout
+### Bootloader-headroom revision (July 2026): current layout
 
-The Phase 3 layout kept the partition table at the default offset 0x8000, capping the bootloader at 24KB. The plain bootloader had grown to within 320 bytes of that cap, and the Phase 5 flash-encryption bootloader (~36KB), let alone the Phase 6 secure-boot one, does not fit. Since the table is frozen for the life of the device once Phase 6 restricts serial to signed images, the offset was moved to **0x10000** before any Profile B device exists:
+The Phase 3 layout kept the partition table at the default offset 0x8000, capping the bootloader at 24KB. The plain bootloader had grown to within 320 bytes of that cap, and the Phase 6 secure-boot bootloader (~44KB) does not fit. The offset was moved to **0x10000** before any device was locked:
 
 ```
 # Name    Type  SubType  Offset     Size       (Human)
@@ -127,26 +126,22 @@ ota_1     app   ota_1    0x620000   0x600000   (6M)
 storage   data  spiffs   0xC20000   0x3E0000   (~3.9M)
 ```
 
-- `CONFIG_PARTITION_TABLE_OFFSET=0x10000` (in `sdkconfig.defaults`): the bootloader slot grows 24KB → 56KB, with headroom for the secure-boot bootloader beyond the FE one.
+- `CONFIG_PARTITION_TABLE_OFFSET=0x10000` (in `sdkconfig.defaults`): the bootloader slot grows 24KB → 56KB.
 - The shift is absorbed entirely by `nvs` (moved to 0x11000, shrunk 84KB → 52KB, still ample for the PIN hash and settings); `otadata`, both app slots, and `storage` keep their exact offsets, so OTA app images and SPIFFS contents survive.
 - Cost for already-flashed devices: one serial re-flash plus an NVS wipe (PIN/settings re-setup); apps and `storage` are untouched.
-- This is a single global move for **all boards and profiles**, not an FE-only override: `CONFIG_PARTITION_TABLE_OFFSET` is compiled into the app, so a per-profile table offset would fork the firmware artifacts: an app built for one offset cannot run on a device whose table sits elsewhere, and a mixed fleet would invite bricking mismatches through the SD update path.
+- This is a single global move for **all boards**: `CONFIG_PARTITION_TABLE_OFFSET` is compiled into the app, so an app built for one offset cannot run on a device whose table sits elsewhere, and a mixed fleet would invite bricking mismatches through the SD update path.
 
 ## Phase Ordering Rationale
 
-The lockdown phases are ordered so that the **roadmap order is also the safe, irreversible eFuse burn order**; there is no separate "burn order" to track. Every read-protected key (KEY5, KEY4, the flash-encryption key) is burned in Phases 2, 3 and 5, all *before* secure boot (Phase 6) write-protects `RD_DIS`; Phase 4 (SD updates) burns nothing:
+The phases are ordered so that the **roadmap order is also the safe eFuse burn order**. The read-protected keys (KEY5, KEY4) are burned in Phases 2 and 3, *before* secure boot (Phase 6) write-protects `RD_DIS`; Phase 4 burns nothing. Phases 5 and 7 were dropped (see [Phase 5](#phase-5-flash-encryption-dropped)); the numbers are kept so existing references stay valid.
 
 1. **Phase 2 (PIN + anti-phishing)**: pure software except one eFuse burn: KEY5 (anti-phishing HMAC), read-protected at burn time, provisioned during first PIN setup.
 
-2. **Phase 3 (NVS encryption)**: coupled to PIN setup, on-device. Burns KEY4 and encrypts the `nvs` partition so the PIN hash is stored at rest. Independent of flash encryption; KEY4 is read-protected here, before secure boot. Phase 3 also carries the one-time **partition-table migration** (factory dropped for anti-rollback, see [Partition Table](#partition-table)): the last cheap moment for it, since a partition table can only change over serial and is frozen once Phase 6 locks the device.
+2. **Phase 3 (NVS encryption)**: coupled to PIN setup, on-device. Burns KEY4 and encrypts the `nvs` partition so the PIN hash is protected at rest. Phase 3 also carried the one-time **partition-table migration** (factory dropped for anti-rollback, see [Partition Table](#partition-table)).
 
-3. **Phase 4 (SD updates) before any irreversible step**: signature verification does **not** require secure boot: `SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT` makes the OTA path verify Secure Boot v2 RSA-3072 signatures against the public keys embedded in the running app: pure software, no eFuse burns, fully reversible. Implementing it first field-proves the only post-lockdown update channel while serial recovery still exists, and pulls the signing-key ceremony forward (the same keys become the Phase 6 eFuse digests).
+3. **Phase 4 (SD updates) before any irreversible step**: signature verification does **not** require secure boot: `SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT` makes the OTA path verify Secure Boot v2 RSA-3072 signatures against the public keys embedded in the running app: pure software, no eFuse burns, fully reversible. Implementing it first field-proves the main post-lockdown update channel while unrestricted serial flashing still exists, and pulls the signing-key ceremony forward (the same keys become the Phase 6 eFuse digests).
 
-4. **Phase 5 (flash encryption + FE key) before Phase 6 (secure boot)**: enabling secure boot write-protects `RD_DIS`, after which no other key block can be read-protected. So the flash-encryption XTS key must be burned in Phase 5. Flash encryption runs in **development mode** here; it is serial-provisioned (Profile B). Development mode does *not* buy a serial re-flash path on ESP32-P4 (see 5b): what it keeps is a single one-shot `SPI_BOOT_CRYPT_CNT` disable, after which the Phase 4 SD path is the only way to update the device.
-
-5. **Phase 6 (secure boot) before Phase 7 (release lockdown)**: secure boot upgrades the Phase 4 signature check from update-time-only to boot-time enforcement and arms eFuse anti-rollback. Release lockdown permanently disables serial flashing, so the Phase 4 validation suite must be re-run and pass under secure boot before Phase 7.
-
-6. **Phase 7 (release lockdown) last**: the only irreversible-and-*unrecoverable* step: flash-encryption release mode + disabling serial download. Everything before it is recoverable (development mode allows re-flashing over serial).
+4. **Phase 6 (secure boot) last**: it upgrades the Phase 4 signature check from update-time-only to boot-time enforcement, disables JTAG, restricts the ROM to secure download mode, and can arm eFuse anti-rollback. It is the final lockdown step. A locked device still updates over SD and can be reflashed with a signed release over USB.
 
 ### Cross-Phase Security Dependencies
 
@@ -155,48 +150,28 @@ Some features only reach their full security guarantee when combined with later 
 | Feature (Phase) | Depends on | Gap until dependency is met |
 |-----------------|------------|----------------------------|
 | Anti-phishing words (2) | Secure Boot (6) | Anti-phishing detects a *different chip* (eFuse mismatch), but an attacker who controls the firmware can bypass the check entirely: malicious firmware on the *same chip* can fake the words or exfiltrate the PIN. Secure boot closes this by ensuring only signed firmware runs. |
-| Anti-phishing words (2) | Flash Encryption (5) | Without flash encryption, an attacker with physical access can read the firmware binary and app partitions and clone them to another board. Flash encryption makes those unreadable. (The PIN hash and split position live in `nvs`, which is protected by NVS encryption, Phase 3, not by flash encryption.) |
 | PIN hash in NVS (2) | NVS Encryption (3) | The PBKDF2 hash is stored in NVS. Until NVS encryption, physical flash extraction exposes it to offline brute-force (limited by 100k PBKDF2 iterations and the device-bound salt, but still a risk for weak PINs). NVS encryption removes this vector and, being coupled to PIN setup, is the default for any PIN user. |
-| PIN hash in NVS (2) | NVS Encryption (3), **not** Flash Encryption (5) | Common misconception: flash encryption does **not** encrypt the `nvs` partition; ESP-IDF excludes it because NVS's wear-levelled writes are incompatible with the block cipher. NVS encryption (Phase 3) is what protects the PIN hash at rest, independent of flash encryption. |
-| KEF storage on SPIFFS (1) | **not** Flash Encryption (5) | Same misconception for the `storage` partition: flash encryption never covers it; ESP-IDF's SPIFFS driver is incompatible with encrypted partitions (SPIFFS progressively programs NOR bits in already-written pages, which XTS's write-once 16-byte blocks cannot express), and `storage` carries no `encrypted` flag. KEF (Phase 1) is the at-rest protection for mnemonics/descriptors there, independent of flash encryption. |
 | NVS encryption (3) | Secure Boot (6) | `HMAC_UP` computations are software-invokable: until secure boot, attacker firmware on the *same chip* can drive the HMAC peripheral to derive the NVS keys and decrypt a dumped `nvs` partition (PIN hash included). Without the chip, the keys stay out of reach either way. |
 | Wipe-after-N-failures (2) | Secure Boot (6) | Custom firmware could reset the failure counter or skip the wipe check. Secure boot prevents running unauthorized firmware. |
 | SD card OTA (4) | Secure Boot (6) | The OTA path already verifies Secure Boot v2 RSA-3072 signatures via `SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`, trusting the public keys embedded in the running app, but nothing verifies firmware at *boot*, so an attacker with serial access can still flash unsigned firmware directly. Secure boot closes the serial path and upgrades the software downgrade check to the eFuse anti-rollback counter. |
-| Session timeout (2) | Flash Encryption (5) | Timeout tears down every secret owner and scrubs camera/display buffers (0c), but working buffers that may hold secret-bearing data (compression state, QR/cUR payloads, frames) still live unencrypted in PSRAM until Phase 5. |
 
-**In summary**: Phase 2 provides strong *usability-layer* security (PIN gating, anti-phishing UX, auto-wipe), and Phase 3 encrypts the PIN hash at rest by default, but tamper-detection guarantees are only as strong as firmware integrity. Secure boot (Phase 6) and flash encryption (Phase 5) are what turn anti-phishing from "detects accidental device swaps" into "cryptographically proves device authenticity".
+**In summary**: Phase 2 provides strong *usability-layer* security (PIN gating, anti-phishing UX, auto-wipe), and Phase 3 encrypts the PIN hash at rest by default, but tamper-detection guarantees are only as strong as firmware integrity. Secure boot (Phase 6) is what turns anti-phishing from "detects accidental device swaps" into "cryptographically proves device authenticity". A flash dump cloned onto another board already fails the anti-phishing check, since the words come from that chip's KEY5.
 
-## Enablement Mechanics & Deployment Profiles
+## Enablement Mechanics
 
-The lockdown phases (3–7) are sequenced so the roadmap order **is** the safe eFuse burn order. What still needs spelling out is *how* each feature activates, which determines whether it can be a tools-free on-device action or needs serial provisioning, and the one hardware constraint that fixes the order.
+There is one deployment path, and every step of it runs on the device. The only tool involved is the USB install that puts Kern on the device in the first place.
 
-### Deployment profiles
-
-Not every user wants the full lockdown. Two supported profiles:
-
-- **Profile A: On-device (tools-free).** PIN + anti-phishing (Phase 2), **NVS encryption** (Phase 3), and **Secure Boot** (Phase 6), all driven from on-device flows, with no serial tools. The read-protected keys (KEY5, KEY4) are burned during PIN setup, before secure boot locks `RD_DIS`. This protects firmware integrity, the PIN hash at rest, and clone detection: the fully self-sovereign path. It omits flash encryption (which needs serial) and release lockdown.
-- **Profile B: Fully locked (serial-provisioned).** Profile A **plus** Flash Encryption (Phase 5) and Release Lockdown (Phase 7). Because flash encryption cannot be a UI toggle (below), this profile adds a one-time serial provisioning step while serial still works.
-
-### On-device vs. serial activation
-
-| Feature | How it activates | Self-transforms flash? | Brick risk |
-|---------|------------------|------------------------|------------|
-| NVS Encryption (3) | **On-device, coupled to PIN setup**: app burns KEY4, then `nvs_flash_secure_init()`; the new PIN hash is written into encrypted NVS | No, the `nvs` partition is erased and re-initialized encrypted | Low: recoverable; worst case NVS re-init → PIN re-setup. Device still boots |
-| SD card updates (4) | **Build config only**: signed-app verification on update (`SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`); no eFuse touched, reversible | No, writes only to the inactive OTA slot | Low: a failed update stays on the current slot; rollback confirm guards a broken image |
-| Secure Boot (6) | **On-device UI**: app burns the three digests, the hardening set (JTAG disable, `DIS_DIRECT_BOOT`, secure download mode), `SECURE_BOOT_EN`, and write-protects `RD_DIS`; already-signed images stay valid | No | Only if lockdown runs while firmware that is unsigned (or signed with keys not matching the digests) is on flash (guarded in Phase 6) |
-| Flash Encryption (5) | **Serial only**: enabled by the *bootloader* on first boot; requires a bootloader built with `CONFIG_SECURE_FLASH_ENC_ENABLED`, flashed over serial | **Yes**, the bootloader encrypts bootloader + app + `encrypted` partitions *in place* on first boot (up to ~1 min) | Real: power loss during the first-boot pass corrupts flash. Development-mode recovery is a **one-shot eFuse disable** (`SPI_BOOT_CRYPT_CNT` to an even bit count), not a re-flash — serial re-flash of an encrypted ESP32-P4 does not work at all (see 5b). Release mode (Phase 7) removes even that |
-
-**Consequence:** the tools-free on-device flows cover NVS encryption and secure boot (all of Profile A). Flash encryption **cannot** be a UI toggle: there is no supported API for a running app to enable flash encryption over a non-FE bootloader, and forcing the eFuse would brick. Profile B therefore adds serial provisioning.
+| Feature | How it activates | Brick risk |
+|---------|------------------|------------|
+| NVS Encryption (3) | **On-device, coupled to PIN setup**: app burns KEY4, then `nvs_flash_secure_init()`; the new PIN hash is written into encrypted NVS | Low: worst case NVS re-init → PIN re-setup. Device still boots |
+| SD card updates (4) | **Build config only**: signed-app verification on update (`SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`); no eFuse touched | Low: a failed update stays on the current slot; rollback confirm guards a broken image |
+| Secure Boot (6) | **On-device menu**: app burns the three digests, the hardening set (JTAG disable, `DIS_DIRECT_BOOT`, secure download mode), `SECURE_BOOT_EN`, and write-protects `RD_DIS`. Needs the frozen bootloader (Phase 6d) on flash, which only a USB install of a lockable release puts there | Only if lockdown runs while an app or bootloader that is unsigned (or signed with other keys) is on flash; the menu verifies both against the embedded keys first |
 
 ### The hard constraint: read-protected keys before secure boot
 
-Per Espressif's security-features workflow, **Flash Encryption must be enabled before Secure Boot**, which is why Phase 5 precedes Phase 6. Enabling secure boot **write-protects `RD_DIS`** (so the secure-boot digests stay readable for the ROM to verify). Once `RD_DIS` is write-protected, read-protection can **no longer be set on any other key block**, including the flash-encryption XTS key and the NVS-encryption HMAC key. A key left software-readable defeats its own purpose.
+Enabling secure boot **write-protects `RD_DIS`** (so the secure-boot digests stay readable for the ROM to verify). After that, read-protection can no longer be set on any key block. A key left software-readable defeats its own purpose.
 
-**Rule: every read-protected key is burned *and* read-protected before `SECURE_BOOT_EN` is set in Phase 6.** The phase order guarantees this:
-
-- KEY5 (anti-phishing HMAC): Phase 2, during PIN setup.
-- KEY4 (NVS HMAC): Phase 3, during PIN setup.
-- Flash-encryption XTS key: Phase 5, KEY3 (XTS-AES-128): generated by the FE bootloader on first boot and read-protected at burn time. (The Key Manager path that would have kept KEY3 spare requires ≥ v3 silicon; see the eFuse key-block note.)
+**Rule: KEY5 (anti-phishing HMAC, Phase 2) and KEY4 (NVS HMAC, Phase 3) are burned and read-protected before `SECURE_BOOT_EN` is set.** Both happen during PIN setup, and the Secure Boot menu refuses to proceed unless a PIN is configured and both keys are sealed.
 
 ## Implementation Phases
 
@@ -220,7 +195,7 @@ Rules for any code that touches mnemonics, private keys, passphrases, PINs or KE
 - **Producers stop first.** Camera and display buffers are wiped only after their DMA writers stop. Workers suspend on completion and are joined and deleted by the UI thread so their stacks are wiped synchronously, never left to the idle task.
 - **Inputs.** Secret textareas are cleared with `ui_secure_clear_textarea()`; setting an empty string alone leaves LVGL copies behind.
 
-Accepted until Phase 5: a live secret can be observed while in use, and compression state, cUR buffers, camera and display pixels (SeedQR display and scan moments) and NVS cipher contexts keep default placement, which may be PSRAM. Cleanup shortens retention; it does not protect live data.
+Accepted: a live secret can be observed while in use, and compression state, cUR buffers, camera and display pixels (SeedQR display and scan moments) and NVS cipher contexts keep default placement, which may be PSRAM. Cleanup shortens retention; it does not protect live data.
 
 Accepted until libwally signs from a caller's key: `wally_psbt_sign` copies each input's signing key into a default-heap `ext_key` (wiped on release). Wrapping the call in the secret allocator would place the whole PSBT in internal RAM and make large PSBTs fail.
 
@@ -284,7 +259,7 @@ Open: validate PSRAM write-back and power-off remanence on hardware; move zlib, 
 
 ### Phase 3: NVS Encryption + Partition Migration (coupled to PIN setup)
 
-**On-device, no serial tools: part of Profile A.** NVS encryption protects the PIN hash (and settings) at rest. It is independent of flash encryption: its keys derive from an eFuse HMAC key (KEY4), not from anything in flash, so a flash dump yields only ciphertext. Its only ordering constraint is that KEY4 must be burned before secure boot (Phase 6) write-protects `RD_DIS`, which is naturally satisfied since this phase runs during PIN setup (right after Phase 2).
+**On-device, no serial tools.** NVS encryption protects the PIN hash (and settings) at rest. Its keys derive from an eFuse HMAC key (KEY4), not from anything in flash, so a flash dump yields only ciphertext. Its only ordering constraint is that KEY4 must be burned before secure boot (Phase 6) write-protects `RD_DIS`, which is naturally satisfied since this phase runs during PIN setup (right after Phase 2).
 
 **Why couple it to the PIN:** enabling NVS encryption erases and re-initializes the `nvs` partition, which would wipe an existing PIN hash. Doing it *as part of setting the PIN* removes that chicken-and-egg: KEY4 is burned and NVS is re-initialized encrypted *before* the new PIN hash is written, so the hash lands directly in encrypted storage. It also makes at-rest protection the **default** for any PIN user (rather than an optional late step), and mirrors the anti-phishing self-provisioning (KEY5, Phase 2b).
 
@@ -323,12 +298,11 @@ CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4        # BLOCK_KEY4
 
 #### 3d. Notes
 - **All-or-nothing:** unlike anti-phishing (which falls back to a deterministic salt if the HMAC peripheral is unavailable), NVS encryption has no plaintext fallback: once KEY4 is burned and NVS is encrypted, that is permanent. The same rule applies at setup time: if provisioning fails or KEY4 is unusable, PIN setup is aborted without writing a hash; a PIN hash is never stored in plaintext NVS.
-- **Independent of flash encryption:** flash encryption (Phase 5) deliberately leaves `nvs` unencrypted anyway (NVS's wear-levelled writes are incompatible with the block cipher), so NVS encryption is the mechanism that protects the PIN hash at rest whether or not flash encryption is used.
 - Anti-phishing words are unaffected (KEY5 is permanent and independent of KEY4).
 
 ### Phase 4: Air-Gapped SD Card Updates
 
-**Deliberately before secure boot.** ESP-IDF's *signed-app verification without secure boot* (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT` + `CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`, RSA scheme) makes the OTA path perform full Secure Boot v2 RSA-3072 signature verification, trusting the public keys embedded in the *currently running* app's signature block. No eFuses are burned and nothing is irreversible: serial recovery stays available while the update path is developed and field-proven, which is exactly the guarantee Phase 7 needs before it disables serial forever. The signing format is identical to secure boot's: when Phase 6 burns the key digests, the same keys and the same OTA code carry over unchanged; the eFuse burn just upgrades update-time verification to boot-time enforcement.
+**Deliberately before secure boot.** ESP-IDF's *signed-app verification without secure boot* (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT` + `CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`, RSA scheme) makes the OTA path perform full Secure Boot v2 RSA-3072 signature verification, trusting the public keys embedded in the *currently running* app's signature block. No eFuses are burned and nothing is irreversible: unrestricted serial flashing stays available while the update path is developed and field-proven. The signing format is identical to secure boot's: when Phase 6 burns the key digests, the same keys and the same OTA code carry over unchanged; the eFuse burn just upgrades update-time verification to boot-time enforcement.
 
 **Scope of the guarantee:** until Phase 6, signature checking protects the *SD update path only*; an attacker with serial access can still flash arbitrary firmware (the status quo today, nothing regresses). See [Cross-Phase Security Dependencies](#cross-phase-security-dependencies).
 
@@ -367,64 +341,55 @@ CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4        # BLOCK_KEY4
 - Test rollback confirm: power-cycle a freshly updated device *before* it calls `esp_ota_mark_app_valid_cancel_rollback()` → verify it returns to the previous slot
 - Test downgrade rejection: older `secure_version` → rejected in pre-flight, OTA slot untouched
 - Test unsigned, wrong-key, and corrupted images → rejected in pre-flight, OTA slot untouched
-- **Re-run this entire suite after Phase 6 (secure boot + eFuse anti-rollback): all tests must pass again before Phase 7 release lockdown**
+- **Re-run this entire suite on a locked device (Phase 6): all tests must pass again before the first lockable release**
 
-### Phase 5: Flash Encryption (development mode) + FE Key Provisioning
+### Phase 5: Flash Encryption (dropped)
 
-**Profile B only; serial-provisioned.** Precedes secure boot (Phase 6) so the flash-encryption key is read-protected before `RD_DIS` locks. Flash encryption runs in **development mode** here: a single one-shot `SPI_BOOT_CRYPT_CNT` disable stays available (serial *re-flash* does not, see 5b); the irreversible serial-disable is deferred to Phase 7. See [Enablement Mechanics & Deployment Profiles](#enablement-mechanics--deployment-profiles).
+**Dropped November 2026. Kern does not use flash encryption, and no other phase depends on it.**
 
-**Irreversible eFuse commitment: practice on a dev board first.**
+What it was: XTS-AES encryption of the bootloader and app partitions, and of PSRAM, with a key generated inside the chip. It had to be enabled over serial, before secure boot.
 
-#### 5a. Flash-encryption key provisioning ✅ (decided July 2026)
-- **XTS-AES-128, bootloader-generated**: the FE bootloader generates the key from TRNG on first boot and burns it read-protected; the key never exists outside the chip, so there is no host-side key ceremony and nothing to back up or leak.
-- **The block is KEY0, not KEY3** (measured on the wave_4b test board, August 2026): the bootloader takes the *first free* key block, and with KEY4/KEY5 already spent on HMAC that is KEY0 — not the KEY3 this plan had allocated. On a Profile B device that consumes a secure-boot digest slot, leaving KEY1/KEY2: two digests and one rotation instead of three and two. Landing the key in KEY3 instead would mean generating it on the host and pre-burning it before first FE boot, trading away the "key never leaves the chip" property above. This has to be settled before any Profile B device is provisioned; it cannot be changed afterwards.
-- The preferred **Key Manager + XTS-AES-256** path is not available on current silicon: the Kconfig option is gated on chip revision ≥ v3.0 (see the eFuse key-block note), and fielded boards measured v1.0/v1.3. The KM questions from earlier drafts (what dev-mode recovery looks like without a host-known key, whether KM lifts the `RD_DIS` ordering constraint) are moot unless the revision floor is ever raised.
-- KEY4 (NVS, Phase 3) and KEY5 (anti-phishing, Phase 2) are already burned; KEY3 is the last read-protected burn before Phase 6 locks `RD_DIS`.
+Why it was dropped:
 
-#### 5b. Enable flash encryption (development mode): **blocked — no enablement path is documented for now**
+- **It protects little here.** It never covers `nvs` or `storage`, which have their own encryption (NVS encryption, KEF). The firmware is public. A flash clone on another chip already fails the anti-phishing check. Firmware integrity is secure boot's job. The one real gain is PSRAM encryption, and the camera and display buffers would have to be exempted from it, leaving SeedQR frames in plaintext anyway.
+- **An encrypted ESP32-P4 cannot be reflashed over USB.** Download-mode encryption uses a per-session key instead of the eFuse key and writes ciphertext the ROM cannot decrypt (measured on a wave_4b, rev v1.0, August 2026; ESP-IDF documents the command as working). The only recovery is a once-per-chip `SPI_BOOT_CRYPT_CNT` disable.
+- **It takes a secure-boot key slot.** The bootloader puts its key in the first free block, KEY0, leaving two digests and one rotation. The alternative is generating the key off-chip. The Key Manager path that avoids both needs chip revision v3.
+- **It does not run cleanly with the display and camera.** DMA peripherals need an unencrypted PSRAM carve-out (`CONFIG_SPIRAM_ENC_EXEMPT`, IDF 6.1). The camera side needs esp_video 2.4, which Kern cannot use, and the DSI framebuffer has no hook for it at all.
+- **It doubles the release work.** It needs its own frozen bootloaders (Phase 6d), serial provisioning with a power-loss brick window, and a second device profile to test and support.
 
-**Status (August 2026).** Phase 5 had one blocker; it has been cleared and replaced by a harder one. Until the second is resolved, Kern **deliberately documents no procedure for enabling flash encryption**: the overlay and flashing recipes live on an unmerged branch and are intentionally not described here, because every route to an encrypted ESP32-P4 currently ends in a device that cannot be re-flashed over serial.
+What dropping it costs: working buffers in PSRAM stay plaintext while the device is powered and unlocked (see [Accepted Residual Risks](#accepted-residual-risks)). The choice is final for a locked device: flash encryption cannot be enabled after secure boot.
 
-*Cleared — PSRAM/DMA (IDF 6.0.x).* The first on-device attempt (July 2026) encrypted and booted the bootloader fine, but the app WDT-bootlooped ~1 s into the splash with no frame ever displayed (DSI underrun blue). Cause: flash encryption set the MMU "sensitive" bit on **every PSRAM page** (`mmu_ll_write_entry`, anti-FI assert, no opt-out in 6.0.x), routing cache traffic through the XTS engine while DMA masters — DSI framebuffer refresh, camera/ISP — reached PSRAM outside that path. Same signature upstream: [esp-idf#17708](https://github.com/espressif/esp-idf/issues/17708), [#17701](https://github.com/espressif/esp-idf/issues/17701), [#18427](https://github.com/espressif/esp-idf/issues/18427). IDF 6.1 provides the opt-out (`CONFIG_SPIRAM_ENC_EXEMPT`: an unencrypted carve-out at the top of PSRAM, reachable via `MALLOC_CAP_SPIRAM_NO_ENC`), and **esp_lvgl_adapter 0.6.4** allocates its draw buffers from it automatically whenever flash encryption is enabled. The camera side does **not**: esp_video only gained that behaviour in 2.4.0, and Kern is held at 2.3.x because 2.4+ drags in an esp_ipa blob built for a RISC-V B extension this core lacks (see the CHANGELOG). Camera and ISP buffers would therefore still land in encrypted PSRAM, so a future attempt needs that pin lifted first. Two further caveats stay attached to this fix: IDF's own DSI driver still allocates the DPI panel framebuffer with plain `MALLOC_CAP_SPIRAM` (`esp_lcd_panel_dpi.c`, v6.1 and master, no external-buffer API), so the ~1 MB buffer the display engine reads every frame would remain encrypted and it is **untested** whether that alone reproduces the wedge; and anything placed in the carve-out is plaintext in PSRAM at rest, which for Kern means display and camera frames, including SeedQR display and scan moments — a narrowing of the PSRAM-encryption guarantee that has to be accepted explicitly when Phase 5 is revisited.
+What is left over:
 
-*New — download-mode encryption is broken on ESP32-P4.* Manual encryption over the serial download path encrypts under a **per-session key rather than the eFuse XTS key**, so it writes ciphertext the ROM cannot decrypt: boot dies with `use legacy efuse key` followed by an endless `invalid header: 0x…`. Measured on the wave_4b test board (rev v1.0, development mode, `DIS_DOWNLOAD_MANUAL_ENCRYPT=0`, `FORCE_USE_KEY_MANAGER_KEY=0`, `KM_HUK_GEN_STATE=0`): two runs of the documented re-flash command, writing a bootloader binary that was built once and never rebuilt to the same offset, produced **different ciphertext**. XTS-AES is address-tweaked and deterministic, so the key differed between download sessions. The ROM's own `use legacy efuse key` message says the boot path uses the eFuse key; the download path appears to use a HUK-derived Key Manager key that nothing configures to match. ESP-IDF's flash-encryption guide presents that command as *the* development-mode re-flash method for exactly this eFuse state, so the documentation is wrong for this target. To be reported upstream.
-
-Consequences for the plan:
-
-- **An encrypted ESP32-P4 has no serial update path at all.** Manual encryption is broken as above, and a plaintext re-flash is not rescued either: `esp_flash_encrypt_check_and_update()` only encrypts flash contents while `SPI_BOOT_CRYPT_CNT` is still even, so once encryption is on the bootloader never re-encrypts plaintext content. The Phase 4 SD/OTA channel becomes the **only** update path the moment Phase 5 completes — earlier than this plan assumed, since it counted on serial recovery remaining through Phase 6. OTA writes go through `esp_partition` and are encrypted at runtime, after the bootloader has pointed the Key Manager at the eFuse key, so they should be unaffected — **unverified on an encrypted device, and a prerequisite for any future attempt.**
-- **Recovery costs the chip's one and only disable.** The test wave_4b was revived by flashing plaintext and burning `SPI_BOOT_CRYPT_CNT` from `0b001` to `0b011` (an even bit count disables decryption). ESP-IDF allows this **once per chip** on non-ESP32 targets. That board now runs plaintext on IDF 6.1 with display and camera confirmed working; its XTS key stays burned and read-protected in KEY0, one FE re-enable remains, and no further disable does.
-- **FE provisioning is therefore one-way in practice.** Any device that gets flash encryption must be treated as final from that moment: no serial re-flash, one recovery, and once that recovery is spent, none.
-
-Before Phase 5 can be revisited, four things need to be true: an upstream fix or a confirmed workaround for download-mode encryption; OTA/SD updates verified on an encrypted device; the DSI framebuffer question settled (does it need the carve-out, and if so how, given the driver offers no hook); and the plaintext-frames-in-PSRAM narrowing accepted in the threat model.
-
-- Partition-table prerequisite done: the 0x10000 table offset gives the ~36KB FE bootloader room in its 56KB slot (see [Partition Table](#partition-table)).
-- PSRAM encryption is enabled automatically and protects runtime key material in external RAM — except whatever is placed in the `SPIRAM_ENC_EXEMPT` carve-out the DMA fix requires, which is plaintext at rest (see the status note above).
-- The `storage` (SPIFFS) partition stays **plaintext**: SPIFFS does not support flash encryption, so the first-boot pass skips it (no `encrypted` flag). Mnemonics there are always KEF envelopes, so nothing key-critical depends on this; see [Cross-Phase Security Dependencies](#cross-phase-security-dependencies) and [Accepted Residual Risks](#accepted-residual-risks).
-- Verify encrypted flash contents are unreadable via physical extraction.
+- The `feat/flash-encryption-61` branch (overlay and recipes) is kept for reference and not maintained.
+- The wave_4b used for the tests has a flash-encryption key in KEY0 and its one disable spent. The Secure Boot menu will refuse it (KEY0 is taken), so the lockdown tests need another board.
+- The 0x10000 partition-table offset, chosen partly for the larger flash-encryption bootloader, stays.
 
 ### Phase 6: Secure Boot
 
-**Irreversible eFuse commitment: practice on a dev board first.** All read-protected keys (KEY4, KEY5, and the flash-encryption key) were burned in Phases 2–5, so it is safe for secure boot to write-protect `RD_DIS` here. For the full mechanics, key ceremony, rotation, and on-device lockdown flow, see [secure-boot.md](secure-boot.md).
+**Irreversible eFuse commitment: practice on a dev board first.** The read-protected keys (KEY4, KEY5) were burned during PIN setup (Phases 2–3), so it is safe for secure boot to write-protect `RD_DIS` here. This is the last lockdown step in the plan. For the full mechanics, key ceremony, rotation, and on-device lockdown flow, see [secure-boot.md](secure-boot.md).
 
 #### 6a. Key management
 - The three RSA-3072 signing keys already exist and are in active use, generated with full ceremony in Phase 4b, releases signed with the primary since then
 - Burn digests into KEY0 (primary), KEY1 (rotation #1), and KEY2 (rotation #2)
-- Sign the **bootloader with all three keys** (it is frozen at flash time and must survive rotations); the app is signed with the current primary key
+- The app is signed with the current primary key at every release. The **bootloader is signed with all three keys, once**, and then frozen (see [6d](#6d-frozen-bootloader)): it cannot be replaced by an SD update and must survive rotations, and signing it per release would pull keys 1 and 2 out of cold storage every time
 - Document eFuse programming workflow and recovery procedures
 
 #### 6b. Build system integration
-- `sdkconfig.secure` overlay with secure boot + anti-rollback config (`CONFIG_SECURE_BOOT=y`, `CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y`): replaces the Phase 4 signed-on-update-only config
+- `sdkconfig.secure` overlay (`CONFIG_SECURE_BOOT=y`, `CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y`, `CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y` so that no app burns secure download mode at startup): replaces the Phase 4 signed-on-update-only config. Done; anti-rollback is not in it yet (6c)
+- `bootloader_components/secure_boot_opt_in`: a stock `CONFIG_SECURE_BOOT` bootloader enables secure boot by itself on first boot, burning the digests of whatever signed it. The component wraps that call so the bootloader verifies apps once secure boot is on but never turns it on; the Settings menu does. Done, with a virtual-eFuse dry run (`just sbtest-flash`); not yet run on hardware
+- Releases build with `sdkconfig.release` + `sdkconfig.secure` and ship the frozen bootloader, not the built one (6d)
 - Leave `CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE` **off**: revoking a good key on one failed verification is a bricking hazard for a wallet
-- CI pipeline: build unsigned, developer signs images offline as part of release
-- **Reproducible builds are a prerequisite for the first signed release**: with CI building unsigned and the developer signing offline, users can only verify that a signed release matches the source if they can reproduce the unsigned image bit-for-bit. Pin toolchain/IDF versions and document the build recipe.
+- CI pipeline: build unsigned, developer signs the app offline as part of release; CI checks the frozen bootloaders against the public keys and, when its ESP-IDF version matches, against a rebuild from the freeze tag
+- **Reproducible builds are a prerequisite for the first signed release**: with CI building unsigned and the developer signing offline, users can only verify that a signed release matches the source if they can reproduce the unsigned image bit-for-bit. Pin toolchain/IDF versions and document the build recipe. The bootloader already meets this: its unsigned image is identical across build directories, which is what lets anyone check a frozen bootloader against its tag.
 - Keep development builds unsigned (separate sdkconfig)
 - Anti-rollback counter enabled (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`): firmware carries a monotonic security version enforced from eFuse; it **backs** the Phase 4 software downgrade check rather than replacing it (see [6c](#6c-anti-rollback-efuse-security-version) for the full plan)
 - Note ESP-IDF 6.0 API renames: `esp_secure_boot_verify_signature_block()` removed (use `esp_secure_boot_verify_rsa_signature_block()`); `esp_flash_encryption_enabled()` deprecated (use `esp_efuse_is_flash_encryption_enabled()`)
-- Re-run the Phase 4d validation suite under secure boot before Phase 7
+- Re-run the Phase 4d validation suite on a locked device before the first lockable release
 
 #### 6c. Anti-rollback (eFuse security version)
 
-**Planned July 2026, to be implemented together with 6a/6b; nothing here lands on master before the secure-boot overlay exists.** Anti-rollback is what stops an attacker (or a careless user) from installing a genuinely signed *older* Kern release to reopen a fixed vulnerability. Until it is on, a downgrade is refused only by our own pre-flight check running inside the firmware being replaced, which an attacker with serial access simply flashes over.
+**Planned July 2026; nothing here lands on master before the secure-boot overlay exists. The on/off decision is due before the first bootloader freeze (6d):** the boot-time refusal of an older app is bootloader code, so a bootloader frozen without anti-rollback can only gain it through a re-freeze and a USB reflash of each device. Anti-rollback is what stops an attacker (or a careless user) from installing a genuinely signed *older* Kern release to reopen a fixed vulnerability. Until it is on, a downgrade is refused only by our own pre-flight check running inside the firmware being replaced, which an attacker with serial access simply flashes over.
 
 ##### What already exists
 
@@ -474,7 +439,7 @@ Two tiers, in this order.
 
 **(a) Emulated, no permanent burns.** `CONFIG_BOOTLOADER_EFUSE_SECURE_VERSION_EMULATE=y` selects `EFUSE_VIRTUAL` + `EFUSE_VIRTUAL_KEEP_IN_FLASH` and needs a partition entry `emul_efuse, data, efuse, , 0x2000`. Two warnings: it virtualizes **all** eFuse operations, so PIN provisioning (KEY4/KEY5), flash encryption, and secure boot all become fake on that build; and it requires its own partition CSV, so it is not the frozen production table. Bench-only, never signed, never handed to a user.
 
-**(b) Real burns on the flash-encryption test mule** (the wave_4b already committed in Phase 5). Each test bump permanently spends one of its 16 bits: acceptable on the mule, never on a user device.
+**(b) Real burns on the board sacrificed for the lockdown tests** (6d). Each test bump permanently spends one of its 16 bits: acceptable on the mule, never on a user device.
 
 The matrix, in order:
 
@@ -486,21 +451,41 @@ The matrix, in order:
 6. Rollback still works between equal versions: OTA 1 → 1′, fail the self-confirm, verify the device returns to the previous slot.
 7. After a confirmed bump, verify the previous slot is no longer a rollback target, the expected loss of the safety net, documented here so it is a decision and not a surprise.
 
-Re-run this matrix as part of the Phase 4d suite under secure boot before Phase 7 lockdown.
+Re-run this matrix as part of the Phase 4d suite on a locked device.
 
-### Phase 7: Release Lockdown
+#### 6d. Frozen bootloader
 
-**The point of no return, and only after the Phase 4 SD update path has been re-validated under secure boot (Phase 6).** This is the last unrecoverable step, but no longer the only one: on ESP32-P4, Phase 5 already ends serial re-flash (see 5b), leaving a single one-shot `SPI_BOOT_CRYPT_CNT` disable as the whole of "recovery" from that point on. Phase 7 removes that too.
+**Decided November 2026.** After lockdown the bootloader on a device is fixed: SD updates write only the app slot, and the ROM accepts a replacement only if a non-revoked key signed it. It also needs all three signatures so that no rotation can strand it, and the lockdown menu verifies exactly that against the embedded keys before burning anything. Producing three signatures per release is not acceptable (keys 1 and 2 are cold), so the bootloader is signed once and reused. Full procedure in [secure-boot.md §4a](secure-boot.md#4a-the-frozen-bootloader).
 
-- Switch flash encryption from development to **release mode**: write-protects `SPI_BOOT_CRYPT_CNT` and burns `DIS_DOWNLOAD_MANUAL_ENCRYPT`; flashing plaintext firmware over serial is no longer possible.
-- Restrict UART ROM download to **secure download mode** (or disable it), and confirm JTAG is locked down. (Secure download mode is already burned by the Phase 6 lockdown flow; Phase 7 optionally disables download mode entirely.)
-- Runtime APIs exist for all of this, `esp_flash_encryption_set_release_mode()` and `esp_efuse_disable_rom_download_mode()` (disable download mode *before* release mode, per the API docs), so Phase 7 can be an **on-device menu action** for Profile B devices, mirroring the Phase 6 lockdown flow.
-- After this, the device is fully locked: firmware updates only via signed SD card OTA (Phase 4).
-- Verify: unsigned/plaintext serial flash is rejected; SD OTA still works; a power-loss during an SD update still boots the previous slot.
+- **Four variants, not one per board.** The bootloader is independent of display, touch and camera. It splits on chip revision range (v1.x / v3.x) and flash mode (wave_35 is DIO, the rest QIO). Measured: wave_4b, wave_5 and crowpanel release bootloaders are byte-identical; wave_35 differs. The staging step confirms the rest.
+- **Stored in the repository**: `kern_secure_boot/bootloaders/<variant>/bootloader-signed.bin` plus a `BOOTLOADERS` manifest (freeze number, git tag, ESP-IDF version, boards, unsigned SHA-256), covered by the existing `SHA256SUMS.sig`.
+- **Freeze ceremony** (rare, air-gapped, all three keys): stage the unsigned bootloaders from a tagged commit, sign each with keys 0, 1 and 2, verify against the published public keys, commit, tag `bootloader-<N>`. `CONFIG_BOOTLOADER_PROJECT_VER` carries N.
+- **Each release** (key 0 only): `release.sh` packages the frozen bootloader for the board's variant and warns when the freshly built one differs; `sign_release.sh` refuses a bootloader that does not verify against all three public keys.
+- **Compatibility rule**: every release must boot on every frozen bootloader still in the field. A change that breaks this is a re-freeze, and reaches a locked device only through a USB reflash by its owner.
+- **Fixed by a freeze**: the ESP-IDF version of the bootloader, the opt-in wrapper, anti-rollback on or off (6c), bootloader log level.
+- **Existing devices** got their bootloader from an earlier release and SD updates never changed it. They need one USB install of a lockable release; it preserves NVS and storage. The menu detects the old bootloader and says so.
+- **Web flasher**: must write the bootloader without rewriting its header (`keep` for flash mode, frequency and size) and must work in secure download mode, so a locked device can still take a signed release over USB.
+- **Self-built firmware** follows the same model with the user's keys: replace the three digest files, sign their own bootloader with their three keys, and the menu checks against those.
+
+Order of work:
+
+1. Tooling that needs no private key: `just bootloader-stage`, the manifest, `scripts/freeze_bootloader.sh`, the `release.sh` / `sign_release.sh` changes, the CI checks, the web flasher changes.
+2. Hardware: the virtual-eFuse dry run, then a real lockdown on a sacrificial board, followed by an SD update and a USB reflash on it.
+3. The anti-rollback decision (6c).
+4. The freeze ceremony.
+5. The first lockable release.
+
+### Phase 7: Release Lockdown (dropped)
+
+**Dropped with Phase 5.** It had three parts:
+
+- Flash-encryption release mode: gone with flash encryption.
+- Secure download mode and JTAG disable: burned by the Phase 6 lockdown.
+- Disabling ROM download mode entirely: not planned. Secure download mode already refuses flash readout, and unsigned code does not boot. A full disable would add little and would remove USB recovery and the only way to replace a frozen bootloader.
 
 ### Phase 8 (Future): TEE / World Controller
 
 - Investigate ESP32-P4 World Controller / PMS maturity in ESP-IDF
 - Goal: signing operations in World0 (secure), UI in World1 (non-secure)
 - Most complex and least mature; watch Espressif's ESP-TEE progress
-- Pragmatic measures (secure_memzero, PSRAM encryption, session-only keys) provide good coverage meanwhile
+- Pragmatic measures (secure_memzero, secrets in internal SRAM, session-only keys) provide good coverage meanwhile
