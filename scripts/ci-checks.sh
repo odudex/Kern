@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Run all CI checks for a single commit: format, tests, and a wave_4b build.
 # Invoked from the per-commit CI loop (see .github/workflows/test-each-commit.yml)
