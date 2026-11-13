@@ -173,8 +173,8 @@ static void poll_cb(lv_timer_t *timer) {
   }
   enabling = false;
   if (enable_result == ESP_OK) {
-    dialog_show_info("Secure Boot", "Secure boot is enabled.\nRestarting...",
-                     restart_cb, NULL, DIALOG_STYLE_FULLSCREEN);
+    dialog_show_acknowledge("Secure Boot", "Secure boot is enabled.", "Restart",
+                            restart_cb, NULL, DIALOG_STYLE_FULLSCREEN);
     return;
   }
   dialog_show_error_timeout("Secure boot could not be enabled.", NULL, 0);

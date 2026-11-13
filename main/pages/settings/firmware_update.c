@@ -151,8 +151,8 @@ static void poll_timer_cb(lv_timer_t *timer) {
     dialog_show_error_timeout(task_err, NULL, 0);
     return;
   }
-  dialog_show_info("Firmware Update", "Update installed.\nRestarting...",
-                   restart_cb, NULL, DIALOG_STYLE_FULLSCREEN);
+  dialog_show_acknowledge("Firmware Update", "Update installed.", "Restart",
+                          restart_cb, NULL, DIALOG_STYLE_FULLSCREEN);
 }
 
 static void start_task(TaskFunction_t fn, const char *name) {
