@@ -376,7 +376,7 @@ What is left over:
 - Document eFuse programming workflow and recovery procedures
 
 #### 6b. Build system integration
-- `sdkconfig.secure` overlay (`CONFIG_SECURE_BOOT=y`, `CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y`, `CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y` so that no app burns secure download mode at startup): replaces the Phase 4 signed-on-update-only config. Done; anti-rollback is not in it yet (6c)
+- `sdkconfig.secure` overlay (`CONFIG_SECURE_BOOT=y`, `CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y`, `CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y` so that no app burns secure download mode at startup): replaces the Phase 4 signed-on-update-only config. Done, with anti-rollback on at security version 0 (6c)
 - `bootloader_components/secure_boot_opt_in`: a stock `CONFIG_SECURE_BOOT` bootloader enables secure boot by itself on first boot, burning the digests of whatever signed it. The component wraps that call so the bootloader verifies apps once secure boot is on but never turns it on; the Settings menu does. Done, with a virtual-eFuse dry run (`just sbtest-flash`); not yet run on hardware
 - Releases build with `sdkconfig.release` + `sdkconfig.secure` and ship the frozen bootloader, not the built one (6d)
 - Leave `CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE` **off**: revoking a good key on one failed verification is a bricking hazard for a wallet
@@ -389,14 +389,14 @@ What is left over:
 
 #### 6c. Anti-rollback (eFuse security version)
 
-**Planned July 2026; nothing here lands on master before the secure-boot overlay exists. The on/off decision is due before the first bootloader freeze (6d):** the boot-time refusal of an older app is bootloader code, so a bootloader frozen without anti-rollback can only gain it through a re-freeze and a USB reflash of each device. Anti-rollback is what stops an attacker (or a careless user) from installing a genuinely signed *older* Kern release to reopen a fixed vulnerability. Until it is on, a downgrade is refused only by our own pre-flight check running inside the firmware being replaced, which an attacker with serial access simply flashes over.
+**Decided November 2026: on, in the secure-boot overlay at security version 0, ahead of the first bootloader freeze (6d).** The boot-time refusal of an older app is bootloader code, so a bootloader frozen without anti-rollback could only gain it through a re-freeze and a USB reflash of each device, and the older bootloader would stay valid for as long as its keys are. Anti-rollback is what stops an attacker (or a careless user) from installing a genuinely signed *older* Kern release to reopen a fixed vulnerability. On a device without it, a downgrade is refused only by our own pre-flight check running inside the firmware being replaced, which an attacker with serial access simply flashes over.
 
 ##### What already exists
 
 - `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (`sdkconfig.defaults`): the Kconfig dependency of `BOOTLOADER_APP_ANTI_ROLLBACK` is already satisfied.
 - OTA-only partition table, no `factory`: the layout anti-rollback requires (see [Partition Table](#partition-table)); this was settled in Phase 3.
 - `core/fw_update.c` rejects an image whose `secure_version` is below the running app's, with the user-visible error "Older security version rejected", and calls `esp_ota_mark_app_valid_cancel_rollback()` after a successful update, the self-confirm that makes the previous slot a valid fallback.
-- Nothing on the eFuse side: `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK` is unset, so `CONFIG_BOOTLOADER_APP_SECURE_VERSION` is invisible to Kconfig and `esp_app_desc.c` compiles `.secure_version = 0` into every build. **The Phase 4 software check is therefore a no-op today**, comparing 0 against 0, and only becomes meaningful once the overlay below sets a non-zero version.
+- Development builds leave `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK` unset, so `CONFIG_BOOTLOADER_APP_SECURE_VERSION` is invisible to Kconfig and `esp_app_desc.c` compiles `.secure_version = 0` into them. Builds with the overlay below set it, also to 0. **The Phase 4 software check is therefore a no-op today**, comparing 0 against 0, and only becomes meaningful with the first bump.
 
 ##### The eFuse field is a 16-shot budget
 
@@ -423,7 +423,7 @@ Three sites, all worth knowing before the first burn:
 
 ##### Implementation, in the secure-boot overlay
 
-All of it belongs in `sdkconfig.secure` alongside 6b, never in `sdkconfig.defaults`: a `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y` on master would start burning counters on every device that flashes a master build:
+In `sdkconfig.secure` since November 2026. All of it belongs there alongside 6b, never in `sdkconfig.defaults`: a `CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y` on master would start burning counters on every device that flashes a master build:
 
 ```
 CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
@@ -471,7 +471,7 @@ Order of work:
 
 1. Tooling that needs no private key: `just bootloader-stage`, the manifest, `scripts/freeze_bootloader.sh`, the `release.sh` / `sign_release.sh` changes, the CI checks, the web flasher changes.
 2. Hardware: the virtual-eFuse dry run, then a real lockdown on a sacrificial board, followed by an SD update and a USB reflash on it.
-3. The anti-rollback decision (6c).
+3. The anti-rollback decision (6c). Taken: on.
 4. The freeze ceremony.
 5. The first lockable release.
 

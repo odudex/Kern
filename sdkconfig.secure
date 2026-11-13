@@ -7,3 +7,8 @@ CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
 # The default, secure download mode, would be burned by every app at startup.
 # The Settings lockdown burns it together with SECURE_BOOT_EN.
 CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y
+# Anti-rollback: the bootloader refuses an app whose security version is below the eFuse counter. Version 0 burns nothing.
+# The counter is 16 unary bits, 16 bumps for the life of a device: raise the version only for a security fix, and never change the field size.
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
+CONFIG_BOOTLOADER_APP_SECURE_VERSION=0
+CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD=16

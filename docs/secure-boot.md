@@ -729,15 +729,15 @@ Anti-rollback assumes an **OTA-only** partition table — two `ota_app` slots an
 
 ### Configuration
 
-In `sdkconfig.secure`:
+In `sdkconfig.secure` (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, which it depends on, is in `sdkconfig.defaults`):
 
 ```
-CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
 CONFIG_BOOTLOADER_APP_SECURE_VERSION=0
+CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD=16
 ```
 
-The security version starts at 0 and is stored in `sdkconfig.secure` as `CONFIG_BOOTLOADER_APP_SECURE_VERSION`. The size of the eFuse counter (and therefore the maximum number of increments) is set by `CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD` — size it generously, since every increment is permanent.
+The security version starts at 0, which burns nothing, and is stored in `sdkconfig.secure` as `CONFIG_BOOTLOADER_APP_SECURE_VERSION`. `CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD` is the size of the eFuse counter and therefore the number of increments a device gets: 16, the whole field on ESP32-P4. It must never change afterwards, because it is how every build reads the bits already burned.
 
 ### When to Increment
 
@@ -767,12 +767,15 @@ CONFIG_SECURE_BOOT=y
 CONFIG_SECURE_BOOT_V2_ENABLED=y
 CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
 CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=y
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
+CONFIG_BOOTLOADER_APP_SECURE_VERSION=0
+CONFIG_BOOTLOADER_APP_SEC_VER_SIZE_EFUSE_FIELD=16
 ```
 
 - `CONFIG_SECURE_INSECURE_ALLOW_DL_MODE` is not an opening: with `CONFIG_SECURE_BOOT` the default download-mode choice is secure download mode, which every app burns at startup (`esp_efuse_startup.c`), locked or not. The Settings lockdown burns it together with `SECURE_BOOT_EN` instead.
 - The hardening options IDF ties to `CONFIG_SECURE_BOOT` (JTAG, `RD_DIS`, unused-slot revokes) only act inside `esp_secure_boot_v2_permanently_enable()`, which `secure_boot_opt_in` defers until secure boot is on, and then returns early; the app burns that set itself.
 - `CONFIG_SECURE_BOOT_V2_ENABLED` selects `CONFIG_ESPTOOLPY_NO_STUB`, so `idf.py flash` runs without the stub and leaves the bootloader out; write it with esptool at `0x2000`.
-- Anti-rollback (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`) is not in this overlay yet: it burns `SECURE_VERSION` by itself whenever a newer app is confirmed, so it gets its own decision (Section 7). That decision is due before the first freeze, because the bootloader half of it cannot be added afterwards without a re-freeze.
+- Anti-rollback (`CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK`) is on, at security version 0 (Section 7). It burns `SECURE_VERSION` by itself whenever an app with a higher security version is confirmed, and version 0 burns nothing. It was turned on before the first freeze because the bootloader half of it cannot be added afterwards without a re-freeze.
 - Aggressive key revocation stays off: revoking a good key on a single failed verification would be a bricking hazard for a wallet.
 - Signing: builds sign with `dev_signing_key.pem`. Releases re-sign the app offline with key 0 and ship the frozen bootloader instead of the built one (Sections 4a, 4b).
 - `CONFIG_BOOTLOADER_PROJECT_VER` will carry the freeze number once the first freeze is prepared.
