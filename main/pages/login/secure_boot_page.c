@@ -195,8 +195,8 @@ static void start_task(bool enable) {
   }
 
   done = false;
-  if (!worker_task_start(enable ? "sb_enable" : "sb_status", TASK_STACK_SIZE,
-                         enable ? enable_work : read_work, &done)) {
+  if (!worker_task_start_io(enable ? "sb_enable" : "sb_status", TASK_STACK_SIZE,
+                            enable ? enable_work : read_work, &done)) {
     if (progress) {
       lv_obj_del(progress);
       progress = NULL;

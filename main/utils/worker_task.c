@@ -11,6 +11,7 @@
 typedef struct {
   worker_task_fn_t fn;
   volatile bool *done_flag;
+  bool starves_core;
 } worker_ctx_t;
 
 static worker_ctx_t worker_ctx;
@@ -21,11 +22,14 @@ static void worker_trampoline(void *arg) {
   (void)arg;
 
   TaskHandle_t idle = xTaskGetIdleTaskHandleForCore(WORKER_TASK_CORE);
-  esp_task_wdt_delete(idle);
+  bool starves_core = worker_ctx.starves_core;
+  if (starves_core)
+    esp_task_wdt_delete(idle);
 
   worker_ctx.fn();
 
-  esp_task_wdt_add(idle);
+  if (starves_core)
+    esp_task_wdt_add(idle);
   *worker_ctx.done_flag = true;
   __atomic_store_n(&worker_running, false, __ATOMIC_RELEASE);
   // The UI joins and deletes this task with its owned stack. Self-deletion
@@ -43,8 +47,8 @@ void worker_task_wait(void) {
   }
 }
 
-bool worker_task_start(const char *name, uint32_t stack_bytes,
-                       worker_task_fn_t fn, volatile bool *done_flag) {
+static bool start(const char *name, uint32_t stack_bytes, worker_task_fn_t fn,
+                  volatile bool *done_flag, bool starves_core) {
   if (!fn || !done_flag)
     return false;
 
@@ -59,6 +63,7 @@ bool worker_task_start(const char *name, uint32_t stack_bytes,
 
   worker_ctx.fn = fn;
   worker_ctx.done_flag = done_flag;
+  worker_ctx.starves_core = starves_core;
 
   bool started = xTaskCreatePinnedToCoreWithCaps(
                      worker_trampoline, name, stack_bytes, NULL,
@@ -67,4 +72,14 @@ bool worker_task_start(const char *name, uint32_t stack_bytes,
   if (!started)
     __atomic_store_n(&worker_running, false, __ATOMIC_RELEASE);
   return started;
+}
+
+bool worker_task_start(const char *name, uint32_t stack_bytes,
+                       worker_task_fn_t fn, volatile bool *done_flag) {
+  return start(name, stack_bytes, fn, done_flag, true);
+}
+
+bool worker_task_start_io(const char *name, uint32_t stack_bytes,
+                          worker_task_fn_t fn, volatile bool *done_flag) {
+  return start(name, stack_bytes, fn, done_flag, false);
 }

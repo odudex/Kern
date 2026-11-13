@@ -40,4 +40,12 @@ KERN_WARN_UNUSED_RESULT bool worker_task_start(const char *name,
                                                worker_task_fn_t fn,
                                                volatile bool *done_flag);
 
+/* Same, for short work that waits on I/O. The idle task runs during those
+ * waits, so it stays subscribed: unsubscribed, its watchdog hook logs an
+ * error on every tick. */
+KERN_WARN_UNUSED_RESULT bool worker_task_start_io(const char *name,
+                                                  uint32_t stack_bytes,
+                                                  worker_task_fn_t fn,
+                                                  volatile bool *done_flag);
+
 #endif /* WORKER_TASK_H */
