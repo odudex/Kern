@@ -46,6 +46,16 @@ flash-release board="wave_4b": (build-release board)
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     idf.py -B build_release_{{board}} -D SDKCONFIG=build_release_{{board}}/sdkconfig flash
 
+# Lockable release image (sdkconfig.release + sdkconfig.secure, published key digests) in build_secure_<board>/.
+# The build signs with dev_signing_key.pem; the files to sign with the release keys are
+# kern-unsigned.bin (key 0) and bootloader/bootloader-unsigned.bin (keys 0, 1 and 2).
+build-secure board="wave_4b": (_check_board board)
+    #!/usr/bin/env sh
+    set -e
+    command -v idf.py >/dev/null || . $IDF_PATH/export.sh
+    rm -f build_secure_{{board}}/sdkconfig
+    idf.py -B build_secure_{{board}} -D SDKCONFIG=build_secure_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.release;sdkconfig.secure" build
+
 # Secure boot dry run: a sdkconfig.secure build with virtual eFuses (sdkconfig.sbtest), so the
 # Settings lockdown burns a RAM copy that is gone after the restart. Signed with test keys:
 # dev_signing_key.pem signs the app, it and two throwaway keys sign the bootloader, and their
@@ -121,6 +131,7 @@ clean:
     rm -fRd build_scanprof_*
     rm -fRd build_release_*
     rm -fRd build_sbtest_*
+    rm -fRd build_secure_*
     rm -f sdkconfig
     rm -fRd compile_commands.json
     rm -fRd .cache/

@@ -433,6 +433,7 @@ Before publishing, boot the new app on each frozen variant, and install it over 
 |-------|----------|-----------|-----|
 | `just build <board>` | board defaults | Plain. Never verifies apps, cannot be locked | Daily development |
 | `just build-release <board>` | + `sdkconfig.release` | Plain | Release log and panic settings, for reproducing release behaviour |
+| `just build-secure <board>` | + `sdkconfig.release` + `sdkconfig.secure` | Built here, dev-key signed; `bootloader/bootloader-unsigned.bin` is the image a freeze signs | One board's lockable image, for a freeze or a lockdown test |
 | `scripts/release.sh` | + `sdkconfig.release` + `sdkconfig.secure` | Frozen, from `kern_secure_boot/bootloaders/` | Published releases |
 | `just sbtest-flash <board>` | + `sdkconfig.secure` + `sdkconfig.sbtest` | Test-key signed, virtual eFuses | Dry run of the lockdown (Section 8) |
 

@@ -5,6 +5,7 @@ build_pbkdf2_*/
 build_scanprof_*/
 build_release_*/
 build_sbtest_*/
+build_secure_*/
 build_wave_4b/
 build_wave_43/
 build_wave_5/
