@@ -18,7 +18,16 @@ A device with secure boot enabled keeps its second-stage bootloader: SD updates 
 
 The bootloader does not depend on the display or camera, so boards share it. There is one per chip revision range and flash mode, listed in `bootloaders/BOOTLOADERS` with the git tag and ESP-IDF version it was built from and the SHA-256 of its unsigned image. Building that tag reproduces the image byte for byte up to the signature sector.
 
-> **Not published yet.** No bootloader has been frozen, so current releases cannot enable secure boot. `bootloaders/` arrives with the first release that can. Procedure: [docs/secure-boot.md §4a](../docs/secure-boot.md#4a-the-frozen-bootloader).
+**Freeze 1** is published here, built from the tag `bootloader-1` with ESP-IDF v6.1.1:
+
+| Variant | Chip revision | Flash mode | Boards |
+|---------|---------------|------------|--------|
+| `v1-qio` | v0.x / v1.x | QIO | wave_4b, wave_5, wave_43, wave_7b, crowpanel, p4_pico |
+| `v1-dio` | v0.x / v1.x | DIO | wave_35 |
+| `v3-qio` | v3.x | QIO | the `_v3` builds of the `v1-qio` boards |
+| `v3-dio` | v3.x | DIO | wave_35_v3 |
+
+A release can enable secure boot when its zip carries one of these as `bootloader.bin`. Releases up to v0.0.21 ship a plain bootloader and cannot. Procedure: [docs/secure-boot.md §4a](../docs/secure-boot.md#4a-the-frozen-bootloader).
 
 ## Contents
 
@@ -30,8 +39,8 @@ The bootloader does not depend on the display or camera, so boards share it. The
 | `kern-sb-digest0.bin` | SHA-256 digest of public key 0 (32 bytes, burned into eFuse KEY0) |
 | `kern-sb-digest1.bin` | SHA-256 digest of public key 1 (32 bytes, burned into eFuse KEY1) |
 | `kern-sb-digest2.bin` | SHA-256 digest of public key 2 (32 bytes, burned into eFuse KEY2) |
-| `bootloaders/BOOTLOADERS` | Manifest of the frozen bootloaders (not published yet) |
-| `bootloaders/<variant>/bootloader-signed.bin` | Frozen bootloader, signed by all three keys (not published yet) |
+| `bootloaders/BOOTLOADERS` | Manifest of the frozen bootloaders |
+| `bootloaders/<variant>/bootloader-signed.bin` | Frozen bootloader, signed by all three keys |
 | `SHA256SUMS` | SHA-256 checksums of all files above |
 | `SHA256SUMS.sig` | GPG detached signature of `SHA256SUMS` |
 
@@ -65,13 +74,19 @@ You can also compute the hex representation of the `.bin` digest files to compar
 for n in 0 1 2; do xxd -p kern-sb-digest${n}.bin | tr -d '\n' && echo; done
 ```
 
-Once the frozen bootloaders are published, each can be checked against the three public keys (`espsecure` comes with `esptool`):
+Each frozen bootloader can be checked against the three public keys (`espsecure` comes with `esptool`):
 
 ```bash
 for n in 0 1 2; do
     espsecure verify-signature --version 2 \
         --keyfile kern-sb-key${n}-pub.pem bootloaders/v1-qio/bootloader-signed.bin
 done
+```
+
+From the repository root, one command checks every variant against the three keys and against the unsigned hash in the manifest:
+
+```bash
+bash scripts/freeze_bootloader.sh --verify kern_secure_boot/bootloaders kern_secure_boot
 ```
 
 ## On-Device Secure Boot Activation
