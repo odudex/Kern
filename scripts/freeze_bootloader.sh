@@ -6,6 +6,9 @@
 #   2. signs it with the three Secure Boot v2 RSA-3072 keys (key 0, then keys 1
 #      and 2 appended), unless the variant already carries its frozen signature
 #   3. verifies the result against the three public keys in the folder
+# and finally writes SHA256SUMS for kern_secure_boot/ (public keys, manifest
+# and signed bootloaders, under the paths they have there) and signs it with
+# GPG. KERN_GPG_KEY picks a key other than the default one.
 #
 # Usage (from inside the release/bootloader-<N> folder on the SD card):
 #
@@ -20,11 +23,12 @@
 #
 #   bash freeze_bootloader.sh --verify [folder] [public-key-folder]
 #
-# Requirements: bash, python3, sha256sum and the esptool pip package (provides
-# espsecure; python3 -m espsecure is used if the CLI is not on PATH).
+# Requirements: bash, python3, sha256sum, gpg and the esptool pip package
+# (provides espsecure; python3 -m espsecure is used if the CLI is not on PATH).
 #
 # Input per variant:  <variant>/bootloader-unsigned.bin
 # Output per variant: <variant>/bootloader-signed.bin
+# Plus:               SHA256SUMS, SHA256SUMS.sig
 #
 # A signature cannot be reproduced: signing the same image again gives different
 # bytes. A variant that already has bootloader-signed.bin is never signed again.
@@ -165,7 +169,33 @@ done < "$MANIFEST"
 
 echo
 echo "$SIGNED variant(s) signed and verified, $PENDING not signed"
-if [ -z "$VERIFY_ONLY" ]; then
-    echo "Next: take the folder back to the build machine and run"
-    echo "  just bootloader-import <folder>"
+[ -z "$VERIFY_ONLY" ] || exit 0
+
+sum_line() {
+    printf '%s  %s\n' "$(sha256sum "$1" | cut -d' ' -f1)" "$2"
+}
+{
+    for n in 0 1 2; do sum_line "$DIR/kern-sb-key$n-pub.pem" "kern-sb-key$n-pub.pem"; done
+    for n in 0 1 2; do sum_line "$DIR/kern-sb-digest$n.bin" "kern-sb-digest$n.bin"; done
+    sum_line "$MANIFEST" "bootloaders/BOOTLOADERS"
+    while read -r VARIANT REST; do
+        case "$VARIANT" in '' | '#'*) continue ;; esac
+        sum_line "$DIR/$VARIANT/bootloader-signed.bin" "bootloaders/$VARIANT/bootloader-signed.bin"
+    done < "$MANIFEST"
+} > "$TMP/SHA256SUMS"
+
+# An unchanged, already signed SHA256SUMS is left alone
+if ! cmp -s "$TMP/SHA256SUMS" "$DIR/SHA256SUMS" || [ ! -f "$DIR/SHA256SUMS.sig" ]; then
+    cp "$TMP/SHA256SUMS" "$DIR/SHA256SUMS"
+    rm -f "$DIR/SHA256SUMS.sig"
+    echo "── SHA256SUMS written, signing it with GPG ──"
+    if ! command -v gpg >/dev/null 2>&1 ||
+        ! gpg ${KERN_GPG_KEY:+--local-user "$KERN_GPG_KEY"} --detach-sign --armor \
+            --output "$DIR/SHA256SUMS.sig" "$DIR/SHA256SUMS"; then
+        echo "SHA256SUMS is NOT signed. The bootloaders are; sign it by hand with:" >&2
+        echo "  gpg --detach-sign --armor -o SHA256SUMS.sig SHA256SUMS" >&2
+    fi
 fi
+
+echo "Next: take the folder back to the build machine and run"
+echo "  just bootloader-import <folder>"

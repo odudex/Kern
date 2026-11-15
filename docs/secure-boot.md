@@ -345,7 +345,7 @@ kern_secure_boot/bootloaders/
 **The freeze.**
 
 1. On the build machine, at the commit to freeze: `just bootloader-stage` builds only the bootloader (`sdkconfig.release` + `sdkconfig.secure`) for every board, groups the unsigned images into variants, and stages one per variant in `release/bootloader-<N>/` with the manifest, the public keys and `freeze_bootloader.sh`. It stops if two boards of one variant build different bootloaders. A variant whose frozen image still matches the build is staged with that signature and is not signed again: a signature cannot be reproduced, and devices are locked with those bytes.
-2. On the air-gapped signing machine, from that folder, with all three private keys: `bash freeze_bootloader.sh <key0.pem> <key1.pem> <key2.pem>`. It checks each private key against its published digest, so a key in the wrong position stops the run, checks each unsigned image against the manifest, signs it with key 0, appends key 1 and key 2, and verifies the result against the three public keys. By hand that is:
+2. On the air-gapped signing machine, from that folder, with all three private keys: `bash freeze_bootloader.sh <key0.pem> <key1.pem> <key2.pem>`. It checks each private key against its published digest, so a key in the wrong position stops the run, checks each unsigned image against the manifest, signs it with key 0, appends key 1 and key 2, and verifies the result against the three public keys. It then writes `SHA256SUMS` for `kern_secure_boot/` and signs it with GPG, so the GPG key can stay on that machine too. By hand the signing is:
 
 ```bash
 espsecure sign-data --version 2 --keyfile kern-sb-key0.pem \
@@ -361,7 +361,7 @@ for n in 0 1 2; do
 done
 ```
 
-3. Back on the build machine: `just bootloader-import release/bootloader-<N>` verifies the folder against the public keys in `kern_secure_boot/` and copies the signed images and their manifest lines into `kern_secure_boot/bootloaders/`. It refuses to replace a frozen image with different bytes under the same freeze number. Then regenerate `SHA256SUMS`, sign it with GPG, commit, and tag the manifest's commit `bootloader-<N>`; the recipe prints those commands.
+3. Back on the build machine: `just bootloader-import release/bootloader-<N>` verifies the folder against the public keys in `kern_secure_boot/` and copies the signed images and their manifest lines into `kern_secure_boot/bootloaders/`. It refuses to replace a frozen image with different bytes under the same freeze number. It installs the folder's `SHA256SUMS` and `SHA256SUMS.sig` once every listed hash matches the result and GPG verifies the signature. Then commit, and tag the manifest's commit `bootloader-<N>`; the recipe prints those commands.
 
 Fill this in at each freeze and keep it with the key ceremony record (Section 3e):
 
