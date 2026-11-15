@@ -156,10 +156,20 @@ static secure_boot_check_t check_ready(bool slot_in_use) {
 
 #undef FAIL
 
+/* The whole field: esp_efuse_read_secure_version() reads only as many bits
+ * as this build's anti-rollback config names. */
+static uint8_t read_security_version(void) {
+  uint32_t bits = 0;
+  esp_efuse_read_field_blob(ESP_EFUSE_SECURE_VERSION, &bits,
+                            esp_efuse_get_field_size(ESP_EFUSE_SECURE_VERSION));
+  return __builtin_popcount(bits);
+}
+
 static void evaluate(secure_boot_status_t *out,
                      slot_t slots[SECURE_BOOT_KEY_COUNT]) {
   memset(out, 0, sizeof(*out));
   memcpy(out->digests, KERN_SB_DIGESTS, sizeof(out->digests));
+  out->security_version = read_security_version();
   for (unsigned i = 0; i < SECURE_BOOT_KEY_COUNT; i++)
     out->revoked[i] = esp_efuse_get_digest_revoke(i);
 

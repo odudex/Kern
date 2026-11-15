@@ -47,6 +47,8 @@ typedef struct {
   /* Burned digests once SECURE_BOOT_EN is set, the embedded ones before */
   uint8_t digests[SECURE_BOOT_KEY_COUNT][SECURE_BOOT_DIGEST_LEN];
   bool revoked[SECURE_BOOT_KEY_COUNT];
+  /* eFuse anti-rollback counter: firmware below it does not start */
+  uint8_t security_version;
 } secure_boot_status_t;
 
 void secure_boot_read_status(secure_boot_status_t *out);

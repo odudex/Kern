@@ -66,6 +66,14 @@ static void add_digests(void) {
   }
 }
 
+static void add_security_version(void) {
+  char msg[80];
+  snprintf(msg, sizeof(msg),
+           "Security version %u. Firmware with a lower one will not start.",
+           status.security_version);
+  lv_obj_set_style_margin_top(text(msg, true), theme_default_padding(), 0);
+}
+
 static const char *blocked_reason(secure_boot_check_t check) {
   switch (check) {
   case SECURE_BOOT_ERR_BUILD:
@@ -114,6 +122,7 @@ static void render(void) {
     text("Only firmware signed by one of these keys starts on this device.",
          true);
     add_digests();
+    add_security_version();
     return;
   case SECURE_BOOT_INCOMPLETE:
     heading("Enabled, setup unfinished", error_color());
