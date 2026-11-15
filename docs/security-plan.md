@@ -469,7 +469,7 @@ Re-run this matrix as part of the Phase 4d suite on a locked device.
 
 Order of work:
 
-1. Tooling that needs no private key: `just bootloader-stage`, the manifest, `scripts/freeze_bootloader.sh` and `just bootloader-import` (done), then the `release.sh` / `sign_release.sh` changes, the CI checks, the web flasher changes.
+1. Tooling that needs no private key: `just bootloader-stage`, the manifest, `scripts/freeze_bootloader.sh`, `just bootloader-import` and the `release.sh` / `sign_release.sh` changes (done), then the CI checks and the web flasher changes.
 2. Hardware: the virtual-eFuse dry run, then a real lockdown on a sacrificial board, followed by an SD update and a USB reflash on it.
 3. The anti-rollback decision (6c). Taken: on.
 4. The freeze ceremony.

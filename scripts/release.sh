@@ -1,8 +1,20 @@
 #!/bin/bash
 set -e
 
+# Kern release build — runs on the build machine.
+#
+# Builds every device with sdkconfig.release + sdkconfig.secure and stages, per
+# device, the unsigned app and the FROZEN bootloader of its variant from
+# kern_secure_boot/bootloaders/, not the bootloader this build produced: a
+# device with secure boot enabled only accepts those bytes, and they carry
+# signatures that are made once per freeze (docs/secure-boot.md, section 4a).
+#
+# Move release/v<version>/ to the air-gapped signing PC and run sign_release.sh
+# there: it signs each app with key 0 and packs the zips.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+KERN_SB_DIR="${KERN_SB_DIR:-$REPO_ROOT/kern_secure_boot}"
 BOARDS="wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b p4_pico"
 # Each board twice: ESP32-P4 chip revision v1.x, then v3.x (<board>_v3)
 DEVICES="$BOARDS $(printf '%s_v3 ' $BOARDS)"
@@ -29,22 +41,42 @@ mkdir -p "$RELEASE_DIR"
 
 cd "$REPO_ROOT"
 
+# Every frozen bootloader must still verify against the three public keys
+MANIFEST="$KERN_SB_DIR/bootloaders/BOOTLOADERS"
+bash "$SCRIPT_DIR/freeze_bootloader.sh" --verify "$KERN_SB_DIR/bootloaders" "$KERN_SB_DIR"
+echo
+
+DRIFTED=""
+
 for DEVICE in $DEVICES; do
     echo "========================================"
     echo "Building for ${DEVICE}..."
     echo "========================================"
 
     # Delegate to justfile so the SDKCONFIG/build-dir layout stays in one place
-    just build-release "$DEVICE"
+    just build-secure "$DEVICE"
 
-    BUILD_DIR="$REPO_ROOT/build_release_${DEVICE}"
+    BUILD_DIR="$REPO_ROOT/build_secure_${DEVICE}"
     DEVICE_DIR="$RELEASE_DIR/${DEVICE}"
     mkdir -p "$DEVICE_DIR"
+
+    VARIANT="$("$SCRIPT_DIR/bootloader_variant.sh" "$BUILD_DIR/sdkconfig")"
+    FROZEN="$KERN_SB_DIR/bootloaders/$VARIANT/bootloader-signed.bin"
+    FROZEN_SHA="$(awk -v v="$VARIANT" '$1 == v { print $6 }' "$MANIFEST")"
+    if [ ! -f "$FROZEN" ] || [ -z "$FROZEN_SHA" ]; then
+        echo "Error: no frozen bootloader for ${DEVICE} (variant ${VARIANT}). Freeze one first: just bootloader-stage" >&2
+        exit 1
+    fi
+    # The release ships the frozen bootloader either way. A different build
+    # output means its sources, config or ESP-IDF moved since the freeze.
+    if [ "$(sha256sum "$BUILD_DIR/bootloader/bootloader-unsigned.bin" | cut -d' ' -f1)" != "$FROZEN_SHA" ]; then
+        DRIFTED="$DRIFTED $DEVICE($VARIANT)"
+    fi
 
     # Stage the raw parts per device. The final artifacts (signed app,
     # NVS-preserving Intel HEX, zip) are produced by sign_release.sh on the
     # air-gapped signing PC — nothing packaged here would survive signing.
-    cp "$BUILD_DIR/bootloader/bootloader.bin" "$DEVICE_DIR/"
+    cp "$FROZEN" "$DEVICE_DIR/bootloader.bin"
     cp "$BUILD_DIR/partition_table/partition-table.bin" "$DEVICE_DIR/"
     cp "$BUILD_DIR/ota_data_initial.bin" "$DEVICE_DIR/"
     cp "$BUILD_DIR/kern-unsigned.bin" "$DEVICE_DIR/firmware.bin"
@@ -54,11 +86,20 @@ for DEVICE in $DEVICES; do
 done
 
 # Ship version + signing script with the release folder so the whole folder
-# can be moved to the air-gapped signing PC via SD card
+# can be moved to the air-gapped signing PC via SD card. The public keys let
+# sign_release.sh check the bootloaders it packs.
 echo "$VERSION" > "$RELEASE_DIR/VERSION"
 cp "$SCRIPT_DIR/sign_release.sh" "$RELEASE_DIR/"
+cp "$KERN_SB_DIR"/kern-sb-key?-pub.pem "$RELEASE_DIR/"
 
 echo "========================================"
 echo "Release v${VERSION} complete!"
 echo "Files in ${RELEASE_DIR}:"
 ls -lh "$RELEASE_DIR"
+
+if [ -n "$DRIFTED" ]; then
+    echo
+    echo "WARNING: the bootloader built here differs from the frozen one for:$DRIFTED"
+    echo "The release ships the frozen bootloader. Check that this app still boots on it,"
+    echo "and whether the change calls for a re-freeze (docs/secure-boot.md, section 4a)."
+fi

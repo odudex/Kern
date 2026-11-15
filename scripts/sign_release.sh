@@ -2,6 +2,8 @@
 # Kern release signing + packaging — runs on the AIR-GAPPED signing PC.
 #
 # For each device staged by release.sh, this script:
+#   0. checks that the staged bootloader is a frozen one, signed by all three
+#      Secure Boot keys (public keys only), before anything is signed
 #   1. signs the app image with the Secure Boot v2 RSA-3072 primary key (key0)
 #      and verifies the signature
 #   2. regenerates the single-file Intel HEX embedding the SIGNED app (sparse:
@@ -23,6 +25,7 @@
 #
 # Input per device:  <device>/{bootloader,partition-table,ota_data_initial,
 #                    firmware}.bin
+# Plus:              kern-sb-key{0,1,2}-pub.pem
 # Output per device: <device>/firmware-signed.bin   (also the SD-update file)
 #                    <device>/kern-v<ver>.hex       (serial install, signed app)
 #                    kern-<device>-v<ver>.zip       (publishable bundle)
@@ -73,6 +76,21 @@ OFF_BOOTLOADER=0x2000
 OFF_PARTITION_TABLE=0x10000
 OFF_OTADATA=0x1e000
 OFF_APP=0x20000
+
+# A device with secure boot enabled only accepts a bootloader its keys signed,
+# and all three so a key rotation cannot strand it. A zip with any other
+# bootloader could not be locked, or would stop a locked device from booting.
+for UNSIGNED in "$RELEASE_DIR"/*/firmware.bin; do
+    [ -f "$UNSIGNED" ] || continue
+    BOOTLOADER="$(dirname "$UNSIGNED")/bootloader.bin"
+    for n in 0 1 2; do
+        if ! $ESPSECURE verify-signature --version 2 \
+            --keyfile "$RELEASE_DIR/kern-sb-key$n-pub.pem" "$BOOTLOADER" >/dev/null 2>&1; then
+            echo "Error: $BOOTLOADER is not signed by key $n. Nothing was signed." >&2
+            exit 1
+        fi
+    done
+done
 
 FOUND=0
 ZIPS=()

@@ -302,7 +302,7 @@ A locked device keeps the bootloader it was locked with. SD updates only write t
 
 Signing a bootloader with all three keys means taking keys 1 and 2 out of cold storage. Doing that for every release would defeat the reason they are cold. So the bootloader is built, signed once in a key ceremony, and committed; every release after that ships those same bytes. Only the app is built and signed per release, with key 0.
 
-> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run and the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) exist. The release-script changes, the CI checks and the web flasher changes described below are planned and not implemented yet. No frozen bootloader is published yet.
+> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run, the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) and the release-script changes exist, and freeze 1 is published for all four variants (tag `bootloader-1`). The CI checks and the web flasher changes described below are planned and not implemented yet.
 
 **Variants.** The bootloader does not depend on the display, touch or camera, so most boards share one. Two settings split it: the chip revision range (v1.x and v3.x need different builds, and the v3 bootloader runs a different CPU clock) and the flash mode (wave_35 uses DIO, the rest QIO). That gives four:
 
@@ -414,9 +414,9 @@ espsecure verify-signature \
 
 The bootloader in each release zip is the frozen one for that board's variant, not the one the release build produced:
 
-- `release.sh` picks the variant from the generated sdkconfig (chip revision range and flash mode) and packages `kern_secure_boot/bootloaders/<variant>/bootloader-signed.bin`.
+- `release.sh` first verifies every frozen bootloader against the three public keys. It then picks each board's variant from the generated sdkconfig (chip revision range and flash mode) and packages `kern_secure_boot/bootloaders/<variant>/bootloader-signed.bin`, and stops if a board has no frozen bootloader.
 - It compares the freshly built `bootloader-unsigned.bin` with the frozen image and warns when they differ. A difference means the bootloader sources, their config or ESP-IDF moved since the freeze. The release still ships the frozen one; the warning is the prompt to ask whether a re-freeze is due.
-- `sign_release.sh` refuses to package a bootloader that does not verify against all three public keys. It needs no private key for that.
+- `sign_release.sh` refuses to package a bootloader that does not verify against all three public keys, which travel in the release folder, and checks every device before it signs anything. It needs no private key for that.
 
 Before publishing, boot the new app on each frozen variant, and install it over SD on the locked reference board.
 

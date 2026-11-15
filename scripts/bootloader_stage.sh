@@ -46,19 +46,11 @@ for DEVICE in $DEVICES; do
 
     BUILD_DIR="build_secure_${DEVICE}"
     CONFIG="$BUILD_DIR/sdkconfig"
-    if grep -q '^CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y' "$CONFIG"; then REV=v1; else REV=v3; fi
-    if grep -q '^CONFIG_ESPTOOLPY_FLASHMODE_QIO=y' "$CONFIG"; then
-        MODE=qio
-    elif grep -q '^CONFIG_ESPTOOLPY_FLASHMODE_DIO=y' "$CONFIG"; then
-        MODE=dio
-    else
-        echo "Error: ${DEVICE} uses a flash mode with no bootloader variant" >&2
-        exit 1
-    fi
+    VARIANT="$("$SCRIPT_DIR/bootloader_variant.sh" "$CONFIG")"
     FREEZE="$(sed -n 's/^CONFIG_BOOTLOADER_PROJECT_VER=//p' "$CONFIG")"
     IDF_VER="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["git_revision"])' "$BUILD_DIR/project_description.json")"
     SHA="$(sha256sum "$BUILD_DIR/bootloader/bootloader-unsigned.bin" | cut -d' ' -f1)"
-    echo "$REV-$MODE $DEVICE $FREEZE $IDF_VER $SHA" >> "$BUILT"
+    echo "$VARIANT $DEVICE $FREEZE $IDF_VER $SHA" >> "$BUILT"
 done
 
 python3 - "$BUILT" "$REPO_ROOT" "$KERN_SB_DIR" "$COMMIT" "$SCRIPT_DIR/freeze_bootloader.sh" <<'EOF'

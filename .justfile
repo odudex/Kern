@@ -33,7 +33,8 @@ flash board="wave_4b": (_check_board board)
     idf.py -B build_{{board}} -D SDKCONFIG=build_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}})" flash
 
 # The sdkconfig is regenerated every time so overlay edits always land.
-# Release image (sdkconfig.release overlay) in build_release_<board>/, as scripts/release.sh builds it
+# Release log and panic settings (sdkconfig.release overlay) with a plain bootloader, in build_release_<board>/.
+# scripts/release.sh builds with build-secure.
 build-release board="wave_4b": (_check_board board)
     #!/usr/bin/env sh
     set -e
