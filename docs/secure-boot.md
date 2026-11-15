@@ -302,7 +302,7 @@ A locked device keeps the bootloader it was locked with. SD updates only write t
 
 Signing a bootloader with all three keys means taking keys 1 and 2 out of cold storage. Doing that for every release would defeat the reason they are cold. So the bootloader is built, signed once in a key ceremony, and committed; every release after that ships those same bytes. Only the app is built and signed per release, with key 0.
 
-> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay and the dry run exist. The staging recipe, the freeze script, the release-script changes, the CI checks and the web flasher changes described below are planned and not implemented yet. No bootloader has been frozen.
+> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run and the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) exist. The release-script changes, the CI checks and the web flasher changes described below are planned and not implemented yet. No frozen bootloader is published yet.
 
 **Variants.** The bootloader does not depend on the display, touch or camera, so most boards share one. Two settings split it: the chip revision range (v1.x and v3.x need different builds, and the v3 bootloader runs a different CPU clock) and the flash mode (wave_35 uses DIO, the rest QIO). That gives four:
 
@@ -338,14 +338,14 @@ kern_secure_boot/bootloaders/
     v3-dio/bootloader-signed.bin
 ```
 
-`BOOTLOADERS` has one line per variant: freeze number, git tag, ESP-IDF version, the boards it serves, and the SHA-256 of the unsigned image. `SHA256SUMS` covers the manifest and the binaries, so the existing `SHA256SUMS.sig` vouches for them together with the public keys.
+`BOOTLOADERS` has one line per variant: freeze number, git tag and commit, ESP-IDF version, the SHA-256 of the unsigned image, and the boards it serves. `SHA256SUMS` covers the manifest and the binaries, so the existing `SHA256SUMS.sig` vouches for them together with the public keys.
 
-**Anyone can check it.** A secure build writes `bootloader/bootloader-unsigned.bin`, and that file comes out identical across build directories. Building the freeze tag with the manifest's ESP-IDF version must reproduce every byte of the frozen image up to its signature sector, and `espsecure verify-signature` checks the sector against each public key.
+**Anyone can check it.** A secure build writes `bootloader/bootloader-unsigned.bin`, and that file comes out identical across build directories. Building the freeze tag with the manifest's ESP-IDF version must reproduce every byte of the frozen image up to its signature sector, and `espsecure verify-signature` checks the sector against each public key. `bash scripts/freeze_bootloader.sh --verify kern_secure_boot/bootloaders kern_secure_boot` runs both checks on every published variant, without any private key.
 
 **The freeze.**
 
-1. On the build machine, at the commit to freeze: `just bootloader-stage` builds only the bootloader (`sdkconfig.release` + `sdkconfig.secure`) for every board, groups the unsigned images by hash, and stages one per variant with a draft manifest.
-2. On the air-gapped signing machine, with all three private keys: `scripts/freeze_bootloader.sh` signs each staged image with key 0, appends key 1 and key 2, verifies the result against the three published public keys, and writes the manifest hashes. By hand that is:
+1. On the build machine, at the commit to freeze: `just bootloader-stage` builds only the bootloader (`sdkconfig.release` + `sdkconfig.secure`) for every board, groups the unsigned images into variants, and stages one per variant in `release/bootloader-<N>/` with the manifest, the public keys and `freeze_bootloader.sh`. It stops if two boards of one variant build different bootloaders. A variant whose frozen image still matches the build is staged with that signature and is not signed again: a signature cannot be reproduced, and devices are locked with those bytes.
+2. On the air-gapped signing machine, from that folder, with all three private keys: `bash freeze_bootloader.sh <key0.pem> <key1.pem> <key2.pem>`. It checks each private key against its published digest, so a key in the wrong position stops the run, checks each unsigned image against the manifest, signs it with key 0, appends key 1 and key 2, and verifies the result against the three public keys. By hand that is:
 
 ```bash
 espsecure sign-data --version 2 --keyfile kern-sb-key0.pem \
@@ -361,7 +361,7 @@ for n in 0 1 2; do
 done
 ```
 
-3. Back on the build machine: copy the result into `kern_secure_boot/bootloaders/`, regenerate `SHA256SUMS`, sign it with GPG, commit, and tag the commit `bootloader-<N>`.
+3. Back on the build machine: `just bootloader-import release/bootloader-<N>` verifies the folder against the public keys in `kern_secure_boot/` and copies the signed images and their manifest lines into `kern_secure_boot/bootloaders/`. It refuses to replace a frozen image with different bytes under the same freeze number. Then regenerate `SHA256SUMS`, sign it with GPG, commit, and tag the manifest's commit `bootloader-<N>`; the recipe prints those commands.
 
 Fill this in at each freeze and keep it with the key ceremony record (Section 3e):
 

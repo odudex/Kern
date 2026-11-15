@@ -49,12 +49,21 @@ flash-release board="wave_4b": (build-release board)
 # Lockable release image (sdkconfig.release + sdkconfig.secure, published key digests) in build_secure_<board>/.
 # The build signs with dev_signing_key.pem; the files to sign with the release keys are
 # kern-unsigned.bin (key 0) and bootloader/bootloader-unsigned.bin (keys 0, 1 and 2).
-build-secure board="wave_4b": (_check_board board)
+build-secure board="wave_4b" target="build": (_check_board board)
     #!/usr/bin/env sh
     set -e
     command -v idf.py >/dev/null || . $IDF_PATH/export.sh
     rm -f build_secure_{{board}}/sdkconfig
-    idf.py -B build_secure_{{board}} -D SDKCONFIG=build_secure_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.release;sdkconfig.secure" build
+    idf.py -B build_secure_{{board}} -D SDKCONFIG=build_secure_{{board}}/sdkconfig -D "SDKCONFIG_DEFAULTS=$(just _defaults {{board}});sdkconfig.release;sdkconfig.secure" {{target}}
+
+# Build every board's secure bootloader and stage one unsigned image per variant in release/bootloader-<N>/
+# for scripts/freeze_bootloader.sh, which signs them with the three release keys on the air-gapped PC.
+bootloader-stage:
+    ./scripts/bootloader_stage.sh
+
+# Verify a signed release/bootloader-<N>/ folder and copy it into kern_secure_boot/bootloaders/
+bootloader-import dir:
+    ./scripts/bootloader_import.sh {{dir}}
 
 # Secure boot dry run: a sdkconfig.secure build with virtual eFuses (sdkconfig.sbtest), so the
 # Settings lockdown burns a RAM copy that is gone after the restart. Signed with test keys:
