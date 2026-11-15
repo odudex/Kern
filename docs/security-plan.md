@@ -419,7 +419,7 @@ Three sites, all worth knowing before the first burn:
 - The bootloader refuses any slot below the eFuse value (`check_anti_rollback()`, wrapped in an `ESP_FAULT_ASSERT` anti-FI double read).
 - Downgrade becomes physically impossible **for the developer too**: no debug path, no serial escape. Keep a never-bumped unit for reproducing old-version bug reports.
 - **Never run `espefuse write_protect_efuse SECURE_VERSION`.** `WR_DIS.SECURE_VERSION` (BLK0 bit 18) would freeze the counter and disable every future bump. Nothing in the secure-boot flow burns it; this is a manual footgun only.
-- Visibility: the bootloader logs `Secure version (from eFuse) = N` on every boot, and `espefuse.py summary` shows `SECURE_VERSION`.
+- Visibility: a bootloader that logs at INFO prints `Secure version (from eFuse) = N` on every boot, and `espefuse summary` shows `SECURE_VERSION` on a device that is not locked. A locked release device offers neither: its bootloader logs at WARN and secure download mode refuses `espefuse`. There the Secure Boot page shows the counter.
 
 ##### Implementation, in the secure-boot overlay
 

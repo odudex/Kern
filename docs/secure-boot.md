@@ -570,18 +570,26 @@ espefuse --chip esp32p4 burn-key \
     BLOCK_KEY2 kern-sb-digest2.bin SECURE_BOOT_DIGEST2
 
 # 4. Burn the hardening eFuses the stock bootloader would burn alongside
-#    secure boot (JTAG off, direct boot off, secure download mode)
+#    secure boot (JTAG off, direct boot off). Secure download mode is
+#    step 7.
 espefuse --chip esp32p4 burn-efuse DIS_DIRECT_BOOT 1
 espefuse --chip esp32p4 burn-efuse DIS_PAD_JTAG 1
 espefuse --chip esp32p4 burn-efuse DIS_USB_JTAG 1
 espefuse --chip esp32p4 burn-efuse SOFT_DIS_JTAG 7
-espefuse --chip esp32p4 burn-efuse ENABLE_SECURITY_DOWNLOAD 1
 
 # 5. Enable secure boot — POINT OF NO RETURN
 espefuse --chip esp32p4 burn-efuse SECURE_BOOT_EN
 
 # 6. Prevent post-hoc read-protection of the digest blocks
 espefuse --chip esp32p4 write-protect-efuse RD_DIS
+
+# 7. Secure download mode, LAST: espefuse needs register reads, and the
+#    ROM refuses them from the next reset on, so no espefuse command
+#    works after this one.
+espefuse --chip esp32p4 burn-efuse ENABLE_SECURITY_DOWNLOAD 1
+
+# 8. Check what is still readable
+esptool --chip esp32p4 --no-stub get-security-info
 ```
 
 After step 5, only firmware signed with `kern-sb-key0.pem`, `kern-sb-key1.pem`, or `kern-sb-key2.pem` will boot on this device.
@@ -648,8 +656,9 @@ espefuse --chip esp32p4 burn-key \
     BLOCK_KEY1 my-digest0.bin      SECURE_BOOT_DIGEST1 \
     BLOCK_KEY2 my-digest1.bin      SECURE_BOOT_DIGEST2
 
-# Burn the hardening eFuses (step 4 of the 5a manual method), then enable
-# secure boot and write-protect RD_DIS as in steps 5-6 there
+# Then steps 4-7 of the 5a manual method, in that order: the hardening
+# eFuses, SECURE_BOOT_EN, the RD_DIS write-protect, and secure download
+# mode last
 espefuse --chip esp32p4 burn-efuse SECURE_BOOT_EN
 ```
 
@@ -799,7 +808,7 @@ eFuses must be burned in a specific order. The critical rule: **the read-protect
 | 5 | `burn-key BLOCK_KEY2 ... SECURE_BOOT_DIGEST2` | KEY2 | Phase 6 | Rotation #2 secure boot digest |
 | 6 | `burn-efuse SECURE_BOOT_EN` (+ hardening set) | Control | Phase 6 | **Enables secure boot permanently.** Burned together with `DIS_DIRECT_BOOT`, the JTAG-disable set, secure download mode, then the `RD_DIS` write-protect |
 
-> **Every eFuse burn is irreversible.** Use `espefuse summary` to inspect the eFuse state before and after. The whole sequence runs from on-device flows: rows 1–2 during PIN setup, rows 3–6 from the Secure Boot menu. If you ever leave a digest slot empty (a custom hybrid layout), revoke it before enabling secure boot.
+> **Every eFuse burn is irreversible.** Use `espefuse summary` to inspect the eFuse state before the lockdown. Afterwards secure download mode refuses it, and what is left is `esptool --no-stub get-security-info` and the Secure Boot page (Section 10). The whole sequence runs from on-device flows: rows 1–2 during PIN setup, rows 3–6 from the Secure Boot menu. If you ever leave a digest slot empty (a custom hybrid layout), revoke it before enabling secure boot.
 
 ---
 
@@ -843,10 +852,11 @@ Complete these steps on a **development board** before any production device.
 - [ ] Verify PIN is required before proceeding
 - [ ] Verify warning about irreversibility is shown
 - [ ] Confirm lockdown — device writes three digests, burns the hardening set, and burns `SECURE_BOOT_EN`
-- [ ] Read eFuse state: `espefuse summary` — verify KEY0/KEY1/KEY2 are programmed and `SECURE_BOOT_EN` is set
-- [ ] Verify hardening eFuses: `DIS_DIRECT_BOOT`, `DIS_PAD_JTAG`, `DIS_USB_JTAG`, `SOFT_DIS_JTAG`, `ENABLE_SECURITY_DOWNLOAD` set, and `RD_DIS` write-protected
+- [ ] Device restarts and boots normally; the ROM prints `Valid secure boot key blocks: 0 1 2` and `RSA-PSS secure boot verification succeeded`
+- [ ] `espefuse summary` is now refused (`not supported in Secure Download Mode`): the host can no longer read eFuses
+- [ ] `esptool --no-stub get-security-info` — `Secure Boot: Enabled`, chip in Secure Download Mode, `JTAG: Permanently Disabled`, KEY0/KEY1/KEY2 hold `SECURE_BOOT_DIGEST0/1/2`, flags `0xc5` (secure boot, secure download mode, both JTAG disables, no key revoked)
+- [ ] The Secure Boot page shows **Enabled** with the three burned digests and the security version, not "Enabled, setup unfinished": it is the only check left for `DIS_DIRECT_BOOT`, `DIS_USB_JTAG`, the `RD_DIS` write-protect and the anti-rollback counter, which the host cannot read any more
 - [ ] Attempt JTAG attach — **must fail**
-- [ ] Device reboots and boots normally with signed firmware
 
 ### On-Device Lockdown — Guard Rails
 
@@ -863,6 +873,7 @@ Complete these steps on a **development board** before any production device.
 - [ ] Read eFuse state: `espefuse summary` — verify KEY0/KEY1/KEY2 are programmed
 - [ ] Device still boots (secure boot not yet enabled, so unsigned firmware also works)
 - [ ] `espefuse burn-efuse SECURE_BOOT_EN`
+- [ ] Hardening set burned with `ENABLE_SECURITY_DOWNLOAD` last: every `espefuse` command after it is refused
 - [ ] Device boots with signed firmware — **confirm normal operation**
 
 ### Post-Lockdown Verification
@@ -885,7 +896,8 @@ Complete these steps on a **development board** before any production device.
 
 - [ ] Install firmware with security version 1
 - [ ] Attempt to install firmware with security version 0 via SD card — **must be rejected**
-- [ ] `espefuse summary` — verify security version counter shows 1
+- [ ] Counter is 1: the Secure Boot page of a locked device shows `Security version 1`; on an unlocked board `espefuse summary` shows `SECURE_VERSION`
+- [ ] Write the security version 0 firmware over USB — the bootloader **must refuse it** (`No bootable app partitions`), and writing version 1 back must recover the device
 
 ### Recovery
 
@@ -921,7 +933,7 @@ The frozen bootloader is the one piece of Kern's code an SD update cannot fix. A
 - A compromised build environment could inject malicious code before signing.
 - **Mitigation**: Build on a trusted, air-gapped machine. The frozen bootloader is reproducible from its tag today (Section 4a); reproducible app builds (future work) would extend that to every release.
 - Pre-flashed devices from untrusted sources could have attacker digests burned.
-- **Mitigation**: Users should verify eFuse state with `espefuse summary` before trusting a pre-flashed device, or flash and lock down the device themselves.
+- **Mitigation**: Lock the device yourself. `espefuse summary` shows the eFuse state of a device that is not locked yet. A locked one cannot be read that way: `esptool --no-stub get-security-info` shows which key slots hold digests but not their values, so install the official release over USB and compare the digests on its Secure Boot page with the published ones.
 
 ### Cross-Phase Dependencies
 
