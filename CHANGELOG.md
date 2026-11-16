@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.22] - 2026-11-16
+
+### Added
+- Secure Boot can be enabled from Settings > Security > Secure Boot. It locks the device to firmware signed by the three release keys: unsigned firmware no longer starts from SD card or USB, JTAG is turned off and the ROM goes to secure download mode. The page shows the three key digests to compare with the published ones and offers the step only when a PIN is set, the running firmware is signed by a release key and the bootloader by all three. It is permanent
+- Releases ship a frozen bootloader, signed once by all three keys and published in `kern_secure_boot/bootloaders/` (freeze 1, tag `bootloader-1`). A device needs one USB install of this release to get it; devices updated over SD keep their old bootloader and the Secure Boot page says so
+- Anti-rollback: the bootloader refuses firmware whose security version is below the device's eFuse counter. This release is security version 0, which burns nothing; the Secure Boot page shows the counter once secure boot is on
+
+### Changed
+- Release images log at WARN level and reboot silently on a panic instead of printing registers and stack memory
+- The dialog after a firmware update has a Restart button instead of announcing the restart above an OK button
+- Built on ESP-IDF 6.1.1
+- Updated libwally (1.6.1), cUR, k_quirc and bip138
+
+### Fixed
+- Simulator builds on macOS: SDL2 is found through its CMake package and libwally's secret wipe uses memset_s
+
 ## [0.0.21] - 2026-11-05
 
 ### Added
