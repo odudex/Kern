@@ -424,7 +424,8 @@ Before publishing, boot the new app on each frozen variant, and install it over 
 
 **USB flashing a locked device.** Secure download mode still writes flash; it refuses to read it. So a locked device can take a new signed app or a newer frozen bootloader over USB. Two things have to hold in the flasher:
 
-- It must write the bootloader unmodified. Rewriting the flash mode, frequency or size in the image header changes the signed bytes and the ROM then rejects the bootloader, so the flasher uses `keep` for all three.
+- It must write the bootloader unmodified. Rewriting the flash mode, frequency or size in the image header changes the signed bytes and the ROM then rejects the bootloader. esptool leaves image headers alone once it sees secure boot or secure download mode ("Security features enabled, so not changing any flash settings"); any other flasher has to do the same.
+- It must tell the ROM the flash size. Secure download mode cannot detect it, and with esptool's `--flash-size keep` the ROM then refuses any write that reaches past 2 MB ("Failed to enter flash download mode", result `0106`), which the app does. So on a locked device: `esptool --chip esp32p4 --no-stub write-flash --flash-mode keep --flash-freq keep --flash-size 16MB 0x2000 bootloader.bin 0x10000 partition-table.bin 0x1e000 ota_data_initial.bin 0x20000 firmware-signed.bin`. The write runs without the stub at about 80 kbit/s (over three minutes for the app) and is not read back, so the boot log is the check: `RSA-PSS secure boot verification succeeded`.
 - It must work without the commands secure download mode removes (register reads, the flasher stub). The web flasher's chip-revision read fails there, so it has to tolerate that and ask which chip revision the board has.
 
 ### 4c. Build Profiles

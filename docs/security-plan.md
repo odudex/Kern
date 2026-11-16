@@ -464,7 +464,7 @@ Re-run this matrix as part of the Phase 4d suite on a locked device.
 - **Compatibility rule**: every release must boot on every frozen bootloader still in the field. A change that breaks this is a re-freeze, and reaches a locked device only through a USB reflash by its owner.
 - **Fixed by a freeze**: the ESP-IDF version of the bootloader, the opt-in wrapper, anti-rollback on or off (6c), bootloader log level.
 - **Existing devices** got their bootloader from an earlier release and SD updates never changed it. They need one USB install of a lockable release; it preserves NVS and storage. The menu detects the old bootloader and says so.
-- **Web flasher**: must write the bootloader without rewriting its header (`keep` for flash mode, frequency and size) and must work in secure download mode, so a locked device can still take a signed release over USB.
+- **Web flasher**: must write the bootloader without rewriting its header and must work in secure download mode, so a locked device can still take a signed release over USB. There the flash size has to be given explicitly (16MB): the ROM cannot detect it and otherwise refuses writes past 2 MB.
 - **Self-built firmware** follows the same model with the user's keys: replace the three digest files, sign their own bootloader with their three keys, and the menu checks against those.
 
 Order of work:
