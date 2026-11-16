@@ -1,0 +1,6 @@
+# Frozen bootloaders, one line per variant (docs/secure-boot.md, section 4a)
+# variant freeze tag commit esp-idf unsigned-sha256 boards
+v1-dio 1 bootloader-1 8f28dbe31e0ca18c1e2ec270826ed7af570be505 v6.1.1 3709ad56234427805f254e74d1128cd9f88ea0032072dd37e4237f346758c92c wave_35
+v1-qio 1 bootloader-1 8f28dbe31e0ca18c1e2ec270826ed7af570be505 v6.1.1 6d1905de558a484702e79da81b6fdc9517879413669b3aadc90b025bfa88f400 wave_4b,wave_5,wave_43,crowpanel,wave_7b,p4_pico
+v3-dio 1 bootloader-1 8f28dbe31e0ca18c1e2ec270826ed7af570be505 v6.1.1 9d11c5944a39420fb4abe118640d9c9b932f041680e1c653916225aeccad9d6c wave_35_v3
+v3-qio 1 bootloader-1 8f28dbe31e0ca18c1e2ec270826ed7af570be505 v6.1.1 2e1e7ab3c34765856dc09c4d564f1b29549b4f702dfe4f6ae8dabd3ce9a5a17a wave_4b_v3,wave_5_v3,wave_43_v3,crowpanel_v3,wave_7b_v3,p4_pico_v3
