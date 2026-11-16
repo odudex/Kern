@@ -56,7 +56,7 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    container: espressif/idf:v6.1
+    container: espressif/idf:v6.1.1
     strategy:
       fail-fast: false
       matrix:

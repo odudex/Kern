@@ -3,10 +3,10 @@
 # checkout as the context (network available), then audits the finished image with
 # no network. Everything the audit may need is built or fetched here.
 #
-# Same base image as CI (.github/workflows/*.yml). It ships ESP-IDF v6.1, the
+# Same base image as CI (.github/workflows/*.yml). It ships ESP-IDF v6.1.1, the
 # esp32p4 toolchain, cmake, ninja and python; host tests and the simulator also
 # need the system packages below.
-FROM espressif/idf:v6.1
+FROM espressif/idf:v6.1.1
 # export.sh needs bash, the default /bin/sh is dash
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive

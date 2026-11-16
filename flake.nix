@@ -21,7 +21,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
 
-          # LLVM 21 is the major ESP-IDF 6.1 ships as esp-clang and the one
+          # LLVM 21 is the major ESP-IDF 6.1.1 ships as esp-clang and the one
           # scripts/format.sh requires: clang-format's defaults drift between
           # majors, so every host has to run the same one.
           llvm = pkgs.llvmPackages_21;
@@ -59,7 +59,7 @@
               echo "  cmake:      $(cmake --version | head -1)"
               echo "  make:       $(make --version | head -1)"
               echo "  just:       $(just --version)"
-              echo "  firmware:   install ESP-IDF v6.1 separately"
+              echo "  firmware:   install ESP-IDF v6.1.1 separately"
             '';
           };
         });
