@@ -13,3 +13,6 @@
 [submodule "components/bipqr/upstream"]
 	path = components/bipqr/upstream
 	url = https://github.com/pythcoiner/bipqr.git
+[submodule "components/bip_nonces_cache/upstream"]
+	path = components/bip_nonces_cache/upstream
+	url = https://github.com/pythcoiner/bip_nonces_cache.git

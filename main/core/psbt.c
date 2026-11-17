@@ -891,10 +891,18 @@ bool psbt_format_keypath(const unsigned char *raw_keypath,
                                    MAX_KEYPATH_TOTAL_DEPTH);
 }
 
+/* PSBT_IN_MUSIG2_PUB_NONCE and PSBT_IN_MUSIG2_PARTIAL_SIG entries of input
+ * `i`. */
+static size_t input_musig_count(const struct wally_psbt *psbt, size_t i) {
+  return psbt->inputs[i].musig2_pubnonces.num_items +
+         psbt->inputs[i].musig2_partial_sigs.num_items;
+}
+
 /* Every place libwally can park a signature for one input: the ECDSA map, the
- * taproot key-path field, and the taproot script-path leaf map. Counted before
- * and after each signing call so `signed_ok` reflects signatures that actually
- * landed, not calls that merely returned WALLY_OK. */
+ * taproot key-path field, the taproot script-path leaf map, and the MuSig2
+ * public nonce and partial signature maps. Counted before and after each
+ * signing call so `signed_ok` reflects signatures that actually landed, not
+ * calls that merely returned WALLY_OK. */
 static bool tap_key_sig_present(const struct wally_psbt *psbt, size_t i) {
   size_t n = 0;
   return wally_psbt_get_input_taproot_signature_len(psbt, i, &n) == WALLY_OK &&
@@ -910,6 +918,7 @@ static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
   if (tap_key_sig_present(psbt, i))
     count++;
   count += psbt->inputs[i].taproot_leaf_signatures.num_items;
+  count += input_musig_count(psbt, i);
 
   return count;
 }
@@ -937,6 +946,8 @@ typedef struct {
    * "already signed by us" from "never signed". */
   size_t sig_baseline;
   bool had_tap_key_sig;
+  /* input_musig_count before the pass */
+  size_t musig_baseline;
   size_t sig_count;
   struct wally_map signatures;
   struct wally_map leaf_signatures;
@@ -948,7 +959,8 @@ typedef struct {
 
 /* BIP375: beside silent payment outputs an input naming no sighash type is
  * signed with SIGHASH_ALL, not taproot's SIGHASH_DEFAULT. Only the inputs we
- * sign get the field, for the signing pass only: psbt_sign removes it after. */
+ * sign get the field, for the signing pass only: psbt_sign removes it after,
+ * but from inputs given a MuSig2 nonce or partial signature. */
 static bool set_sighash_all(struct wally_psbt *psbt, input_plan_t *plan,
                             size_t num_inputs) {
   for (size_t i = 0; i < num_inputs; i++) {
@@ -1296,6 +1308,46 @@ static size_t sign_owned_inputs(struct wally_psbt *psbt, bool is_testnet,
   return signatures_added;
 }
 
+/* BIP-370 signer rules: a signature under ALL, the only sighash signed, pins
+ * the input and output sets. libwally's signer clears both tx-modifiable flags
+ * for each signature it stores, but a MuSig2 partial signature is stored
+ * beside it, so they are cleared here. */
+static void pin_after_partial_sigs(struct wally_psbt *psbt) {
+  size_t version = 0, flags = 0;
+  if (wally_psbt_get_version(psbt, &version) != WALLY_OK ||
+      version != WALLY_PSBT_VERSION_2 ||
+      wally_psbt_get_tx_modifiable_flags(psbt, &flags) != WALLY_OK)
+    return;
+  uint32_t pinned = (uint32_t)flags & ~(uint32_t)(WALLY_PSBT_TXMOD_INPUTS |
+                                                  WALLY_PSBT_TXMOD_OUTPUTS);
+  if (pinned != (uint32_t)flags &&
+      wally_psbt_set_tx_modifiable_flags(psbt, pinned) != WALLY_OK)
+    ESP_LOGW(TAG, "Failed to clear tx-modifiable flags after signing");
+}
+
+/* Our MuSig2 signatures on the inputs the policy cleared (musig_psbt.c). */
+static bool plan_musig(const struct wally_psbt *psbt, const input_plan_t *plan,
+                       size_t num_inputs, musig_plan_t *musig) {
+  bool *signable = calloc(num_inputs, sizeof(*signable));
+  if (!signable)
+    return false;
+  for (size_t i = 0; i < num_inputs; i++)
+    signable[i] = !plan[i].denied;
+  bool ok = musig_psbt_plan(psbt, signable, musig) == MUSIG_PSBT_OK;
+  free(signable);
+  return ok;
+}
+
+static size_t sign_musig_inputs(struct wally_psbt *psbt, input_plan_t *plan,
+                                const musig_plan_t *musig) {
+  size_t added = 0;
+  for (size_t s = 0; s < musig->num_slots; s++)
+    plan[musig->slots[s].input_index].attempted = true;
+  if (musig_psbt_sign(psbt, musig, &added) != MUSIG_PSBT_OK)
+    ESP_LOGE(TAG, "MuSig2 signing failed");
+  return added;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1319,6 +1371,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   }
 
   size_t signatures_added = 0;
+  musig_plan_t musig = {0};
 
   /* Classify everything up front, then freeze the inputs we will not sign.
    * Bailing on a snapshot failure rather than signing unprotected. */
@@ -1329,6 +1382,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       signable_any = true;
       plan[i].sig_baseline = input_signature_count(psbt, i);
       plan[i].had_tap_key_sig = tap_key_sig_present(psbt, i);
+      plan[i].musig_baseline = input_musig_count(psbt, i);
       continue;
     }
     plan[i].denied = true;
@@ -1344,10 +1398,20 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   if (sp_psbt_has_outputs(psbt) && !set_sighash_all(psbt, plan, num_inputs))
     goto cleanup;
 
+  if (!plan_musig(psbt, plan, num_inputs, &musig)) {
+    ESP_LOGE(TAG, "Invalid MuSig2 inputs; refusing to sign");
+    goto cleanup;
+  }
+
   /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
   wally_psbt_signing_cache_enable(psbt, 0);
 
-  signatures_added = sign_owned_inputs(psbt, is_testnet, plan, num_inputs);
+  /* Round 1 of MuSig2 answers with public nonces and no signature of any
+   * kind. */
+  if (musig.step != MUSIG_STEP_PUB_NONCES)
+    signatures_added = sign_owned_inputs(psbt, is_testnet, plan, num_inputs);
+  size_t musig_added = sign_musig_inputs(psbt, plan, &musig);
+  signatures_added += musig_added;
 
   drop_unverified_key_path_sigs(psbt, plan, num_inputs, result);
   wally_psbt_signing_cache_disable(psbt);
@@ -1372,10 +1436,17 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
     }
   }
 
+  /* A public nonce commits to nothing in the transaction */
+  if (musig_added && musig.step != MUSIG_STEP_PUB_NONCES)
+    pin_after_partial_sigs(psbt);
+
 cleanup:
+  musig_plan_free(&musig);
   for (size_t i = 0; i < num_inputs; i++) {
-    /* The signatures carry their SIGHASH_ALL byte */
-    if (plan[i].sighash_set)
+    /* A full signature carries its SIGHASH_ALL byte; a MuSig2 nonce or
+     * partial signature does not, so the aggregator needs the field. */
+    if (plan[i].sighash_set &&
+        input_musig_count(psbt, i) == plan[i].musig_baseline)
       wally_psbt_set_input_sighash(psbt, i, 0);
     release_input_state(&plan[i]);
   }
