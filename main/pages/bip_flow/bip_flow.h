@@ -75,17 +75,6 @@ bip_flow_register_error(descriptor_validation_result_t result) {
     return BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
   }
 }
-// The error a request needing a capability Kern does not advertise answers
-// with, 0 when Kern takes it: Nonce Preparation
-static inline uint8_t bip_flow_unsupported_error(const bipqr_request *request) {
-  switch (request->message_type) {
-  case BIPQR_MESSAGE_NONCE_PREPARATION:
-    return BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION;
-  default:
-    return 0;
-  }
-}
-
 void bip_flow_start(lv_obj_t *parent, const uint8_t *data, size_t len,
                     void (*return_cb)(void));
 

@@ -5,6 +5,7 @@
 #include "../../core/debug_log.h"
 #include "../../core/key.h"
 #include "../../core/musig_psbt.h"
+#include "../../core/nonce_cache.h"
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
 #include "../../core/settings.h"
@@ -48,7 +49,8 @@
    BIPQR_CAPABILITY_MINISCRIPT_TAPROOT |                                       \
    BIPQR_CAPABILITY_SILENT_PAYMENT_SENDS |                                     \
    BIPQR_CAPABILITY_SILENT_PAYMENT_ACCOUNTS |                                  \
-   BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR | BIPQR_CAPABILITY_MUSIG2)
+   BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR | BIPQR_CAPABILITY_MUSIG2 |          \
+   BIPQR_CAPABILITY_NONCE_CACHE)
 
 typedef struct {
   lv_obj_t *parent;
@@ -1568,6 +1570,104 @@ static void handle_sign(void) {
                    NULL);
 }
 
+/* The optional DESCRIPTOR names a descriptor whose musig() has our key at the
+ * request's path as a participant. */
+static bool prepare_descriptor_ok(const bipqr_prepare_nonces *req) {
+  const bipqr_descriptor_body *body = req->descriptor->body;
+  if (body && body->tag == BIPQR_DESCRIPTOR_SP_KEYS) {
+    show_descriptor_error(BIPQR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM);
+    return false;
+  }
+  // Our silent payment account holds no MuSig2 key
+  if (registry_sp_alias_exists(req->descriptor->alias)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Not a MuSig2 participant key of the descriptor");
+    return false;
+  }
+  const registry_entry_t *entry = NULL;
+  uint8_t error =
+      resolve_descriptor(req->descriptor->alias, req->descriptor->body, &entry);
+  if (error) {
+    show_descriptor_error(error);
+    return false;
+  }
+  if (!musig_psbt_is_participant_path(entry->desc, req->derivation_path.ptr,
+                                      req->derivation_path.len)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Not a MuSig2 participant key of the descriptor");
+    return false;
+  }
+  return true;
+}
+
+static void show_issue_error(nonce_cache_result_t result) {
+  switch (result) {
+  case NONCE_CACHE_ERR_SESSION:
+    show_error_response(BIPQR_RESPONSE_ERROR_MUSIG_SESSION,
+                        "Nonce session missing or mismatched");
+    break;
+  case NONCE_CACHE_ERR_INVALID:
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Invalid nonce request");
+    break;
+  case NONCE_CACHE_OK:
+  case NONCE_CACHE_ERR_INTERNAL:
+  default:
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Nonce issuance failed");
+    break;
+  }
+}
+
+static void handle_prepare_nonces(void) {
+  const bipqr_prepare_nonces *req = &ctx.request->body.prepare_nonces;
+  if (req->descriptor && !prepare_descriptor_ok(req))
+    return;
+  bnc_issuance issuance = {
+      .has_session_ref = req->has_session_ref,
+      .inputs = req->max_inputs,
+      .start = req->start,
+      .end = req->has_end ? req->end : req->start,
+  };
+  memcpy(issuance.session_id, req->session_id, sizeof(issuance.session_id));
+  memcpy(issuance.session_ref, req->session_ref, sizeof(issuance.session_ref));
+
+  /* The codec rejects an empty input count and a reversed range */
+  size_t count = (size_t)(issuance.end - issuance.start) + 1;
+  if (count > SIZE_MAX / sizeof(bipqr_pub_nonce) / issuance.inputs) {
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Too many nonces");
+    return;
+  }
+  count *= issuance.inputs;
+  bipqr_pub_nonce *nonces = calloc(count, sizeof(*nonces));
+  if (!nonces) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    return;
+  }
+  nonce_cache_issued_t issued;
+  nonce_cache_result_t result =
+      nonce_cache_issue(&issuance, !req->has_session_id,
+                        req->derivation_path.ptr, req->derivation_path.len,
+                        (uint8_t *)nonces, count * sizeof(*nonces), &issued);
+  if (result != NONCE_CACHE_OK) {
+    free(nonces);
+    show_issue_error(result);
+    return;
+  }
+
+  bipqr_response response;
+  fill_response_header(&response);
+  bipqr_nonces_prepared *prepared = &response.body.nonces_prepared;
+  prepared->has_session = issued.new_session;
+  memcpy(prepared->session_id, issued.session_id, sizeof(prepared->session_id));
+  memcpy(prepared->session_ref, issued.session_ref,
+         sizeof(prepared->session_ref));
+  prepared->nonces.ptr = nonces;
+  prepared->nonces.len = count;
+  show_response(&response);
+  free(nonces);
+}
+
 static void unregister_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
   if (!confirmed) {
@@ -1628,14 +1728,6 @@ static void handle_unregister(void) {
 
 static void dispatch_request(void) {
   debug_logf("bip_flow dispatch message_type=%d", ctx.request->message_type);
-  uint8_t unsupported = bip_flow_unsupported_error(ctx.request);
-  if (unsupported) {
-    show_error_response(
-        unsupported, unsupported == BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION
-                         ? "Unsupported request"
-                         : "Descriptor form not taken here");
-    return;
-  }
   switch (ctx.request->message_type) {
   case BIPQR_MESSAGE_GET_INFO:
     handle_get_info();
@@ -1651,6 +1743,9 @@ static void dispatch_request(void) {
     break;
   case BIPQR_MESSAGE_SIGNING:
     handle_sign();
+    break;
+  case BIPQR_MESSAGE_NONCE_PREPARATION:
+    handle_prepare_nonces();
     break;
   case BIPQR_MESSAGE_UNREGISTER_DESCRIPTOR:
     handle_unregister();
