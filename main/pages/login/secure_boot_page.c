@@ -50,14 +50,17 @@ static void heading(const char *msg, lv_color_t color) {
 }
 
 static void add_digests(void) {
+  static const char HEX[] = "0123456789abcdef";
   for (unsigned i = 0; i < SECURE_BOOT_KEY_COUNT; i++) {
     char hex[SECURE_BOOT_DIGEST_LEN * 2 + SECURE_BOOT_DIGEST_LEN / 4 + 1];
     size_t n = 0;
     for (unsigned b = 0; b < SECURE_BOOT_DIGEST_LEN; b++) {
       if (b && b % 4 == 0)
         hex[n++] = ' ';
-      n += snprintf(hex + n, sizeof(hex) - n, "%02x", status.digests[i][b]);
+      hex[n++] = HEX[status.digests[i][b] >> 4];
+      hex[n++] = HEX[status.digests[i][b] & 0x0f];
     }
+    hex[n] = '\0';
     char title[24];
     snprintf(title, sizeof(title), "Key %u%s", i + 1,
              status.revoked[i] ? " (revoked)" : "");
