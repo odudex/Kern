@@ -28,9 +28,12 @@
 
 // BIP370 PSBT_GLOBAL_TX_MODIFIABLE
 #define GLOBAL_TX_MODIFIABLE 0x06
+// BIP174 PSBT_IN_SIGHASH_TYPE and its 32-bit little endian value
+#define PSBT_IN_SIGHASH_TYPE 0x03
 // BIP370 PSBT_OUT_SCRIPT
 #define PSBT_OUT_SCRIPT 0x04
 #define OP_RETURN 0x6a
+#define SIGHASH_TYPE_LEN 4
 // BIP174 magic bytes "psbt" and 0xff
 #define PSBT_MAGIC_LEN 5
 // BIP371 PSBT_IN_TAP_MERKLE_ROOT, held in libwally's psbt_fields map
@@ -1586,8 +1589,43 @@ static int read_pair(raw_cursor_t *c, raw_pair_t *pair) {
              : -1;
 }
 
+static bool skip_map(raw_cursor_t *c) {
+  raw_pair_t pair;
+  int read;
+  while ((read = read_pair(c, &pair)) == 1)
+    ;
+  return read == 0;
+}
+
 static bool pair_is(const raw_pair_t *pair, uint8_t type) {
   return pair->key_len == 1 && pair->key[0] == type;
+}
+
+static bool input_map_sighash_is_all(raw_cursor_t *c) {
+  raw_pair_t pair;
+  int read;
+  while ((read = read_pair(c, &pair)) == 1)
+    if (pair_is(&pair, PSBT_IN_SIGHASH_TYPE) &&
+        (pair.value_len != SIGHASH_TYPE_LEN ||
+         bip32_path_u32_le(pair.value) != WALLY_SIGHASH_ALL))
+      return false;
+  return read == 0;
+}
+
+bool sp_psbt_raw_sighash_is_all(const uint8_t *data, size_t len,
+                                size_t num_inputs) {
+  raw_cursor_t c;
+
+  if (!data || len < PSBT_MAGIC_LEN)
+    return false;
+  c.pos = data + PSBT_MAGIC_LEN;
+  c.end = data + len;
+  if (!skip_map(&c))
+    return false;
+  for (size_t i = 0; i < num_inputs; i++)
+    if (!input_map_sighash_is_all(&c))
+      return false;
+  return true;
 }
 
 // Copies the pairs of one map, PSBT_OUT_SCRIPT left out when `drop_script`

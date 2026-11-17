@@ -122,6 +122,13 @@ sp_psbt_serialize_alloc(const struct wally_psbt *psbt, uint8_t **out,
 KERN_WARN_UNUSED_RESULT bool sp_psbt_base64_alloc(const struct wally_psbt *psbt,
                                                   char **out);
 
+// False when an input map of the serialized PSBT `data` carries a
+// PSBT_IN_SIGHASH_TYPE other than SIGHASH_ALL, which BIP375 refuses with
+// silent payment outputs. libwally keeps an explicit SIGHASH_DEFAULT (0) the
+// way it keeps an absent field, so only the raw maps tell them apart.
+bool sp_psbt_raw_sighash_is_all(const uint8_t *data, size_t len,
+                                size_t num_inputs);
+
 const char *sp_psbt_result_message(sp_psbt_result_t result);
 
 #endif // SP_PSBT_H

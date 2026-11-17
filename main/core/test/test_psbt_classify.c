@@ -3535,16 +3535,20 @@ static void test_silent_payment_classify(void) {
 static void test_sign_silent_payment_input(void) {
   struct wally_psbt *psbt = make_silent_payment_psbt();
   psbt_sign_policy_t policy = {0};
-  size_t sig_len = 0;
+  unsigned char sig[65];
+  size_t sig_len = 0, sighash = 0;
 
-  TEST("psbt_sign: signs our silent payment input with SIGHASH_DEFAULT");
+  TEST("psbt_sign: signs our silent payment input with SIGHASH_ALL (BIP375) "
+       "and adds no PSBT_IN_SIGHASH_TYPE");
   if (psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
-      wally_psbt_get_input_taproot_signature_len(psbt, 0, &sig_len) ==
-          WALLY_OK &&
-      sig_len == 64)
+      wally_psbt_get_input_taproot_signature(psbt, 0, sig, sizeof(sig),
+                                             &sig_len) == WALLY_OK &&
+      sig_len == 65 && sig[64] == WALLY_SIGHASH_ALL &&
+      wally_psbt_get_input_sighash(psbt, 0, &sighash) == WALLY_OK &&
+      sighash == 0)
     PASS();
   else
-    FAIL("silent payment input not signed");
+    FAIL("silent payment input not signed, or its sighash type left set");
 
   struct wally_psbt *trimmed = psbt ? psbt_trim(psbt) : NULL;
   unsigned char share_key[1 + 33];
@@ -3560,6 +3564,27 @@ static void test_sign_silent_payment_input(void) {
   else
     FAIL("BIP375 fields trimmed away");
   wally_psbt_free(trimmed);
+  wally_psbt_free(psbt);
+}
+
+static void test_sign_silent_payment_keeps_sighash_all(void) {
+  struct wally_psbt *psbt = make_silent_payment_psbt();
+  psbt_sign_policy_t policy = {0};
+  unsigned char sig[65];
+  size_t sig_len = 0, sighash = 0;
+
+  TEST("psbt_sign: a silent payment input naming SIGHASH_ALL keeps it");
+  if (psbt &&
+      wally_psbt_set_input_sighash(psbt, 0, WALLY_SIGHASH_ALL) == WALLY_OK &&
+      psbt_sign(psbt, false, policy, NULL) == 1 &&
+      wally_psbt_get_input_taproot_signature(psbt, 0, sig, sizeof(sig),
+                                             &sig_len) == WALLY_OK &&
+      sig_len == 65 && sig[64] == WALLY_SIGHASH_ALL &&
+      wally_psbt_get_input_sighash(psbt, 0, &sighash) == WALLY_OK &&
+      sighash == WALLY_SIGHASH_ALL)
+    PASS();
+  else
+    FAIL("silent payment input not signed, or its sighash type removed");
   wally_psbt_free(psbt);
 }
 
@@ -5759,6 +5784,7 @@ int main(void) {
 
   test_silent_payment_classify();
   test_sign_silent_payment_input();
+  test_sign_silent_payment_keeps_sighash_all();
   test_partial_signing_refuses_share_round();
   test_partial_signing_allows_share_round();
   test_partial_signing_own_inputs(false);
