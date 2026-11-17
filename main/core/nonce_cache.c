@@ -2,6 +2,7 @@
 
 #include "../utils/secure_mem.h"
 #include "crypto_utils.h"
+#include "key.h"
 #include <esp_log.h>
 #include <nvs.h>
 #include <psa/crypto.h>
@@ -286,4 +287,63 @@ bool nonce_cache_erase(void) {
 
 bool nonce_cache_fresh_secret(uint8_t *secret_out) {
   return crypto_random_bytes(secret_out, BNC_SECRET_LEN) == CRYPTO_OK;
+}
+
+/* A drawn session ID must name a new session, so its reference is answered. */
+#define SESSION_ID_DRAWS 8
+
+static bool draw_session_id(bnc_signer *signer, uint8_t *session_id) {
+  for (int i = 0; i < SESSION_ID_DRAWS; i++) {
+    bnc_secret *held = NULL;
+    if (crypto_random_bytes(session_id, BNC_SESSION_ID_LEN) != CRYPTO_OK)
+      return false;
+    int32_t status = bnc_held_session(signer, session_id, NULL, &held);
+    bnc_secret_free(held);
+    if (status == BNC_ERR_UNKNOWN_SESSION)
+      return true;
+    if (status != BNC_OK)
+      return false;
+  }
+  return false;
+}
+
+static nonce_cache_result_t issue_result(int32_t status) {
+  switch (status) {
+  case BNC_OK:
+    return NONCE_CACHE_OK;
+  case BNC_ERR_UNKNOWN_SESSION:
+  case BNC_ERR_SESSION_REF_MISMATCH:
+    return NONCE_CACHE_ERR_SESSION;
+  case BNC_ERR_INVALID_BOOL:
+  case BNC_ERR_BUFFER_LENGTH:
+  case BNC_ERR_NO_INPUTS:
+  case BNC_ERR_INVALID_RANGE:
+    return NONCE_CACHE_ERR_INVALID;
+  default:
+    return NONCE_CACHE_ERR_INTERNAL;
+  }
+}
+
+nonce_cache_result_t nonce_cache_issue(bnc_issuance *request, bool draw_session,
+                                       const uint32_t *path, size_t path_len,
+                                       uint8_t *nonces_out, size_t nonces_len,
+                                       nonce_cache_issued_t *issued_out) {
+  bnc_signer *signer = nonce_cache_signer();
+  if (!signer ||
+      (draw_session && !draw_session_id(signer, request->session_id)))
+    return NONCE_CACHE_ERR_INTERNAL;
+  struct ext_key *key = NULL;
+  if (!path || path_len == 0 ||
+      !key_get_derived_key_components(path, path_len, &key))
+    return NONCE_CACHE_ERR_INVALID;
+  uint8_t fresh[BNC_SECRET_LEN];
+  int32_t status = BNC_ERR_CRYPTO;
+  if (nonce_cache_fresh_secret(fresh))
+    status = bnc_issue(signer, request, fresh, key->priv_key + 1, key->pub_key,
+                       issued_out->session_ref, &issued_out->new_session,
+                       nonces_out, nonces_len);
+  secure_memzero(fresh, sizeof(fresh));
+  bip32_key_free(key);
+  memcpy(issued_out->session_id, request->session_id, BNC_SESSION_ID_LEN);
+  return issue_result(status);
 }

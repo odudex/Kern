@@ -3,8 +3,8 @@
  *
  * The bip_nonces_cache signer on Kern's backend: libwally's MuSig2,
  * mbedTLS SHA-256 and sessions in the simulator's NVS, under a fresh temp
- * directory, as MuSig2 signing keeps them between its two rounds. The values
- * are the nonce cache BIP draft's test vectors (bip_nonces_cache/test_vectors).
+ * directory. The values are the nonce cache BIP draft's test vectors
+ * (bip_nonces_cache/test_vectors).
  */
 
 #include "core/nonce_cache.h"
@@ -28,11 +28,13 @@ static void check(const char *name, bool ok) {
   printf("Testing: %s... %s\n", name, ok ? "PASS" : "FAIL");
 }
 
-/* nonce.json and musig2_signing.json */
+/* nonce.json, session_ref.json and musig2_signing.json */
 #define SECRET_A                                                               \
   "6b85ef3dff7bb6fea77cd2b8662cb19b7a6895139e8e86e307e1875e456dab7e"
 #define SECRET_B                                                               \
   "5485cb5d03981cc3bd989290a6be33ca392c013279a5c3c3fd10a1cae57e1460"
+#define REF_A "c29ef5ec"
+#define REF_B "9981509f"
 #define SK_A "ba36730b8ca1fb220a1b35736c0091cc9bd0ecfa9d87c52ed3750f4cffa7445b"
 #define PK_A                                                                   \
   "021936c5746965205425e26e6e19e3c2eeb91378843363de0267caf2f968991a12"
@@ -82,43 +84,35 @@ static bool equals_hex(const unsigned char *bytes, size_t len,
   return memcmp(bytes, decoded, len) == 0;
 }
 
-static void session_id(uint8_t id, uint8_t *out) {
-  memset(out, id, BNC_SESSION_ID_LEN);
-}
+typedef struct {
+  int32_t status;
+  uint8_t session_ref[BNC_SESSION_REF_LEN];
+  bool new_session;
+  uint8_t nonces[4 * BNC_PUBNONCE_LEN];
+} issued_t;
 
-/* Round 1 under the session ID of bytes `id`, `fresh` the new secret. */
-static int32_t round_one(uint8_t id, const char *fresh, bnc_secret **secret) {
-  uint8_t sid[BNC_SESSION_ID_LEN];
-  unsigned char fresh_bytes[BNC_SECRET_LEN];
-  session_id(id, sid);
+/* Issues `inputs` inputs and the key expressions start..=end, for the key
+ * sk/pk; `fresh` is the secret a new session gets. */
+static issued_t issue(uint8_t id, const char *ref, uint32_t inputs,
+                      uint32_t start, uint32_t end, const char *fresh,
+                      const char *sk, const char *pk) {
+  issued_t issued = {0};
+  bnc_issuance request = {.inputs = inputs, .start = start, .end = end};
+  unsigned char fresh_bytes[BNC_SECRET_LEN], sk_bytes[BNC_SECRET_KEY_LEN],
+      pk_bytes[BNC_PUBLIC_KEY_LEN];
+  memset(request.session_id, id, sizeof(request.session_id));
+  if (ref) {
+    request.has_session_ref = 1;
+    hex(ref, request.session_ref, sizeof(request.session_ref));
+  }
   hex(fresh, fresh_bytes, sizeof(fresh_bytes));
-  return bnc_begin_round_one(nonce_cache_signer(), sid, fresh_bytes, secret);
-}
-
-static int32_t held_session(uint8_t id, bnc_secret **secret) {
-  uint8_t sid[BNC_SESSION_ID_LEN];
-  session_id(id, sid);
-  return bnc_held_session(nonce_cache_signer(), sid, NULL, secret);
-}
-
-static int32_t round_two(uint8_t id, bnc_secret **secret) {
-  uint8_t sid[BNC_SESSION_ID_LEN];
-  session_id(id, sid);
-  return bnc_begin_round_two(nonce_cache_signer(), sid, secret);
-}
-
-/* The session's nonce of input `input`, key expression `key_expression` and
- * the key sk/pk is `expected`. */
-static bool nonce_is(const bnc_secret *secret, uint32_t input,
-                     uint32_t key_expression, const char *sk, const char *pk,
-                     const char *expected) {
-  unsigned char sk_bytes[BNC_SECRET_KEY_LEN], pk_bytes[BNC_PUBLIC_KEY_LEN];
-  unsigned char nonce[BNC_PUBNONCE_LEN];
   hex(sk, sk_bytes, sizeof(sk_bytes));
   hex(pk, pk_bytes, sizeof(pk_bytes));
-  return bnc_cached_nonce(nonce_cache_signer(), secret, input, key_expression,
-                          sk_bytes, pk_bytes, nonce) == BNC_OK &&
-         equals_hex(nonce, sizeof(nonce), expected);
+  issued.status =
+      bnc_issue(nonce_cache_signer(), &request, fresh_bytes, sk_bytes, pk_bytes,
+                issued.session_ref, &issued.new_session, issued.nonces,
+                (size_t)(end - start + 1) * inputs * BNC_PUBNONCE_LEN);
+  return issued;
 }
 
 static size_t stored_sessions(void) {
@@ -135,47 +129,58 @@ static size_t stored_sessions(void) {
 }
 
 static void test_draft_vectors(void) {
-  bnc_secret *secret = NULL;
-  check("round 1 stores a new session",
-        round_one(0xa1, SECRET_A, &secret) == BNC_OK);
+  issued_t issued = issue(0xa1, NULL, 2, 0, 1, SECRET_A, SK_A, PK_A);
+  check("a new session issues", issued.status == BNC_OK && issued.new_session);
+  check("session reference of the secret",
+        equals_hex(issued.session_ref, BNC_SESSION_REF_LEN, REF_A));
   check("nonce of input 0, key expression 0",
-        nonce_is(secret, 0, 0, SK_A, PK_A, NONCE_A_0_0));
+        equals_hex(issued.nonces, BNC_PUBNONCE_LEN, NONCE_A_0_0));
   check("nonce of input 1, key expression 0",
-        nonce_is(secret, 1, 0, SK_A, PK_A, NONCE_A_1_0));
+        equals_hex(issued.nonces + BNC_PUBNONCE_LEN, BNC_PUBNONCE_LEN,
+                   NONCE_A_1_0));
   check("nonce of input 0, key expression 1",
-        nonce_is(secret, 0, 1, SK_A, PK_A, NONCE_A_0_1));
-  check("another key at the same position gets another nonce",
-        nonce_is(secret, 0, 0, SK_B, PK_B, NONCE_B_0_0));
-  bnc_secret_free(secret);
+        equals_hex(issued.nonces + 2 * BNC_PUBNONCE_LEN, BNC_PUBNONCE_LEN,
+                   NONCE_A_0_1));
   check("the session is stored", stored_sessions() == 1);
+
+  issued = issue(0xa2, NULL, 1, 0, 0, SECRET_A, SK_B, PK_B);
+  check("another key at the same position gets another nonce",
+        issued.status == BNC_OK &&
+            equals_hex(issued.nonces, BNC_PUBNONCE_LEN, NONCE_B_0_0));
+
+  issued = issue(0xa3, NULL, 1, 0, 0, SECRET_B, SK_A, PK_A);
+  check("session reference of another secret",
+        issued.status == BNC_OK &&
+            equals_hex(issued.session_ref, BNC_SESSION_REF_LEN, REF_B));
 }
 
 static void test_held_session(void) {
-  bnc_secret *secret = NULL;
-  check("a held session is read without being taken",
-        held_session(0xa1, &secret) == BNC_OK &&
-            nonce_is(secret, 0, 0, SK_A, PK_A, NONCE_A_0_0) &&
-            stored_sessions() == 1);
-  bnc_secret_free(secret);
-  secret = NULL;
-  check("round 1 again replaces the session with a new secret",
-        round_one(0xa1, SECRET_B, &secret) == BNC_OK &&
-            !nonce_is(secret, 0, 0, SK_A, PK_A, NONCE_A_0_0) &&
-            stored_sessions() == 1);
-  bnc_secret_free(secret);
-  check("a session never stored is not held",
-        held_session(0xb0, &(bnc_secret *){NULL}) == BNC_ERR_UNKNOWN_SESSION);
+  issued_t again = issue(0xa1, NULL, 2, 0, 1, SECRET_B, SK_A, PK_A);
+  check("a held session answers again with its nonces, not a new secret",
+        again.status == BNC_OK && !again.new_session &&
+            equals_hex(again.nonces, BNC_PUBNONCE_LEN, NONCE_A_0_0) &&
+            equals_hex(again.session_ref, BNC_SESSION_REF_LEN, REF_A));
+
+  issued_t extended = issue(0xa1, REF_A, 2, 1, 1, SECRET_B, SK_A, PK_A);
+  check("extending with the reference gives key expression 1 first",
+        extended.status == BNC_OK && !extended.new_session &&
+            equals_hex(extended.nonces, BNC_PUBNONCE_LEN, NONCE_A_0_1));
+
+  check("a reference of another session is refused",
+        issue(0xa1, REF_B, 2, 0, 1, SECRET_B, SK_A, PK_A).status ==
+            BNC_ERR_SESSION_REF_MISMATCH);
+  check("a reference without a held session is refused",
+        issue(0xb0, REF_A, 2, 0, 1, SECRET_A, SK_A, PK_A).status ==
+            BNC_ERR_UNKNOWN_SESSION);
+  check("a refused reference creates no session", stored_sessions() == 3);
 }
 
-/* musig2_signing.json: A signs in round 2 with its round 1 nonce, no
- * tweaks. */
+/* musig2_signing.json: A signs with its cached nonce, no tweaks. */
 static void test_musig2_signing(void) {
-  bnc_secret *secret = NULL;
-  check("signer A's round 1 nonce",
-        round_one(0xc1, SECRET_A, &secret) == BNC_OK &&
-            nonce_is(secret, 0, 0, SK_A, PK_A, NONCE_A_0_0));
-  bnc_secret_free(secret);
-  secret = NULL;
+  issued_t issued = issue(0xc1, NULL, 1, 0, 0, SECRET_A, SK_A, PK_A);
+  check("signer A's cached nonce",
+        issued.status == BNC_OK &&
+            equals_hex(issued.nonces, BNC_PUBNONCE_LEN, NONCE_A_0_0));
 
   unsigned char pubkeys[2 * BNC_PUBLIC_KEY_LEN], xonly[32], msg[32];
   unsigned char aggnonce_bytes[BNC_PUBNONCE_LEN];
@@ -196,9 +201,16 @@ static void test_musig2_signing(void) {
                                 &session) == WALLY_OK;
   check("session context of the vector", context_ok);
 
-  check("round 2 takes the session", round_two(0xc1, &secret) == BNC_OK);
+  bnc_secret *secret = NULL;
+  check("the named session is taken",
+        bnc_begin_signing(nonce_cache_signer(),
+                          (const uint8_t[]){0xc1, 0xc1, 0xc1, 0xc1},
+                          issued.session_ref, &secret) == BNC_OK);
   check("a taken session is deleted",
-        round_two(0xc1, &(bnc_secret *){NULL}) == BNC_ERR_UNKNOWN_SESSION);
+        bnc_begin_signing(nonce_cache_signer(),
+                          (const uint8_t[]){0xc1, 0xc1, 0xc1, 0xc1},
+                          issued.session_ref,
+                          &(bnc_secret *){NULL}) == BNC_ERR_UNKNOWN_SESSION);
 
   nonce_cache_sign_context_t context = {.keyagg_cache = cache,
                                         .session = session};
@@ -210,7 +222,7 @@ static void test_musig2_signing(void) {
   check("a nonce of another position is refused",
         bnc_sign_musig(nonce_cache_signer(), secret, &slot, sk, &context,
                        partial_sig) == BNC_ERR_PUBNONCE_MISMATCH);
-  hex(NONCE_A_0_0, slot.pubnonce, sizeof(slot.pubnonce));
+  memcpy(slot.pubnonce, issued.nonces, sizeof(slot.pubnonce));
   check("partial signature of signer A",
         bnc_sign_musig(nonce_cache_signer(), secret, &slot, sk, &context,
                        partial_sig) == BNC_OK &&
@@ -227,24 +239,30 @@ static void test_musig2_signing(void) {
   wally_musig_session_free(session);
   wally_musig_aggnonce_free(aggnonce);
   wally_musig_keyagg_cache_free(cache);
+
+  issued_t reissued = issue(0xc1, NULL, 1, 0, 0, SECRET_B, SK_A, PK_A);
+  check("the session ID issued again gets a new secret and nonce",
+        reissued.status == BNC_OK && reissued.new_session &&
+            !equals_hex(reissued.nonces, BNC_PUBNONCE_LEN, NONCE_A_0_0));
 }
 
 static void test_eviction(void) {
   size_t held = stored_sessions();
   check("sessions held before filling the store",
         held > 0 && held < NONCE_CACHE_MAX_SESSIONS);
-  bool stored = true;
-  for (uint8_t id = 0xe0; id < 0xe0 + NONCE_CACHE_MAX_SESSIONS; id++) {
-    bnc_secret *secret = NULL;
-    stored = round_one(id, SECRET_A, &secret) == BNC_OK && stored;
-    bnc_secret_free(secret);
-  }
+  for (uint8_t id = 0xe0; id < 0xe0 + NONCE_CACHE_MAX_SESSIONS; id++)
+    issue(id, NULL, 1, 0, 0, SECRET_A, SK_A, PK_A);
   check("the store keeps at most its capacity",
-        stored && stored_sessions() == NONCE_CACHE_MAX_SESSIONS);
+        stored_sessions() == NONCE_CACHE_MAX_SESSIONS);
   bnc_secret *secret = NULL;
   check("the oldest session is evicted",
-        held_session(0xa1, &secret) == BNC_ERR_UNKNOWN_SESSION);
-  check("the newest session is held", held_session(0xef, &secret) == BNC_OK);
+        bnc_held_session(nonce_cache_signer(),
+                         (const uint8_t[]){0xa1, 0xa1, 0xa1, 0xa1}, NULL,
+                         &secret) == BNC_ERR_UNKNOWN_SESSION);
+  check("the newest session is held",
+        bnc_held_session(nonce_cache_signer(),
+                         (const uint8_t[]){0xef, 0xef, 0xef, 0xef}, NULL,
+                         &secret) == BNC_OK);
   bnc_secret_free(secret);
 }
 
@@ -253,7 +271,9 @@ static void test_erase(void) {
         nonce_cache_erase() && stored_sessions() == 0);
   bnc_secret *secret = NULL;
   check("an erased session is no longer held",
-        held_session(0xef, &secret) == BNC_ERR_UNKNOWN_SESSION);
+        bnc_held_session(nonce_cache_signer(),
+                         (const uint8_t[]){0xef, 0xef, 0xef, 0xef}, NULL,
+                         &secret) == BNC_ERR_UNKNOWN_SESSION);
 }
 
 int main(void) {

@@ -11,6 +11,7 @@
 
 #include "core/key.h"
 #include "core/musig_psbt.h"
+#include "core/nonce_cache.h"
 #include "core/psbt_internal.h"
 #include "core/registry.h"
 #include "core/sp_psbt.h"
@@ -111,6 +112,9 @@ static const char *TEST_MNEMONIC = "abandon abandon abandon abandon abandon "
 /* The same on a recovery path's <2;3> */
 #define AGGREGATE_THEN_DERIVE_RECOVERY                                         \
   "tr(musig([" FP "/86'/1'/0']%s,[deadbeef/86'/1'/1']%s)/<2;3>/*)"
+/* musig() of the participant keys at 2/CHILD or 3/CHILD */
+#define DERIVE_THEN_AGGREGATE_RECOVERY                                         \
+  "tr(musig([" FP "/86'/1'/0']%s/<2;3>/*,[deadbeef/86'/1'/1']%s/<2;3>/*))"
 
 static const unsigned char OUR_FP[4] = {0x73, 0xc5, 0xda, 0x0a};
 static const unsigned char SYNTHETIC_FP[4] = {0xaa, 0xbb, 0xcc, 0xdd};
@@ -816,6 +820,22 @@ static void test_aggregate_then_derive(void) {
   registry_clear();
 }
 
+static bool issue_session(const unsigned char *session_id, uint8_t *ref_out,
+                          unsigned char *nonce_out) {
+  bnc_issuance request = {.inputs = 1, .start = 0, .end = 0};
+  uint8_t fresh[BNC_SECRET_LEN];
+  bool new_session = false;
+  struct ext_key *key = key_at(OURS);
+  memcpy(request.session_id, session_id, BNC_SESSION_ID_LEN);
+  bool ok = key && nonce_cache_fresh_secret(fresh) &&
+            bnc_issue(nonce_cache_signer(), &request, fresh, key->priv_key + 1,
+                      key->pub_key, ref_out, &new_session, nonce_out,
+                      BNC_PUBNONCE_LEN) == BNC_OK &&
+            new_session;
+  bip32_key_free(key);
+  return ok;
+}
+
 static bool name_session(struct wally_psbt *psbt, const unsigned char *id,
                          const uint8_t *ref) {
   static const unsigned char key[1] = {BNC_PSBT_GLOBAL_NONCE_CACHE_SESSION};
@@ -826,27 +846,99 @@ static bool name_session(struct wally_psbt *psbt, const unsigned char *id,
                            sizeof(value)) == WALLY_OK;
 }
 
-/* Signing from a nonce cache session needs capability bit 8, which Kern does
- * not advertise: a PSBT naming one is refused, never signed in two rounds. */
-static void test_cache_session_unsupported(void) {
+/* Our nonce under the BIP-373 key of `aggregate`, on the key path. */
+static bool set_own_nonce(fixture_t *f, const unsigned char *aggregate,
+                          const unsigned char *nonce) {
+  return wally_psbt_input_add_musig2_pubnonce(
+             &f->psbt->inputs[0], f->ours, EC_PUBLIC_KEY_LEN, aggregate,
+             EC_PUBLIC_KEY_LEN, NULL, 0, nonce, BNC_PUBNONCE_LEN) == WALLY_OK;
+}
+
+/* One round from a session issued before the PSBT existed. */
+static void test_cached_session(void) {
   static const unsigned char id[BNC_SESSION_ID_LEN] = {9, 8, 7, 6};
-  static const uint8_t ref[BNC_SESSION_REF_LEN] = {1, 2, 3, 4};
   const uint32_t path[] = {0, CHILD};
-  unsigned char value[4 + 4 * 2];
+  unsigned char value[4 + 4 * 2], nonce[BNC_PUBNONCE_LEN];
+  unsigned char other_nonce[BNC_PUBNONCE_LEN];
+  uint8_t ref[BNC_SESSION_REF_LEN], other_ref[BNC_SESSION_REF_LEN];
   fixture_t f;
   check("aggregate then derive registers",
         register_descriptor(AGGREGATE_THEN_DERIVE));
-  check("PSBT naming a nonce cache session builds",
+  check("session issued", issue_session(id, ref, nonce));
+  check("PSBT builds",
         fixture(OURS, COSIGNER, value, origin(SYNTHETIC_FP, path, 2, value),
                 true, &f) &&
-            name_session(f.psbt, id, ref));
-  musig_plan_t plan;
+            key_path_output(&f));
+  check("cached nonce and cosigner nonce added",
+        set_own_nonce(&f, f.output, nonce) &&
+            add_cosigner_nonce(&f, f.output, NULL));
+
+  memcpy(other_ref, ref, sizeof(ref));
+  other_ref[0] ^= 1;
+  check("a session named with another reference is refused",
+        name_session(f.psbt, id, other_ref) &&
+            step_of(f.psbt) == MUSIG_STEP_CACHED &&
+            check_request(f.psbt) == MUSIG_PSBT_ERR_SESSION);
+
+  memcpy(other_nonce, nonce, sizeof(other_nonce));
+  other_nonce[1] ^= 1;
+  check("a nonce the session does not give is refused",
+        name_session(f.psbt, id, ref) &&
+            set_own_nonce(&f, f.output, other_nonce) &&
+            check_session(f.psbt) == MUSIG_PSBT_ERR_SESSION);
+
+  fixture_t g;
+  check("PSBT with only our nonce builds",
+        fixture(OURS, COSIGNER, value, origin(SYNTHETIC_FP, path, 2, value),
+                true, &g) &&
+            key_path_output(&g) && name_session(g.psbt, id, ref) &&
+            set_own_nonce(&g, g.output, other_nonce));
+  check("a nonce the session does not give is refused before the cosigner's "
+        "is looked for",
+        check_session(g.psbt) == MUSIG_PSBT_ERR_SESSION &&
+            check_request(g.psbt) == MUSIG_PSBT_ERR_SESSION);
+  fixture_free(&g);
+
+  check("PSBT with our nonce under the KeyAgg key builds",
+        fixture(OURS, COSIGNER, value, origin(SYNTHETIC_FP, path, 2, value),
+                true, &g) &&
+            key_path_output(&g) && name_session(g.psbt, id, ref) &&
+            set_own_nonce(&g, g.aggregate, nonce) &&
+            add_cosigner_nonce(&g, g.aggregate, NULL));
+  check("the KeyAgg key is not the key path's BIP-373 aggregate: refused",
+        check_session(g.psbt) == MUSIG_PSBT_ERR_SESSION &&
+            check_request(g.psbt) == MUSIG_PSBT_ERR_SESSION);
+  fixture_free(&g);
+
+  /* A nonce keyed by the cosigner's key as the aggregate: no slot of ours */
+  check("PSBT with every nonce builds",
+        fixture(OURS, COSIGNER, value, origin(SYNTHETIC_FP, path, 2, value),
+                true, &g) &&
+            key_path_output(&g) && name_session(g.psbt, id, ref) &&
+            set_own_nonce(&g, g.output, nonce) &&
+            add_cosigner_nonce(&g, g.output, NULL));
+  check("the cosigner's nonce on another aggregate is not ours to refuse",
+        wally_psbt_input_add_musig2_pubnonce(
+            &g.psbt->inputs[0], g.cosigner, EC_PUBLIC_KEY_LEN, g.cosigner,
+            EC_PUBLIC_KEY_LEN, NULL, 0, nonce, BNC_PUBNONCE_LEN) == WALLY_OK &&
+            check_session(g.psbt) == MUSIG_PSBT_OK);
+  check("our nonce on an aggregate no slot signs is refused",
+        wally_psbt_input_add_musig2_pubnonce(
+            &g.psbt->inputs[0], g.ours, EC_PUBLIC_KEY_LEN, g.cosigner,
+            EC_PUBLIC_KEY_LEN, NULL, 0, nonce, BNC_PUBNONCE_LEN) == WALLY_OK &&
+            check_session(g.psbt) == MUSIG_PSBT_ERR_SESSION &&
+            check_request(g.psbt) == MUSIG_PSBT_ERR_SESSION);
+  fixture_free(&g);
+
   size_t added = 0;
-  check("a named nonce cache session is unsupported",
-        musig_psbt_plan(f.psbt, NULL, &plan) == MUSIG_PSBT_ERR_UNSUPPORTED &&
-            check_request(f.psbt) == MUSIG_PSBT_ERR_UNSUPPORTED &&
-            sign(f.psbt, &added) == MUSIG_PSBT_ERR_UNSUPPORTED && added == 0 &&
-            f.psbt->inputs[0].musig2_pubnonces.num_items == 0);
+  check(
+      "the named session signs in one round, under the output key",
+      set_own_nonce(&f, f.output, nonce) &&
+          check_request(f.psbt) == MUSIG_PSBT_OK &&
+          sign(f.psbt, &added) == MUSIG_PSBT_OK && added == 1 &&
+          has_entry(&f.psbt->inputs[0].musig2_partial_sigs, f.ours, f.output));
+  check("the named session is consumed",
+        check_request(f.psbt) == MUSIG_PSBT_ERR_SESSION);
   fixture_free(&f);
   registry_clear();
 }
@@ -994,6 +1086,61 @@ static void test_leaf(void) {
   registry_clear();
 }
 
+/* ---------- nonce preparation ---------- */
+
+static const uint32_t ACCOUNT_PATH[] = {0x80000056, 0x80000001, 0x80000000};
+
+static nonce_cache_result_t prepare(bnc_issuance *request, bool draw,
+                                    const uint32_t *path, size_t path_len,
+                                    uint8_t *nonces, size_t count,
+                                    nonce_cache_issued_t *issued) {
+  return nonce_cache_issue(request, draw, path, path_len, nonces,
+                           count * BNC_PUBNONCE_LEN, issued);
+}
+
+static void test_nonce_preparation(void) {
+  bnc_issuance request = {.inputs = 2, .start = 0, .end = 2};
+  uint8_t nonces[6 * BNC_PUBNONCE_LEN], chunk[2 * BNC_PUBNONCE_LEN];
+  nonce_cache_issued_t issued, again;
+  check("a request without session ID draws one for a new session",
+        prepare(&request, true, ACCOUNT_PATH, 3, nonces, 6, &issued) ==
+                NONCE_CACHE_OK &&
+            issued.new_session &&
+            memcmp(issued.session_id, request.session_id, BNC_SESSION_ID_LEN) ==
+                0);
+
+  bnc_issuance extend = {
+      .has_session_ref = 1, .inputs = 2, .start = 2, .end = 2};
+  memcpy(extend.session_id, issued.session_id, BNC_SESSION_ID_LEN);
+  memcpy(extend.session_ref, issued.session_ref, BNC_SESSION_REF_LEN);
+  check("a chunk of the session comes from it, positioned by index then input",
+        prepare(&extend, false, ACCOUNT_PATH, 3, chunk, 2, &again) ==
+                NONCE_CACHE_OK &&
+            !again.new_session &&
+            memcmp(again.session_ref, issued.session_ref,
+                   BNC_SESSION_REF_LEN) == 0 &&
+            memcmp(chunk, nonces + 4 * BNC_PUBNONCE_LEN, sizeof(chunk)) == 0);
+
+  extend.session_ref[0] ^= 1;
+  check("a reference of another session is refused",
+        prepare(&extend, false, ACCOUNT_PATH, 3, chunk, 2, &again) ==
+            NONCE_CACHE_ERR_SESSION);
+  bnc_issuance unknown = extend;
+  unknown.session_id[0] ^= 1;
+  bnc_secret *secret = NULL;
+  check("a reference without a held session is refused and creates none",
+        prepare(&unknown, false, ACCOUNT_PATH, 3, chunk, 2, &again) ==
+                NONCE_CACHE_ERR_SESSION &&
+            bnc_held_session(nonce_cache_signer(), unknown.session_id, NULL,
+                             &secret) == BNC_ERR_UNKNOWN_SESSION);
+  check("a request without a key path is refused",
+        prepare(&request, false, ACCOUNT_PATH, 0, nonces, 6, &issued) ==
+            NONCE_CACHE_ERR_INVALID);
+  check("a nonce buffer of another size is refused",
+        prepare(&request, false, ACCOUNT_PATH, 3, nonces, 5, &issued) ==
+            NONCE_CACHE_ERR_INVALID);
+}
+
 /* ---------- key path and leaf of three seeds ---------- */
 
 /* musig() of the accounts 87'/1'/0' of three seeds on the key path, of the
@@ -1060,9 +1207,22 @@ static bool add_participants(struct wally_psbt *psbt, const unsigned char *keys,
   return ok;
 }
 
-/* Two rounds on the key path and the leaf, every BIP-373 entry keyed as
- * Bitcoin Core and Ledger key it; the partial signatures of the three seeds
- * must make BIP-340 signatures of the output key and of the leaf key. */
+/* Our nonce from the prepared session under the BIP-373 key of `aggregate`
+ * and `leaf_hash`, as the coordinator places it. */
+static bool add_own_nonce(struct wally_psbt *psbt, const unsigned char *ours,
+                          const unsigned char *aggregate,
+                          const unsigned char *leaf_hash,
+                          const unsigned char *nonce) {
+  return wally_psbt_input_add_musig2_pubnonce(
+             &psbt->inputs[0], ours, EC_PUBLIC_KEY_LEN, aggregate,
+             EC_PUBLIC_KEY_LEN, leaf_hash, leaf_hash ? SHA256_LEN : 0, nonce,
+             BNC_PUBNONCE_LEN) == WALLY_OK;
+}
+
+/* One round from a prepared nonce cache session on the key path and the leaf,
+ * every BIP-373 entry keyed as Bitcoin Core and Ledger key it; the partial
+ * signatures of the three seeds must make BIP-340 signatures of the output
+ * key and of the leaf key. */
 static void test_three_seeds(void) {
   unsigned char a_key[EC_PUBLIC_KEY_LEN], b_key[EC_PUBLIC_KEY_LEN];
   unsigned char c_key[EC_PUBLIC_KEY_LEN], keyagg_abc[EC_PUBLIC_KEY_LEN];
@@ -1143,34 +1303,52 @@ static void test_three_seeds(void) {
         memcmp(leaf.key, leaf_key, EC_PUBLIC_KEY_LEN) == 0 &&
             memcmp(leaf.hash, leaf_hash, SHA256_LEN) == 0);
 
+  bnc_issuance request = {.inputs = 1, .start = 0, .end = 1};
+  uint8_t nonces[2 * BNC_PUBNONCE_LEN];
+  nonce_cache_issued_t issued;
+  check("Nonce Preparation prepares a session of the two musig()",
+        prepare(&request, true, ACCOUNT_87, 3, nonces, 2, &issued) ==
+                NONCE_CACHE_OK &&
+            issued.new_session);
+  cosigner_t key_path[] = {{.pub = b_key, .sk = b->priv_key + 1},
+                           {.pub = c_key, .sk = c->priv_key + 1}};
+  cosigner_t in_leaf = {.pub = b_key, .sk = b->priv_key + 1};
+  check("every nonce in, keyed by the output key and the leaf key",
+        name_session(psbt, issued.session_id, issued.session_ref) &&
+            add_own_nonce(psbt, a_key, output, NULL, nonces) &&
+            add_own_nonce(psbt, a_key, leaf_key, leaf_hash,
+                          nonces + BNC_PUBNONCE_LEN) &&
+            cosigner_nonce(psbt, &key_path[0], output, NULL) &&
+            cosigner_nonce(psbt, &key_path[1], output, NULL) &&
+            cosigner_nonce(psbt, &in_leaf, leaf_key, leaf_hash));
+
   musig_plan_t plan;
   check("plan signs the key path under the output key, the leaf under its key",
         musig_psbt_plan(psbt, NULL, &plan) == MUSIG_PSBT_OK &&
-            plan.step == MUSIG_STEP_PUB_NONCES && plan.num_slots == 2 &&
+            plan.step == MUSIG_STEP_CACHED && plan.num_slots == 2 &&
             !plan.slots[0].has_leaf_hash &&
             memcmp(plan.slots[0].aggregate, output, EC_PUBLIC_KEY_LEN) == 0 &&
             plan.slots[1].has_leaf_hash &&
             memcmp(plan.slots[1].aggregate, leaf_key, EC_PUBLIC_KEY_LEN) == 0 &&
             memcmp(plan.slots[1].leaf_hash, leaf_hash, SHA256_LEN) == 0);
   musig_plan_free(&plan);
+  check("the session is held and gives the nonces the PSBT carries",
+        check_request(psbt) == MUSIG_PSBT_OK);
+
+  struct wally_psbt *keyagg_keyed = NULL;
+  unsigned char nonce_key[2 * EC_PUBLIC_KEY_LEN];
+  memcpy(nonce_key, a_key, EC_PUBLIC_KEY_LEN);
+  memcpy(nonce_key + EC_PUBLIC_KEY_LEN, output, EC_PUBLIC_KEY_LEN);
+  check("our key path nonce under the KeyAgg key is refused",
+        wally_psbt_clone_alloc(psbt, 0, &keyagg_keyed) == WALLY_OK &&
+            wally_map_remove(&keyagg_keyed->inputs[0].musig2_pubnonces,
+                             nonce_key, sizeof(nonce_key)) == WALLY_OK &&
+            add_own_nonce(keyagg_keyed, a_key, keyagg_abc, NULL, nonces) &&
+            check_request(keyagg_keyed) == MUSIG_PSBT_ERR_SESSION);
+  wally_psbt_free(keyagg_keyed);
 
   size_t added = 0;
-  check("round 1 adds our two public nonces",
-        sign(psbt, &added) == MUSIG_PSBT_OK && added == 2 &&
-            entry(&psbt->inputs[0].musig2_pubnonces, a_key, output, NULL,
-                  WALLY_MUSIG_PUBNONCE_LEN) &&
-            entry(&psbt->inputs[0].musig2_pubnonces, a_key, leaf_key, leaf_hash,
-                  WALLY_MUSIG_PUBNONCE_LEN));
-  cosigner_t key_path[] = {{.pub = b_key, .sk = b->priv_key + 1},
-                           {.pub = c_key, .sk = c->priv_key + 1}};
-  cosigner_t in_leaf = {.pub = b_key, .sk = b->priv_key + 1};
-  check("every nonce in, keyed by the output key and the leaf key",
-        cosigner_nonce(psbt, &key_path[0], output, NULL) &&
-            cosigner_nonce(psbt, &key_path[1], output, NULL) &&
-            cosigner_nonce(psbt, &in_leaf, leaf_key, leaf_hash) &&
-            check_request(psbt) == MUSIG_PSBT_OK);
-
-  check("round 2 adds our two partial signatures",
+  check("one round adds our two partial signatures",
         sign(psbt, &added) == MUSIG_PSBT_OK && added == 2 &&
             entry(&psbt->inputs[0].musig2_partial_sigs, a_key, output, NULL,
                   WALLY_MUSIG_PARTIAL_SIG_LEN) &&
@@ -1204,6 +1382,38 @@ static void test_three_seeds(void) {
   registry_clear();
 }
 
+static void test_participant_path(void) {
+  const uint32_t cosigner[] = {0x80000056, 0x80000001, 0x80000001};
+  const uint32_t child[] = {0x80000056, 0x80000001, 0x80000000, 0, CHILD};
+  check("aggregate then derive registers",
+        register_descriptor(AGGREGATE_THEN_DERIVE));
+  const struct wally_descriptor *desc = registry_get(0)->desc;
+  check("our account key is a participant",
+        musig_psbt_is_participant_path(desc, ACCOUNT_PATH, 3));
+  check("the cosigner's account key is not ours",
+        !musig_psbt_is_participant_path(desc, cosigner, 3));
+  check("a key derived under our participant is not one",
+        !musig_psbt_is_participant_path(desc, child, 5));
+
+  check("derive then aggregate registers",
+        register_descriptor(DERIVE_THEN_AGGREGATE));
+  desc = registry_get(0)->desc;
+  check("our key at 0/3 is a participant",
+        musig_psbt_is_participant_path(desc, child, 5));
+  check("our account key alone is not",
+        !musig_psbt_is_participant_path(desc, ACCOUNT_PATH, 3));
+
+  const uint32_t recovery[] = {0x80000056, 0x80000001, 0x80000000, 3, CHILD};
+  check("derive then aggregate on <2;3> registers",
+        register_descriptor(DERIVE_THEN_AGGREGATE_RECOVERY));
+  desc = registry_get(0)->desc;
+  check("our key at 3/3 of <2;3> is a participant",
+        musig_psbt_is_participant_path(desc, recovery, 5));
+  check("our key at 0/3 is not one of <2;3>",
+        !musig_psbt_is_participant_path(desc, child, 5));
+  registry_clear();
+}
+
 int main(void) {
   char dir[] = "/tmp/kern_musig_psbt_XXXXXX";
   if (!mkdtemp(dir)) {
@@ -1221,8 +1431,10 @@ int main(void) {
   test_sighash_all_beside_silent_payments();
   test_aggregate_then_derive();
   test_leaf();
-  test_cache_session_unsupported();
+  test_cached_session();
+  test_nonce_preparation();
   test_three_seeds();
+  test_participant_path();
   registry_clear();
   key_unload();
   wallet_cleanup();

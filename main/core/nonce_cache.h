@@ -35,4 +35,29 @@ KERN_WARN_UNUSED_RESULT bool nonce_cache_fresh_secret(uint8_t *secret_out);
 /* Deletes every session, durably: a device wipe leaves none behind. */
 KERN_WARN_UNUSED_RESULT bool nonce_cache_erase(void);
 
+typedef enum {
+  NONCE_CACHE_OK,
+  /* the reference names no session held under the ID, or another one */
+  NONCE_CACHE_ERR_SESSION,
+  NONCE_CACHE_ERR_INVALID,
+  NONCE_CACHE_ERR_INTERNAL,
+} nonce_cache_result_t;
+
+typedef struct {
+  uint8_t session_id[BNC_SESSION_ID_LEN];
+  uint8_t session_ref[BNC_SESSION_REF_LEN];
+  /* the session was created for this request */
+  bool new_session;
+} nonce_cache_issued_t;
+
+/* Issuance (Nonce Preparation): the public nonces of the key at `path` from
+ * the session `request` names, created when it holds none and carries no
+ * reference, durable before this returns. With `draw_session`, the session
+ * ID is drawn from the RNG among the IDs no session holds. `nonces_out` takes
+ * (end - start + 1) * inputs nonces, by key expression index then input. */
+KERN_WARN_UNUSED_RESULT nonce_cache_result_t
+nonce_cache_issue(bnc_issuance *request, bool draw_session,
+                  const uint32_t *path, size_t path_len, uint8_t *nonces_out,
+                  size_t nonces_len, nonce_cache_issued_t *issued_out);
+
 #endif // NONCE_CACHE_H

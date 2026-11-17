@@ -662,14 +662,22 @@ static musig_step_t slot_step(const struct wally_psbt *psbt,
                                                   : MUSIG_STEP_NOTHING;
 }
 
-/* True when the PSBT carries a PSBT_GLOBAL_NONCE_CACHE_SESSION field. */
-static bool names_cache_session(const struct wally_psbt *psbt) {
+/* The PSBT_GLOBAL_NONCE_CACHE_SESSION field, if the PSBT carries one. */
+static musig_psbt_result_t session_field(const struct wally_psbt *psbt,
+                                         musig_plan_t *plan, bool *found) {
+  *found = false;
   for (size_t i = 0; i < psbt->unknowns.num_items; i++) {
     const struct wally_map_item *item = &psbt->unknowns.items[i];
-    if (item->key_len && item->key[0] == BNC_PSBT_GLOBAL_NONCE_CACHE_SESSION)
-      return true;
+    if (item->key_len == 0 ||
+        item->key[0] != BNC_PSBT_GLOBAL_NONCE_CACHE_SESSION)
+      continue;
+    if (bnc_session_field_decode(item->key, item->key_len, item->value,
+                                 item->value_len, plan->session_id,
+                                 plan->session_ref) != BNC_OK)
+      return MUSIG_PSBT_ERR_INVALID;
+    *found = true;
   }
-  return false;
+  return MUSIG_PSBT_OK;
 }
 
 /* The two-round session ID, from the canonical texts of the descriptors the
@@ -697,9 +705,14 @@ static musig_psbt_result_t plan_step(const struct wally_psbt *psbt,
                                      musig_plan_t *plan) {
   if (plan->num_slots == 0)
     return MUSIG_PSBT_OK;
-  /* ENCODING.md: signing from a nonce cache session needs capability bit 8 */
-  if (names_cache_session(psbt))
-    return MUSIG_PSBT_ERR_UNSUPPORTED;
+  bool cached = false;
+  musig_psbt_result_t result = session_field(psbt, plan, &cached);
+  if (result != MUSIG_PSBT_OK)
+    return result;
+  if (cached) {
+    plan->step = MUSIG_STEP_CACHED;
+    return MUSIG_PSBT_OK;
+  }
   plan->step = MUSIG_STEP_NOTHING;
   for (size_t s = 0; s < plan->num_slots; s++) {
     musig_step_t step = slot_step(psbt, &plan->slots[s]);
@@ -760,12 +773,14 @@ static musig_psbt_result_t cached_nonce(bnc_signer *signer,
   return status == BNC_OK ? MUSIG_PSBT_OK : MUSIG_PSBT_ERR_INTERNAL;
 }
 
-/* The slots round 2 signs: those with every participant's public nonce. */
+/* The slots a step signs: every one from a cached session, those with every
+ * participant's public nonce in round 2. */
 static bool step_signs_slot(const struct wally_psbt *psbt,
                             const musig_plan_t *plan,
                             const musig_slot_t *slot) {
-  return plan->step == MUSIG_STEP_PARTIAL_SIGS &&
-         slot_step(psbt, slot) == MUSIG_STEP_PARTIAL_SIGS;
+  return plan->step == MUSIG_STEP_CACHED ||
+         (plan->step == MUSIG_STEP_PARTIAL_SIGS &&
+          slot_step(psbt, slot) == MUSIG_STEP_PARTIAL_SIGS);
 }
 
 static bool own_pubnonce(const struct wally_psbt *psbt,
@@ -777,17 +792,25 @@ static bool own_pubnonce(const struct wally_psbt *psbt,
   return nonce != NULL;
 }
 
-/* The secret round 2 signs from: taken for signing, or only read. */
+/* The secret the plan's step signs from: taken for signing, or only read. */
 static musig_psbt_result_t plan_secret(bnc_signer *signer,
                                        const musig_plan_t *plan, bool take,
                                        bnc_secret **secret_out) {
-  int32_t status =
-      take ? bnc_begin_round_two(signer, plan->session_id, secret_out)
-           : bnc_held_session(signer, plan->session_id, NULL, secret_out);
+  int32_t status;
+  if (plan->step == MUSIG_STEP_CACHED)
+    status = take ? bnc_begin_signing(signer, plan->session_id,
+                                      plan->session_ref, secret_out)
+                  : bnc_held_session(signer, plan->session_id,
+                                     plan->session_ref, secret_out);
+  else
+    status = take
+                 ? bnc_begin_round_two(signer, plan->session_id, secret_out)
+                 : bnc_held_session(signer, plan->session_id, NULL, secret_out);
   switch (status) {
   case BNC_OK:
     return MUSIG_PSBT_OK;
   case BNC_ERR_UNKNOWN_SESSION:
+  case BNC_ERR_SESSION_REF_MISMATCH:
     return MUSIG_PSBT_ERR_SESSION;
   default:
     return MUSIG_PSBT_ERR_INTERNAL;
@@ -813,17 +836,65 @@ static musig_psbt_result_t check_slot_nonce(const struct wally_psbt *psbt,
   return MUSIG_PSBT_OK;
 }
 
+/* True when a slot of the plan is keyed by `item` of input `input_index`'s
+ * PSBT_IN_MUSIG2_PUB_NONCE map: its participant, aggregate and leaf. */
+static bool plan_keys_pubnonce(const musig_plan_t *plan, size_t input_index,
+                               const struct wally_map_item *item) {
+  for (size_t s = 0; s < plan->num_slots; s++) {
+    const musig_slot_t *slot = &plan->slots[s];
+    size_t key_len =
+        2 * EC_PUBLIC_KEY_LEN + (slot->has_leaf_hash ? SHA256_LEN : 0);
+    if (slot->input_index == input_index && item->key_len == key_len &&
+        memcmp(item->key, slot->participant, EC_PUBLIC_KEY_LEN) == 0 &&
+        memcmp(item->key + EC_PUBLIC_KEY_LEN, slot->aggregate,
+               EC_PUBLIC_KEY_LEN) == 0 &&
+        (!slot->has_leaf_hash || memcmp(item->key + 2 * EC_PUBLIC_KEY_LEN,
+                                        slot->leaf_hash, SHA256_LEN) == 0))
+      return true;
+  }
+  return false;
+}
+
+/* True when `participant` is the participant key of a slot of the plan. */
+static bool plan_has_participant(const musig_plan_t *plan,
+                                 const unsigned char *participant) {
+  for (size_t s = 0; s < plan->num_slots; s++) {
+    if (memcmp(plan->slots[s].participant, participant, EC_PUBLIC_KEY_LEN) == 0)
+      return true;
+  }
+  return false;
+}
+
+/* A cached session prepared the nonces of the plan's slots only: a nonce of
+ * one of our participant keys keyed by no slot is not one it gave. */
+static musig_psbt_result_t check_unplanned_nonces(const struct wally_psbt *psbt,
+                                                  const musig_plan_t *plan) {
+  for (size_t i = 0; i < psbt->num_inputs; i++) {
+    const struct wally_map *nonces = &psbt->inputs[i].musig2_pubnonces;
+    for (size_t j = 0; j < nonces->num_items; j++) {
+      const struct wally_map_item *item = &nonces->items[j];
+      if (item->key_len >= EC_PUBLIC_KEY_LEN &&
+          plan_has_participant(plan, item->key) &&
+          !plan_keys_pubnonce(plan, i, item))
+        return MUSIG_PSBT_ERR_SESSION;
+    }
+  }
+  return MUSIG_PSBT_OK;
+}
+
 musig_psbt_result_t musig_psbt_check_session(struct wally_psbt *psbt,
                                              const musig_plan_t *plan) {
   if (!psbt || !plan)
     return MUSIG_PSBT_ERR_INTERNAL;
-  if (plan->step != MUSIG_STEP_PARTIAL_SIGS)
+  if (plan->step != MUSIG_STEP_CACHED && plan->step != MUSIG_STEP_PARTIAL_SIGS)
     return MUSIG_PSBT_OK;
   bnc_signer *signer = nonce_cache_signer();
   bnc_secret *secret = NULL;
   if (!signer)
     return MUSIG_PSBT_ERR_INTERNAL;
   musig_psbt_result_t result = plan_secret(signer, plan, false, &secret);
+  if (result == MUSIG_PSBT_OK && plan->step == MUSIG_STEP_CACHED)
+    result = check_unplanned_nonces(psbt, plan);
   for (size_t s = 0; result == MUSIG_PSBT_OK && s < plan->num_slots; s++) {
     if (step_signs_slot(psbt, plan, &plan->slots[s]))
       result = check_slot_nonce(psbt, signer, secret, &plan->slots[s]);
@@ -1042,6 +1113,7 @@ musig_psbt_result_t musig_psbt_sign(struct wally_psbt *psbt,
   case MUSIG_STEP_PUB_NONCES:
     return round_one(psbt, plan, added_out);
   case MUSIG_STEP_PARTIAL_SIGS:
+  case MUSIG_STEP_CACHED:
     return sign_slots(psbt, plan, added_out);
   }
   return MUSIG_PSBT_ERR_INTERNAL;
@@ -1073,6 +1145,59 @@ musig_psbt_result_t musig_psbt_check_request(const uint8_t *psbt_bytes,
   musig_plan_free(&plan);
   wally_psbt_free(psbt);
   return result;
+}
+
+/* True when our participant `ref` is the key at `path`. */
+static bool participant_at_path(const struct wally_descriptor *desc,
+                                descriptor_key_ref_t ref, const uint32_t *path,
+                                size_t path_len) {
+  uint32_t origin[MAX_KEYPATH_TOTAL_DEPTH];
+  size_t origin_len = 0;
+  char *origin_str = descriptor_key_origin_path_alloc(desc, ref);
+  bool ok = origin_str && bip32_path_parse(origin_str, origin, &origin_len,
+                                           MAX_KEYPATH_TOTAL_DEPTH);
+  wally_free_string(origin_str);
+  if (!ok || path_len < origin_len ||
+      memcmp(path, origin, origin_len * sizeof(origin[0])) != 0)
+    return false;
+
+  uint32_t num_paths = 0;
+  if (wally_descriptor_get_num_paths(desc, &num_paths) != WALLY_OK)
+    return false;
+  /* The step before the child number is a child number too: the position in
+   * the <a;b> tuple is the one whose steps `path` ends with. */
+  uint32_t child_num = path_len >= origin_len + 2 ? path[path_len - 1] : 0;
+  for (uint32_t k = 0; k < num_paths; k++) {
+    unsigned char key[EC_PUBLIC_KEY_LEN];
+    uint32_t steps[MAX_KEYPATH_TOTAL_DEPTH];
+    size_t steps_len = 0;
+    if (participant_key(desc, ref, k, child_num, key, steps, &steps_len) &&
+        origin_len + steps_len == path_len &&
+        memcmp(path + origin_len, steps, steps_len * sizeof(steps[0])) == 0)
+      return true;
+  }
+  return false;
+}
+
+bool musig_psbt_is_participant_path(const struct wally_descriptor *desc,
+                                    const uint32_t *path, size_t path_len) {
+  unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
+  uint32_t num_keys = 0;
+  if (!desc || !path || !key_get_fingerprint(our_fp) ||
+      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK)
+    return false;
+  for (uint32_t k = 0; k < num_keys; k++) {
+    size_t participants = descriptor_key_musig_participants(desc, k);
+    for (size_t p = 0; p < participants; p++) {
+      descriptor_key_ref_t ref = {.index = k, .participant = p};
+      unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+      if (descriptor_key_origin_fingerprint(desc, ref, fp) &&
+          memcmp(fp, our_fp, sizeof(fp)) == 0 &&
+          participant_at_path(desc, ref, path, path_len))
+        return true;
+    }
+  }
+  return false;
 }
 
 bool musig_psbt_is_own_participant(const struct wally_psbt *psbt,

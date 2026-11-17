@@ -1546,10 +1546,6 @@ static bool refuse_musig_request(const bipqr_sign *req) {
     show_error_response(BIPQR_RESPONSE_ERROR_INVALID_PSBT,
                         "Invalid MuSig2 fields");
     return true;
-  case MUSIG_PSBT_ERR_UNSUPPORTED:
-    show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
-                        "Nonce cache sessions are not supported");
-    return true;
   case MUSIG_PSBT_ERR_INTERNAL:
   default:
     show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "MuSig2 check failed");
