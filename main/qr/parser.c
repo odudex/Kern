@@ -393,7 +393,8 @@ static int detect_format(const char *data, size_t data_len, BBQrCode **bbqr) {
     }
   } else if (data_len >= 3 && starts_with_case_insensitive(data, "ur:")) {
     return FORMAT_UR;
-  } else if (data_len >= BBQR_HEADER_LEN && data[0] == 'B' && data[1] == '$') {
+  } else if (data_len >= BBQR_HEADER_LEN &&
+             toupper((unsigned char)data[0]) == 'B' && data[1] == '$') {
     // Validate BBQr header (convert to uppercase for validation)
     char encoding = toupper((unsigned char)data[2]);
     char file_type = toupper((unsigned char)data[3]);
