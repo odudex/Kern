@@ -302,7 +302,7 @@ A locked device keeps the bootloader it was locked with. SD updates only write t
 
 Signing a bootloader with all three keys means taking keys 1 and 2 out of cold storage. Doing that for every release would defeat the reason they are cold. So the bootloader is built, signed once in a key ceremony, and committed; every release after that ships those same bytes. Only the app is built and signed per release, with key 0.
 
-> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run, the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) and the release-script changes exist, and freeze 1 is published for all four variants (tag `bootloader-1`). The CI checks and the web flasher changes described below are planned and not implemented yet.
+> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run, the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) and the release-script changes exist, and freeze 1 is published for all four variants (tag `bootloader-1`). The web flasher handles a locked device, verified on a v1.x chip; v3.1 and v3.2 chips are an open question (below). The CI checks described below are planned and not implemented yet.
 
 **Variants.** The bootloader does not depend on the display, touch or camera, so most boards share one. Two settings split it: the chip revision range (v1.x and v3.x need different builds, and the v3 bootloader runs a different CPU clock) and the flash mode (wave_35 uses DIO, the rest QIO). That gives four:
 
@@ -426,7 +426,11 @@ Before publishing, boot the new app on each frozen variant, and install it over 
 
 - It must write the bootloader unmodified. Rewriting the flash mode, frequency or size in the image header changes the signed bytes and the ROM then rejects the bootloader. esptool leaves image headers alone once it sees secure boot or secure download mode ("Security features enabled, so not changing any flash settings"); any other flasher has to do the same.
 - It must tell the ROM the flash size. Secure download mode cannot detect it, and with esptool's `--flash-size keep` the ROM then refuses any write that reaches past 2 MB ("Failed to enter flash download mode", result `0106`), which the app does. So on a locked device: `esptool --chip esp32p4 --no-stub write-flash --flash-mode keep --flash-freq keep --flash-size 16MB 0x2000 bootloader.bin 0x10000 partition-table.bin 0x1e000 ota_data_initial.bin 0x20000 firmware-signed.bin`. The write runs without the stub at about 80 kbit/s (over three minutes for the app) and is not read back, so the boot log is the check: `RSA-PSS secure boot verification succeeded`.
-- It must work without the commands secure download mode removes (register reads, the flasher stub). The web flasher's chip-revision read fails there, so it has to tolerate that and ask which chip revision the board has.
+- It must work without the commands secure download mode removes (register reads, the flasher stub). The ROM there also refuses compressed data and blocks larger than 1 KiB.
+
+The web flasher (`site/flash/index.html`) does all of this when it finds the chip in secure download mode. It skips the chip-revision read and asks the user to confirm the revision range the bundle was built for. It turns the CI builds off, since they are not signed with the release keys, and warns when a bundle's bootloader is not signed by all three release keys or its app by none of them. It never rewrites an image header, on any device. It then sets the flash size and writes uncompressed in 1 KiB blocks, about four minutes for a release.
+
+> **Chip revisions v3.1 and later cannot be locked yet.** There the flash is unpowered in download mode and esptool powers it by writing registers, which secure download mode refuses. Measured on a v3.2 chip: a write through the ROM with no register access hangs at the erase, and the same write succeeds once the flash is powered. A locked chip of those revisions could therefore never be flashed over USB again, bootloader included, so the Secure Boot page refuses them (`core/secure_boot.c`, `NO_LOCKED_USB_FLASH_REV`). The eFuse `DOWNLOAD_MODE_XPD_ON` makes the ROM of a v3.2 chip power the flash itself and is the candidate fix; it is untested, and ESP-IDF's eFuse table does not define it.
 
 ### 4c. Build Profiles
 
@@ -508,6 +512,7 @@ esptool --chip esp32p4 write-flash --flash-mode keep --flash-freq keep --flash-s
 4. Confirm by entering the device PIN.
 5. The firmware:
    - Verifies that `SECURE_BOOT_EN` is not already set.
+   - Verifies the chip revision is below v3.1: later revisions could not be flashed over USB once locked (Section 4b).
    - Verifies that KEY0, KEY1, and KEY2 eFuse blocks are empty — or already contain exactly the three embedded digests, in which case it offers to **resume** an interrupted lockdown (see power-cut note below).
    - Verifies the running app carries a valid signature **and** that the signing key's digest matches one of the embedded digests — a valid signature from a non-matching key would still brick on reboot.
    - Verifies the bootloader image in flash (offset 0x2000): each of the three embedded keys must have a valid signature on it. This is a cryptographic check against the embedded keys, not a comparison of displayed hashes, and it is what ties the device to the frozen bootloader: a bootloader signed by fewer keys, by other keys, or built without secure boot support is refused.
@@ -867,6 +872,7 @@ Complete these steps on a **development board** before any production device.
 - [ ] Attempt lockdown with unsigned firmware running — **must refuse** (firmware should detect it is not properly signed and block the operation)
 - [ ] Attempt lockdown with firmware signed by a key that does not match the embedded digests — **must refuse**
 - [ ] Attempt lockdown with a bootloader that does not carry signatures covering all three embedded digests — **must refuse**
+- [ ] Open the page on a chip of revision v3.1 or later — **must refuse**, naming the chip revision
 
 ### Manual Lockdown via espefuse (Alternative Path)
 

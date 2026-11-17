@@ -96,7 +96,7 @@ The device must have been installed **over USB** from a release that ships the f
 **Settings → Security → Secure Boot** then:
 
 1. Shows the three key digests embedded in the firmware.
-2. Checks, before offering anything, that the PIN keys are sealed, that the running app is signed by one of the three keys, and that the bootloader on flash is signed by **all three**. These are signature verifications against the embedded keys. If one fails, the page names it and offers no way to proceed.
+2. Checks, before offering anything, that the chip revision is one that can still be flashed over USB once locked (below v3.1 for now), that the PIN keys are sealed, that the running app is signed by one of the three keys, and that the bootloader on flash is signed by **all three**. These are signature verifications against the embedded keys. If one fails, the page names it and offers no way to proceed.
 3. Warns that the action is **irreversible** and asks for the PIN.
 4. Burns the three digests into eFuse KEY0/KEY1/KEY2, reads them back, then burns the hardening eFuses (direct-boot disable, JTAG disable, secure download mode), `SECURE_BOOT_EN`, and the `RD_DIS` write-protect.
 
