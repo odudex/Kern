@@ -248,14 +248,13 @@ static void test_unsupported_requests(void) {
   uint8_t message[160];
   expect_unsupported("a FORM 0x01 descriptor is taken", REGISTER_BIP380_REQUEST,
                      sizeof(REGISTER_BIP380_REQUEST), 0x00);
-  expect_unsupported("registering FORM 0x03 silent payment keys answers "
-                     "unsupported descriptor form",
+  expect_unsupported("FORM 0x03 silent payment keys are taken to register",
                      REGISTER_SP_KEYS_REQUEST, sizeof(REGISTER_SP_KEYS_REQUEST),
-                     0x06);
-  expect_unsupported("verifying a FORM 0x03 silent payment address answers "
-                     "unsupported descriptor form",
+                     0x00);
+  expect_unsupported("FORM 0x03 silent payment keys are taken to verify an "
+                     "address",
                      VERIFY_SP_KEYS_REQUEST, sizeof(VERIFY_SP_KEYS_REQUEST),
-                     0x06);
+                     0x00);
   expect_unsupported("Nonce Preparation answers unsupported operation",
                      NONCE_PREPARATION_REQUEST,
                      sizeof(NONCE_PREPARATION_REQUEST), 0x0F);

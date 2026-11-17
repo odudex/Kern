@@ -119,10 +119,37 @@ KERN_WARN_UNUSED_RESULT bool registry_persist(const char *id, const char *name);
 /* True when a registration on flash already uses `name`, loaded or not. */
 KERN_WARN_UNUSED_RESULT bool registry_name_registered(const char *name);
 
+/* Silent payment account registrations: aliases naming the loaded seed's
+ * BIP-352 spend key on the wallet network, with our scan key or the one not
+ * ours it was registered with, always stored on flash and loaded by
+ * registry_init. An alias names a descriptor or an account, not both. */
+KERN_WARN_UNUSED_RESULT bool registry_sp_alias_exists(const char *alias);
+/* `scan_key` is the 32-byte scan key of an account whose scan key is not
+ * ours, NULL for ours. */
+KERN_WARN_UNUSED_RESULT bool
+registry_add_sp_alias(const char *alias, const unsigned char *scan_key);
+/* The scan key `alias` was registered with when not ours, else NULL */
+KERN_WARN_UNUSED_RESULT const unsigned char *
+registry_sp_alias_scan_key(const char *alias);
+KERN_WARN_UNUSED_RESULT size_t registry_sp_alias_count(void);
+KERN_WARN_UNUSED_RESULT const char *registry_sp_alias_get(size_t i);
+/* Deletes the alias's record from flash and forgets it. Failure leaves it
+ * intact. */
+KERN_WARN_UNUSED_RESULT bool registry_sp_alias_deregister_at(size_t i);
 /* Removes the registration `alias` names, and only it: its descriptor entry
  * with its backup on flash when it has one. False for an unknown alias;
  * failure leaves the registration intact. */
 KERN_WARN_UNUSED_RESULT bool registry_unregister(const char *alias);
+/* Names a scan key not ours that the current request pairs with our spend
+ * key, until registry_sp_clear_named_scan_keys(). False when there is no room
+ * left. */
+KERN_WARN_UNUSED_RESULT bool
+registry_sp_name_scan_key(const unsigned char *scan_key);
+void registry_sp_clear_named_scan_keys(void);
+/* The scan keys not ours of our spend key's accounts: those registered, then
+ * those the current request names. NULL past the last. */
+KERN_WARN_UNUSED_RESULT const unsigned char *
+registry_sp_scan_key_get(size_t pos);
 
 /* True when `entry` pays the same scripts as `descriptor_str` (see
  * registry_session_has_duplicate_scripts). */
@@ -152,7 +179,8 @@ registry_session_has_duplicate_scripts(const struct wally_descriptor *desc,
                                        char *out_id, size_t out_id_size);
 
 void registry_clear(void);
-/* Clears the session and registers every flash backup the loaded key opens. */
+/* Clears the session and registers every flash backup the loaded key opens,
+ * and the silent payment aliases of the loaded seed. */
 void registry_init(bool is_testnet);
 /* Backups registered on this device that the last registry_init skipped
  * because they no longer pass keyed validation (other-network ones aside). */

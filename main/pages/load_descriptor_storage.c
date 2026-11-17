@@ -228,11 +228,14 @@ static void sd_desc_on_file_selected(const char *full_path, const char *dir,
 /* ---------- Display name ---------- */
 
 /* A registered backup is already in the session and is managed from Session
- * Descriptors, so the flash list leaves it out. Other BIP138 files stay
+ * Descriptors, so the flash list leaves it out, as it does silent payment
+ * account registrations, which hold no descriptor. Other BIP138 files stay
  * listed: they belong to another key or lack this device's approval mark. */
 static bool is_registered_backup(storage_location_t loc, const char *filename) {
   if (loc != STORAGE_FLASH)
     return false;
+  if (storage_descriptor_format(filename) == STORAGE_DESCRIPTOR_SP_ACCOUNT)
+    return true;
   for (size_t i = 0; i < registry_count(); i++) {
     const registry_entry_t *entry = registry_get(i);
     if (entry->persisted && entry->loc == STORAGE_FLASH &&

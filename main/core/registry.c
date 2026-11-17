@@ -6,6 +6,7 @@
 #include "descriptor_validator.h"
 #include "key.h"
 #include "psbt_internal.h"
+#include "silent_payments.h"
 #include "wallet.h"
 #include <esp_log.h>
 #include <stdio.h>
@@ -21,6 +22,28 @@ static const char *TAG = "registry";
 static registry_entry_t registry_entries[REGISTRY_MAX_ENTRIES];
 static size_t registry_len = 0;
 static size_t registry_rejected = 0;
+
+/* Aliases of the loaded seed's silent payment account on the wallet network,
+ * with the scan key of an account registered with one not ours */
+typedef struct {
+  char alias[REGISTRY_ID_MAX_LEN];
+  bool has_scan_key;
+  unsigned char scan_key[SP_SECRET_LEN];
+} sp_account_entry_t;
+static sp_account_entry_t sp_accounts[REGISTRY_MAX_ENTRIES];
+static size_t sp_alias_len = 0;
+/* Scan keys not ours that the current request names with our spend key */
+static unsigned char sp_named_scan_keys[REGISTRY_MAX_ENTRIES][SP_SECRET_LEN];
+static size_t sp_named_scan_key_len = 0;
+/* An account is stored as a record, our fingerprint, the network, the scan
+ * key when not ours and the alias, followed by the seed's approval mark over
+ * it. An alias is at most 32 bytes, so a record carries a scan key exactly
+ * when what its header and mark enclose is longer. */
+#define SP_RECORD_HEADER_LEN (BIP32_KEY_FINGERPRINT_LEN + 1)
+#define SP_RECORD_ALIAS_MAX_LEN (REGISTRY_ID_MAX_LEN - 1)
+#define SP_RECORD_MAX_LEN                                                      \
+  (SP_RECORD_HEADER_LEN + SP_SECRET_LEN + SP_RECORD_ALIAS_MAX_LEN +            \
+   BIP138_BACKUP_MARK_LEN)
 
 size_t registry_count(void) { return registry_len; }
 
@@ -94,6 +117,9 @@ void registry_clear(void) {
   }
   memset(registry_entries, 0, sizeof registry_entries);
   registry_len = 0;
+  secure_memzero(sp_accounts, sizeof sp_accounts);
+  sp_alias_len = 0;
+  registry_sp_clear_named_scan_keys();
 }
 
 static bool descriptor_id_from_filename(const char *fname, char *id,
@@ -144,7 +170,119 @@ bool registry_name_registered(const char *name) {
   char file_id[REGISTRY_ALIAS_FILE_ID_LEN + 1];
   return !alias_file_id(name, file_id) ||
          storage_descriptor_exists(STORAGE_FLASH, file_id,
-                                   STORAGE_DESCRIPTOR_BIP138);
+                                   STORAGE_DESCRIPTOR_BIP138) ||
+         storage_descriptor_exists(STORAGE_FLASH, file_id,
+                                   STORAGE_DESCRIPTOR_SP_ACCOUNT);
+}
+
+static const sp_account_entry_t *sp_account_find(const char *alias) {
+  for (size_t i = 0; i < sp_alias_len; i++) {
+    if (strncmp(sp_accounts[i].alias, alias, REGISTRY_ID_MAX_LEN) == 0)
+      return &sp_accounts[i];
+  }
+  return NULL;
+}
+
+bool registry_sp_alias_exists(const char *alias) {
+  return sp_account_find(alias) != NULL;
+}
+
+const unsigned char *registry_sp_alias_scan_key(const char *alias) {
+  const sp_account_entry_t *account = sp_account_find(alias);
+  return account && account->has_scan_key ? account->scan_key : NULL;
+}
+
+static bool sp_alias_taken(const char *alias) {
+  return registry_find_by_id(alias) || registry_sp_alias_exists(alias);
+}
+
+/* The record of `account` with its approval mark, its length in *len_out */
+static bool sp_record(const sp_account_entry_t *account,
+                      uint8_t record[SP_RECORD_MAX_LEN], size_t *len_out) {
+  size_t alias_len = strlen(account->alias);
+  size_t len = SP_RECORD_HEADER_LEN;
+  if (alias_len == 0 || alias_len > SP_RECORD_ALIAS_MAX_LEN ||
+      !key_get_fingerprint(record))
+    return false;
+  record[BIP32_KEY_FINGERPRINT_LEN] = (uint8_t)wallet_get_network();
+  if (account->has_scan_key) {
+    memcpy(record + len, account->scan_key, SP_SECRET_LEN);
+    len += SP_SECRET_LEN;
+  }
+  memcpy(record + len, account->alias, alias_len);
+  len += alias_len;
+  *len_out = len + BIP138_BACKUP_MARK_LEN;
+  return bip138_backup_sp_account_mark(record, len, record + len);
+}
+
+/* The account a record stores, before its mark is checked */
+static bool sp_record_account(const uint8_t *record, size_t len,
+                              sp_account_entry_t *account) {
+  size_t body_len = len > SP_RECORD_HEADER_LEN + BIP138_BACKUP_MARK_LEN
+                        ? len - SP_RECORD_HEADER_LEN - BIP138_BACKUP_MARK_LEN
+                        : 0;
+  const uint8_t *body = record + SP_RECORD_HEADER_LEN;
+  memset(account, 0, sizeof(*account));
+  account->has_scan_key = body_len > SP_RECORD_ALIAS_MAX_LEN;
+  if (account->has_scan_key) {
+    memcpy(account->scan_key, body, SP_SECRET_LEN);
+    body += SP_SECRET_LEN;
+    body_len -= SP_SECRET_LEN;
+  }
+  if (body_len == 0 || body_len > SP_RECORD_ALIAS_MAX_LEN)
+    return false;
+  memcpy(account->alias, body, body_len);
+  return strlen(account->alias) == body_len;
+}
+
+bool registry_add_sp_alias(const char *alias, const unsigned char *scan_key) {
+  sp_account_entry_t account = {.has_scan_key = scan_key != NULL};
+  uint8_t record[SP_RECORD_MAX_LEN];
+  size_t len = 0;
+  char file_id[REGISTRY_ALIAS_FILE_ID_LEN + 1];
+  if (strlen(alias) > SP_RECORD_ALIAS_MAX_LEN)
+    return false;
+  strcpy(account.alias, alias);
+  if (scan_key)
+    memcpy(account.scan_key, scan_key, SP_SECRET_LEN);
+  bool ok = sp_alias_len < REGISTRY_MAX_ENTRIES && !sp_alias_taken(alias) &&
+            !registry_name_registered(alias) && alias_file_id(alias, file_id) &&
+            sp_record(&account, record, &len);
+  if (ok && storage_save_descriptor(STORAGE_FLASH, file_id, record, len,
+                                    STORAGE_DESCRIPTOR_SP_ACCOUNT) != ESP_OK) {
+    ESP_LOGE(TAG, "registering silent payment alias '%s' failed", alias);
+    ok = false;
+  }
+  if (ok)
+    sp_accounts[sp_alias_len++] = account;
+  secure_memzero(&account, sizeof(account));
+  secure_memzero(record, sizeof(record));
+  return ok;
+}
+
+size_t registry_sp_alias_count(void) { return sp_alias_len; }
+
+const char *registry_sp_alias_get(size_t i) {
+  return i < sp_alias_len ? sp_accounts[i].alias : NULL;
+}
+
+bool registry_sp_alias_deregister_at(size_t i) {
+  char file_id[REGISTRY_ALIAS_FILE_ID_LEN + 1];
+  char filename[REGISTRY_FILENAME_MAX_LEN];
+  if (i >= sp_alias_len || !alias_file_id(sp_accounts[i].alias, file_id))
+    return false;
+  storage_descriptor_filename(STORAGE_FLASH, file_id,
+                              STORAGE_DESCRIPTOR_SP_ACCOUNT, filename,
+                              sizeof(filename));
+  if (storage_delete_descriptor(STORAGE_FLASH, filename) != ESP_OK) {
+    ESP_LOGE(TAG, "De-registering '%s' failed", sp_accounts[i].alias);
+    return false;
+  }
+  memmove(&sp_accounts[i], &sp_accounts[i + 1],
+          (sp_alias_len - i - 1) * sizeof(sp_accounts[0]));
+  sp_alias_len--;
+  secure_memzero(&sp_accounts[sp_alias_len], sizeof(sp_accounts[0]));
+  return true;
 }
 
 bool registry_unregister(const char *alias) {
@@ -154,6 +292,63 @@ bool registry_unregister(const char *alias) {
                                            : registry_remove_at(i);
   }
   return false;
+}
+
+bool registry_sp_name_scan_key(const unsigned char *scan_key) {
+  for (size_t i = 0; i < sp_named_scan_key_len; i++) {
+    if (memcmp(sp_named_scan_keys[i], scan_key, SP_SECRET_LEN) == 0)
+      return true;
+  }
+  if (sp_named_scan_key_len >= REGISTRY_MAX_ENTRIES)
+    return false;
+  memcpy(sp_named_scan_keys[sp_named_scan_key_len++], scan_key, SP_SECRET_LEN);
+  return true;
+}
+
+void registry_sp_clear_named_scan_keys(void) {
+  secure_memzero(sp_named_scan_keys, sizeof sp_named_scan_keys);
+  sp_named_scan_key_len = 0;
+}
+
+const unsigned char *registry_sp_scan_key_get(size_t pos) {
+  for (size_t i = 0; i < sp_alias_len; i++) {
+    if (!sp_accounts[i].has_scan_key)
+      continue;
+    if (pos == 0)
+      return sp_accounts[i].scan_key;
+    pos--;
+  }
+  return pos < sp_named_scan_key_len ? sp_named_scan_keys[pos] : NULL;
+}
+
+/* Loads the account of a silent payment account record when it is the loaded
+ * seed's on the wallet network and carries the seed's approval mark */
+static void load_sp_alias(const char *fname) {
+  uint8_t *data = NULL;
+  size_t len = 0;
+  uint8_t expected[SP_RECORD_MAX_LEN];
+  size_t expected_len = 0;
+  sp_account_entry_t account;
+  if (storage_load_descriptor(STORAGE_FLASH, fname, &data, &len, NULL) !=
+      ESP_OK)
+    return;
+  /* Our fingerprint, network and mark rebuild the stored record exactly */
+  bool ours = sp_record_account(data, len, &account) &&
+              sp_record(&account, expected, &expected_len) &&
+              expected_len == len && secure_memcmp(expected, data, len) == 0;
+  secure_memzero(expected, sizeof(expected));
+  secure_memzero(data, len);
+  free(data);
+  if (!ours) {
+    secure_memzero(&account, sizeof(account));
+    return;
+  }
+  if (sp_alias_taken(account.alias) || sp_alias_len >= REGISTRY_MAX_ENTRIES)
+    ESP_LOGW(TAG, "Skipping '%s': alias '%s' taken or no room", fname,
+             account.alias);
+  else
+    sp_accounts[sp_alias_len++] = account;
+  secure_memzero(&account, sizeof(account));
 }
 
 /* The id of a backup: the alias it holds, else its filename for a backup
@@ -180,7 +375,10 @@ static void registry_init_scan(void) {
   bip138_backup_hold_approval_key();
   for (int i = 0; i < count; i++) {
     const char *fname = files[i];
-    if (storage_descriptor_format(fname) != STORAGE_DESCRIPTOR_BIP138 ||
+    storage_descriptor_format_t format = storage_descriptor_format(fname);
+    if (format == STORAGE_DESCRIPTOR_SP_ACCOUNT)
+      load_sp_alias(fname);
+    if (format != STORAGE_DESCRIPTOR_BIP138 ||
         registry_len >= REGISTRY_MAX_ENTRIES)
       continue;
     uint8_t *data = NULL;

@@ -6,7 +6,9 @@
 #include <lvgl.h>
 #include <stdbool.h>
 
-#define UI_MENU_MAX_ENTRIES 20
+// Covers the Session Descriptors list: every registry entry and silent
+// payment alias
+#define UI_MENU_MAX_ENTRIES 32
 
 typedef void (*ui_menu_callback_t)(void);
 typedef void (*ui_menu_action_callback_t)(int index);

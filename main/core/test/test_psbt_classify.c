@@ -3532,6 +3532,60 @@ static void test_silent_payment_classify(void) {
   wally_psbt_free(psbt);
 }
 
+/* Output 1 of the silent payment PSBT paying our spend key labeled with
+ * m = 0 under the BIP352 receiving vectors' scan key, not ours */
+static bool pay_change_to_scan_key_not_ours(struct wally_psbt *psbt) {
+  static const char scan[] =
+      "0220bcfac5b99e04ad1a06ddfb016ee13582609d60b6291e98d01a9bc9a16c96d4";
+  static const char spend_label_0[] =
+      "02e673195a3b1a0c7cdfdde5649e6e13be05d01791be238329bb58fdb3ea386f56";
+  unsigned char info_key = PSBT_OUT_SP_V0_INFO,
+                label_key = PSBT_OUT_SP_V0_LABEL;
+  unsigned char info[66];
+  size_t written = 0;
+  struct wally_map *unknowns = &psbt->outputs[1].unknowns;
+  return wally_hex_to_bytes(scan, info, 33, &written) == WALLY_OK &&
+         wally_hex_to_bytes(spend_label_0, info + 33, 33, &written) ==
+             WALLY_OK &&
+         wally_map_replace(unknowns, &info_key, 1, info, sizeof(info)) ==
+             WALLY_OK &&
+         wally_map_remove(unknowns, &label_key, 1) == WALLY_OK;
+}
+
+static void test_silent_payment_scan_key_not_ours(void) {
+  static const char scan_secret_hex[] =
+      "0f694e068028a717f8af6b9411f9a133dd3565258714cc226594b34db90c1f2c";
+  unsigned char scan_secret[32];
+  size_t written = 0;
+  struct wally_psbt *psbt = make_silent_payment_psbt();
+  bool ready = psbt && pay_change_to_scan_key_not_ours(psbt) &&
+               wally_hex_to_bytes(scan_secret_hex, scan_secret,
+                                  sizeof(scan_secret), &written) == WALLY_OK;
+
+  TEST("psbt_classify_output: change under a scan key not ours is external "
+       "until a request names that scan key");
+  output_ownership_t unnamed =
+      ready ? psbt_classify_output(psbt, 1, false) : (output_ownership_t){0};
+  bool named = ready && registry_sp_name_scan_key(scan_secret);
+  output_ownership_t change =
+      named ? psbt_classify_output(psbt, 1, false) : (output_ownership_t){0};
+  output_ownership_t recipient =
+      named ? psbt_classify_output(psbt, 0, false) : (output_ownership_t){0};
+  registry_sp_clear_named_scan_keys();
+  output_ownership_t cleared =
+      ready ? psbt_classify_output(psbt, 1, false) : (output_ownership_t){0};
+  if (unnamed.ownership == PSBT_OWNERSHIP_EXTERNAL &&
+      change.ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+      change.source.kind == CLAIM_SILENT_PAYMENT &&
+      change.source.silent_payment.is_change &&
+      recipient.ownership == PSBT_OWNERSHIP_EXTERNAL &&
+      cleared.ownership == PSBT_OWNERSHIP_EXTERNAL)
+    PASS();
+  else
+    FAIL("change under a named scan key misclassified");
+  wally_psbt_free(psbt);
+}
+
 static void test_sign_silent_payment_input(void) {
   struct wally_psbt *psbt = make_silent_payment_psbt();
   psbt_sign_policy_t policy = {0};
@@ -5321,6 +5375,7 @@ int main(void) {
   printf("\n=== silent payment tests ===\n\n");
 
   test_silent_payment_classify();
+  test_silent_payment_scan_key_not_ours();
   test_sign_silent_payment_input();
   test_sign_silent_payment_keeps_sighash_all();
   test_partial_signing_refuses_share_round();

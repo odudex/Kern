@@ -56,6 +56,13 @@ KERN_WARN_UNUSED_RESULT bool
 bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
                                  char **descriptor_out, char **alias_out,
                                  bool *approved_out);
+#define BIP138_BACKUP_MARK_LEN 32
+
+/* This seed's approval mark over a silent payment account record: the key of
+ * the backup marks, with the record set apart from any backup. */
+KERN_WARN_UNUSED_RESULT bool
+bip138_backup_sp_account_mark(const uint8_t *record, size_t len,
+                              uint8_t mark[BIP138_BACKUP_MARK_LEN]);
 
 /* True for a binary container or its base64 text form. */
 bool bip138_backup_detect(const uint8_t *data, size_t len);

@@ -55,6 +55,13 @@ HOST_PBKDF2 = $(ROOT)/simulator/platform/esp_idf_stubs/pbkdf2_sim.c
 
 LIBWALLY = libwally.a
 
+# kern-bipqr, the firmware's Rust staticlib, built for the host: test_sp_keys
+# decodes bipqr requests through it. Its C headers are the bipqr submodule's.
+BIPQR_INCS = -I$(ROOT)/components/bipqr/upstream/bipqr-ll/include
+KERN_BIPQR_DIR = kern_bipqr
+KERN_BIPQR = $(KERN_BIPQR_DIR)/release/libkern_bipqr.a
+KERN_BIPQR_LIBS = $(KERN_BIPQR) -lpthread -ldl
+
 # Headers outside main/core that the tests compile, over-approximated: a full
 # rebuild takes seconds.
 COMMON_H = ../../utils/attributes.h $(shell find stubs $(SIM_STUBS_INC) -name '*.h') \
@@ -85,7 +92,8 @@ TARGET_PSB = test_purpose_binding
 SRCS_REG_MATCH = test_registry_match.c
 TARGET_REG_MATCH = test_registry_match
 REGISTRY_SRC = ../registry.c $(REGISTRY_H) ../descriptor_validator.h ../miniscript_policy.h \
-	../bip138_backup.h ../bip138_keys.h ../descriptor_checksum.h ../key.h ../../utils/secure_mem.h
+	../bip138_backup.h ../bip138_keys.h ../descriptor_checksum.h ../key.h ../../utils/secure_mem.h \
+	../silent_payments.h
 DESCRIPTOR_CHECKSUM_SRC = ../descriptor_checksum.c ../descriptor_checksum.h
 # Kern's libwally descriptor parse flags, linked by every test that parses.
 DESCRIPTOR_PARSE_SRC = ../descriptor_parse.c ../wallet.h
@@ -270,8 +278,8 @@ $(PSBT_KEY_OBJ): $(KEY_SRC) $(LIBWALLY)
 $(TARGET_PSBT_CLASSIFY): $(SRCS_PSBT_CLASSIFY) sp_fixture.h ../settings.h $(PSBT_SRC) ../psbt_gate.c ../psbt_gate.h $(SS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SP_PSBT_SRC) $(LIBWALLY) $(PSBT_KEY_OBJ) $(CRYPTO_INIT_LIB)
 	$(CC) $(CFLAGS) $(KEF_INCS) -DPSBT_TESTING -Wl,--wrap=malloc -Wl,--wrap=wally_psbt_signing_cache_disable -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../psbt_gate.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c ../descriptor_parse.c $(SP_PSBT_LINK) $(CRYPTO_INIT_LIB) $(LIBWALLY) -lmbedcrypto
 
-$(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c $(PSBT_H) $(KEY_SRC) $(SP_PSBT_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_PSBT_PARSE) ../psbt_parse.c ../key.c ../bip32_path.c $(SP_PSBT_LINK) $(LIBWALLY) -lmbedcrypto
+$(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c $(PSBT_H) $(KEY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(SP_PSBT_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_PSBT_PARSE) ../psbt_parse.c ../key.c ../bip32_path.c ../descriptor_checksum.c $(SP_PSBT_LINK) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_MS_POLICY): $(SRCS_MS_POLICY) $(MS_POLICY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MS_POLICY) ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
@@ -346,7 +354,7 @@ $(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_back
 		../bip138_backup.c ../bip138_keys.c ../bip138_crypto.c \
 		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) \
 		../wallet.c ../descriptor_parse.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
-		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c \
+		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c ../silent_payments.c \
 		$(DEBUG_LOG_STUB_SRC) $(BIP138_SRCS) $(LIBWALLY) -lmbedcrypto $(KEF_LIBS)
 
 $(TARGET_ADDRESS_MATCH): $(SRCS_ADDRESS_MATCH) $(ADDRESS_MATCH_SRC) $(SS_SRC) $(KEY_SRC) $(LIBWALLY)
@@ -386,11 +394,15 @@ $(TARGET_SILENTPAYMENTS): $(SRCS_SILENTPAYMENTS) $(LIBWALLY)
 $(TARGET_DLEQ): $(SRCS_DLEQ) $(DLEQ_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DLEQ) ../dleq.c $(LIBWALLY) -lmbedcrypto
 
-$(TARGET_SP_KEYS): $(SRCS_SP_KEYS) $(SP_SRC) $(KEY_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_SP_KEYS) ../silent_payments.c ../key.c ../bip32_path.c $(LIBWALLY) -lmbedcrypto
+$(TARGET_SP_KEYS): $(SRCS_SP_KEYS) $(SP_SRC) $(KEY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(LIBWALLY) $(KERN_BIPQR)
+	$(CC) $(CFLAGS) $(TEST_INCS) $(BIPQR_INCS) -o $@ $(SRCS_SP_KEYS) ../silent_payments.c ../key.c ../bip32_path.c ../descriptor_checksum.c $(LIBWALLY) $(KERN_BIPQR_LIBS) -lmbedcrypto
 
-$(TARGET_SP_PSBT): $(SRCS_SP_PSBT) sp_fixture.h bip375_fixture.h $(SP_PSBT_SRC) ../psbt_parse.c $(KEY_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_SP_PSBT) ../psbt_parse.c ../key.c ../bip32_path.c $(SP_PSBT_LINK) $(LIBWALLY) -lmbedcrypto
+$(TARGET_SP_PSBT): $(SRCS_SP_PSBT) sp_fixture.h bip375_fixture.h $(SP_PSBT_SRC) ../psbt_parse.c $(KEY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_SP_PSBT) ../psbt_parse.c ../key.c ../bip32_path.c ../descriptor_checksum.c $(SP_PSBT_LINK) $(LIBWALLY) -lmbedcrypto
+
+# Always runs: cargo tracks the crate sources and only relinks on a change
+$(KERN_BIPQR):
+	CARGO_TARGET_DIR=$(KERN_BIPQR_DIR) cargo build --release --manifest-path $(ROOT)/components/bipqr/Cargo.toml
 
 # Fuzz targets for the glue around libwally that handles untrusted QR and SD
 # payloads (`just fuzz`). gcc builds link fuzz/fuzz_driver.c, a coverage-blind
@@ -468,5 +480,6 @@ run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REG
 
 clean:
 	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(TARGET_SILENTPAYMENTS) $(TARGET_DLEQ) $(TARGET_SP_KEYS) $(TARGET_SP_PSBT) $(FUZZ_TARGETS) $(LIBWALLY) combined.o kern_wally.o secret_alloc.o $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ) $(CRYPTO_INIT_LIB) $(CRYPTO_INIT_OBJS)
+	rm -rf $(KERN_BIPQR_DIR)
 
-.PHONY: all run clean fuzz
+.PHONY: all run clean fuzz $(KERN_BIPQR)

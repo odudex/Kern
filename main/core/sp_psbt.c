@@ -1334,14 +1334,16 @@ spend_key_ownership(const struct sp_keys *keys, const unsigned char *spend,
 }
 
 sp_output_ownership_t sp_psbt_output_ownership(const struct wally_psbt *psbt,
-                                               size_t i, bool is_testnet) {
+                                               size_t i,
+                                               const unsigned char *scan_secret,
+                                               bool is_testnet) {
   unsigned char scan[SP_PUBKEY_LEN], spend[SP_PUBKEY_LEN];
   struct sp_keys keys;
   sp_output_ownership_t ownership = SP_OUTPUT_FOREIGN;
 
   if (!psbt || i >= psbt->num_outputs ||
       !sp_output_keys(&psbt->outputs[i], scan, spend) ||
-      !sp_keys_derive(is_testnet, &keys))
+      !sp_account_keys_derive(is_testnet, scan_secret, &keys))
     return SP_OUTPUT_FOREIGN;
   if (memcmp(scan, keys.scan_pubkey, SP_PUBKEY_LEN) == 0)
     ownership = spend_key_ownership(

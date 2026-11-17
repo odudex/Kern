@@ -80,14 +80,11 @@ bip_flow_register_error(descriptor_validation_result_t result) {
 #define BIP_FLOW_PSBT_OUT_SP_V0_INFO 0x09
 
 // The error a descriptor body needing a capability Kern does not advertise
-// answers with, 0 when Kern takes it: a silent payment FORM 0x03 gets 0x06, a
-// musig() key 0x0F
+// answers with, 0 when Kern takes it: a musig() key gets 0x0F
 static inline uint8_t
 bip_flow_descriptor_body_error(const bipqr_descriptor_body *body) {
-  if (!body)
+  if (!body || body->tag == BIPQR_DESCRIPTOR_SP_KEYS)
     return 0;
-  if (body->tag == BIPQR_DESCRIPTOR_SP_KEYS)
-    return BIPQR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM;
   // A wallet policy names its musig() keys in the policy, as musig(@0,@1)
   const char *text = body->tag == BIPQR_DESCRIPTOR_BIP380
                          ? body->value.bip380
