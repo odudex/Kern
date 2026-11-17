@@ -14,7 +14,6 @@
 
 #define SP_PURPOSE 352
 #define SP_ACCOUNT 0
-#define SP_PATH_DEPTH 5
 #define SP_VERSION 0
 #define SP_DESCRIPTOR_PREFIX "sp("
 
@@ -25,17 +24,22 @@
 
 static uint32_t sp_coin(bool is_testnet) { return is_testnet ? 1 : 0; }
 
-// m/352'/coin'/0'/branch'/0
+void sp_account_key_path(bool is_testnet, uint32_t branch,
+                         uint32_t path[SP_PATH_DEPTH]) {
+  path[0] = BIP32_INITIAL_HARDENED_CHILD | SP_PURPOSE;
+  path[1] = BIP32_INITIAL_HARDENED_CHILD | sp_coin(is_testnet);
+  path[2] = BIP32_INITIAL_HARDENED_CHILD | SP_ACCOUNT;
+  path[3] = BIP32_INITIAL_HARDENED_CHILD | branch;
+  path[4] = 0;
+}
+
 static bool derive_sp_key(bool is_testnet, uint32_t branch,
                           unsigned char *secret_out,
                           unsigned char *pubkey_out) {
-  const uint32_t path[SP_PATH_DEPTH] = {
-      BIP32_INITIAL_HARDENED_CHILD | SP_PURPOSE,
-      BIP32_INITIAL_HARDENED_CHILD | sp_coin(is_testnet),
-      BIP32_INITIAL_HARDENED_CHILD | SP_ACCOUNT,
-      BIP32_INITIAL_HARDENED_CHILD | branch, 0};
+  uint32_t path[SP_PATH_DEPTH];
   struct ext_key *key = NULL;
 
+  sp_account_key_path(is_testnet, branch, path);
   if (!key_get_derived_key_components(path, SP_PATH_DEPTH, &key))
     return false;
   // priv_key carries a leading 0x00 before the 32-byte secret

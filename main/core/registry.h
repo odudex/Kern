@@ -137,8 +137,9 @@ KERN_WARN_UNUSED_RESULT const char *registry_sp_alias_get(size_t i);
  * intact. */
 KERN_WARN_UNUSED_RESULT bool registry_sp_alias_deregister_at(size_t i);
 /* Removes the registration `alias` names, and only it: its descriptor entry
- * with its backup on flash when it has one. False for an unknown alias;
- * failure leaves the registration intact. */
+ * with its backup on flash when it has one, or its silent payment account
+ * record. False for an unknown alias; failure leaves the registration
+ * intact. */
 KERN_WARN_UNUSED_RESULT bool registry_unregister(const char *alias);
 /* Names a scan key not ours that the current request pairs with our spend
  * key, until registry_sp_clear_named_scan_keys(). False when there is no room

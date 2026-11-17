@@ -1142,9 +1142,29 @@ static void test_unregister(void) {
             !stub_find(STORAGE_FLASH, "d_8b88a85089561b79.bip138"));
   registry_init(false);
   check("nothing returns after a restart", registry_count() == 0);
+
+  check("original seed on testnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", true) &&
+            wallet_init(WALLET_NETWORK_TESTNET));
+  check("a silent payment alias with a scan key not ours registers",
+        registry_add_sp_alias("3f82-9b", FOREIGN_SCAN_KEY));
+  check("unregistering it deletes its record",
+        registry_unregister("3f82-9b") &&
+            strcmp(stub_last_deleted, "d_915557cfec2af8ee.spa") == 0 &&
+            !stub_find(STORAGE_FLASH, "d_915557cfec2af8ee.spa") &&
+            !registry_sp_alias_exists("3f82-9b") &&
+            !registry_sp_scan_key_get(0));
+  registry_init(true);
+  check("the silent payment alias does not return after a restart",
+        !registry_sp_alias_exists("3f82-9b") &&
+            !registry_unregister("3f82-9b"));
   registry_clear();
   stub_storage_reset();
+  check("original seed on mainnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", false) &&
+            wallet_init(WALLET_NETWORK_MAINNET));
 }
+
 static void test_many_origins(void) {
   registry_clear();
   stub_storage_reset();
