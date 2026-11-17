@@ -200,6 +200,18 @@ int main(void) {
   } else {
     FAIL("register two-group miniscript");
   }
+  {
+    seed_registry();
+    /* e[3]: 87'/0'/0', <2;3> as a recovery path key */
+    if (!registry_add_from_string(
+            "e3", "wpkh([00000000/87'/0'/0']" XPUB_84 "/<2;3>/*)",
+            STORAGE_FLASH, false)) {
+      FAIL("registry_add_from_string e3");
+    } else {
+      n = keypath(kp, 5, H(87), H(0), H(0), 3u, 7u);
+      expect_match("<2;3> entry with mp=3 is group 1", kp, n, "e3", 1, 7);
+    }
+  }
 
   printf("\n--- cursor pagination ---\n");
   seed_registry();
