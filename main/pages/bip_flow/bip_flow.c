@@ -7,6 +7,7 @@
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
 #include "../../core/settings.h"
+#include "../../core/silent_payments.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -139,6 +140,8 @@ static void show_response_sized(bipqr_response *response, void (*done_cb)(void),
 
   BBQrParts *parts =
       bbqr_encode_hex(encoded.ptr, encoded.len, BBQR_TYPE_BINARY, max_chars);
+  // A Get Keys response can hold a private key
+  secure_memzero(encoded.ptr, encoded.len);
   bipqr_buf_free(encoded);
   if (!parts) {
     cleanup_request();
@@ -280,6 +283,17 @@ static bool public_key_to_wire(const bipqr_path *path,
   return ok;
 }
 
+static bool private_key_to_wire(const bipqr_path *path,
+                                bipqr_extended_key *out) {
+  struct ext_key *key = NULL;
+  if (!key_get_derived_key_components(path->ptr, path->len, &key))
+    return false;
+  bool ok = bip32_key_serialize(key, BIP32_FLAG_KEY_PRIVATE, out->bytes,
+                                sizeof(out->bytes)) == WALLY_OK;
+  bip32_key_free(key);
+  return ok;
+}
+
 static void free_keys(bipqr_extended_key *keys, size_t n) {
   secure_memzero(keys, n * sizeof(*keys));
   free(keys);
@@ -303,7 +317,10 @@ static void get_keys_confirm_cb(bool confirmed, void *user_data) {
 
   for (size_t i = 0; i < n; i++) {
     const bipqr_key_request *key = &req->keys.ptr[i];
-    if (!public_key_to_wire(&key->derivation_path, &keys[i])) {
+    bool ok = key->kind == BIPQR_KEY_PRIVATE
+                  ? private_key_to_wire(&key->derivation_path, &keys[i])
+                  : public_key_to_wire(&key->derivation_path, &keys[i]);
+    if (!ok) {
       free_keys(keys, n);
       show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
       return;
@@ -486,6 +503,18 @@ static bool get_keys_has_private(const bipqr_key_request_list *keys) {
   return false;
 }
 
+// Only the BIP352 scan key leaves the device, so a wallet can scan
+static bool get_keys_private_allowed(const bipqr_key_request_list *keys) {
+  for (size_t i = 0; i < keys->len; i++) {
+    const bipqr_path *path = &keys->ptr[i].derivation_path;
+    if (keys->ptr[i].kind == BIPQR_KEY_PRIVATE &&
+        !sp_path_on_branch(path->ptr, path->len, wallet_is_testnet(),
+                           SP_SCAN_BRANCH))
+      return false;
+  }
+  return true;
+}
+
 static void handle_get_keys(void) {
   const bipqr_get_keys *req = &ctx.request->body.get_keys;
   char mismatch[80];
@@ -495,8 +524,7 @@ static void handle_get_keys(void) {
     show_error_response(BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH, mismatch);
     return;
   }
-  // Kern exports no private key
-  if (get_keys_has_private(&req->keys)) {
+  if (!get_keys_private_allowed(&req->keys)) {
     show_error_response(BIPQR_RESPONSE_ERROR_PRIVATE_KEY_EXPORT_REFUSED,
                         "Private key export refused");
     return;
@@ -505,7 +533,11 @@ static void handle_get_keys(void) {
   char msg[512];
   size_t off =
       snprintf(msg, sizeof(msg), "Export %zu key(s)?\n", req->keys.len);
-  append_key_request_paths(msg, sizeof(msg), off, &req->keys);
+  off = append_key_request_paths(msg, sizeof(msg), off, &req->keys);
+  if (get_keys_has_private(&req->keys))
+    appendf(msg, sizeof(msg), off,
+            "\n\nIncludes the scan private key: whoever holds it sees every "
+            "payment this account receives, but cannot spend them.");
   dialog_show_confirm(msg, get_keys_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
