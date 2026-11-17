@@ -15,9 +15,23 @@
  * truncated. Trailing whitespace is container padding, not payload: a PSBT
  * ends on its 0x00 separator, so it is trimmed before the strict parse.
  * A BIP375 PSBT whose silent payment outputs still lack their scripts parses
- * loosely; sp_psbt_complete derives them and runs the strict checks again. */
+ * loosely; sp_psbt_complete derives them and runs the strict checks again.
+ * A PSBT with silent payment outputs and an input PSBT_IN_SIGHASH_TYPE other
+ * than SIGHASH_ALL, an explicit 0 included, is refused (BIP375). */
 KERN_WARN_UNUSED_RESULT bool psbt_parse_payload(const uint8_t *data, size_t len,
                                                 struct wally_psbt **psbt_out);
+
+typedef enum {
+  PSBT_PARSE_OK,
+  PSBT_PARSE_INVALID,
+  /* silent payment outputs beside a PSBT_IN_SIGHASH_TYPE other than
+   * SIGHASH_ALL */
+  PSBT_PARSE_SP_SIGHASH,
+} psbt_parse_result_t;
+
+/* psbt_parse_payload, telling why a PSBT is refused. */
+KERN_WARN_UNUSED_RESULT psbt_parse_result_t psbt_parse_payload_result(
+    const uint8_t *data, size_t len, struct wally_psbt **psbt_out);
 
 typedef enum {
   CLAIM_WHITELIST,

@@ -897,9 +897,10 @@ static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
  * after. */
 typedef struct {
   input_ownership_t owner;
-  bool denied;    /* policy refused this input */
-  bool tracked;   /* a snapshot was taken (denied and it names some key) */
-  bool attempted; /* policy cleared it and a signing key was derived */
+  bool denied;      /* policy refused this input */
+  bool tracked;     /* a snapshot was taken (denied and it names some key) */
+  bool attempted;   /* policy cleared it and a signing key was derived */
+  bool sighash_set; /* set_sighash_all gave it SIGHASH_ALL for the pass */
   /* Signature count before the pass began. One wally_psbt_sign() call signs
    * every input naming the key it was given, so an input can already be
    * signed by the time its own turn comes round -- two inputs on one address
@@ -915,6 +916,21 @@ typedef struct {
   unsigned char signing_pubkeys[REGISTRY_MAX_OWN_KEYS][EC_PUBLIC_KEY_LEN];
   size_t num_signing_pubkeys;
 } input_plan_t;
+
+/* BIP375: beside silent payment outputs an input naming no sighash type is
+ * signed with SIGHASH_ALL, not taproot's SIGHASH_DEFAULT. Only the inputs we
+ * sign get the field, for the signing pass only: psbt_sign removes it after. */
+static bool set_sighash_all(struct wally_psbt *psbt, input_plan_t *plan,
+                            size_t num_inputs) {
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (plan[i].denied || psbt->inputs[i].sighash)
+      continue;
+    if (wally_psbt_set_input_sighash(psbt, i, WALLY_SIGHASH_ALL) != WALLY_OK)
+      return false;
+    plan[i].sighash_set = true;
+  }
+  return true;
+}
 
 /* Safe on an untouched plan, and safe twice, so every exit can run it over
  * the whole array without tracking how far the classify loop got. */
@@ -1290,6 +1306,9 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   if (!signable_any)
     goto cleanup;
 
+  if (sp_psbt_has_outputs(psbt) && !set_sighash_all(psbt, plan, num_inputs))
+    goto cleanup;
+
   /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
   wally_psbt_signing_cache_enable(psbt, 0);
 
@@ -1319,8 +1338,12 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   }
 
 cleanup:
-  for (size_t i = 0; i < num_inputs; i++)
+  for (size_t i = 0; i < num_inputs; i++) {
+    /* The signatures carry their SIGHASH_ALL byte */
+    if (plan[i].sighash_set)
+      wally_psbt_set_input_sighash(psbt, i, 0);
     release_input_state(&plan[i]);
+  }
   free(plan);
 
   return signatures_added;

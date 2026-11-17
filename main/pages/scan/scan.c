@@ -506,8 +506,15 @@ void scan_review_psbt(lv_obj_t *parent, const uint8_t *data, size_t len,
   scan_ctx.screen = theme_create_page_container(parent);
 
   scan_psbt_cleanup();
-  bool parsed = psbt_parse_payload(data, len, &scan_ctx.psbt);
-  finish_dispatch(NULL, len, parsed, FORMAT_NONE);
+  psbt_parse_result_t parsed =
+      psbt_parse_payload_result(data, len, &scan_ctx.psbt);
+  if (parsed == PSBT_PARSE_SP_SIGHASH) {
+    scan_psbt_fail(SCAN_PSBT_INVALID,
+                   "Silent payment inputs must use SIGHASH_ALL",
+                   scan_ctx.return_cb, 0);
+    return;
+  }
+  finish_dispatch(NULL, len, parsed == PSBT_PARSE_OK, FORMAT_NONE);
 }
 
 void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
