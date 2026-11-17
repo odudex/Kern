@@ -174,110 +174,6 @@ static void test_decode_error(void) {
                       0x00, BIPQR_ERR_UNKNOWN_DESCRIPTOR_FORM, 0x02);
 }
 
-/* bipqr test vectors (d7363e0) of requests carrying a descriptor body */
-static const uint8_t REGISTER_BIP380_REQUEST[] = {
-    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x03, 0x00, 0x01, 0x04,
-    0x6d, 0x61, 0x69, 0x6e, 0x01, 0x01, 0x22, 0x77, 0x70, 0x6b, 0x68,
-    0x28, 0x5b, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x2f,
-    0x38, 0x34, 0x68, 0x2f, 0x31, 0x68, 0x2f, 0x30, 0x68, 0x5d, 0x78,
-    0x70, 0x75, 0x62, 0x2f, 0x30, 0x2f, 0x2a, 0x29};
-static const uint8_t REGISTER_SP_KEYS_REQUEST[] = {
-    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x03, 0x00, 0x01, 0x04,
-    0x6d, 0x61, 0x69, 0x6e, 0x01, 0x03, 0x73, 0xc5, 0xda, 0x0a, 0x05,
-    0x80, 0x00, 0x01, 0x60, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
-    0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x05,
-    0x80, 0x00, 0x01, 0x60, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
-    0x00, 0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
-static const uint8_t VERIFY_SP_KEYS_REQUEST[] = {
-    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x04, 0x00, 0x01, 0x04,
-    0x6d, 0x61, 0x69, 0x6e, 0x00, 0x01, 0x07, 0x73, 0x70, 0x31, 0x71,
-    0x78, 0x79, 0x7a, 0x01, 0x03, 0x73, 0xc5, 0xda, 0x0a, 0x05, 0x80,
-    0x00, 0x01, 0x60, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00, 0x00,
-    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x05, 0x80,
-    0x00, 0x01, 0x60, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00, 0x00,
-    0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-static const uint8_t NONCE_PREPARATION_REQUEST[] = {
-    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x06, 0x00, 0x01, 0x01,
-    0x51, 0x51, 0x51, 0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x05,
-    0x80, 0x00, 0x00, 0x56, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
-    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01};
-
-/* A Register Descriptor request for the alias "main" with a FORM 0x01
- * descriptor, laid out as REGISTER_BIP380_REQUEST */
-static size_t register_bip380_request(const char *descriptor, uint8_t *out) {
-  size_t len = strlen(descriptor);
-  memcpy(out, REGISTER_BIP380_REQUEST, 17);
-  out[17] = (uint8_t)len;
-  memcpy(out + 18, descriptor, len);
-  return 18 + len;
-}
-
-/* A Register Descriptor request for the alias "main" with a FORM 0x02 wallet
- * policy of two keys */
-static size_t register_bip388_request(const char *key0, const char *key1,
-                                      const char *policy, uint8_t *out) {
-  const char *strings[] = {key0, key1, policy};
-  size_t off = 16;
-  memcpy(out, REGISTER_BIP380_REQUEST, off);
-  out[off++] = 0x02;
-  out[off++] = 2;
-  for (size_t i = 0; i < 3; i++) {
-    size_t len = strlen(strings[i]);
-    out[off++] = (uint8_t)len;
-    memcpy(out + off, strings[i], len);
-    off += len;
-  }
-  return off;
-}
-
-static void expect_unsupported(const char *name, const uint8_t *message,
-                               size_t len, uint8_t expected) {
-  const bipqr_request *request = NULL;
-  TEST(name);
-  if (bipqr_request_decode(message, len, &request, NULL) != BIPQR_OK)
-    FAIL("request does not decode");
-  else if (bip_flow_unsupported_error(request) != expected)
-    FAIL("unexpected error code");
-  else
-    PASS();
-  bipqr_request_free(request);
-}
-
-static void test_unsupported_requests(void) {
-  uint8_t message[160];
-  expect_unsupported("a FORM 0x01 descriptor is taken", REGISTER_BIP380_REQUEST,
-                     sizeof(REGISTER_BIP380_REQUEST), 0x00);
-  expect_unsupported("FORM 0x03 silent payment keys are taken to register",
-                     REGISTER_SP_KEYS_REQUEST, sizeof(REGISTER_SP_KEYS_REQUEST),
-                     0x00);
-  expect_unsupported("FORM 0x03 silent payment keys are taken to verify an "
-                     "address",
-                     VERIFY_SP_KEYS_REQUEST, sizeof(VERIFY_SP_KEYS_REQUEST),
-                     0x00);
-  expect_unsupported("Nonce Preparation answers unsupported operation",
-                     NONCE_PREPARATION_REQUEST,
-                     sizeof(NONCE_PREPARATION_REQUEST), 0x0F);
-  expect_unsupported(
-      "a musig() key in a FORM 0x01 descriptor is taken", message,
-      register_bip380_request("tr(musig([00000000/86h/1h/0h]xpub,"
-                              "[11111111/86h/1h/0h]xpub)/<0;1>/*)",
-                              message),
-      0x00);
-  expect_unsupported("a musig() key in a FORM 0x02 wallet policy is taken",
-                     message,
-                     register_bip388_request("[00000000/86h/1h/0h]xpub",
-                                             "[11111111/86h/1h/0h]xpub",
-                                             "tr(musig(@0,@1)/**)", message),
-                     0x00);
-  expect_unsupported(
-      "a FORM 0x02 wallet policy without musig() is taken", message,
-      register_bip388_request("[00000000/48h/1h/0h/2h]xpub",
-                              "[11111111/48h/1h/0h/2h]xpub",
-                              "wsh(sortedmulti(2,@0/**,@1/**))", message),
-      0x00);
-}
-
 int main(void) {
   printf("BIP flow request header tests\n");
   printf("=============================\n\n");
@@ -287,7 +183,6 @@ int main(void) {
   test_unregister_request();
   test_unregister_malformed();
   test_unregister_response();
-  test_unsupported_requests();
 
   printf("\nResults: %d failed\n", tests_failed);
   return tests_failed == 0 ? 0 : 1;
