@@ -4031,6 +4031,187 @@ static void test_overlong_keypaths_skipped(void) {
   memset(stub_fp, 0, sizeof(stub_fp));
 }
 
+/* Liana shape: our key on <0;1> in the primary path and on <2;3> in the
+ * recovery path. */
+#define LIANA_REGISTRY_DESC                                                    \
+  "wsh(or_d(multi(2,[00000000/84'/0'/0']" XPUB_84 "/<0;1>/*,"                  \
+  "[11111111/86'/0'/0']" XPUB_86 "/<0;1>/*),"                                  \
+  "and_v(v:multi(1,[00000000/84'/0'/0']" XPUB_84 "/<2;3>/*,"                   \
+  "[11111111/86'/0'/0']" XPUB_86 "/<2;3>/*),older(1008))))"
+
+/* Our key on m/84'/0'/0'/<chain>/5 and its keypath value. */
+static bool liana_key(uint8_t chain, unsigned char *pub_out,
+                      uint8_t kp_out[24]) {
+  const uint8_t kp_val[24] = {
+      0x00,  0x00, 0x00, 0x00, /* fp = 00000000 (stub) */
+      0x54,  0x00, 0x00, 0x80, /* 84' */
+      0x00,  0x00, 0x00, 0x80, /* 0'  */
+      0x00,  0x00, 0x00, 0x80, /* 0'  */
+      chain, 0x00, 0x00, 0x00, /* chain */
+      0x05,  0x00, 0x00, 0x00, /* index 5 */
+  };
+  char path[32];
+  snprintf(path, sizeof(path), "m/84'/0'/0'/%u/5", (unsigned)chain);
+  struct ext_key *derived = NULL;
+  if (!key_get_derived_key(path, &derived))
+    return false;
+  memcpy(pub_out, derived->pub_key, EC_PUBLIC_KEY_LEN);
+  memcpy(kp_out, kp_val, sizeof(kp_val));
+  bip32_key_free(derived);
+  return true;
+}
+
+/* The P2WSH script pubkey and witness script of the registered
+ * LIANA_REGISTRY_DESC at multipath index `k`, child 5. libwally needs room for
+ * the witness script to build the script pubkey. */
+static bool liana_scripts(uint32_t k, unsigned char *spk,
+                          unsigned char *witness, size_t *witness_len) {
+  const struct wally_descriptor *desc = registry_get(0)->desc;
+  unsigned char work[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t spk_len = 0;
+  if (wally_descriptor_to_script(desc, 0, 0, 0, k, 5, 0, work, sizeof(work),
+                                 &spk_len) != WALLY_OK ||
+      spk_len != WALLY_SCRIPTPUBKEY_P2WSH_LEN ||
+      wally_descriptor_to_script(desc, 1, 0, 0, k, 5, 0, witness,
+                                 PSBT_MAX_INNER_SCRIPT_LEN,
+                                 witness_len) != WALLY_OK ||
+      *witness_len > PSBT_MAX_INNER_SCRIPT_LEN)
+    return false;
+  memcpy(spk, work, spk_len);
+  return true;
+}
+
+/* Spends LIANA_REGISTRY_DESC at multipath index `k`, child 5. The keypaths name
+ * our primary key (chain k), our recovery key (chain 2 + k) and our key on the
+ * other primary chain, which the script does not hold: the first two sign, the
+ * third never does. */
+static void test_psbt_sign_registry_recovery_keys(uint32_t k) {
+  TEST(k ? "psbt_sign: liana change spend signs with both our keys"
+         : "psbt_sign: liana receive spend signs with both our keys");
+
+  registry_clear();
+  if (!registry_add_from_string("l", LIANA_REGISTRY_DESC, STORAGE_FLASH,
+                                false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  unsigned char spk[WALLY_SCRIPTPUBKEY_P2WSH_LEN],
+      witness[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t witness_len = 0;
+  if (!liana_scripts(k, spk, witness, &witness_len)) {
+    FAIL("script generation");
+    registry_clear();
+    return;
+  }
+
+  unsigned char primary[EC_PUBLIC_KEY_LEN], recovery[EC_PUBLIC_KEY_LEN],
+      other[EC_PUBLIC_KEY_LEN];
+  uint8_t kp_primary[24], kp_recovery[24], kp_other[24];
+  if (!liana_key(k, primary, kp_primary) ||
+      !liana_key(2 + k, recovery, kp_recovery) ||
+      !liana_key(1 - k, other, kp_other)) {
+    FAIL("key derivation");
+    registry_clear();
+    return;
+  }
+
+  /* The key the script does not hold comes first, so it is the one the
+   * input classifies on. */
+  struct wally_psbt *psbt = make_test_psbt(
+      spk, sizeof(spk), other, sizeof(other), kp_other, sizeof(kp_other));
+  if (!psbt ||
+      wally_psbt_set_input_witness_script(psbt, 0, witness, witness_len) !=
+          WALLY_OK ||
+      wally_map_add(&psbt->inputs[0].keypaths, recovery, sizeof(recovery),
+                    kp_recovery, sizeof(kp_recovery)) != WALLY_OK ||
+      wally_map_add(&psbt->inputs[0].keypaths, primary, sizeof(primary),
+                    kp_primary, sizeof(kp_primary)) != WALLY_OK) {
+    FAIL("PSBT construction");
+    wally_psbt_free(psbt);
+    registry_clear();
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  psbt_sign_policy_t policy = {0};
+  psbt_sign_result_t res;
+  (void)psbt_sign(psbt, false, policy, &res);
+
+  const struct wally_map *sigs = &psbt->inputs[0].signatures;
+  size_t primary_ix = 0, recovery_ix = 0, other_ix = 0;
+  wally_map_find(sigs, primary, sizeof(primary), &primary_ix);
+  wally_map_find(sigs, recovery, sizeof(recovery), &recovery_ix);
+  wally_map_find(sigs, other, sizeof(other), &other_ix);
+  size_t num_sigs = sigs->num_items;
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
+      r.claim.kind != CLAIM_REGISTRY)
+    FAIL("expected OWNED_SAFE via CLAIM_REGISTRY");
+  else if (r.claim.registry.multi_index != k || r.claim.registry.child_num != 5)
+    FAIL("wrong multi_index or child_num");
+  else if (!primary_ix)
+    FAIL("primary key did not sign");
+  else if (!recovery_ix)
+    FAIL("recovery key did not sign");
+  else if (other_ix)
+    FAIL("signed with a key the script does not hold");
+  else if (num_sigs != 2)
+    FAIL("expected exactly two signatures");
+  else if (res.attempted != 1 || res.signed_ok != 1)
+    FAIL("input not tallied as signed");
+  else
+    PASS();
+}
+
+/* A keypath on the other primary chain names our key at tuple position 1, so
+ * it cannot claim the script generated at position 0, though the descriptor
+ * generates it. */
+static void test_psbt_classify_registry_other_chain_refused(void) {
+  TEST("psbt_classify_input: keypath on chain 1 does not claim the chain 0 "
+       "script -> EXPECTED_OWNED");
+
+  registry_clear();
+  if (!registry_add_from_string("l", LIANA_REGISTRY_DESC, STORAGE_FLASH,
+                                false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+
+  unsigned char spk[WALLY_SCRIPTPUBKEY_P2WSH_LEN],
+      witness[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t witness_len = 0;
+  unsigned char other[EC_PUBLIC_KEY_LEN];
+  uint8_t kp_other[24];
+  if (!liana_scripts(0, spk, witness, &witness_len) ||
+      !liana_key(1, other, kp_other)) {
+    FAIL("script generation or key derivation");
+    registry_clear();
+    return;
+  }
+
+  struct wally_psbt *psbt = make_test_psbt(
+      spk, sizeof(spk), other, sizeof(other), kp_other, sizeof(kp_other));
+  if (!psbt || wally_psbt_set_input_witness_script(psbt, 0, witness,
+                                                   witness_len) != WALLY_OK) {
+    FAIL("PSBT construction");
+    wally_psbt_free(psbt);
+    registry_clear();
+    return;
+  }
+
+  input_ownership_t r = psbt_classify_input(psbt, 0, false);
+  wally_psbt_free(psbt);
+  registry_clear();
+
+  if (r.ownership != PSBT_OWNERSHIP_EXPECTED_OWNED)
+    FAIL("expected EXPECTED_OWNED");
+  else
+    PASS();
+}
+
 /* Mixed two-input PSBT: input 0 is OWNED_SAFE (BIP84 verified), input 1 is
  * EXTERNAL (foreign fp). Verifies each input is classified independently and
  * that the per-input policy gate in psbt_sign signs exactly one of them. */
@@ -5187,6 +5368,9 @@ int main(void) {
     test_sign_every_own_key_wsh();
     test_sign_every_own_key_tr();
   }
+  test_psbt_sign_registry_recovery_keys(0);
+  test_psbt_sign_registry_recovery_keys(1);
+  test_psbt_classify_registry_other_chain_refused();
 
   printf("\n=== PSBTv2 tests ===\n\n");
 
