@@ -259,66 +259,23 @@ static void test_unsupported_requests(void) {
                      NONCE_PREPARATION_REQUEST,
                      sizeof(NONCE_PREPARATION_REQUEST), 0x0F);
   expect_unsupported(
-      "a musig() key in a FORM 0x01 descriptor answers unsupported operation",
-      message,
+      "a musig() key in a FORM 0x01 descriptor is taken", message,
       register_bip380_request("tr(musig([00000000/86h/1h/0h]xpub,"
                               "[11111111/86h/1h/0h]xpub)/<0;1>/*)",
                               message),
-      0x0F);
-  expect_unsupported(
-      "a musig() key in a FORM 0x02 wallet policy answers unsupported "
-      "operation",
-      message,
-      register_bip388_request("[00000000/86h/1h/0h]xpub",
-                              "[11111111/86h/1h/0h]xpub", "tr(musig(@0,@1)/**)",
-                              message),
-      0x0F);
+      0x00);
+  expect_unsupported("a musig() key in a FORM 0x02 wallet policy is taken",
+                     message,
+                     register_bip388_request("[00000000/86h/1h/0h]xpub",
+                                             "[11111111/86h/1h/0h]xpub",
+                                             "tr(musig(@0,@1)/**)", message),
+                     0x00);
   expect_unsupported(
       "a FORM 0x02 wallet policy without musig() is taken", message,
       register_bip388_request("[00000000/48h/1h/0h/2h]xpub",
                               "[11111111/48h/1h/0h/2h]xpub",
                               "wsh(sortedmulti(2,@0/**,@1/**))", message),
       0x00);
-}
-
-static void expect_psbt(const char *name, const struct wally_psbt *psbt,
-                        bool unsupported) {
-  TEST(name);
-  if (bip_flow_psbt_is_unsupported(psbt) == unsupported)
-    PASS();
-  else
-    FAIL(unsupported ? "PSBT taken" : "PSBT refused");
-}
-
-static void test_unsupported_psbts(void) {
-  struct wally_psbt_input input;
-  struct wally_psbt_output output;
-  struct wally_psbt psbt;
-  /* PSBT_OUT_SP_V0_INFO (BIP-375): the output pays a silent payment address */
-  unsigned char sp_info_key = 0x09;
-  unsigned char other_key = 0x08;
-  struct wally_map_item item = {.key = &other_key, .key_len = 1};
-  memset(&input, 0, sizeof(input));
-  memset(&output, 0, sizeof(output));
-  memset(&psbt, 0, sizeof(psbt));
-  psbt.inputs = &input;
-  psbt.num_inputs = 1;
-  psbt.outputs = &output;
-  psbt.num_outputs = 1;
-
-  output.unknowns.items = &item;
-  output.unknowns.num_items = 1;
-  expect_psbt("a PSBT with another unknown output field is taken", &psbt,
-              false);
-  item.key = &sp_info_key;
-  expect_psbt("a silent payment send is taken", &psbt, false);
-  output.unknowns.num_items = 0;
-  input.musig2_pubkeys.num_items = 1;
-  expect_psbt("an input MuSig2 key answers unsupported operation", &psbt, true);
-  input.musig2_pubkeys.num_items = 0;
-  output.musig2_pubkeys.num_items = 1;
-  expect_psbt("an output MuSig2 key answers unsupported operation", &psbt,
-              true);
 }
 
 int main(void) {
@@ -331,7 +288,6 @@ int main(void) {
   test_unregister_malformed();
   test_unregister_response();
   test_unsupported_requests();
-  test_unsupported_psbts();
 
   printf("\nResults: %d failed\n", tests_failed);
   return tests_failed == 0 ? 0 : 1;

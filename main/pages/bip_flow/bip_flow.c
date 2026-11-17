@@ -4,6 +4,7 @@
 #include "../../core/bip32_path.h"
 #include "../../core/debug_log.h"
 #include "../../core/key.h"
+#include "../../core/musig_psbt.h"
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
 #include "../../core/settings.h"
@@ -26,7 +27,6 @@
 #include <bipqr.h>
 #include <esp_app_desc.h>
 #include <inttypes.h>
-#include <kern_wally.h>
 #include <sdkconfig.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -48,7 +48,7 @@
    BIPQR_CAPABILITY_MINISCRIPT_TAPROOT |                                       \
    BIPQR_CAPABILITY_SILENT_PAYMENT_SENDS |                                     \
    BIPQR_CAPABILITY_SILENT_PAYMENT_ACCOUNTS |                                  \
-   BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR)
+   BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR | BIPQR_CAPABILITY_MUSIG2)
 
 typedef struct {
   lv_obj_t *parent;
@@ -1206,6 +1206,66 @@ static bool append_signature(bipqr_signature **signatures, size_t *len,
   return true;
 }
 
+#define MUSIG_KEY_LEN (2 * BIPQR_PUBLIC_KEY_LEN)
+#define MUSIG_LEAF_KEY_LEN (MUSIG_KEY_LEN + BIPQR_TAP_LEAF_HASH_LEN)
+
+/* The BIP-373 key participant | aggregate [| leaf_hash] of a MuSig2 entry. */
+static void musig_entry_key(const struct wally_map_item *item,
+                            uint8_t *participant, uint8_t *aggregate,
+                            uint8_t *has_leaf_hash, uint8_t *leaf_hash) {
+  memcpy(participant, item->key, BIPQR_PUBLIC_KEY_LEN);
+  memcpy(aggregate, item->key + BIPQR_PUBLIC_KEY_LEN, BIPQR_PUBLIC_KEY_LEN);
+  *has_leaf_hash = item->key_len == MUSIG_LEAF_KEY_LEN;
+  if (*has_leaf_hash)
+    memcpy(leaf_hash, item->key + MUSIG_KEY_LEN, BIPQR_TAP_LEAF_HASH_LEN);
+}
+
+/* A PSBT_IN_MUSIG2_PUB_NONCE entry. */
+static bool musig_pub_nonce_entry(const struct wally_map_item *item,
+                                  bipqr_signature *sig) {
+  bipqr_musig_pub_nonce *nonce = &sig->value.musig_pub_nonce;
+  if (item->value_len != sizeof(nonce->nonce))
+    return false;
+  musig_entry_key(item, nonce->participant, nonce->aggregate,
+                  &nonce->has_leaf_hash, nonce->leaf_hash);
+  memcpy(nonce->nonce, item->value, sizeof(nonce->nonce));
+  return true;
+}
+
+/* A PSBT_IN_MUSIG2_PARTIAL_SIG entry. */
+static bool musig_partial_sig_entry(const struct wally_map_item *item,
+                                    bipqr_signature *sig) {
+  bipqr_musig_partial_sig *partial_sig = &sig->value.musig_partial_sig;
+  if (item->value_len != sizeof(partial_sig->signature))
+    return false;
+  musig_entry_key(item, partial_sig->participant, partial_sig->aggregate,
+                  &partial_sig->has_leaf_hash, partial_sig->leaf_hash);
+  memcpy(partial_sig->signature, item->value, sizeof(partial_sig->signature));
+  return true;
+}
+
+/* The entries of `map` whose participant is ours, as `kind` signatures. */
+static bool append_musig_entries(const struct wally_psbt *psbt,
+                                 size_t input_index,
+                                 const struct wally_map *map, uint8_t kind,
+                                 bipqr_signature **signatures, size_t *len,
+                                 size_t *cap) {
+  for (size_t j = 0; j < map->num_items; j++) {
+    const struct wally_map_item *item = &map->items[j];
+    if ((item->key_len != MUSIG_KEY_LEN &&
+         item->key_len != MUSIG_LEAF_KEY_LEN) ||
+        !musig_psbt_is_own_participant(psbt, input_index, item->key))
+      continue;
+    bipqr_signature sig = {.input_index = (uint32_t)input_index, .kind = kind};
+    bool filled = kind == BIPQR_SIGNATURE_MUSIG_PUB_NONCE
+                      ? musig_pub_nonce_entry(item, &sig)
+                      : musig_partial_sig_entry(item, &sig);
+    if (!filled || !append_signature(signatures, len, cap, &sig))
+      return false;
+  }
+  return true;
+}
+
 static bool collect_signatures(const struct wally_psbt *psbt,
                                bipqr_signature **signatures_out,
                                size_t *len_out) {
@@ -1272,6 +1332,16 @@ static bool collect_signatures(const struct wally_psbt *psbt,
         free_signature_list(signatures, len);
         return false;
       }
+    }
+
+    if (!append_musig_entries(psbt, input_index, &input->musig2_pubnonces,
+                              BIPQR_SIGNATURE_MUSIG_PUB_NONCE, &signatures,
+                              &len, &cap) ||
+        !append_musig_entries(psbt, input_index, &input->musig2_partial_sigs,
+                              BIPQR_SIGNATURE_MUSIG_PARTIAL_SIG, &signatures,
+                              &len, &cap)) {
+      free_signature_list(signatures, len);
+      return false;
     }
   }
 
@@ -1458,20 +1528,33 @@ static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
   return !error;
 }
 
-// A PSBT needing a capability Kern does not advertise: MuSig2 keys
-static bool refuse_unsupported_psbt(const bipqr_sign *req) {
-  struct wally_psbt *psbt = NULL;
-  // Loose, as a silent payment output has no script until a signer derives it
-  bool unsupported = kern_psbt_from_bytes(req->psbt.ptr, req->psbt.len,
-                                          WALLY_PSBT_PARSE_FLAG_LOOSE |
-                                              WALLY_PSBT_PARSE_FLAG_COMPLETE,
-                                          &psbt) == WALLY_OK &&
-                     bip_flow_psbt_is_unsupported(psbt);
-  wally_psbt_free(psbt);
-  if (unsupported)
+/* A MuSig2 session or step refused before the user is asked. */
+static bool refuse_musig_request(const bipqr_sign *req) {
+  switch (musig_psbt_check_request(req->psbt.ptr, req->psbt.len,
+                                   wallet_is_testnet())) {
+  case MUSIG_PSBT_OK:
+    return false;
+  case MUSIG_PSBT_ERR_SESSION:
+    show_error_response(BIPQR_RESPONSE_ERROR_MUSIG_SESSION,
+                        "MuSig2 session missing, consumed or mismatched");
+    return true;
+  case MUSIG_PSBT_ERR_NOTHING:
+    show_error_response(BIPQR_RESPONSE_ERROR_NOTHING_TO_SIGN,
+                        "Waiting for another participant's MuSig2 nonce");
+    return true;
+  case MUSIG_PSBT_ERR_INVALID:
+    show_error_response(BIPQR_RESPONSE_ERROR_INVALID_PSBT,
+                        "Invalid MuSig2 fields");
+    return true;
+  case MUSIG_PSBT_ERR_UNSUPPORTED:
     show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
-                        "MuSig2 is not supported");
-  return unsupported;
+                        "Nonce cache sessions are not supported");
+    return true;
+  case MUSIG_PSBT_ERR_INTERNAL:
+  default:
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "MuSig2 check failed");
+    return true;
+  }
 }
 
 static void handle_sign(void) {
@@ -1482,7 +1565,7 @@ static void handle_sign(void) {
     // A script several entries generate is reviewed under the named alias
     registry_prefer(req->descriptors.ptr[i].alias);
   }
-  if (refuse_unsupported_psbt(req))
+  if (refuse_musig_request(req))
     return;
   scan_review_psbt(ctx.parent, req->psbt.ptr, req->psbt.len, ctx.return_cb,
                    return_from_signing_response, signed_psbt_cb, sign_failed_cb,
