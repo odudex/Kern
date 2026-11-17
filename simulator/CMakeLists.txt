@@ -177,6 +177,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_gate.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/musig_psbt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/nonce_cache.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_parse.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c
@@ -382,8 +383,8 @@ target_link_libraries(lvgl PUBLIC
     ${SDL2_LIBRARIES}
 )
 
-# --- kern-bipqr: the firmware's Rust staticlib, built for the host. The bipqr
-# flow decodes its requests and encodes its responses through it. ---
+# --- kern-bipqr: the firmware's Rust staticlib, built for the host. The
+# MuSig2 signer reaches its nonce cache sessions through it. ---
 set(KERN_BIPQR_TARGET_DIR ${CMAKE_CURRENT_BINARY_DIR}/kern_bipqr)
 set(KERN_BIPQR_LIB ${KERN_BIPQR_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}kern_bipqr${CMAKE_STATIC_LIBRARY_SUFFIX})
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
@@ -436,8 +437,9 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/video
-    # kern-bipqr C headers: the bipqr submodule
+    # kern-bipqr C headers: the bipqr and bip_nonces_cache submodules
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/upstream/bipqr-ll/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip_nonces_cache/upstream/bip-nonces-cache-ll/include
     # LVGL
     ${LVGL_DIR}
     ${LVGL_DIR}/src

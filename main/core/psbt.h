@@ -318,6 +318,9 @@ typedef struct {
 // `psbt_sign_policy_t`. Callers must still check `partial_signing` upstream
 // (it gates whether to proceed at all when external inputs exist), since
 // that's a UX decision rather than a per-input one.
+// MuSig2 inputs follow ENCODING.md's MuSig2 rules (musig_psbt.h): in round 1
+// only our public nonces are added, and no signature of any kind. Our MuSig2
+// public nonces and partial signatures count as signatures added.
 // `result` may be NULL. Returns number of signatures added (0 if none).
 KERN_WARN_UNUSED_RESULT size_t psbt_sign(struct wally_psbt *psbt,
                                          bool is_testnet,

@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "bip-nonces-cache-ll"
+version = "0.0.1"
+
+[[package]]
 name = "bipqr-ll"
 version = "0.0.1"
 
@@ -10,5 +14,6 @@ version = "0.0.1"
 name = "kern-bipqr"
 version = "0.1.0"
 dependencies = [
+ "bip-nonces-cache-ll",
  "bipqr-ll",
 ]

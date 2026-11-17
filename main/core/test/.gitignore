@@ -49,4 +49,5 @@ test_dleq
 test_sp_keys
 test_sp_psbt
 test_musig_psbt
+test_nonce_cache
 kern_bipqr/

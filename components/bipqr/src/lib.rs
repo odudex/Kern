@@ -7,6 +7,10 @@ use core::ffi::c_void;
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
 
+pub use bip_nonces_cache_ll::ffi::{
+    bnc_begin_round_one, bnc_begin_round_two, bnc_cached_nonce, bnc_held_session, bnc_secret_free,
+    bnc_sign_musig, bnc_signer_free, bnc_signer_new, bnc_two_round_session_id,
+};
 pub use bipqr_ll::ffi::{
     bipqr_buf_free, bipqr_request_decode, bipqr_request_free, bipqr_response_encode,
 };

@@ -6,6 +6,7 @@ idf_component_register(
     SRCS "dummy.c"
     INCLUDE_DIRS
         "upstream/bipqr-ll/include"
+        "../bip_nonces_cache/upstream/bip-nonces-cache-ll/include"
 )
 
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
