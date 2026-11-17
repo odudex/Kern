@@ -22,8 +22,10 @@
 #include "core/psbt_gate.h"
 #include "core/psbt_internal.h"
 #include "core/registry.h"
+#include "core/sp_psbt.h"
 #include "core/storage.h"
 #include "core/wallet.h"
+#include "sp_fixture.h"
 
 /* --- Storage stubs (registry.c persist=false path never calls these) --- */
 esp_err_t storage_save_descriptor(storage_location_t loc, const char *id,
@@ -3478,6 +3480,356 @@ done:
   bip32_key_free(cosigner);
 }
 
+static struct wally_psbt *parse_silent_payment_psbt(const char *hex) {
+  unsigned char bytes[1024];
+  size_t written = 0;
+  struct wally_psbt *psbt = NULL;
+  if (wally_hex_to_bytes(hex, bytes, sizeof(bytes), &written) != WALLY_OK ||
+      wally_psbt_from_bytes(bytes, written,
+                            WALLY_PSBT_PARSE_FLAG_LOOSE |
+                                WALLY_PSBT_PARSE_FLAG_COMPLETE,
+                            &psbt) != WALLY_OK)
+    return NULL;
+  return psbt;
+}
+
+/* The bwk-built silent payment PSBT, with its output scripts derived */
+static struct wally_psbt *make_silent_payment_psbt(void) {
+  struct wally_psbt *psbt = parse_silent_payment_psbt(UNSIGNED_PSBT);
+  if (!psbt)
+    return NULL;
+  if (sp_psbt_complete(&psbt, false) == SP_PSBT_OK)
+    return psbt;
+  wally_psbt_free(psbt);
+  return NULL;
+}
+
+static void test_silent_payment_classify(void) {
+  struct wally_psbt *psbt = make_silent_payment_psbt();
+
+  TEST("psbt_classify_input: our silent payment input is owned safe");
+  input_ownership_t in =
+      psbt ? psbt_classify_input(psbt, 0, false) : (input_ownership_t){0};
+  if (in.ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+      in.claim.kind == CLAIM_SILENT_PAYMENT)
+    PASS();
+  else
+    FAIL("silent payment input not owned");
+
+  TEST("psbt_classify_output: our silent payment change is owned safe, the "
+       "recipient external");
+  output_ownership_t change =
+      psbt ? psbt_classify_output(psbt, 1, false) : (output_ownership_t){0};
+  output_ownership_t recipient =
+      psbt ? psbt_classify_output(psbt, 0, false) : (output_ownership_t){0};
+  if (change.ownership == PSBT_OWNERSHIP_OWNED_SAFE &&
+      change.source.kind == CLAIM_SILENT_PAYMENT &&
+      change.source.silent_payment.is_change &&
+      recipient.ownership == PSBT_OWNERSHIP_EXTERNAL)
+    PASS();
+  else
+    FAIL("silent payment outputs misclassified");
+  wally_psbt_free(psbt);
+}
+
+static void test_sign_silent_payment_input(void) {
+  struct wally_psbt *psbt = make_silent_payment_psbt();
+  psbt_sign_policy_t policy = {0};
+  size_t sig_len = 0;
+
+  TEST("psbt_sign: signs our silent payment input with SIGHASH_DEFAULT");
+  if (psbt && psbt_sign(psbt, false, policy, NULL) == 1 &&
+      wally_psbt_get_input_taproot_signature_len(psbt, 0, &sig_len) ==
+          WALLY_OK &&
+      sig_len == 64)
+    PASS();
+  else
+    FAIL("silent payment input not signed");
+
+  struct wally_psbt *trimmed = psbt ? psbt_trim(psbt) : NULL;
+  unsigned char share_key[1 + 33];
+  size_t index = 0;
+  TEST("psbt_trim: keeps the ECDH shares of a silent payment PSBT");
+  share_key[0] = PSBT_GLOBAL_SP_ECDH_SHARE;
+  if (trimmed &&
+      wally_hex_to_bytes(OUR_SCAN, share_key + 1, 33, &index) == WALLY_OK &&
+      wally_map_find(&trimmed->unknowns, share_key, sizeof(share_key),
+                     &index) == WALLY_OK &&
+      index && sp_psbt_has_outputs(trimmed))
+    PASS();
+  else
+    FAIL("BIP375 fields trimmed away");
+  wally_psbt_free(trimmed);
+  wally_psbt_free(psbt);
+}
+
+static bool has_input_share(const struct wally_psbt *psbt, size_t i) {
+  for (size_t j = 0; j < psbt->inputs[i].unknowns.num_items; j++) {
+    const struct wally_map_item *item = &psbt->inputs[i].unknowns.items[j];
+    if (item->key_len && item->key[0] == PSBT_IN_SP_ECDH_SHARE)
+      return true;
+  }
+  return false;
+}
+
+static bool has_global_share(const struct wally_psbt *psbt) {
+  for (size_t j = 0; j < psbt->unknowns.num_items; j++) {
+    const struct wally_map_item *item = &psbt->unknowns.items[j];
+    if (item->key_len && item->key[0] == PSBT_GLOBAL_SP_ECDH_SHARE)
+      return true;
+  }
+  return false;
+}
+
+/* The pre-review gate over a fresh classification of `psbt`, as the scan flow
+ * runs it before a silent payment share round */
+static psbt_gate_t share_round_gate(struct wally_psbt *psbt,
+                                    psbt_gate_settings_t settings,
+                                    psbt_gate_report_t *report) {
+  input_ownership_t *inputs = calloc(psbt->num_inputs, sizeof(*inputs));
+  output_ownership_t *outputs = calloc(psbt->num_outputs, sizeof(*outputs));
+  psbt_gate_t gate = PSBT_GATE_NOTHING_SIGNABLE;
+  if (inputs && outputs) {
+    for (size_t i = 0; i < psbt->num_inputs; i++)
+      inputs[i] = psbt_classify_input(psbt, i, false);
+    for (size_t i = 0; i < psbt->num_outputs; i++)
+      outputs[i] = psbt_classify_output(psbt, i, false);
+    gate = psbt_gate_check(psbt, inputs, outputs, &settings, report);
+  }
+  free(inputs);
+  free(outputs);
+  return gate;
+}
+
+/* TWO_SIGNER_PSBT: input 0 ours, input 1 another signer's. Partial signing off
+ * refuses it before the share round, so no share is made. */
+static void test_partial_signing_refuses_share_round(void) {
+  struct wally_psbt *psbt = parse_silent_payment_psbt(TWO_SIGNER_PSBT);
+  psbt_gate_settings_t settings = {.partial = false};
+  psbt_gate_report_t report;
+
+  TEST("psbt_gate_check: Partial signing off, a share round with another "
+       "signer's input is refused, input 1 listed, no share made");
+  if (psbt && share_round_gate(psbt, settings, &report) == PSBT_GATE_PARTIAL &&
+      report.external_count == 1 && report.external_inputs[0] == 1 &&
+      !has_input_share(psbt, 0) && !has_input_share(psbt, 1))
+    PASS();
+  else
+    FAIL("share round with a foreign input not refused");
+  wally_psbt_free(psbt);
+}
+
+static void test_partial_signing_allows_share_round(void) {
+  struct wally_psbt *psbt = parse_silent_payment_psbt(TWO_SIGNER_PSBT);
+  psbt_gate_settings_t settings = {.partial = true};
+  psbt_gate_report_t report;
+  sp_share_t *shares = NULL;
+  size_t count = 0;
+
+  TEST("psbt_gate_check: Partial signing on, the share round gives the "
+       "per-input shares of input 0 only");
+  if (psbt && share_round_gate(psbt, settings, &report) == PSBT_GATE_ALLOW &&
+      sp_psbt_complete(&psbt, false) == SP_PSBT_PENDING &&
+      sp_psbt_shares_alloc(psbt, false, &shares, &count) && count == 2 &&
+      !shares[0].global && shares[0].input_index == 0 && !shares[1].global &&
+      shares[1].input_index == 0 && !has_input_share(psbt, 1))
+    PASS();
+  else
+    FAIL("per-input shares of our input not made");
+  free(shares);
+  wally_psbt_free(psbt);
+}
+
+/* UNSIGNED_PSBT holds input 0 only, ours */
+static void test_partial_signing_own_inputs(bool partial_signing) {
+  struct wally_psbt *psbt = parse_silent_payment_psbt(UNSIGNED_PSBT);
+  psbt_gate_settings_t settings = {.partial = partial_signing};
+  psbt_gate_report_t report;
+  sp_share_t *shares = NULL;
+  size_t count = 0;
+
+  TEST(partial_signing ? "psbt_gate_check: Partial signing on, every input "
+                         "ours, global shares made"
+                       : "psbt_gate_check: Partial signing off, every input "
+                         "ours, global shares made");
+  if (psbt && share_round_gate(psbt, settings, &report) == PSBT_GATE_ALLOW &&
+      report.external_count == 0 &&
+      sp_psbt_complete(&psbt, false) == SP_PSBT_OK &&
+      sp_psbt_shares_alloc(psbt, false, &shares, &count) && count == 2 &&
+      shares[0].global && shares[1].global)
+    PASS();
+  else
+    FAIL("shares of a PSBT owning every input not made");
+  free(shares);
+  wally_psbt_free(psbt);
+}
+
+/* TWO_SIGNER_PSBT without our input 0: nothing to sign, not Partial signing,
+ * refuses it */
+static void test_partial_signing_no_own_input(void) {
+  struct wally_psbt *psbt = parse_silent_payment_psbt(TWO_SIGNER_PSBT);
+  psbt_gate_settings_t settings = {.partial = false};
+  psbt_gate_report_t report;
+
+  TEST("psbt_gate_check: Partial signing off, a PSBT owning no input is left "
+       "to the nothing to sign refusal");
+  if (psbt &&
+      wally_psbt_set_tx_modifiable_flags(psbt, WALLY_PSBT_TXMOD_INPUTS) ==
+          WALLY_OK &&
+      wally_psbt_remove_input(psbt, 0) == WALLY_OK &&
+      share_round_gate(psbt, settings, &report) == PSBT_GATE_NOTHING_SIGNABLE &&
+      report.external_count == 1 && report.external_inputs[0] == 0)
+    PASS();
+  else
+    FAIL("a PSBT owning no input refused by Partial signing");
+  wally_psbt_free(psbt);
+}
+
+/* UNSIGNED_PSBT with a P2WPKH input 1 of 50000 sats at outpoint 0x55..55:0,
+ * spending `spk` and naming `pubkey` at the key origin `origin` */
+static struct wally_psbt *add_p2wpkh_input(const uint8_t *spk, size_t spk_len,
+                                           const unsigned char *pubkey,
+                                           const uint8_t *origin,
+                                           size_t origin_len) {
+  struct wally_psbt *psbt = parse_silent_payment_psbt(UNSIGNED_PSBT);
+  unsigned char txid[32];
+  struct wally_tx_input *txin = NULL;
+  struct wally_tx_output *utxo = NULL;
+  size_t flags = 0;
+  memset(txid, 0x55, sizeof(txid));
+  bool ok =
+      psbt && wally_psbt_get_tx_modifiable_flags(psbt, &flags) == WALLY_OK &&
+      wally_psbt_set_tx_modifiable_flags(psbt, WALLY_PSBT_TXMOD_INPUTS) ==
+          WALLY_OK &&
+      wally_tx_input_init_alloc(txid, sizeof(txid), 0, 0xffffffff, NULL, 0,
+                                NULL, &txin) == WALLY_OK &&
+      wally_psbt_add_tx_input_at(psbt, 1, 0, txin) == WALLY_OK &&
+      wally_psbt_set_tx_modifiable_flags(psbt, (uint32_t)flags) == WALLY_OK &&
+      wally_tx_output_init_alloc(50000, spk, spk_len, &utxo) == WALLY_OK &&
+      wally_psbt_set_input_witness_utxo(psbt, 1, utxo) == WALLY_OK &&
+      wally_map_add(&psbt->inputs[1].keypaths, pubkey, EC_PUBLIC_KEY_LEN,
+                    origin, origin_len) == WALLY_OK;
+  wally_tx_input_free(txin);
+  wally_tx_output_free(utxo);
+  if (ok)
+    return psbt;
+  wally_psbt_free(psbt);
+  return NULL;
+}
+
+/* Input 1 ours on the non-standard path m/9999'/0'/0'/0/0: Permissive signing
+ * off refuses the share round before any share, on gives the global shares of
+ * a PSBT owning every input */
+static void test_permissive_signing_share_round(bool permissive_signing) {
+  struct ext_key *derived = NULL;
+  uint8_t spk[22];
+  size_t spk_len = 0;
+  uint8_t origin[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 */
+      0x0F, 0x27, 0x00, 0x80, /* 9999' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+  };
+  struct wally_psbt *psbt = NULL;
+  if (key_get_derived_key("m/9999'/0'/0'/0/0", &derived) &&
+      wally_witness_program_from_bytes(derived->pub_key, EC_PUBLIC_KEY_LEN,
+                                       WALLY_SCRIPT_HASH160, spk, sizeof(spk),
+                                       &spk_len) == WALLY_OK)
+    psbt = add_p2wpkh_input(spk, spk_len, derived->pub_key, origin,
+                            sizeof(origin));
+  bip32_key_free(derived);
+
+  psbt_gate_settings_t settings = {.permissive = permissive_signing};
+  psbt_gate_report_t report;
+  sp_share_t *shares = NULL;
+  size_t count = 0;
+
+  if (!permissive_signing) {
+    TEST("psbt_gate_check: Permissive signing off, a share round with our "
+         "input on a non-standard path is refused, input 1 flagged, no share "
+         "made");
+    if (psbt &&
+        share_round_gate(psbt, settings, &report) == PSBT_GATE_PERMISSIVE &&
+        report.flagged_is_input && report.flagged_index == 1 &&
+        strcmp(report.flagged_path, "m/9999'/0'/0'/0/0") == 0 &&
+        !has_global_share(psbt) && !has_input_share(psbt, 0) &&
+        !has_input_share(psbt, 1))
+      PASS();
+    else
+      FAIL("share round with an input on a non-standard path not refused");
+  } else {
+    TEST("psbt_gate_check: Permissive signing on, a share round with our "
+         "input on a non-standard path gives the global shares");
+    if (psbt && share_round_gate(psbt, settings, &report) == PSBT_GATE_ALLOW &&
+        sp_psbt_complete(&psbt, false) == SP_PSBT_OK &&
+        sp_psbt_shares_alloc(psbt, false, &shares, &count) && count == 2 &&
+        shares[0].global && shares[1].global)
+      PASS();
+    else
+      FAIL("global shares of a PSBT owning every input not made");
+  }
+  free(shares);
+  wally_psbt_free(psbt);
+}
+
+/* Input 1 names our m/84'/0'/0'/0/0 key at the origin m/99'/0'/0'/0/0, which
+ * does not derive it: Expected-owned signing off refuses the share round
+ * before any share, on gives the per-input shares of input 0, input 1 left to
+ * the other signer */
+static void
+test_expected_owned_signing_share_round(bool expected_owned_signing) {
+  struct ext_key *derived = NULL;
+  uint8_t origin[] = {
+      0x00, 0x00, 0x00, 0x00, /* fp = 00000000 */
+      0x63, 0x00, 0x00, 0x80, /* 99' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x80, /* 0' */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+      0x00, 0x00, 0x00, 0x00, /* 0 */
+  };
+  struct wally_psbt *psbt = NULL;
+  if (key_get_derived_key("m/84'/0'/0'/0/0", &derived))
+    psbt = add_p2wpkh_input(REF_SPK_P2WPKH, sizeof(REF_SPK_P2WPKH),
+                            derived->pub_key, origin, sizeof(origin));
+  bip32_key_free(derived);
+
+  psbt_gate_settings_t settings = {.expected_owned = expected_owned_signing};
+  psbt_gate_report_t report;
+  sp_share_t *shares = NULL;
+  size_t count = 0;
+
+  if (!expected_owned_signing) {
+    TEST("psbt_gate_check: Expected-owned signing off, a share round with an "
+         "input its key origin cannot re-derive is refused, input 1 flagged, "
+         "no share made");
+    if (psbt &&
+        share_round_gate(psbt, settings, &report) == PSBT_GATE_EXPECTED_OWNED &&
+        report.flagged_is_input && report.flagged_index == 1 &&
+        strcmp(report.flagged_path, "m/99'/0'/0'/0/0") == 0 &&
+        !has_global_share(psbt) && !has_input_share(psbt, 0) &&
+        !has_input_share(psbt, 1))
+      PASS();
+    else
+      FAIL("share round with an expected owned input not refused");
+  } else {
+    TEST("psbt_gate_check: Expected-owned signing on, a share round with an "
+         "input its key origin cannot re-derive gives the per-input shares of "
+         "input 0 only");
+    if (psbt && share_round_gate(psbt, settings, &report) == PSBT_GATE_ALLOW &&
+        sp_psbt_complete(&psbt, false) == SP_PSBT_PENDING &&
+        sp_psbt_shares_alloc(psbt, false, &shares, &count) && count == 2 &&
+        !shares[0].global && shares[0].input_index == 0 && !shares[1].global &&
+        shares[1].input_index == 0 && !has_input_share(psbt, 1))
+      PASS();
+    else
+      FAIL("per-input shares of our input not made");
+  }
+  free(shares);
+  wally_psbt_free(psbt);
+}
+
 static void test_trim_psbt_v2_in_place(void) {
   TEST("psbt_trim: a v2 PSBT is trimmed in place");
 
@@ -4940,6 +5292,20 @@ int main(void) {
   test_trim_leaves_out_previous_transactions();
   test_trim_psbt_v2_in_place();
   test_trim_v0_keeps_signatures();
+
+  printf("\n=== silent payment tests ===\n\n");
+
+  test_silent_payment_classify();
+  test_sign_silent_payment_input();
+  test_partial_signing_refuses_share_round();
+  test_partial_signing_allows_share_round();
+  test_partial_signing_own_inputs(false);
+  test_partial_signing_own_inputs(true);
+  test_partial_signing_no_own_input();
+  test_permissive_signing_share_round(false);
+  test_permissive_signing_share_round(true);
+  test_expected_owned_signing_share_round(false);
+  test_expected_owned_signing_share_round(true);
 
   key_unload();
 

@@ -5,6 +5,8 @@
 
 #include "../../core/psbt.h"
 #include "../../core/registry.h"
+#include "../../core/silent_payments.h"
+#include "../../core/sp_psbt.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
 #include "../../qr/scanner.h"
@@ -13,7 +15,6 @@
 #include "../../ui/theme_widgets.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/descriptor_loader.h"
-#include "kern_wally.h"
 #include "psbt_sign_policy.h"
 #include "scan_internal.h"
 #include <inttypes.h>
@@ -40,7 +41,8 @@ typedef struct {
   size_t num_outputs;
 } psbt_owners_t;
 
-static bool create_psbt_info_display(const psbt_owners_t *owners);
+static bool create_psbt_info_display(const psbt_owners_t *owners,
+                                     bool shares_only);
 
 // Fee share of the inputs at which the review screen stops calling it normal.
 #define HIGH_FEE_PERCENT 10u
@@ -64,6 +66,7 @@ typedef struct {
   output_type_t type;
   uint64_t value;
   char *address;
+  char *sp_address; /* sp1 address of a silent payment output, else NULL */
   uint32_t address_index;
   bool change_chain; /* owned output on its wallet's change chain */
   bool is_dust;      /* below the relay dust threshold for its script type */
@@ -112,13 +115,21 @@ static const char *ss_script_label(ss_script_type_t script) {
 static void format_claim_policy(const claim_t *claim, char *out,
                                 size_t out_size) {
   out[0] = '\0';
-  if (claim->kind == CLAIM_WHITELIST) {
+  switch (claim->kind) {
+  case CLAIM_WHITELIST:
     snprintf(out, out_size, "%s @ account %u",
              ss_script_label(claim->whitelist.script),
              (unsigned)claim->whitelist.account);
-  } else if (claim->kind == CLAIM_REGISTRY && claim->registry.entry) {
-    const registry_entry_t *entry = claim->registry.entry;
-    snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
+    break;
+  case CLAIM_REGISTRY:
+    if (claim->registry.entry) {
+      const registry_entry_t *entry = claim->registry.entry;
+      snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
+    }
+    break;
+  case CLAIM_SILENT_PAYMENT:
+    snprintf(out, out_size, "Silent Payments");
+    break;
   }
 }
 
@@ -141,12 +152,18 @@ static void classify_output(const classified_input_t *inputs, size_t num_inputs,
                             classified_output_t *out) {
   switch (ownership.ownership) {
   case PSBT_OWNERSHIP_OWNED_SAFE:
-    if (ownership.source.kind == CLAIM_WHITELIST) {
+    switch (ownership.source.kind) {
+    case CLAIM_WHITELIST:
       out->change_chain = (ownership.source.whitelist.chain == 1);
       out->address_index = ownership.source.whitelist.index;
-    } else {
+      break;
+    case CLAIM_REGISTRY:
       out->change_chain = (ownership.source.registry.multi_index == 1);
       out->address_index = ownership.source.registry.child_num;
+      break;
+    case CLAIM_SILENT_PAYMENT:
+      out->change_chain = ownership.source.silent_payment.is_change;
+      break;
     }
     format_claim_policy(&ownership.source, out->policy, sizeof(out->policy));
     out->type = out->change_chain && output_shares_input_policy(
@@ -206,7 +223,7 @@ static void owners_free(psbt_owners_t *o) {
   memset(o, 0, sizeof(*o));
 }
 
-static bool owners_classify(psbt_owners_t *o) {
+static bool owners_classify(psbt_owners_t *o, bool is_testnet) {
   memset(o, 0, sizeof(*o));
   if (!scan_ctx.psbt ||
       wally_psbt_get_num_inputs(scan_ctx.psbt, &o->num_inputs) != WALLY_OK ||
@@ -220,15 +237,15 @@ static bool owners_classify(psbt_owners_t *o) {
     return false;
   }
   for (size_t i = 0; i < o->num_inputs; i++)
-    o->inputs[i] = psbt_classify_input(scan_ctx.psbt, i, scan_ctx.is_testnet);
+    o->inputs[i] = psbt_classify_input(scan_ctx.psbt, i, is_testnet);
   for (size_t i = 0; i < o->num_outputs; i++)
-    o->outputs[i] = psbt_classify_output(scan_ctx.psbt, i, scan_ctx.is_testnet);
+    o->outputs[i] = psbt_classify_output(scan_ctx.psbt, i, is_testnet);
   return true;
 }
 
 void scan_psbt_resume_review(bool offer_descriptor) {
   psbt_owners_t owners;
-  if (!owners_classify(&owners)) {
+  if (!owners_classify(&owners, scan_ctx.is_testnet)) {
     scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid PSBT data", scan_ctx.return_cb,
                    0);
     return;
@@ -238,7 +255,7 @@ void scan_psbt_resume_review(bool offer_descriptor) {
                                      offer_descriptor ? psbt_offer_descriptor_cb
                                                       : NULL,
                                      &policy_refusal) &&
-      !create_psbt_info_display(&owners))
+      !create_psbt_info_display(&owners, false))
     scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid PSBT data", scan_ctx.return_cb,
                    0);
   owners_free(&owners);
@@ -312,8 +329,16 @@ bool scan_psbt_parse_base64(const char *base64_data) {
 
   scan_psbt_cleanup();
 
-  int ret = kern_psbt_from_base64(base64_data, 0, &scan_ctx.psbt);
-  if (ret != WALLY_OK) {
+  // Decoded and parsed as a binary payload, so it gets the same checks
+  size_t max_len = 0, len = 0;
+  unsigned char *bytes = NULL;
+  bool parsed =
+      wally_base64_get_maximum_length(base64_data, 0, &max_len) == WALLY_OK &&
+      (bytes = malloc(max_len)) != NULL &&
+      wally_base64_to_bytes(base64_data, 0, bytes, max_len, &len) == WALLY_OK &&
+      psbt_parse_payload(bytes, len, &scan_ctx.psbt);
+  free(bytes);
+  if (!parsed) {
     scan_psbt_cleanup();
     return false;
   }
@@ -334,15 +359,83 @@ static void mismatch_dialog_cb(void *user_data) {
   }
 }
 
+static scan_psbt_failure_t sp_psbt_failure(sp_psbt_result_t result) {
+  switch (result) {
+  case SP_PSBT_ERR_KEYS:
+  case SP_PSBT_ERR_CRYPTO:
+    return SCAN_PSBT_INTERNAL;
+  default:
+    return SCAN_PSBT_INVALID;
+  }
+}
+
+// Another signer still owes a share, so no output can be derived and nothing
+// may be signed (BIP375): the review offers to send our shares back alone
+static void offer_shares_only(bool is_testnet) {
+  sp_share_t *shares = NULL;
+  size_t count = 0;
+  if (!sp_psbt_shares_alloc(scan_ctx.psbt, is_testnet, &shares, &count)) {
+    scan_psbt_fail(SCAN_PSBT_INTERNAL, "Silent payment shares unavailable",
+                   scan_ctx.return_cb, 0);
+    return;
+  }
+  free(shares);
+  if (!count) {
+    scan_psbt_fail(SCAN_PSBT_NOTHING_TO_SIGN,
+                   sp_psbt_result_message(SP_PSBT_PENDING), scan_ctx.return_cb,
+                   0);
+    return;
+  }
+  psbt_owners_t owners;
+  if (!owners_classify(&owners, is_testnet) ||
+      !create_psbt_info_display(&owners, true))
+    scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid PSBT data", scan_ctx.return_cb,
+                   0);
+  owners_free(&owners);
+}
+
+bool scan_psbt_complete_silent_payments(void) {
+  if (!scan_ctx.psbt || !sp_psbt_has_fields(scan_ctx.psbt))
+    return false;
+  bool is_testnet = wallet_get_network() == WALLET_NETWORK_TESTNET;
+  // The signing policy gates our shares as it gates our signatures. A
+  // descriptor loaded from the expected-owned refusal would resume the
+  // signature review, not this round, so none is offered.
+  psbt_owners_t owners;
+  if (!owners_classify(&owners, is_testnet)) {
+    scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid PSBT data", scan_ctx.return_cb,
+                   0);
+    return true;
+  }
+  bool allowed = psbt_sign_policy_allows_review(
+      scan_ctx.psbt, owners.inputs, owners.outputs, policy_reject_dismissed_cb,
+      NULL, &policy_refusal);
+  owners_free(&owners);
+  if (!allowed)
+    return true;
+  sp_psbt_result_t result = sp_psbt_complete(&scan_ctx.psbt, is_testnet);
+  if (result == SP_PSBT_OK)
+    return false;
+  if (result == SP_PSBT_PENDING)
+    offer_shares_only(is_testnet);
+  else
+    scan_psbt_fail(sp_psbt_failure(result), sp_psbt_result_message(result),
+                   scan_ctx.return_cb, 0);
+  return true;
+}
+
 bool scan_psbt_check_mismatch(void) {
   if (!scan_ctx.psbt) {
     return false;
   }
 
-  scan_ctx.is_testnet = psbt_detect_network(scan_ctx.psbt);
-
   wallet_network_t wallet_net = wallet_get_network();
   bool wallet_is_testnet = (wallet_net == WALLET_NETWORK_TESTNET);
+
+  // Silent payment fields carry no key origin, so the wallet network applies
+  scan_ctx.is_testnet = sp_psbt_has_fields(scan_ctx.psbt)
+                            ? wallet_is_testnet
+                            : psbt_detect_network(scan_ctx.psbt);
 
   bool network_mismatch = (scan_ctx.is_testnet != wallet_is_testnet);
 
@@ -392,10 +485,21 @@ static void review_data_free(review_data_t *d) {
       free_address(d->inputs[i].address);
   free(d->inputs);
   if (d->outputs)
-    for (size_t i = 0; i < d->num_outputs; i++)
+    for (size_t i = 0; i < d->num_outputs; i++) {
       free_address(d->outputs[i].address);
+      free(d->outputs[i].sp_address);
+    }
   free(d->outputs);
   memset(d, 0, sizeof(*d));
+}
+
+// The sp1 address a silent payment output pays, left NULL for other outputs
+static bool output_sp_address(size_t output_index, char **out) {
+  unsigned char scan[SP_PUBKEY_LEN], spend[SP_PUBKEY_LEN];
+  *out = NULL;
+  if (!sp_output_keys(&scan_ctx.psbt->outputs[output_index], scan, spend))
+    return true;
+  return sp_address_alloc(scan, spend, scan_ctx.is_testnet, out);
 }
 
 static bool review_data_collect(review_data_t *d, const psbt_owners_t *owners) {
@@ -478,6 +582,10 @@ static bool review_data_collect(review_data_t *d, const psbt_owners_t *owners) {
     out->address = psbt_output_destination(
         txo->script, txo->script_len, scan_ctx.is_testnet, &out->dest_kind);
     out->script_len = txo->script_len;
+    if (!output_sp_address(i, &out->sp_address)) {
+      wally_tx_free(tx);
+      goto fail;
+    }
     classify_output(d->inputs, d->num_inputs, owners->outputs[i], out);
     out->is_dust =
         out->value < psbt_output_dust_threshold(txo->script, txo->script_len);
@@ -822,12 +930,18 @@ static void render_self_transfers(lv_obj_t *parent, const review_data_t *d) {
     if (out->type != OUTPUT_TYPE_SELF_TRANSFER)
       continue;
     char text[64];
-    snprintf(text, sizeof(text),
-             "%s #%u: ", out->change_chain ? "Change" : "Receive",
-             out->address_index);
+    if (out->sp_address)
+      snprintf(text, sizeof(text), "Output %zu: ", out->index);
+    else
+      snprintf(text, sizeof(text),
+               "%s #%u: ", out->change_chain ? "Change" : "Receive",
+               out->address_index);
     lv_obj_t *row = indented_amount_row(parent, text, out->value);
     if (out->policy[0])
       append_policy_note(row, "to", out->policy);
+    if (out->sp_address)
+      scan_create_address_label(parent, out->sp_address, accent_color(),
+                                ADDRESS_INDENT_PX);
     render_destination(parent, out->address, out->dest_kind, out->script_len,
                        accent_color());
   }
@@ -856,6 +970,23 @@ static void render_change(lv_obj_t *parent, const review_data_t *d) {
   lv_obj_set_style_margin_top(row, 15, 0);
 }
 
+/* The taproot address a silent payment lands on is derived for this
+ * transaction only, so the recipient can vouch for the sp1 address alone. */
+static void render_silent_payment_warning(lv_obj_t *parent,
+                                          const review_data_t *d) {
+  for (size_t i = 0; i < d->num_outputs; i++) {
+    if (d->outputs[i].type != OUTPUT_TYPE_SPEND || !d->outputs[i].sp_address)
+      continue;
+    lv_obj_t *title = section_title(
+        parent,
+        "Verify each sp1 address with its recipient. The taproot address "
+        "under it cannot be checked.",
+        error_color(), true);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+    return;
+  }
+}
+
 /* A titled list of every output of one kind: amount row plus address, with
  * the derivation path in the row label when the kind carries one. */
 static void render_output_group(lv_obj_t *parent, const review_data_t *d,
@@ -878,6 +1009,9 @@ static void render_output_group(lv_obj_t *parent, const review_data_t *d,
     else
       snprintf(text, sizeof(text), "Output %zu: ", out->index);
     indented_amount_row(parent, text, out->value);
+    if (out->sp_address)
+      scan_create_address_label(parent, out->sp_address, color,
+                                ADDRESS_INDENT_PX);
     render_destination(parent, out->address, out->dest_kind, out->script_len,
                        color);
   }
@@ -989,7 +1123,15 @@ static void render_fee_and_notes(lv_obj_t *parent, const review_data_t *d) {
   }
 }
 
-static bool create_psbt_info_display(const psbt_owners_t *owners) {
+static void add_shares_button_cb(lv_event_t *e) {
+  (void)e;
+  scan_psbt_export_shares();
+}
+
+// The review screen, its action adding our silent payment shares instead of
+// signing when shares_only
+static bool create_psbt_info_display(const psbt_owners_t *owners,
+                                     bool shares_only) {
   if (!scan_ctx.screen || !scan_ctx.psbt || !wallet_is_initialized())
     return false;
   if (scan_psbt_check_mismatch())
@@ -1021,12 +1163,23 @@ static bool create_psbt_info_display(const psbt_owners_t *owners) {
                       "Owned (non-standard path): ", true);
   render_output_group(c, &data, OUTPUT_TYPE_EXPECTED_OWNED,
                       "Expected ownership (UNVERIFIED): ", true);
+  render_silent_payment_warning(c, &data);
   render_output_group(c, &data, OUTPUT_TYPE_SPEND, "Spending: ", false);
 
   render_fee_and_notes(c, &data);
   review_data_free(&data);
 
-  scan_create_sign_action_row(c, scan_psbt_sign_button_cb);
+  if (shares_only) {
+    scan_create_review_note(
+        c,
+        "Other signers still owe silent payment shares, so the outputs cannot "
+        "be derived yet and nothing is signed. Add the shares of the inputs "
+        "this wallet holds?",
+        highlight_color());
+    scan_create_sign_action_row(c, "Add shares", add_shares_button_cb);
+  } else {
+    scan_create_sign_action_row(c, "Sign", scan_psbt_sign_button_cb);
+  }
   return true;
 }
 
