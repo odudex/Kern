@@ -493,6 +493,7 @@ static void build_main_menu(void) {
     return;
 
   bool has_desc = registry_count() > 0;
+  bool has_entries = has_desc || registry_sp_alias_count() > 0;
 
   ui_menu_add_entry(main_menu, "Session Descriptors", registered_desc_cb);
   idx_registered = 0;
@@ -502,8 +503,8 @@ static void build_main_menu(void) {
                     load_descriptor_cb);
   idx_load = 1;
 
-  /* Disable session descriptor entries when no descriptor is loaded */
-  if (!has_desc) {
+  /* Disable session descriptor entries when nothing is registered */
+  if (!has_entries) {
     ui_menu_set_entry_enabled(main_menu, idx_registered, false);
   }
 
@@ -521,7 +522,8 @@ static void refresh_menu_visibility(void) {
                                        : "Load Descriptor");
 
     /* Toggle session descriptor actions */
-    ui_menu_set_entry_enabled(main_menu, idx_registered, has_desc);
+    ui_menu_set_entry_enabled(main_menu, idx_registered,
+                              has_desc || registry_sp_alias_count() > 0);
   }
 }
 

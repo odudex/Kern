@@ -446,8 +446,14 @@ static void test_descriptor_path(void) {
                           out, sizeof(out));
   check("path: sd bip138",
         strcmp(out, "/sdcard/kern/descriptors/My_Wallet.bip138") == 0);
+  storage_descriptor_path(STORAGE_FLASH, "0123456789abcdef",
+                          STORAGE_DESCRIPTOR_SP_ACCOUNT, out, sizeof(out));
+  check("path: flash silent payment account",
+        strcmp(out, "/spiffs/d_0123456789abcdef.spa") == 0);
   check("format: by extension",
         storage_descriptor_format("d_x.bip138") == STORAGE_DESCRIPTOR_BIP138 &&
+            storage_descriptor_format("d_x.spa") ==
+                STORAGE_DESCRIPTOR_SP_ACCOUNT &&
             storage_descriptor_format("x.bip138.txt") ==
                 STORAGE_DESCRIPTOR_BIP138 &&
             storage_descriptor_format("x.kef") == STORAGE_DESCRIPTOR_KEF &&

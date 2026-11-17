@@ -14,9 +14,9 @@ endif
 
 ROOT = ../../..
 WALLY_DIR = $(ROOT)/components/libwally-core
-WALLY_SRC = $(WALLY_DIR)/upstream/src/amalgamation/combined.c
+WALLY_SRC = $(WALLY_DIR)/kern_combined.c
 WALLY_INC = $(WALLY_DIR)/upstream/include
-WALLY_DEPS := $(WALLY_DIR)/config.h $(wildcard $(WALLY_INC)/*.h) \
+WALLY_DEPS := $(WALLY_DIR)/config.h $(WALLY_DIR)/kern_bech32.h $(wildcard $(WALLY_INC)/*.h) \
 	$(shell find $(WALLY_DIR)/upstream/src -name '*.[ch]' -o -name '*.inl' 2>/dev/null)
 
 WALLY_PRIV_INCS = \
@@ -29,7 +29,7 @@ WALLY_PRIV_INCS = \
 # HAVE_PSA_CRYPTO_H: hash through PSA like the device build, so its glue and
 # the uncached BIP341 path are what the tests run. Every libwally link line
 # then needs -lmbedcrypto.
-WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_STANDARD_SECP=1 -DECMULT_WINDOW_SIZE=8 \
+WALLY_DEFS = -DBUILD_MINIMAL=1 -DECMULT_WINDOW_SIZE=8 \
 	-DHAVE_PSA_CRYPTO_H $(SANITIZE_WALLY_DEFS)
 WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS)
 
@@ -37,7 +37,8 @@ WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS)
 ESP_STUBS_INC = stubs
 
 # Test includes: wally public headers + esp stubs + main source tree
-TEST_INCS = -I$(ROOT)/components/bip138/include -I$(WALLY_INC) -I$(WALLY_DIR) -I$(ROOT)/components/secure_memory/include -I$(ESP_STUBS_INC) -I$(ROOT)/main
+TEST_INCS = -I$(ROOT)/components/bip138/include -I$(WALLY_INC) \
+	-I$(WALLY_DIR)/upstream/src/secp256k1/include -I$(WALLY_DIR) -I$(ROOT)/components/secure_memory/include -I$(ESP_STUBS_INC) -I$(ROOT)/main
 
 # KEF pulls in crypto_utils/entropy_pool/deflate_codec, which need a handful of
 # ESP-IDF headers.  Reuse the simulator's stub headers instead of a second copy;
@@ -53,6 +54,18 @@ MBEDTLS_COMPAT_H = $(SIM_STUBS_INC)/mbedtls_compat.h
 HOST_PBKDF2 = $(ROOT)/simulator/platform/esp_idf_stubs/pbkdf2_sim.c
 
 LIBWALLY = libwally.a
+
+# kern-bipqr, the firmware's Rust staticlib, built for the host: the MuSig2
+# signer reaches its nonce cache sessions through it. Its C headers are those
+# of the bipqr and bip_nonces_cache submodules.
+BIPQR_INCS = -I$(ROOT)/components/bipqr/upstream/bipqr-ll/include \
+	-I$(ROOT)/components/bip_nonces_cache/upstream/bip-nonces-cache-ll/include
+KERN_BIPQR_DIR = kern_bipqr
+KERN_BIPQR = $(KERN_BIPQR_DIR)/release/libkern_bipqr.a
+KERN_BIPQR_LIBS = $(KERN_BIPQR) -lpthread -ldl
+# The simulator's NVS, kept in files under the data dir a test sets
+NVS_SIM_SRC = $(ROOT)/simulator/platform/esp_idf_stubs/nvs_sim.c
+NONCE_CACHE_SRC = ../nonce_cache.c ../nonce_cache.h
 
 # Headers outside main/core that the tests compile, over-approximated: a full
 # rebuild takes seconds.
@@ -84,20 +97,24 @@ TARGET_PSB = test_purpose_binding
 SRCS_REG_MATCH = test_registry_match.c
 TARGET_REG_MATCH = test_registry_match
 REGISTRY_SRC = ../registry.c $(REGISTRY_H) ../descriptor_validator.h ../miniscript_policy.h \
-	../bip138_backup.h ../bip138_keys.h ../descriptor_checksum.h ../key.h ../../utils/secure_mem.h
+	../bip138_backup.h ../bip138_keys.h ../descriptor_checksum.h ../key.h ../../utils/secure_mem.h \
+	../descriptor_keys.c ../descriptor_keys.h ../silent_payments.h
 DESCRIPTOR_CHECKSUM_SRC = ../descriptor_checksum.c ../descriptor_checksum.h
-# Kern's libwally descriptor parse flags, linked by every test that parses.
-DESCRIPTOR_PARSE_SRC = ../descriptor_parse.c ../wallet.h
+# Kern's libwally descriptor parse flags and its musig() leaf rewrite, linked
+# by every test that parses; the rewrite needs descriptor_checksum.c too.
+DESCRIPTOR_PARSE_SRC = ../descriptor_parse.c ../wallet.h ../musig_leaves.c ../musig_leaves.h ../descriptor_checksum.c
 BIP32_PATH_SRC = ../bip32_path.c $(SS_H)
 SCRIPT_TEMPLATE_SRC = ../script_templates.c ../script_templates.h
 REGISTRY_STUB_SRC = stubs/registry_stub.c
 REGISTRY_PERSIST_STUB_SRC = stubs/registry_persist_stub.c
 VALIDATOR_KEYED_STUB_SRC = stubs/validator_keyed_stub.c
+# debug_logf writes to device storage, never host-linkable
+DEBUG_LOG_STUB_SRC = stubs/debug_log_stub.c
 
 SRCS_REG_PARSE = test_registry_parse.c
 TARGET_REG_PARSE = test_registry_parse
 
-PSBT_SRC = ../psbt.c ../psbt_internal.h ../key.h $(PSBT_H)
+PSBT_SRC = ../psbt.c ../psbt_internal.h ../key.h $(PSBT_H) ../musig_psbt.c ../musig_psbt.h
 SRCS_PSBT_CLASSIFY = test_psbt_classify.c
 TARGET_PSBT_CLASSIFY = test_psbt_classify
 PSBT_KEY_OBJ = test_psbt_key.o
@@ -193,7 +210,7 @@ SRCS_SELF_TEST = test_self_test.c
 TARGET_SELF_TEST = test_self_test
 SELF_TEST_SRC = ../self_test.c ../self_test.h ../crypto_init.c ../crypto_init.h \
 	../secp_hardening.c ../secp_hardening.h ../message_sign.c ../message_sign.h \
-	../dice_mnemonic.c ../dice_mnemonic.h ../descriptor_parse.c ../wallet.h \
+	../dice_mnemonic.c ../dice_mnemonic.h ../descriptor_parse.c ../musig_leaves.c ../descriptor_checksum.c ../wallet.h \
 	$(KEY_SRC) $(SCRIPT_TEMPLATE_SRC) $(CRYPTO_UTILS_SRC)
 
 # libwally's own descriptor vectors (taptrees, multi_a), against the library
@@ -208,11 +225,35 @@ TARGET_MNEMONIC_WORDS = test_mnemonic_words
 SRCS_DESCRIPTOR_BRANCH = test_descriptor_branch.c
 TARGET_DESCRIPTOR_BRANCH = test_descriptor_branch
 
+SRCS_SILENTPAYMENTS = test_silentpayments.c
+TARGET_SILENTPAYMENTS = test_silentpayments
+
+SRCS_DLEQ = test_dleq.c
+TARGET_DLEQ = test_dleq
+DLEQ_SRC = ../dleq.c ../dleq.h
+
+SRCS_SP_KEYS = test_sp_keys.c
+TARGET_SP_KEYS = test_sp_keys
+SP_SRC = ../silent_payments.c ../silent_payments.h
+
+SRCS_SP_PSBT = test_sp_psbt.c
+TARGET_SP_PSBT = test_sp_psbt
+# The BIP375 signer and what it pulls in, past key.c and its helpers
+SP_PSBT_SRC = ../sp_psbt.c ../sp_psbt.h $(SP_SRC) $(DLEQ_SRC) $(CRYPTO_UTILS_SRC)
+SP_PSBT_LINK = ../sp_psbt.c ../silent_payments.c ../dleq.c ../crypto_utils.c \
+	../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2)
+
+SRCS_MUSIG_PSBT = test_musig_psbt.c
+TARGET_MUSIG_PSBT = test_musig_psbt
+
+SRCS_NONCE_CACHE = test_nonce_cache.c
+TARGET_NONCE_CACHE = test_nonce_cache
+
 SRCS_MULTISIG_SETUP = test_multisig_setup.c
 TARGET_MULTISIG_SETUP = test_multisig_setup
 MULTISIG_SETUP_SRC = ../multisig_setup.c ../multisig_setup.h
 
-all: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST)
+all: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(TARGET_SILENTPAYMENTS) $(TARGET_DLEQ) $(TARGET_SP_KEYS) $(TARGET_SP_PSBT) $(TARGET_MUSIG_PSBT) $(TARGET_NONCE_CACHE)
 
 $(LIBWALLY): $(WALLY_SRC) $(WALLY_DEPS) $(WALLY_DIR)/kern_wally.c $(WALLY_DIR)/kern_wally.h $(ROOT)/components/secure_memory/secret_alloc.c $(ROOT)/components/secure_memory/include/secure_memory.h Makefile
 	$(CC) $(CFLAGS) $(WALLY_CFLAGS) -c -o combined.o $<
@@ -220,7 +261,7 @@ $(LIBWALLY): $(WALLY_SRC) $(WALLY_DEPS) $(WALLY_DIR)/kern_wally.c $(WALLY_DIR)/k
 	$(CC) $(CFLAGS) -I$(ROOT)/components/secure_memory/include -c -o secret_alloc.o $(ROOT)/components/secure_memory/secret_alloc.c
 	ar rcs $@ combined.o kern_wally.o secret_alloc.o
 
-$(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ) $(CRYPTO_INIT_LIB): $(COMMON_H)
+$(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(TARGET_SILENTPAYMENTS) $(TARGET_DLEQ) $(TARGET_SP_KEYS) $(TARGET_SP_PSBT) $(TARGET_MUSIG_PSBT) $(TARGET_NONCE_CACHE) $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ) $(CRYPTO_INIT_LIB): $(COMMON_H)
 
 $(TARGET_DERIV): $(SRCS_DERIV) $(BIP32_PATH_SRC)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DERIV) ../bip32_path.c
@@ -238,19 +279,19 @@ $(TARGET_PSB): $(SRCS_PSB) $(SS_SRC) $(KEY_STUB_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PSB) ../ss_whitelist.c ../script_templates.c $(KEY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_REG_MATCH): $(SRCS_REG_MATCH) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(BIP32_PATH_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(REGISTRY_STUB_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_MATCH) ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_MATCH) ../registry.c ../descriptor_keys.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../descriptor_parse.c ../musig_leaves.c $(REGISTRY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_REG_PARSE): $(SRCS_REG_PARSE) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(BIP32_PATH_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(REGISTRY_STUB_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_PARSE) ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_REG_PARSE) ../registry.c ../descriptor_keys.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../descriptor_parse.c ../musig_leaves.c $(REGISTRY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 $(PSBT_KEY_OBJ): $(KEY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Dkey_get_fingerprint=key_get_fingerprint_raw -c -o $@ ../key.c
 
-$(TARGET_PSBT_CLASSIFY): $(SRCS_PSBT_CLASSIFY) ../settings.h $(PSBT_SRC) ../psbt_gate.c ../psbt_gate.h $(SS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(LIBWALLY) $(PSBT_KEY_OBJ) $(CRYPTO_INIT_LIB)
-	$(CC) $(CFLAGS) $(TEST_INCS) -DPSBT_TESTING -Wl,--wrap=malloc -Wl,--wrap=wally_psbt_signing_cache_disable -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../psbt_gate.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c ../descriptor_parse.c $(CRYPTO_INIT_LIB) $(LIBWALLY) -lmbedcrypto
+$(TARGET_PSBT_CLASSIFY): $(SRCS_PSBT_CLASSIFY) sp_fixture.h ../settings.h $(PSBT_SRC) ../psbt_gate.c ../psbt_gate.h ../psbt_parse.c $(SS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SP_PSBT_SRC) $(NONCE_CACHE_SRC) $(LIBWALLY) $(PSBT_KEY_OBJ) $(CRYPTO_INIT_LIB) $(KERN_BIPQR)
+	$(CC) $(CFLAGS) $(KEF_INCS) $(BIPQR_INCS) -DPSBT_TESTING -Wl,--wrap=malloc -Wl,--wrap=wally_psbt_signing_cache_disable -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_PSBT_CLASSIFY) $(PSBT_KEY_OBJ) ../ss_whitelist.c ../registry.c ../descriptor_keys.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../psbt.c ../psbt_gate.c ../psbt_parse.c ../musig_psbt.c ../nonce_cache.c $(NVS_SIM_SRC) ../bip32_path.c ../script_templates.c ../descriptor_checksum.c ../descriptor_parse.c ../musig_leaves.c $(SP_PSBT_LINK) $(CRYPTO_INIT_LIB) $(LIBWALLY) $(KERN_BIPQR_LIBS) -lmbedcrypto
 
-$(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c $(PSBT_H) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_PSBT_PARSE) ../psbt_parse.c $(LIBWALLY) -lmbedcrypto
+$(TARGET_PSBT_PARSE): $(SRCS_PSBT_PARSE) ../psbt_parse.c $(PSBT_H) $(KEY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(SP_PSBT_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_PSBT_PARSE) ../psbt_parse.c ../key.c ../bip32_path.c ../descriptor_checksum.c ../musig_leaves.c $(SP_PSBT_LINK) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_MS_POLICY): $(SRCS_MS_POLICY) $(MS_POLICY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MS_POLICY) ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
@@ -281,9 +322,9 @@ $(TARGET_FW_UPDATE): $(SRCS_FW_UPDATE) $(FW_UPDATE_SRC) $(wildcard stubs/*.h)
 # firmware build carries -Wno-format for the same reason.
 $(TARGET_DESC_VALIDATOR): $(SRCS_DESC_VALIDATOR) $(DESC_VALIDATOR_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(REGISTRY_PERSIST_STUB_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(SRCS_DESC_VALIDATOR) \
-		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../key.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) \
+		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../musig_leaves.c ../key.c ../registry.c ../descriptor_keys.c $(REGISTRY_PERSIST_STUB_SRC) \
 		../descriptor_checksum.c ../bip32_path.c ../script_templates.c \
-		../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
+		../ss_whitelist.c ../miniscript_policy.c $(DEBUG_LOG_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 # storage.c is built unchanged with its POSIX file calls redirected (see
 # stubs/storage_host_hooks.h) so /spiffs and /sdcard resolve under a temp dir.
@@ -318,21 +359,21 @@ $(TARGET_PBKDF2): $(SRCS_PBKDF2) $(PBKDF2_OBJ) $(CRYPTO_UTILS_SRC)
 		../entropy_pool.c stubs/esp_hw_stub.c -lmbedcrypto
 
 $(TARGET_BIP138_KEYS): $(SRCS_BIP138_KEYS) ../bip138_keys.c ../bip138_keys.h ../bip32_path.h ../storage.h ../wallet.h $(DESCRIPTOR_PARSE_SRC) $(REGISTRY_STUB_SRC) $(BIP138_DIR)/test/vectors.h $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) $(BIP138_INCS) -o $@ $(SRCS_BIP138_KEYS) ../bip138_keys.c ../descriptor_parse.c $(REGISTRY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) $(BIP138_INCS) -o $@ $(SRCS_BIP138_KEYS) ../bip138_keys.c ../descriptor_keys.c ../descriptor_parse.c ../musig_leaves.c ../descriptor_checksum.c $(REGISTRY_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_backup.h ../bip138_keys.c ../bip138_keys.h ../bip138_crypto.c ../bip138_crypto.h $(CRYPTO_UTILS_SRC) $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(DESC_VALIDATOR_SRC) $(BIP138_SRCS) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) $(BIP138_INCS) -DBIP138_BACKUP_TESTING -Wl,--wrap=wally_descriptor_parse -Wno-format-truncation -o $@ $(SRCS_BIP138_BACKUP) \
 		../bip138_backup.c ../bip138_keys.c ../bip138_crypto.c \
 		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) \
-		../wallet.c ../descriptor_parse.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
-		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c \
-		$(BIP138_SRCS) $(LIBWALLY) -lmbedcrypto $(KEF_LIBS)
+		../wallet.c ../descriptor_parse.c ../musig_leaves.c ../key.c ../registry.c ../descriptor_keys.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
+		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c ../silent_payments.c \
+		$(DEBUG_LOG_STUB_SRC) $(BIP138_SRCS) $(LIBWALLY) -lmbedcrypto $(KEF_LIBS)
 
 $(TARGET_ADDRESS_MATCH): $(SRCS_ADDRESS_MATCH) $(ADDRESS_MATCH_SRC) $(SS_SRC) $(KEY_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_ADDRESS_MATCH) ../address_match.c ../descriptor_branch.c ../descriptor_parse.c ../ss_whitelist.c ../key.c ../bip32_path.c ../script_templates.c $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_ADDRESS_MATCH) ../address_match.c ../descriptor_branch.c ../descriptor_parse.c ../musig_leaves.c ../descriptor_checksum.c ../ss_whitelist.c ../key.c ../bip32_path.c ../script_templates.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_DESCRIPTOR_TEXT): $(SRCS_DESCRIPTOR_TEXT) $(DESCRIPTOR_TEXT_SRC) $(DESCRIPTOR_CHECKSUM_SRC) ../../utils/text_file.c ../../utils/text_file.h $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DESCRIPTOR_TEXT) ../descriptor_text.c ../descriptor_checksum.c ../../utils/text_file.c $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DESCRIPTOR_TEXT) ../descriptor_text.c ../descriptor_checksum.c ../musig_leaves.c ../../utils/text_file.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_MESSAGE_SIGN): $(SRCS_MESSAGE_SIGN) ../message_sign.c ../message_sign.h ../message_validation.h ../crypto_init.c ../crypto_init.h ../secp_hardening.c ../secp_hardening.h $(KEY_SRC) $(SCRIPT_TEMPLATE_SRC) $(CRYPTO_UTILS_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_MESSAGE_SIGN) ../message_sign.c ../crypto_init.c ../secp_hardening.c ../key.c ../bip32_path.c ../script_templates.c \
@@ -340,7 +381,7 @@ $(TARGET_MESSAGE_SIGN): $(SRCS_MESSAGE_SIGN) ../message_sign.c ../message_sign.h
 
 $(TARGET_SELF_TEST): $(SRCS_SELF_TEST) $(SELF_TEST_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_SELF_TEST) ../self_test.c ../crypto_init.c \
-		../secp_hardening.c ../message_sign.c ../dice_mnemonic.c ../descriptor_parse.c \
+		../secp_hardening.c ../message_sign.c ../dice_mnemonic.c ../descriptor_parse.c ../musig_leaves.c ../descriptor_checksum.c \
 		../key.c ../bip32_path.c ../script_templates.c ../crypto_utils.c ../entropy_pool.c \
 		stubs/esp_hw_stub.c $(HOST_PBKDF2) $(LIBWALLY) -lmbedcrypto
 
@@ -354,10 +395,32 @@ $(TARGET_MNEMONIC_WORDS): $(SRCS_MNEMONIC_WORDS) ../../utils/bip39_filter.c ../.
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MNEMONIC_WORDS) ../../utils/bip39_filter.c ../dice_mnemonic.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_DESCRIPTOR_BRANCH): $(SRCS_DESCRIPTOR_BRANCH) ../descriptor_branch.c ../descriptor_branch.h ../psbt_internal.h $(PSBT_H) $(DESCRIPTOR_PARSE_SRC) $(LIBWALLY)
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DESCRIPTOR_BRANCH) ../descriptor_branch.c ../descriptor_parse.c $(LIBWALLY) -lmbedcrypto
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DESCRIPTOR_BRANCH) ../descriptor_branch.c ../descriptor_parse.c ../musig_leaves.c ../descriptor_checksum.c $(LIBWALLY) -lmbedcrypto
 
 $(TARGET_MULTISIG_SETUP): $(SRCS_MULTISIG_SETUP) $(MULTISIG_SETUP_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_MULTISIG_SETUP) ../multisig_setup.c $(LIBWALLY) -lmbedcrypto
+
+$(TARGET_SILENTPAYMENTS): $(SRCS_SILENTPAYMENTS) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_SILENTPAYMENTS) $(LIBWALLY) -lmbedcrypto
+
+$(TARGET_DLEQ): $(SRCS_DLEQ) $(DLEQ_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(SRCS_DLEQ) ../dleq.c $(LIBWALLY) -lmbedcrypto
+
+$(TARGET_SP_KEYS): $(SRCS_SP_KEYS) $(SP_SRC) $(KEY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(LIBWALLY) $(KERN_BIPQR)
+	$(CC) $(CFLAGS) $(TEST_INCS) $(BIPQR_INCS) -o $@ $(SRCS_SP_KEYS) ../silent_payments.c ../key.c ../bip32_path.c ../descriptor_checksum.c ../musig_leaves.c $(LIBWALLY) $(KERN_BIPQR_LIBS) -lmbedcrypto
+
+$(TARGET_SP_PSBT): $(SRCS_SP_PSBT) sp_fixture.h bip375_fixture.h $(SP_PSBT_SRC) ../psbt_parse.c $(KEY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(LIBWALLY)
+	$(CC) $(CFLAGS) $(KEF_INCS) -o $@ $(SRCS_SP_PSBT) ../psbt_parse.c ../key.c ../bip32_path.c ../descriptor_checksum.c ../musig_leaves.c $(SP_PSBT_LINK) $(LIBWALLY) -lmbedcrypto
+
+$(TARGET_MUSIG_PSBT): $(SRCS_MUSIG_PSBT) $(PSBT_SRC) ../psbt_gate.c ../psbt_gate.h ../psbt_parse.c $(KEY_SRC) $(REGISTRY_SRC) $(DESCRIPTOR_CHECKSUM_SRC) $(DESCRIPTOR_PARSE_SRC) $(SS_SRC) $(SP_PSBT_SRC) $(NONCE_CACHE_SRC) $(LIBWALLY) $(KERN_BIPQR)
+	$(CC) $(CFLAGS) $(KEF_INCS) $(BIPQR_INCS) -o $@ $(SRCS_MUSIG_PSBT) ../musig_psbt.c ../psbt.c ../psbt_gate.c ../psbt_parse.c ../registry.c ../descriptor_keys.c ../key.c ../wallet.c ../descriptor_parse.c ../musig_leaves.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) ../bip32_path.c ../descriptor_checksum.c ../ss_whitelist.c ../script_templates.c $(SP_PSBT_LINK) ../nonce_cache.c $(NVS_SIM_SRC) $(LIBWALLY) $(KERN_BIPQR_LIBS) -lmbedcrypto
+
+$(TARGET_NONCE_CACHE): $(SRCS_NONCE_CACHE) $(NONCE_CACHE_SRC) $(KEY_SRC) $(CRYPTO_UTILS_SRC) $(LIBWALLY) $(KERN_BIPQR)
+	$(CC) $(CFLAGS) $(KEF_INCS) $(BIPQR_INCS) -o $@ $(SRCS_NONCE_CACHE) ../nonce_cache.c ../key.c ../bip32_path.c ../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) $(NVS_SIM_SRC) $(LIBWALLY) $(KERN_BIPQR_LIBS) -lmbedcrypto
+
+# Always runs: cargo tracks the crate sources and only relinks on a change
+$(KERN_BIPQR):
+	CARGO_TARGET_DIR=$(KERN_BIPQR_DIR) cargo build --release --manifest-path $(ROOT)/components/bipqr/Cargo.toml
 
 # Fuzz targets for the glue around libwally that handles untrusted QR and SD
 # payloads (`just fuzz`). gcc builds link fuzz/fuzz_driver.c, a coverage-blind
@@ -372,30 +435,30 @@ FUZZ_DEPS = $(FUZZ_DIR)/fuzz.h $(FUZZ_DIR)/fuzz_driver.c $(LIBWALLY)
 FUZZ_TARGETS = fuzz_psbt fuzz_descriptor fuzz_text
 FUZZ_ITERATIONS ?= 20000
 
-fuzz_psbt: $(FUZZ_DIR)/fuzz_psbt.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_DEPS) $(PSBT_SRC) $(REGISTRY_SRC) $(SS_SRC) $(KEY_SRC) $(BIP322_SRC) ../psbt_parse.c
-	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(FUZZ_DIR)/fuzz_psbt.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_MAIN) \
-		../psbt.c ../psbt_parse.c ../bip322.c ../message_sign.c ../key.c ../registry.c \
+fuzz_psbt: $(FUZZ_DIR)/fuzz_psbt.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_DEPS) $(PSBT_SRC) $(REGISTRY_SRC) $(SS_SRC) $(KEY_SRC) $(BIP322_SRC) ../psbt_parse.c $(SP_PSBT_SRC) $(NONCE_CACHE_SRC) $(KERN_BIPQR)
+	$(CC) $(CFLAGS) $(KEF_INCS) $(BIPQR_INCS) -o $@ $(FUZZ_DIR)/fuzz_psbt.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_MAIN) \
+		../psbt.c ../psbt_parse.c ../bip322.c ../message_sign.c ../key.c ../registry.c ../descriptor_keys.c \
 		../ss_whitelist.c ../bip32_path.c ../script_templates.c ../descriptor_checksum.c \
-		../descriptor_parse.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) \
-		$(LIBWALLY) -lmbedcrypto
+		../descriptor_parse.c ../musig_leaves.c $(REGISTRY_PERSIST_STUB_SRC) $(VALIDATOR_KEYED_STUB_SRC) \
+		../musig_psbt.c ../nonce_cache.c $(NVS_SIM_SRC) $(SP_PSBT_LINK) $(LIBWALLY) $(KERN_BIPQR_LIBS) -lmbedcrypto
 
 fuzz_descriptor: $(FUZZ_DIR)/fuzz_descriptor.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_DEPS) $(DESC_VALIDATOR_SRC) $(REGISTRY_SRC) $(SS_SRC) $(KEY_SRC)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(FUZZ_DIR)/fuzz_descriptor.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_MAIN) \
-		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../key.c ../registry.c \
+		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../musig_leaves.c ../key.c ../registry.c ../descriptor_keys.c \
 		$(REGISTRY_PERSIST_STUB_SRC) ../descriptor_checksum.c ../bip32_path.c \
-		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
+		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c $(DEBUG_LOG_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 fuzz_text: $(FUZZ_DIR)/fuzz_text.c $(FUZZ_DEPS) ../message_sign.c $(KEY_SRC) $(MULTISIG_SETUP_SRC) $(DESCRIPTOR_TEXT_SRC) ../../utils/text_file.c
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(FUZZ_DIR)/fuzz_text.c $(FUZZ_MAIN) ../message_sign.c ../key.c \
 		../bip32_path.c ../script_templates.c ../multisig_setup.c ../descriptor_text.c \
-		../descriptor_checksum.c ../../utils/text_file.c $(LIBWALLY) -lmbedcrypto
+		../descriptor_checksum.c ../musig_leaves.c ../../utils/text_file.c $(LIBWALLY) -lmbedcrypto
 
 fuzz: $(FUZZ_TARGETS)
 	./fuzz_psbt -n $(FUZZ_ITERATIONS) @json:$(WALLY_DIR)/upstream/src/data/psbt.json
 	./fuzz_descriptor -n $(FUZZ_ITERATIONS) $(FUZZ_DIR)/corpus/text
 	./fuzz_text -n $(FUZZ_ITERATIONS) $(FUZZ_DIR)/corpus/text
 
-run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST)
+run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(TARGET_SILENTPAYMENTS) $(TARGET_DLEQ) $(TARGET_SP_KEYS) $(TARGET_SP_PSBT) $(TARGET_MUSIG_PSBT) $(TARGET_NONCE_CACHE)
 	./$(TARGET_DERIV)
 	./$(TARGET_SS_PARSE)
 	./$(TARGET_SS_WHITELISTED)
@@ -428,8 +491,15 @@ run: $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REG
 	./$(TARGET_MNEMONIC_WORDS)
 	./$(TARGET_DESCRIPTOR_BRANCH)
 	./$(TARGET_SELF_TEST)
+	./$(TARGET_SILENTPAYMENTS)
+	./$(TARGET_DLEQ)
+	./$(TARGET_SP_KEYS)
+	./$(TARGET_SP_PSBT)
+	./$(TARGET_MUSIG_PSBT)
+	./$(TARGET_NONCE_CACHE)
 
 clean:
-	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(FUZZ_TARGETS) $(LIBWALLY) combined.o kern_wally.o secret_alloc.o $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ) $(CRYPTO_INIT_LIB) $(CRYPTO_INIT_OBJS)
+	rm -f $(TARGET_DERIV) $(TARGET_SS_PARSE) $(TARGET_SS_WHITELISTED) $(TARGET_SS_REGEN) $(TARGET_PSB) $(TARGET_REG_MATCH) $(TARGET_REG_PARSE) $(TARGET_PSBT_CLASSIFY) $(TARGET_MS_POLICY) $(TARGET_BIP322) $(TARGET_ESTIMATED_ENTROPY) $(TARGET_UTF8) $(TARGET_PIN_ATTEMPT) $(TARGET_KEF) $(TARGET_PSBT_PARSE) $(TARGET_FW_UPDATE) $(TARGET_DESC_VALIDATOR) $(TARGET_STORAGE) $(TARGET_KEY) $(TARGET_CRYPTO_UTILS) $(TARGET_PBKDF2) $(TARGET_BIP138_KEYS) $(TARGET_BIP138_BACKUP) $(TARGET_MULTISIG_SETUP) $(TARGET_ADDRESS_MATCH) $(TARGET_DESCRIPTOR_TEXT) $(TARGET_MESSAGE_SIGN) $(TARGET_WALLY_DESCRIPTOR) $(TARGET_SEEDQR) $(TARGET_MNEMONIC_WORDS) $(TARGET_DESCRIPTOR_BRANCH) $(TARGET_SELF_TEST) $(TARGET_SILENTPAYMENTS) $(TARGET_DLEQ) $(TARGET_SP_KEYS) $(TARGET_SP_PSBT) $(TARGET_MUSIG_PSBT) $(TARGET_NONCE_CACHE) $(FUZZ_TARGETS) $(LIBWALLY) combined.o kern_wally.o secret_alloc.o $(PSBT_KEY_OBJ) $(STORAGE_OBJ) $(PBKDF2_OBJ) $(CRYPTO_INIT_LIB) $(CRYPTO_INIT_OBJS)
+	rm -rf $(KERN_BIPQR_DIR)
 
-.PHONY: all run clean fuzz
+.PHONY: all run clean fuzz $(KERN_BIPQR)

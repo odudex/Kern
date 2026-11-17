@@ -49,13 +49,14 @@ set(WALLY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../components/libwally-core)
 add_library(wally STATIC
     ${WALLY_DIR}/kern_wally.c
     ../components/secure_memory/secret_alloc.c
-    ${WALLY_DIR}/upstream/src/amalgamation/combined.c
+    ${WALLY_DIR}/kern_combined.c
 )
 set_target_properties(wally PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(wally PUBLIC
     ../components/secure_memory/include
     ${WALLY_DIR}
     ${WALLY_DIR}/upstream/include
+    ${WALLY_DIR}/upstream/src/secp256k1/include
 )
 
 target_include_directories(wally PRIVATE
@@ -68,8 +69,6 @@ target_include_directories(wally PRIVATE
 
 target_compile_definitions(wally PRIVATE
     BUILD_MINIMAL=1
-    # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
-    BUILD_STANDARD_SECP=1
     ECMULT_WINDOW_SIZE=8
 )
 
@@ -156,6 +155,7 @@ set(APP_UTIL_SOURCES
 # --- Core application modules ---
 set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/debug_log.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/nvs_secure.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
@@ -168,6 +168,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/dice_mnemonic.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/miniscript_policy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/multisig_setup.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/key.c
@@ -175,6 +176,8 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip322.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_gate.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/musig_psbt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/nonce_cache.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_parse.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c
@@ -182,6 +185,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip138_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip138_backup.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/musig_leaves.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/address_match.c
@@ -190,6 +194,9 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/secp_hardening.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/crypto_init.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/dleq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/silent_payments.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/sp_psbt.c
     # Shared zlib adapter used by KEF and BBQr
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src/deflate_codec.c
     # bbqr (multi-part QR encoding)
@@ -303,6 +310,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/settings/firmware_update.c
     ${APP_PAGES_DIR}/settings/self_test_page.c
     # Shared pages
+    ${APP_PAGES_DIR}/bip_flow/bip388.c
+    ${APP_PAGES_DIR}/bip_flow/bip_flow.c
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
     ${APP_PAGES_DIR}/shared/kef_decrypt_page.c
@@ -373,6 +382,24 @@ target_link_libraries(lvgl PUBLIC
     ${SDL2_LIBRARIES}
 )
 
+# --- kern-bipqr: the firmware's Rust staticlib, built for the host. The
+# MuSig2 signer reaches its nonce cache sessions through it. ---
+set(KERN_BIPQR_TARGET_DIR ${CMAKE_CURRENT_BINARY_DIR}/kern_bipqr)
+set(KERN_BIPQR_LIB ${KERN_BIPQR_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}kern_bipqr${CMAKE_STATIC_LIBRARY_SUFFIX})
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+# Always runs: cargo tracks the crate sources and only relinks on a change
+add_custom_target(kern_bipqr_rust
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${KERN_BIPQR_TARGET_DIR}
+            ${CARGO_EXECUTABLE} build --release
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/Cargo.toml
+    BYPRODUCTS ${KERN_BIPQR_LIB}
+    COMMENT "Building kern-bipqr for the host"
+    VERBATIM
+)
+add_library(kern_bipqr STATIC IMPORTED GLOBAL)
+set_target_properties(kern_bipqr PROPERTIES IMPORTED_LOCATION ${KERN_BIPQR_LIB})
+add_dependencies(kern_bipqr kern_bipqr_rust)
+
 add_executable(kern_simulator
     ${SIM_SOURCES}
     ${STUB_SOURCES}
@@ -409,6 +436,9 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/video
+    # kern-bipqr C headers: the bipqr and bip_nonces_cache submodules
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/upstream/bipqr-ll/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip_nonces_cache/upstream/bip-nonces-cache-ll/include
     # LVGL
     ${LVGL_DIR}
     ${LVGL_DIR}/src
@@ -432,6 +462,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
     $<$<STREQUAL:${SIM_BOARD},wave_7b>:CONFIG_KERN_BOARD_WAVE_7B=1>
     $<$<STREQUAL:${SIM_BOARD},p4_pico>:CONFIG_KERN_BOARD_P4_PICO=1>
+    "CONFIG_KERN_BOARD_NAME=\"${SIM_BOARD}\""
 )
 
 target_compile_options(kern_simulator PRIVATE
@@ -472,6 +503,8 @@ target_link_libraries(kern_simulator PRIVATE
     Threads::Threads
     m
     wally
+    kern_bipqr
+    ${CMAKE_DL_LIBS}
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}
     ${MBEDX509_LIB}

@@ -3,6 +3,7 @@
 #include "pin.h"
 #include "../utils/secure_mem.h"
 #include "crypto_utils.h"
+#include "nonce_cache.h"
 #include "pin_attempt.h"
 #include "settings.h"
 #include "storage.h"
@@ -441,6 +442,10 @@ void pin_wipe_all(void) {
   esp_err_t err = settings_reset_all();
   if (err != ESP_OK)
     ESP_LOGE(TAG, "Settings reset failed: %s", esp_err_to_name(err));
+
+  // MuSig2 nonce cache sessions
+  if (!nonce_cache_erase())
+    ESP_LOGE(TAG, "Nonce cache erase failed");
 
   // Wipe flash storage. storage_wipe_flash() erases the partition directly, so
   // a failed mount does not stop it - log and go on rather than skipping it.

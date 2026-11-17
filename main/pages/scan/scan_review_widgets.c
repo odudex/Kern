@@ -14,7 +14,8 @@
 
 static void back_button_cb(lv_event_t *e);
 
-void scan_create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb) {
+void scan_create_sign_action_row(lv_obj_t *parent, const char *sign_label,
+                                 lv_event_cb_t sign_cb) {
   lv_obj_t *button_container = theme_create_button_row(parent, 10);
   if (!button_container)
     return;
@@ -24,7 +25,8 @@ void scan_create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb) {
   lv_obj_add_event_cb(back_button, back_button_cb, LV_EVENT_CLICKED, NULL);
   lv_obj_clear_flag(back_button, LV_OBJ_FLAG_EVENT_BUBBLE);
 
-  lv_obj_t *sign_button = theme_create_button(button_container, "Sign", false);
+  lv_obj_t *sign_button =
+      theme_create_button(button_container, sign_label, false);
   lv_obj_set_size(sign_button, LV_PCT(45), LV_SIZE_CONTENT);
   lv_obj_add_event_cb(sign_button, sign_cb, LV_EVENT_CLICKED, NULL);
   lv_obj_clear_flag(sign_button, LV_OBJ_FLAG_EVENT_BUBBLE);
@@ -142,6 +144,10 @@ void scan_create_review_note(lv_obj_t *parent, const char *text,
 }
 
 static void back_button_cb(lv_event_t *e) {
+  if (scan_ctx.psbt_failed_cb) {
+    scan_psbt_fail(SCAN_PSBT_DECLINED, "Declined", NULL, 0);
+    return;
+  }
   if (scan_ctx.return_cb) {
     scan_ctx.return_cb();
   }

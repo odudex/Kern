@@ -30,6 +30,13 @@ script_template_pubkey_matches_spk(const uint8_t *pubkey, size_t pubkey_len,
                                    const uint8_t *target_spk,
                                    size_t target_spk_len);
 
+/* True when `script` pushes the `key_len` byte key `key`, compressed or
+ * x-only. */
+KERN_WARN_UNUSED_RESULT bool script_template_pushes_key(const uint8_t *script,
+                                                        size_t script_len,
+                                                        const uint8_t *key,
+                                                        size_t key_len);
+
 KERN_WARN_UNUSED_RESULT char *
 script_template_address_from_spk(const unsigned char *script, size_t script_len,
                                  bool is_testnet);

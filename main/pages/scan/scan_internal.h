@@ -10,6 +10,7 @@
 #include "../../core/message_sign.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
+#include "scan.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -49,6 +50,12 @@ typedef struct {
   bool is_bip322;
 
   char *scanned_mnemonic;
+
+  /* Set by scan_review_psbt(): the signed PSBT, or why there is none, goes
+   * back to the caller instead of the export menu or an error dialog. */
+  scan_psbt_signed_cb_t psbt_signed_cb;
+  scan_psbt_failed_cb_t psbt_failed_cb;
+  void *psbt_user_data;
 } scan_ctx_t;
 
 extern scan_ctx_t scan_ctx;
@@ -57,9 +64,14 @@ extern scan_ctx_t scan_ctx;
 void scan_dismiss_progress(void);
 void scan_defer_with_progress(const char *title, const char *text,
                               lv_timer_cb_t cb);
+// Hands `failure` to the scan_review_psbt() caller, else shows `message` and
+// then calls local_cb (NULL stays on the current screen)
+void scan_psbt_fail(scan_psbt_failure_t failure, const char *message,
+                    void (*local_cb)(void), uint32_t timeout_ms);
 
 /* scan_review_widgets.c */
-void scan_create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb);
+void scan_create_sign_action_row(lv_obj_t *parent, const char *sign_label,
+                                 lv_event_cb_t sign_cb);
 lv_obj_t *scan_create_address_label(lv_obj_t *parent, const char *address,
                                     lv_color_t highlight, int32_t pad_left);
 lv_obj_t *scan_create_btc_value_row(lv_obj_t *parent, const char *prefix,
@@ -70,11 +82,17 @@ void scan_create_review_note(lv_obj_t *parent, const char *text,
 /* scan_psbt_review.c */
 bool scan_psbt_parse_base64(const char *base64_data);
 void scan_psbt_cleanup(void);
+// Runs the BIP375 signer pass on a PSBT carrying silent payment fields.
+// True when it failed and an error dialog took over.
+bool scan_psbt_complete_silent_payments(void);
 bool scan_psbt_check_mismatch(void);
 void scan_psbt_resume_review(bool offer_descriptor);
 
 /* scan_psbt_sign.c */
 void scan_psbt_sign_button_cb(lv_event_t *e);
+// Hands the unsigned PSBT holding our silent payment shares back, as a
+// signed one would go
+void scan_psbt_export_shares(void);
 void scan_qr_viewer_return_cb(void);
 void scan_export_destroy_menu(void);
 

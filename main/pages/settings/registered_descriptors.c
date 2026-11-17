@@ -18,6 +18,10 @@
 #include <wally_bip32.h>
 #include <wally_descriptor.h>
 
+// One entry per descriptor and per silent payment alias, none hidden
+_Static_assert(UI_MENU_MAX_ENTRIES >= 2 * REGISTRY_MAX_ENTRIES,
+               "Session Descriptors menu cannot list the whole registry");
+
 static lv_obj_t *rd_screen = NULL;
 static ui_menu_t *rd_menu = NULL;
 static ui_menu_t *action_menu = NULL;
@@ -27,6 +31,8 @@ static registered_descriptor_action_cb_t action_callback = NULL;
 static int pending_remove_index = -1;
 static int pending_deregister_index = -1;
 static int selected_descriptor_index = -1;
+// Index among the silent payment aliases, listed after the registry entries
+static int selected_sp_alias_index = -1;
 
 static void build_rd_menu(void);
 
@@ -224,10 +230,54 @@ static void deregister_action_cb(void) {
                              DIALOG_STYLE_OVERLAY);
 }
 
+static void sp_deregister_confirmed_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  int idx = selected_sp_alias_index;
+  if (!confirmed || idx < 0)
+    return;
+  if (!registry_sp_alias_deregister_at((size_t)idx)) {
+    dialog_show_error_timeout("Could not de-register the alias.\n"
+                              "The registration has not changed.",
+                              NULL, 0);
+    return;
+  }
+  selected_sp_alias_index = -1;
+  build_rd_menu();
+}
+
+static void sp_deregister_action_cb(void) {
+  dialog_show_danger_confirm("Delete this silent payment account alias "
+                             "from flash?",
+                             sp_deregister_confirmed_cb, NULL,
+                             DIALOG_STYLE_OVERLAY);
+}
+
+static void show_sp_action_menu(size_t sp_index) {
+  const char *alias = registry_sp_alias_get(sp_index);
+  if (!alias)
+    return;
+  selected_sp_alias_index = (int)sp_index;
+  ui_menu_hide(rd_menu);
+  if (action_menu) {
+    ui_menu_destroy(action_menu);
+    action_menu = NULL;
+  }
+  action_menu = ui_menu_create(rd_screen, alias, action_menu_back_cb);
+  if (!action_menu)
+    return;
+  ui_menu_add_entry(action_menu, "De-register and Delete",
+                    sp_deregister_action_cb);
+  ui_menu_show(action_menu);
+}
+
 static void show_action_menu(void) {
   int idx = ui_menu_get_selected(rd_menu);
   if (idx < 0)
     return;
+  if ((size_t)idx >= registry_count()) {
+    show_sp_action_menu((size_t)idx - registry_count());
+    return;
+  }
 
   const registry_entry_t *entry = registry_get((size_t)idx);
   if (!entry)
@@ -280,7 +330,8 @@ static void build_rd_menu(void) {
     return;
 
   size_t count = registry_count();
-  if (count == 0) {
+  size_t sp_count = registry_sp_alias_count();
+  if (count == 0 && sp_count == 0) {
     ui_menu_add_entry(rd_menu, "(no session descriptors)", disabled_entry_cb);
     ui_menu_set_entry_enabled(rd_menu, 0, false);
   } else {
@@ -290,6 +341,13 @@ static void build_rd_menu(void) {
         continue;
       ui_menu_add_entry(rd_menu, entry->label[0] ? entry->label : entry->id,
                         show_action_menu);
+    }
+    for (size_t i = 0; i < sp_count; i++) {
+      const char *alias = registry_sp_alias_get(i);
+      char text[REGISTRY_ID_MAX_LEN + 48];
+      snprintf(text, sizeof(text), "%s (Silent payment account%s)", alias,
+               registry_sp_alias_scan_key(alias) ? ", external scan key" : "");
+      ui_menu_add_entry(rd_menu, text, show_action_menu);
     }
   }
   ui_menu_show(rd_menu);
@@ -350,6 +408,7 @@ void registered_descriptors_page_destroy(void) {
   pending_remove_index = -1;
   pending_deregister_index = -1;
   selected_descriptor_index = -1;
+  selected_sp_alias_index = -1;
   return_callback = NULL;
   action_callback = NULL;
 }
