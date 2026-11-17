@@ -1473,6 +1473,30 @@ static void unregister_confirm_cb(bool confirmed, void *user_data) {
   show_response(&response);
 }
 
+// Our silent payment account under `alias`: our fingerprint, our spend key
+// and whether its scan key is not ours
+static void confirm_sp_unregister(const char *alias) {
+  char fingerprint[9];
+  uint32_t spend_path[SP_PATH_DEPTH];
+  char spend[64];
+  sp_account_key_path(wallet_is_testnet(), SP_SPEND_BRANCH, spend_path);
+  if (!key_get_fingerprint_hex(fingerprint) ||
+      !bip32_path_format(spend_path, SP_PATH_DEPTH, spend, sizeof(spend))) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+    return;
+  }
+  char msg[192];
+  snprintf(msg, sizeof(msg),
+           "Unregister silent payment keys?\n\nAlias: %s\nFingerprint: "
+           "%s\nSpend key: %s%s",
+           alias, fingerprint, spend,
+           registry_sp_alias_scan_key(alias)
+               ? "\nScan key: external, not this device's"
+               : "");
+  dialog_show_danger_confirm(msg, unregister_confirm_cb, NULL,
+                             DIALOG_STYLE_OVERLAY);
+}
+
 // The user confirms the alias and what it names before it is removed
 static void handle_unregister(void) {
   const char *alias = ctx.request->body.unregister_descriptor.descriptor_alias;
@@ -1481,6 +1505,8 @@ static void handle_unregister(void) {
     if (!descriptor_loader_confirm_unregister(entry, unregister_confirm_cb))
       show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
                           "Descriptor review failed");
+  } else if (registry_sp_alias_exists(alias)) {
+    confirm_sp_unregister(alias);
   } else {
     show_descriptor_error(BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS);
   }

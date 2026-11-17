@@ -291,6 +291,10 @@ bool registry_unregister(const char *alias) {
       return registry_entries[i].persisted ? registry_deregister_at(i)
                                            : registry_remove_at(i);
   }
+  for (size_t i = 0; i < sp_alias_len; i++) {
+    if (strncmp(sp_accounts[i].alias, alias, REGISTRY_ID_MAX_LEN) == 0)
+      return registry_sp_alias_deregister_at(i);
+  }
   return false;
 }
 

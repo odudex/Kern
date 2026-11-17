@@ -12,6 +12,7 @@
 #define SP_SPEND_BRANCH 0
 // BIP352 reserves label m = 0 for change
 #define SP_CHANGE_LABEL 0
+#define SP_PATH_DEPTH 5
 
 // BIP352 account keys of the loaded seed, account 0'.
 // SENSITIVE: wipe with sp_keys_wipe() once used.
@@ -27,6 +28,10 @@ struct sp_keys {
 KERN_WARN_UNUSED_RESULT bool sp_keys_derive(bool is_testnet,
                                             struct sp_keys *out);
 void sp_keys_wipe(struct sp_keys *keys);
+
+// The path of our account key on `branch`: m/352'/coin'/0'/branch'/0
+void sp_account_key_path(bool is_testnet, uint32_t branch,
+                         uint32_t path[SP_PATH_DEPTH]);
 
 // The keys of our spend key's account with `scan_secret` as its scan key, or
 // with ours when NULL.
