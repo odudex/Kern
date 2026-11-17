@@ -1,9 +1,10 @@
 idf_component_register(SRCS
                        "kern_wally.c"
-                       "upstream/src/amalgamation/combined.c"
+                       "kern_combined.c"
                        INCLUDE_DIRS
                        "."
                        "upstream/include"
+                       "upstream/src/secp256k1/include"
                        PRIV_INCLUDE_DIRS
                        "."
                        "upstream"
@@ -13,7 +14,7 @@ idf_component_register(SRCS
                        PRIV_REQUIRES mbedtls secure_memory)
 
 set_source_files_properties(
-    upstream/src/amalgamation/combined.c
+    kern_combined.c
     PROPERTIES COMPILE_FLAGS
     "-Wno-error=maybe-uninitialized -Wno-error=array-parameter"
     )
@@ -28,5 +29,6 @@ target_compile_definitions(${COMPONENT_TARGET} PUBLIC "-DWALLY_ABI_NO_ELEMENTS")
 # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_STANDARD_SECP=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_PSA_CRYPTO_H")
-# The secp256k1 module set is combined.c's.
+# The secp256k1 module set is combined.c's, plus the BIP352 silentpayments
+# module kern_combined.c enables.
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DECMULT_WINDOW_SIZE=8")
