@@ -302,7 +302,7 @@ A locked device keeps the bootloader it was locked with. SD updates only write t
 
 Signing a bootloader with all three keys means taking keys 1 and 2 out of cold storage. Doing that for every release would defeat the reason they are cold. So the bootloader is built, signed once in a key ceremony, and committed; every release after that ships those same bytes. Only the app is built and signed per release, with key 0.
 
-> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run, the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) and the release-script changes exist, and freeze 1 is published for all four variants (tag `bootloader-1`). The web flasher handles a locked device, verified on a v1.x chip; v3.1 and v3.2 chips are an open question (below). The CI checks described below are planned and not implemented yet.
+> **Status:** the bootloader component (`bootloader_components/secure_boot_opt_in`), the `sdkconfig.secure` overlay, the dry run, the freeze tooling (`just bootloader-stage`, `scripts/freeze_bootloader.sh`, `just bootloader-import`) and the release-script changes exist, and freeze 1 is published for all four variants (tag `bootloader-1`). The web flasher handles a locked device, verified on a v1.x chip; chips of revision v3.1 and later cannot be locked yet (below). The CI checks exist (Section 4d).
 
 **Variants.** The bootloader does not depend on the display, touch or camera, so most boards share one. Two settings split it: the chip revision range (v1.x and v3.x need different builds, and the v3 bootloader runs a different CPU clock) and the flash mode (wave_35 uses DIO, the rest QIO). That gives four:
 
@@ -459,11 +459,11 @@ Developer (air-gapped):
   5. Publish the signed release
 ```
 
-Checks on the frozen bootloaders, none of which needs a secret:
+Checks on the frozen bootloaders, none of which needs a secret. `scripts/check_bootloaders.sh` runs them:
 
-- Every `bootloader-signed.bin` verifies against all three public keys, and the image before its signature sector hashes to the manifest value.
-- When CI's ESP-IDF version equals the manifest's, the bootloader built from the freeze tag matches the frozen one byte for byte. This is what ties the committed binaries to source.
-- On every build with `sdkconfig.secure`, a mismatch between the built and the frozen bootloader is reported, as in `release.sh`.
+- Every `bootloader-signed.bin` verifies against all three public keys, the image before its signature sector hashes to the manifest value, and `SHA256SUMS` matches the files. This is the script's default mode, run for every commit by `scripts/ci-checks.sh`.
+- When CI's ESP-IDF version equals the manifest's, the bootloader built from the freeze commit matches the frozen one byte for byte (`--reproduce`, which checks that commit out into a temporary worktree). This is what ties the committed binaries to source. A mismatch fails the `frozen bootloaders` job of the all-builds workflow.
+- The bootloader the current commit builds is compared with the frozen one, and a difference is reported as a warning, as in `release.sh` (`--drift`, same job).
 
 Signing in CI with a key held as a repository secret would be more convenient and is not an option here: a compromised pipeline or account could then sign firmware.
 

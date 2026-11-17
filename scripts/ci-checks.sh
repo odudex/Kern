@@ -19,10 +19,14 @@ echo "=== format check ==="
 echo "=== tests ==="
 "$SCRIPT_DIR/test.sh"
 
-echo "=== build wave_4b ==="
 # Local dev: load ESP-IDF if idf.py isn't already on PATH. In CI the job
 # sources export.sh once before the per-commit loop, so this is a no-op.
 command -v idf.py >/dev/null || . "${IDF_PATH:-$HOME/esp/esp-idf}/export.sh"
+
+echo "=== frozen bootloaders ==="
+"$SCRIPT_DIR/check_bootloaders.sh"
+
+echo "=== build wave_4b ==="
 idf.py \
     -B build_wave_4b \
     -D SDKCONFIG=build_wave_4b/sdkconfig \

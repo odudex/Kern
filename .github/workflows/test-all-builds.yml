@@ -58,6 +58,28 @@ jobs:
         if-no-files-found: error
         retention-days: 30
 
+  # The frozen bootloaders (kern_secure_boot/bootloaders/) against the public
+  # keys, against a rebuild from their freeze commit, and against this commit.
+  bootloaders:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.1.1
+    name: frozen bootloaders
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+        # --reproduce checks the freeze commits out of this history
+        fetch-depth: 0
+    - name: Rebuild the frozen bootloaders from their freeze commits
+      run: |
+        git config --global --add safe.directory '*'
+        . $IDF_PATH/export.sh
+        ./scripts/check_bootloaders.sh --reproduce
+    - name: Report bootloader drift at this commit
+      run: |
+        . $IDF_PATH/export.sh
+        ./scripts/check_bootloaders.sh --drift
 
   deploy-site:
     needs: [build]
