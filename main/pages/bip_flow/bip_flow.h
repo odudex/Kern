@@ -9,7 +9,6 @@
 
 #include "../../core/descriptor_validator.h"
 #include <bipqr.h>
-#include <wally_psbt.h>
 
 #define BIP_FLOW_MAGIC "BIPXXX"
 #define BIP_FLOW_MAGIC_LEN 6
@@ -76,59 +75,15 @@ bip_flow_register_error(descriptor_validation_result_t result) {
     return BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
   }
 }
-// The error a descriptor body needing a capability Kern does not advertise
-// answers with, 0 when Kern takes it: a musig() key gets 0x0F
-static inline uint8_t
-bip_flow_descriptor_body_error(const bipqr_descriptor_body *body) {
-  if (!body || body->tag == BIPQR_DESCRIPTOR_SP_KEYS)
-    return 0;
-  // A wallet policy names its musig() keys in the policy, as musig(@0,@1)
-  const char *text = body->tag == BIPQR_DESCRIPTOR_BIP380
-                         ? body->value.bip380
-                         : body->value.bip388.policy;
-  return text && strstr(text, "musig(")
-             ? BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION
-             : 0;
-}
-
 // The error a request needing a capability Kern does not advertise answers
-// with, 0 when Kern takes it: Nonce Preparation, or a descriptor body
-// bip_flow_descriptor_body_error refuses
+// with, 0 when Kern takes it: Nonce Preparation
 static inline uint8_t bip_flow_unsupported_error(const bipqr_request *request) {
   switch (request->message_type) {
   case BIPQR_MESSAGE_NONCE_PREPARATION:
     return BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION;
-  case BIPQR_MESSAGE_REGISTER_DESCRIPTOR:
-    return bip_flow_descriptor_body_error(
-        request->body.register_descriptor.descriptor);
-  case BIPQR_MESSAGE_ADDRESS_VERIFICATION:
-    return bip_flow_descriptor_body_error(
-        request->body.verify_address.descriptor);
-  case BIPQR_MESSAGE_SIGNING:
-    for (size_t i = 0; i < request->body.sign.descriptors.len; i++) {
-      uint8_t error = bip_flow_descriptor_body_error(
-          request->body.sign.descriptors.ptr[i].body);
-      if (error)
-        return error;
-    }
-    return 0;
   default:
     return 0;
   }
-}
-
-// True for a PSBT needing a capability Kern does not advertise: the BIP-373
-// participant keys of a MuSig2 key
-static inline bool bip_flow_psbt_is_unsupported(const struct wally_psbt *psbt) {
-  for (size_t i = 0; i < psbt->num_inputs; i++) {
-    if (psbt->inputs[i].musig2_pubkeys.num_items)
-      return true;
-  }
-  for (size_t i = 0; i < psbt->num_outputs; i++) {
-    if (psbt->outputs[i].musig2_pubkeys.num_items)
-      return true;
-  }
-  return false;
 }
 
 void bip_flow_start(lv_obj_t *parent, const uint8_t *data, size_t len,

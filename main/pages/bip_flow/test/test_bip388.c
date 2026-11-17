@@ -58,6 +58,8 @@ static void test_expanded(void) {
                     KEYS, 1,
                     "wsh(or_d(pk(" KEY_A "/<0;1>/*),and_v(v:pk(" KEY_A
                     "/<2;3>/*),older(10))))");
+  expect_descriptor("/** after musig() is expanded", "tr(musig(@0,@1)/**)",
+                    KEYS, 2, "tr(musig(" KEY_A "," KEY_B ")/<0;1>/*)");
   expect_descriptor("keys are taken by index",
                     "wsh(sortedmulti(1,@1/**,@0/**))", KEYS, 2,
                     "wsh(sortedmulti(1," KEY_B "/<0;1>/*," KEY_A "/<0;1>/*))");
