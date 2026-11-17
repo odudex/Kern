@@ -50,6 +50,15 @@ bool sp_keys_derive(bool is_testnet, struct sp_keys *out) {
 
 void sp_keys_wipe(struct sp_keys *keys) { secure_memzero(keys, sizeof(*keys)); }
 
+bool sp_path_on_branch(const uint32_t *path, size_t len, bool is_testnet,
+                       uint32_t branch) {
+  return path && len == SP_PATH_DEPTH &&
+         path[0] == (BIP32_INITIAL_HARDENED_CHILD | SP_PURPOSE) &&
+         path[1] == (BIP32_INITIAL_HARDENED_CHILD | sp_coin(is_testnet)) &&
+         path[2] == (BIP32_INITIAL_HARDENED_CHILD | SP_ACCOUNT) &&
+         path[3] == (BIP32_INITIAL_HARDENED_CHILD | branch);
+}
+
 bool sp_address_alloc(const unsigned char *scan_pubkey,
                       const unsigned char *spend_pubkey, bool is_testnet,
                       char **out) {

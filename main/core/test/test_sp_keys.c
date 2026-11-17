@@ -80,7 +80,34 @@ static void test_address(void) {
   free(address);
 }
 
+#define H(n) ((n) | BIP32_INITIAL_HARDENED_CHILD)
+
+static void test_path_on_branch(void) {
+  const uint32_t scan_0[] = {H(352), H(0), H(0), H(1), 0};
+  const uint32_t scan_5[] = {H(352), H(0), H(0), H(1), 5};
+  const uint32_t unhardened_purpose[] = {352, H(0), H(0), H(1), 0};
+  const uint32_t spend[] = {H(352), H(0), H(0), H(0), 0};
+
+  TEST("sp_path_on_branch matches the scan branch at any index");
+  if (sp_path_on_branch(scan_0, 5, false, SP_SCAN_BRANCH) &&
+      sp_path_on_branch(scan_5, 5, false, SP_SCAN_BRANCH))
+    PASS();
+  else
+    FAIL("scan path rejected");
+
+  TEST("sp_path_on_branch rejects other coins, purposes, depths, branches");
+  if (!sp_path_on_branch(scan_0, 5, true, SP_SCAN_BRANCH) &&
+      !sp_path_on_branch(unhardened_purpose, 5, false, SP_SCAN_BRANCH) &&
+      !sp_path_on_branch(scan_0, 4, false, SP_SCAN_BRANCH) &&
+      !sp_path_on_branch(spend, 5, false, SP_SCAN_BRANCH))
+    PASS();
+  else
+    FAIL("foreign path accepted");
+}
+
 int main(void) {
+  test_path_on_branch();
+
   if (!key_load_from_mnemonic(TEST_MNEMONIC, NULL, false)) {
     printf("FAIL: could not load the test mnemonic\n");
     return 1;

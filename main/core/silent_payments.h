@@ -28,6 +28,10 @@ KERN_WARN_UNUSED_RESULT bool sp_keys_derive(bool is_testnet,
                                             struct sp_keys *out);
 void sp_keys_wipe(struct sp_keys *keys);
 
+// True when `path` is m/352'/coin'/0'/branch'/x, for any x.
+bool sp_path_on_branch(const uint32_t *path, size_t len, bool is_testnet,
+                       uint32_t branch);
+
 // The sp1/tsp1 address of a scan and spend public key pair.
 // On success *out must be freed with free().
 KERN_WARN_UNUSED_RESULT bool sp_address_alloc(const unsigned char *scan_pubkey,
