@@ -12,7 +12,9 @@ typedef struct {
 } bip322_request_t;
 
 // True if the PSBT carries the PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE (0x09)
-// global field, marking it as a BIP322 message-signing request.
+// global field over a BIP322 to_sign transaction, marking it as a BIP322
+// message-signing request. A nonce cache session uses the same key on a
+// regular transaction.
 KERN_WARN_UNUSED_RESULT bool bip322_detect(const struct wally_psbt *psbt);
 
 // Validates a BIP322 to_sign PSBT: structure (version-0 tx, single input at
