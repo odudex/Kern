@@ -8,20 +8,26 @@
 #include "../../core/settings.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
+#include "../../qr/encoder.h"
 #include "../../qr/parser.h"
 #include "../../qr/viewer.h"
+#include "../../ui/address_label.h"
 #include "../../ui/dialog.h"
+#include "../../ui/theme.h"
+#include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
 #include "bip388.h"
 #include <bipqr.h>
 #include <esp_app_desc.h>
+#include <inttypes.h>
 #include <sdkconfig.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
 #include <wally_descriptor.h>
@@ -40,6 +46,31 @@ typedef struct {
 } bip_flow_ctx_t;
 
 static bip_flow_ctx_t ctx;
+// The verified address and its BIP-321 URI, both from malloc()
+static char *pending_verified_address = NULL;
+static char *pending_verified_uri = NULL;
+// What the verified address is, shown under the title
+static char pending_verify_caption[REGISTRY_ID_MAX_LEN + 32];
+static lv_obj_t *verify_address_detail = NULL;
+static lv_obj_t *verify_address_approve_btn = NULL;
+
+static void destroy_verify_address_detail(void) {
+  if (verify_address_detail) {
+    lv_obj_del(verify_address_detail);
+    verify_address_detail = NULL;
+  }
+  verify_address_approve_btn = NULL;
+}
+
+static void clear_pending_verify(void) {
+  destroy_verify_address_detail();
+  free(pending_verified_address);
+  pending_verified_address = NULL;
+  free(pending_verified_uri);
+  pending_verified_uri = NULL;
+  pending_verify_caption[0] = '\0';
+}
+
 bool bip_flow_can_handle(const uint8_t *data, size_t len) {
   return data && len >= 6 && memcmp(data, "BIP", 3) == 0;
 }
@@ -53,6 +84,7 @@ static void cleanup_request(void) {
 
 static void return_from_response(void) {
   qr_viewer_page_destroy();
+  clear_pending_verify();
   cleanup_request();
   if (ctx.return_cb)
     ctx.return_cb();
@@ -118,6 +150,17 @@ static void show_error_response(uint8_t error, const char *message) {
   bipqr_response response;
   fill_error_response(&response, error, message);
   show_response(&response);
+}
+
+// Kern keeps its registrations on the device and issues no proof of
+// registration, so a proof it receives is not one of its own
+static void show_foreign_proof_error(void) {
+  show_error_response(BIPQR_RESPONSE_ERROR_INVALID_PROOF,
+                      "Kern issues no proof of registration");
+}
+
+static bool wallet_is_testnet(void) {
+  return wallet_get_network() == WALLET_NETWORK_TESTNET;
 }
 
 static void fill_device_fields(const char **vendor, const char **model,
@@ -565,6 +608,290 @@ static void handle_register(void) {
   free(descriptor);
 }
 
+// The registry entry of `alias`, the session registering `body` under it
+// when the alias is unknown. Returns 0 or the error code to answer with.
+static uint8_t resolve_descriptor(const char *alias,
+                                  const bipqr_descriptor_body *body,
+                                  const registry_entry_t **entry_out) {
+  *entry_out = registry_find_by_id(alias);
+  if (*entry_out)
+    return 0;
+  if (!body)
+    return BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS;
+  char *descriptor = request_descriptor_alloc(body);
+  if (!descriptor)
+    return request_descriptor_error(body);
+  wallet_network_t network;
+  if (descriptor_infer_network(descriptor, &network) &&
+      network != wallet_get_network()) {
+    free(descriptor);
+    return BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH;
+  }
+  bool added =
+      registry_add_from_string(alias, descriptor, STORAGE_FLASH, false);
+  free(descriptor);
+  *entry_out = added ? registry_find_by_id(alias) : NULL;
+  return *entry_out ? 0 : BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
+}
+
+static void show_descriptor_error(uint8_t error) {
+  switch (error) {
+  case BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS:
+    show_error_response(error, "Unknown descriptor alias");
+    break;
+  case BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH:
+    show_error_response(error, "Descriptor network mismatch");
+    break;
+  case BIPQR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM:
+    show_error_response(error, "Descriptor form not taken here");
+    break;
+  case BIPQR_RESPONSE_ERROR_INTERNAL:
+    show_error_response(error, "Out of memory");
+    break;
+  default:
+    show_error_response(error, "Descriptor registration failed");
+    break;
+  }
+}
+
+// The address at `path`, the path under the descriptor: the position in its
+// <a;b> tuple when it has several paths, then the index when it is ranged
+static bool address_from_entry_path(const registry_entry_t *entry,
+                                    const bipqr_path *path, char **out) {
+  uint32_t features = 0;
+  if (wally_descriptor_get_features(entry->desc, &features) != WALLY_OK)
+    return false;
+  bool multipath = entry->num_paths > 1;
+  bool ranged = features & WALLY_MS_IS_RANGED;
+  size_t want = (multipath ? 1 : 0) + (ranged ? 1 : 0);
+  if (path->len != want)
+    return false;
+  for (size_t i = 0; i < want; i++) {
+    if (bip32_path_is_hardened(path->ptr[i]))
+      return false;
+  }
+  uint32_t multi_index = multipath ? path->ptr[0] : 0;
+  uint32_t child_num = ranged ? path->ptr[want - 1] : 0;
+  if (multi_index >= entry->num_paths)
+    return false;
+  return wally_descriptor_to_address(entry->desc, 0, multi_index, child_num, 0,
+                                     out) == WALLY_OK;
+}
+
+static bool address_to_spk(const char *address, bool is_testnet,
+                           unsigned char *script, size_t script_len,
+                           size_t *written) {
+  return wally_addr_segwit_to_bytes(address, is_testnet ? "tb" : "bc", 0,
+                                    script, script_len, written) == WALLY_OK ||
+         wally_address_to_scriptpubkey(address,
+                                       is_testnet
+                                           ? WALLY_NETWORK_BITCOIN_TESTNET
+                                           : WALLY_NETWORK_BITCOIN_MAINNET,
+                                       script, script_len, written) == WALLY_OK;
+}
+
+// 0 when `given` pays the script of `derived` on the wallet network, else the
+// error to answer: Kern signs for the other network on another setting and
+// never for regtest
+static uint8_t address_error(const char *given, const char *derived) {
+  bool testnet = wallet_is_testnet();
+  unsigned char given_script[128];
+  unsigned char derived_script[128];
+  size_t given_len = 0;
+  size_t derived_len = 0;
+  if (!address_to_spk(given, testnet, given_script, sizeof(given_script),
+                      &given_len))
+    return address_to_spk(given, !testnet, given_script, sizeof(given_script),
+                          &given_len) ||
+                   wally_addr_segwit_to_bytes(given, "bcrt", 0, given_script,
+                                              sizeof(given_script),
+                                              &given_len) == WALLY_OK
+               ? BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH
+               : BIPQR_RESPONSE_ERROR_ADDRESS_MISMATCH;
+  bool same = address_to_spk(derived, testnet, derived_script,
+                             sizeof(derived_script), &derived_len) &&
+              given_len == derived_len &&
+              memcmp(given_script, derived_script, given_len) == 0;
+  return same ? 0 : BIPQR_RESPONSE_ERROR_ADDRESS_MISMATCH;
+}
+
+static void verify_address_approve_enable_cb(lv_timer_t *timer) {
+  (void)timer;
+  if (verify_address_approve_btn)
+    lv_obj_clear_state(verify_address_approve_btn, LV_STATE_DISABLED);
+}
+
+static void verify_address_done_cb(lv_event_t *e) {
+  (void)e;
+  destroy_verify_address_detail();
+  bipqr_response response;
+  fill_response_header(&response);
+  response.body.address_uri.uri = pending_verified_uri;
+  show_response(&response);
+}
+
+static void show_verify_address_detail(void) {
+  destroy_verify_address_detail();
+
+  int32_t pad = theme_default_padding();
+  int32_t scr_w = theme_screen_width();
+  bool landscape = theme_is_landscape();
+  int32_t square_size = theme_min_dim() * 55 / 100;
+
+  verify_address_detail = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(verify_address_detail, LV_PCT(100), LV_PCT(100));
+  theme_apply_screen(verify_address_detail);
+  lv_obj_set_style_pad_all(verify_address_detail, pad, 0);
+  lv_obj_set_flex_flow(verify_address_detail, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(verify_address_detail, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(verify_address_detail, pad, 0);
+
+  lv_obj_t *title =
+      theme_create_label(verify_address_detail, "Verify Address", false);
+  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+
+  lv_obj_t *caption =
+      theme_create_label(verify_address_detail, pending_verify_caption, true);
+  lv_obj_set_width(caption, LV_PCT(95));
+  lv_label_set_long_mode(caption, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+
+  lv_obj_t *content = lv_obj_create(verify_address_detail);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, LV_PCT(100), LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(content,
+                       landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(content, pad, 0);
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+
+  char *upper = qr_bech32_to_upper(pending_verified_address);
+  const char *qr_payload = upper ? upper : pending_verified_address;
+  lv_obj_t *qr_container = theme_create_qr_container(content, square_size, 15);
+  qr_create_optimal(qr_container, square_size - 30, qr_payload);
+  qr_viewer_attach_fullscreen(qr_container, qr_payload, "Verify Address");
+  free(upper);
+
+  lv_obj_t *addr_label =
+      address_label_create(content, pending_verified_address);
+  if (landscape)
+    lv_obj_set_width(addr_label, scr_w - 2 * pad - square_size - pad);
+  else
+    lv_obj_set_width(addr_label, LV_PCT(95));
+
+  verify_address_approve_btn = lv_btn_create(verify_address_detail);
+  lv_obj_set_size(verify_address_approve_btn, LV_PCT(60), LV_SIZE_CONTENT);
+  theme_apply_touch_button(verify_address_approve_btn, true);
+  lv_obj_add_state(verify_address_approve_btn, LV_STATE_DISABLED);
+  lv_obj_t *approve_lbl = lv_label_create(verify_address_approve_btn);
+  lv_label_set_text(approve_lbl, "Done");
+  lv_obj_center(approve_lbl);
+  theme_apply_button_label(approve_lbl, true);
+  lv_obj_add_event_cb(verify_address_approve_btn, verify_address_done_cb,
+                      LV_EVENT_CLICKED, NULL);
+  lv_timer_t *enable_timer =
+      lv_timer_create(verify_address_approve_enable_cb, 500, NULL);
+  lv_timer_set_repeat_count(enable_timer, 1);
+}
+
+// Shows `address` (malloc()ed, taken over) under `caption` for the user to
+// check, then answers with `uri_prefix` and the address
+static void show_verified_address(char *address, const char *uri_prefix,
+                                  const char *caption) {
+  size_t uri_len = strlen(uri_prefix) + strlen(address) + 1;
+  pending_verified_address = address;
+  snprintf(pending_verify_caption, sizeof(pending_verify_caption), "%s",
+           caption);
+  pending_verified_uri = malloc(uri_len);
+  if (!pending_verified_uri) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    return;
+  }
+  snprintf(pending_verified_uri, uri_len, "%s%s", uri_prefix, address);
+  debug_log_event("bip_flow verify show_detail");
+  show_verify_address_detail();
+}
+
+// "<alias> receive #7", "<alias> change #3", "<alias> path 2/5": the address
+// `path` names under the descriptor of `entry`, as address_from_entry_path
+// reads it
+static void descriptor_address_caption(const char *alias,
+                                       const registry_entry_t *entry,
+                                       const bipqr_path *path, char *out,
+                                       size_t out_len) {
+  bool multipath = entry->num_paths > 1;
+  bool ranged = path->len > (multipath ? 1 : 0);
+  uint32_t position = multipath ? path->ptr[0] : 0;
+  uint32_t index = ranged ? path->ptr[path->len - 1] : 0;
+  const char *branch = NULL;
+  if (multipath && position == 0)
+    branch = "receive";
+  else if (multipath && position == 1)
+    branch = "change";
+
+  if (branch && ranged)
+    snprintf(out, out_len, "%s %s #%" PRIu32, alias, branch, index);
+  else if (branch)
+    snprintf(out, out_len, "%s %s", alias, branch);
+  else if (multipath && ranged)
+    snprintf(out, out_len, "%s path %" PRIu32 "/%" PRIu32, alias, position,
+             index);
+  else if (multipath)
+    snprintf(out, out_len, "%s path %" PRIu32, alias, position);
+  else if (ranged)
+    snprintf(out, out_len, "%s #%" PRIu32, alias, index);
+  else
+    snprintf(out, out_len, "%s", alias);
+}
+
+static void verify_descriptor_address(const bipqr_verify_address *req) {
+  const registry_entry_t *entry = NULL;
+  uint8_t error =
+      resolve_descriptor(req->descriptor_alias, req->descriptor, &entry);
+  if (error) {
+    show_descriptor_error(error);
+    return;
+  }
+  char *derived = NULL;
+  if (!address_from_entry_path(entry, &req->derivation_path, &derived) ||
+      !derived) {
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Path does not fit the descriptor");
+    return;
+  }
+  char *address = strdup(derived);
+  wally_free_string(derived);
+  if (!address) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    return;
+  }
+  uint8_t mismatch = req->address ? address_error(req->address, address) : 0;
+  if (mismatch) {
+    free(address);
+    show_error_response(mismatch,
+                        mismatch == BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH
+                            ? "Address is for another network"
+                            : "Address mismatch");
+    return;
+  }
+  char caption[sizeof(pending_verify_caption)];
+  descriptor_address_caption(req->descriptor_alias, entry,
+                             &req->derivation_path, caption, sizeof(caption));
+  show_verified_address(address, "bitcoin:", caption);
+}
+
+static void handle_verify(void) {
+  debug_log_event("bip_flow handle_verify");
+  const bipqr_verify_address *req = &ctx.request->body.verify_address;
+  if (req->proof.ptr) {
+    show_foreign_proof_error();
+    return;
+  }
+  verify_descriptor_address(req);
+}
+
 static void dispatch_request(void) {
   debug_logf("bip_flow dispatch message_type=%d", ctx.request->message_type);
   uint8_t unsupported = bip_flow_unsupported_error(ctx.request);
@@ -585,6 +912,9 @@ static void dispatch_request(void) {
   case BIPQR_MESSAGE_REGISTER_DESCRIPTOR:
     handle_register();
     break;
+  case BIPQR_MESSAGE_ADDRESS_VERIFICATION:
+    handle_verify();
+    break;
   default:
     show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
                         "Unsupported request");
@@ -598,6 +928,7 @@ void bip_flow_start(lv_obj_t *parent, const uint8_t *data, size_t len,
   ctx.parent = parent;
   ctx.return_cb = return_cb;
   cleanup_request();
+  clear_pending_verify();
   if (!bip_flow_read_request_header(data, len, &ctx.header)) {
     debug_log_event("bip_flow unreadable_request");
     show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
