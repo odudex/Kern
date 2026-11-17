@@ -922,6 +922,52 @@ static void test_aliases(void) {
   stub_storage_reset();
 }
 
+static void test_unregister(void) {
+  char descriptor[256];
+  registry_clear();
+  stub_storage_reset();
+  check("unregister fixture builds",
+        build_wpkh("m/84'/0'/2'", descriptor, sizeof(descriptor)));
+  check("an unknown alias is not unregistered",
+        !registry_unregister("Nope") && stub_deletes == 0);
+
+  check("session entry adds",
+        registry_add_from_string("Session", descriptor, STORAGE_FLASH, false));
+  check("unregistering a session entry removes it without touching flash",
+        registry_unregister("Session") && registry_count() == 0 &&
+            !registry_find_by_id("Session") && stub_deletes == 0);
+
+  check(
+      "the descriptor registers under two aliases",
+      registry_add_from_string("ColdVault", descriptor, STORAGE_FLASH, true) &&
+          registry_add_from_string("Second", descriptor, STORAGE_FLASH, true));
+  stub_delete_fail = true;
+  check("a failed deletion keeps the registration",
+        !registry_unregister("ColdVault") && registry_find_by_id("ColdVault") &&
+            stub_find(STORAGE_FLASH, "d_59e7365e4ef71a36.bip138"));
+  stub_delete_fail = false;
+  check("unregistering one alias deletes only its backup",
+        registry_unregister("ColdVault") &&
+            strcmp(stub_last_deleted, "d_59e7365e4ef71a36.bip138") == 0 &&
+            !stub_find(STORAGE_FLASH, "d_59e7365e4ef71a36.bip138") &&
+            stub_find(STORAGE_FLASH, "d_182e7623398229ec.bip138"));
+  check("the other alias of the descriptor stays registered",
+        registry_count() == 1 && !registry_find_by_id("ColdVault") &&
+            registry_find_by_id("Second") &&
+            registry_find_by_id("Second")->persisted);
+  registry_init(false);
+  check("after a restart only the other alias loads",
+        registry_count() == 1 && !registry_find_by_id("ColdVault") &&
+            registry_find_by_id("Second"));
+  check("the other alias unregisters too",
+        registry_unregister("Second") &&
+            !stub_find(STORAGE_FLASH, "d_182e7623398229ec.bip138"));
+  registry_init(false);
+  check("nothing returns after a restart", registry_count() == 0);
+  registry_clear();
+  stub_storage_reset();
+}
+
 #define OTHER_MNEMONIC "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong"
 #define SHARED_ALIAS "Liana-u768v50p"
 
@@ -1131,6 +1177,7 @@ int main(void) {
   test_overwrite_and_duplicates();
   test_deregister();
   test_aliases();
+  test_unregister();
   test_two_seeds_one_alias();
   test_many_origins();
   key_unload();

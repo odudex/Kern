@@ -358,10 +358,9 @@ static const char *descriptor_script_type(struct wally_descriptor *descriptor) {
   return name;
 }
 
-static bool extract_descriptor_info(struct wally_descriptor *descriptor,
-                                    const char *descriptor_str,
-                                    int our_key_index,
-                                    descriptor_info_t *info) {
+bool descriptor_info_extract(struct wally_descriptor *descriptor,
+                             const char *descriptor_str, int our_key_index,
+                             descriptor_info_t *info) {
   memset(info, 0, sizeof(descriptor_info_t));
 
   /* static_checks rejects more keys than letter IDs; this guards keys[]. */
@@ -714,7 +713,7 @@ static void show_keyed_info(struct wally_descriptor *descriptor,
              purpose, script_name);
   }
 
-  bool have_info = extract_descriptor_info(
+  bool have_info = descriptor_info_extract(
       descriptor, current_ctx->descriptor_str, key_index, &current_ctx->info);
   current_ctx->descriptor = descriptor;
   current_ctx->key_index = key_index;
@@ -952,7 +951,7 @@ void descriptor_validate_and_load_persistent(
 // Watch-only: extract info and show the "Load?" dialog, skipping the xpub
 // verification and PSB warning that the keyed path performs.
 static void watch_only_show_info(struct wally_descriptor *descriptor) {
-  bool have_info = extract_descriptor_info(
+  bool have_info = descriptor_info_extract(
       descriptor, current_ctx->descriptor_str, -1, &current_ctx->info);
   wally_descriptor_free(descriptor);
   if (!have_info) {

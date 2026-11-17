@@ -85,6 +85,90 @@ static void test_read_header(void) {
                   9);
 }
 
+/* BIP-377 test vectors: unregister_descriptor_request and
+ * unregister_descriptor_response for the alias "main", request id 0x0001 */
+static const uint8_t UNREGISTER_REQUEST[] = {0x42, 0x49, 0x50, 0x33, 0x37,
+                                             0x37, 0x01, 0x07, 0x00, 0x01,
+                                             0x04, 0x6d, 0x61, 0x69, 0x6e};
+static const uint8_t UNREGISTER_RESPONSE[] = {0x42, 0x49, 0x50, 0x33, 0x37,
+                                              0x37, 0x01, 0x87, 0x00, 0x01,
+                                              0x04, 0x6d, 0x61, 0x69, 0x6e};
+
+static void test_unregister_request(void) {
+  bip377_header header;
+  const bip377_request *request = NULL;
+  void *mem = NULL;
+  TEST("an Unregister Descriptor request header is read");
+  if (bip377_request_header(UNREGISTER_REQUEST, sizeof(UNREGISTER_REQUEST),
+                            &header) &&
+      header.version == 0x01 && header.message_type == 0x07 &&
+      header.id[0] == 0x00 && header.id[1] == 0x01)
+    PASS();
+  else
+    FAIL("header fields differ");
+
+  TEST("an Unregister Descriptor request decodes to its alias");
+  if (decode_request(UNREGISTER_REQUEST, sizeof(UNREGISTER_REQUEST), &mem,
+                     &request) == BIP377_OK &&
+      request->message_type == 0x07 && request->id[0] == 0x00 &&
+      request->id[1] == 0x01 &&
+      strcmp(request->body.unregister_descriptor.descriptor_alias, "main") == 0)
+    PASS();
+  else
+    FAIL("request differs");
+  free(mem);
+}
+
+/* A request whose header reads but whose body does not decode, as
+ * bip_flow_start answers it */
+static void expect_malformed(const char *name, const uint8_t *message,
+                             size_t len) {
+  bip377_header header;
+  const bip377_request *request = NULL;
+  void *mem = NULL;
+  TEST(name);
+  int status = bip377_request_header(message, len, &header)
+                   ? decode_request(message, len, &mem, &request)
+                   : BIP377_OK;
+  if (status != BIP377_OK && !request &&
+      bip_flow_decode_error(&header, status) == 0x03)
+    PASS();
+  else
+    FAIL("not answered with malformed request");
+  free(mem);
+}
+
+static void test_unregister_malformed(void) {
+  uint8_t long_alias[BIP377_HEADER_LEN + 1 + 33];
+  memcpy(long_alias, UNREGISTER_REQUEST, BIP377_HEADER_LEN);
+  long_alias[BIP377_HEADER_LEN] = 33;
+  memset(long_alias + BIP377_HEADER_LEN + 1, 'a', 33);
+  expect_malformed("an Unregister Descriptor request without its alias "
+                   "answers malformed request",
+                   UNREGISTER_REQUEST, BIP377_HEADER_LEN);
+  expect_malformed("an Unregister Descriptor request with a 33-byte alias "
+                   "answers malformed request",
+                   long_alias, sizeof(long_alias));
+}
+
+static void test_unregister_response(void) {
+  bip377_response response;
+  uint8_t encoded[sizeof(UNREGISTER_RESPONSE)];
+  size_t encoded_len = 0;
+  memset(&response, 0, sizeof(response));
+  response.id[1] = 0x01;
+  response.message_type = BIP377_MESSAGE_UNREGISTER_DESCRIPTOR;
+  response.body.unregistered.descriptor_alias = "main";
+  TEST("the Unregister Descriptor ok response echoes the alias");
+  if (bip377_response_encode(&response, encoded, sizeof(encoded),
+                             &encoded_len) == BIP377_OK &&
+      encoded_len == sizeof(UNREGISTER_RESPONSE) &&
+      memcmp(encoded, UNREGISTER_RESPONSE, encoded_len) == 0)
+    PASS();
+  else
+    FAIL("encoding differs from the vector");
+}
+
 static void expect_decode_error(const char *name, uint8_t version, int status,
                                 uint8_t expected) {
   bip377_header header = {.version = version};
@@ -255,6 +339,9 @@ int main(void) {
 
   test_read_header();
   test_decode_error();
+  test_unregister_request();
+  test_unregister_malformed();
+  test_unregister_response();
   test_unsupported_requests();
   test_unsupported_psbts();
 

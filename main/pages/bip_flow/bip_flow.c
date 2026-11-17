@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
@@ -40,7 +41,8 @@
   (BIP377_CAPABILITY_BIP380_DESCRIPTORS |                                      \
    BIP377_CAPABILITY_BIP388_WALLET_POLICIES |                                  \
    BIP377_CAPABILITY_MINISCRIPT_SEGWIT_V0 |                                    \
-   BIP377_CAPABILITY_MINISCRIPT_TAPROOT)
+   BIP377_CAPABILITY_MINISCRIPT_TAPROOT |                                      \
+   BIP377_CAPABILITY_UNREGISTER_DESCRIPTOR)
 
 // What a decoded request may take: its strings and byte fields are copies
 // of the message, so only a request built to exhaust memory goes past it
@@ -1199,6 +1201,37 @@ static void handle_sign(void) {
                    NULL);
 }
 
+static void unregister_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!confirmed) {
+    show_error_response(BIP377_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    return;
+  }
+  const char *alias = ctx.request->body.unregister_descriptor.descriptor_alias;
+  if (!registry_unregister(alias)) {
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
+                        "Removing the registration failed");
+    return;
+  }
+  bip377_response response;
+  fill_response_header(&response);
+  response.body.unregistered.descriptor_alias = alias;
+  show_response(&response);
+}
+
+// The user confirms the alias and what it names before it is removed
+static void handle_unregister(void) {
+  const char *alias = ctx.request->body.unregister_descriptor.descriptor_alias;
+  const registry_entry_t *entry = registry_find_by_id(alias);
+  if (entry) {
+    if (!descriptor_loader_confirm_unregister(entry, unregister_confirm_cb))
+      show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
+                          "Descriptor review failed");
+  } else {
+    show_descriptor_error(BIP377_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS);
+  }
+}
+
 static void dispatch_request(void) {
   uint8_t unsupported = bip_flow_unsupported_error(ctx.request);
   if (unsupported) {
@@ -1227,6 +1260,9 @@ static void dispatch_request(void) {
     break;
   case BIP377_MESSAGE_SIGNING:
     handle_sign();
+    break;
+  case BIP377_MESSAGE_UNREGISTER_DESCRIPTOR:
+    handle_unregister();
     break;
   default:
     show_error_response(BIP377_RESPONSE_ERROR_UNSUPPORTED_OPERATION,

@@ -708,6 +708,25 @@ static void fixed_id_info_confirm_wrapper(const descriptor_info_t *info,
   show_descriptor_info(info, ctx->id, "Register?", proceed);
 }
 
+bool descriptor_loader_confirm_unregister(const registry_entry_t *entry,
+                                          void (*proceed)(bool confirmed,
+                                                          void *user_data)) {
+  char *descriptor_str = NULL;
+  descriptor_info_t *info = calloc(1, sizeof(*info));
+  int our_key_index =
+      entry->my_key_index == SIZE_MAX ? -1 : (int)entry->my_key_index;
+  bool ok =
+      info && descriptor_string_from_descriptor(entry->desc, &descriptor_str) &&
+      descriptor_info_extract(entry->desc, descriptor_str, our_key_index, info);
+  if (ok)
+    show_descriptor_info(info, entry->id, "Unregister?", proceed);
+  free(descriptor_str);
+  if (info)
+    free(info->policy);
+  free(info);
+  return ok;
+}
+
 void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
                                        void *user_data,
                                        void (*error_cb)(void)) {

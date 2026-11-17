@@ -149,6 +149,15 @@ bool registry_name_registered(const char *name) {
                                    STORAGE_DESCRIPTOR_BIP138);
 }
 
+bool registry_unregister(const char *alias) {
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, alias, REGISTRY_ID_MAX_LEN) == 0)
+      return registry_entries[i].persisted ? registry_deregister_at(i)
+                                           : registry_remove_at(i);
+  }
+  return false;
+}
+
 /* The id of a backup: the alias it holds, else its filename for a backup
  * written before aliases were stored */
 static bool backup_id(const char *fname, const char *alias, char *id,

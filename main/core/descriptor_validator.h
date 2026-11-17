@@ -112,6 +112,12 @@ typedef struct {
   const char *script_type;
 } descriptor_info_t;
 
+// The confirmation info of `descriptor`, written as `descriptor_str`, whose
+// key `our_key_index` is ours, -1 when none is known
+bool descriptor_info_extract(struct wally_descriptor *descriptor,
+                             const char *descriptor_str, int our_key_index,
+                             descriptor_info_t *info);
+
 // The policy of `info` in a few words: "sortedmulti 2 of 3", "Single-sig"...
 void descriptor_info_policy_name(const descriptor_info_t *info, char *out,
                                  size_t out_len);
