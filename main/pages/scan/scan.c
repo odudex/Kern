@@ -335,7 +335,7 @@ static void deferred_bip138_cb(lv_timer_t *timer) {
   (void)timer;
   char *descriptor = NULL;
   bool opened = bip138_backup_decrypt_any(pending_bip138, pending_bip138_len,
-                                          &descriptor, NULL);
+                                          &descriptor, NULL, NULL);
   free(pending_bip138);
   pending_bip138 = NULL;
   pending_bip138_len = 0;

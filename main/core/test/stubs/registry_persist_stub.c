@@ -8,8 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
-                           size_t *blob_len) {
+bool bip138_backup_encrypt(const char *descriptor, const char *alias,
+                           uint8_t **blob_out, size_t *blob_len) {
+  (void)alias;
   if (!descriptor || !blob_out || !blob_len)
     return false;
   size_t len = strlen(descriptor);
@@ -23,9 +24,12 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
 }
 
 bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
-                               char **descriptor_out, bool *approved_out) {
+                               char **descriptor_out, char **alias_out,
+                               bool *approved_out) {
   if (approved_out)
     *approved_out = true;
+  if (alias_out)
+    *alias_out = NULL;
   if (!data || !descriptor_out)
     return false;
   char *descriptor = malloc(len + 1);
@@ -38,9 +42,22 @@ bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
 }
 
 bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
-                                      char **descriptor_out,
+                                      char **descriptor_out, char **alias_out,
                                       bool *approved_out) {
-  return bip138_backup_decrypt_any(data, len, descriptor_out, approved_out);
+  return bip138_backup_decrypt_any(data, len, descriptor_out, alias_out,
+                                   approved_out);
+}
+
+/* FNV-1a: distinct names for distinct aliases, no key needed */
+bool bip138_backup_alias_mac(const char *alias, uint8_t out[32]) {
+  if (!alias || !out)
+    return false;
+  uint64_t hash = 0xcbf29ce484222325ull;
+  for (const char *p = alias; *p; p++)
+    hash = (hash ^ (uint8_t)*p) * 0x100000001b3ull;
+  memset(out, 0, 32);
+  memcpy(out, &hash, sizeof(hash));
+  return true;
 }
 
 void bip138_backup_forget_keys(void) {}

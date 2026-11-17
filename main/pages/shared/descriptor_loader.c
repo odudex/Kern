@@ -238,8 +238,7 @@ static void loaded_register_named_cb(const char *name, storage_location_t loc,
     loaded_finish();
     return;
   }
-  if (storage_descriptor_exists(STORAGE_FLASH, name,
-                                STORAGE_DESCRIPTOR_BIP138)) {
+  if (registry_name_registered(name)) {
     dialog_show_error_timeout("A registered descriptor already uses this name",
                               loaded_name_taken_cb, 0);
     return;
