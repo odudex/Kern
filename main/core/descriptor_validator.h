@@ -106,6 +106,8 @@ typedef struct {
   /* Outer script: "pkh", "wpkh", "sh(wpkh)", "sh", "sh(wsh)", "wsh" or "tr";
    * NULL if none of these. */
   const char *script_type;
+  /* Participants of the musig() keys, 0 without any. */
+  uint32_t musig_participants;
 } descriptor_info_t;
 
 // The confirmation info of `descriptor`, written as `descriptor_str`, whose

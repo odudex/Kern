@@ -26,9 +26,10 @@ struct wally_map;
 
 /* Parse an output descriptor with Kern's standard flags. Identical to
  * wally_descriptor_parse() except the recursion depth is capped at
- * KERN_DESCRIPTOR_MAX_DEPTH. Returns the libwally result code (WALLY_OK on
- * success); on success *output owns the descriptor (free with
- * wally_descriptor_free). */
+ * KERN_DESCRIPTOR_MAX_DEPTH and a musig() in a tapscript leaf is first
+ * rewritten into the key it stands for (musig_leaves.h). Returns the libwally
+ * result code (WALLY_OK on success); on success *output owns the descriptor
+ * (free with wally_descriptor_free). */
 KERN_WARN_UNUSED_RESULT int
 wallet_descriptor_parse(const char *descriptor, const struct wally_map *vars_in,
                         uint32_t network, struct wally_descriptor **output);

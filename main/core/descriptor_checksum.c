@@ -1,4 +1,5 @@
 #include "descriptor_checksum.h"
+#include "musig_leaves.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,9 +132,14 @@ bool descriptor_string_from_descriptor(const struct wally_descriptor *desc,
   if (!desc || !output)
     return false;
 
-  char *canonical = NULL;
+  char *wally_canonical = NULL;
   if (wally_descriptor_canonicalize(desc, WALLY_MS_CANONICAL_NO_CHECKSUM,
-                                    &canonical) != WALLY_OK)
+                                    &wally_canonical) != WALLY_OK)
+    return false;
+  /* The text a leaf musig() was rewritten from, not the rewrite */
+  char *canonical = musig_leaves_restore_alloc(wally_canonical);
+  wally_free_string(wally_canonical);
+  if (!canonical)
     return false;
 
   size_t body_len = strlen(canonical);
@@ -144,13 +150,13 @@ bool descriptor_string_from_descriptor(const struct wally_descriptor *desc,
 
   char cksum[9];
   if (!desc_compute_checksum(canonical, body_len, cksum)) {
-    wally_free_string(canonical);
+    free(canonical);
     return false;
   }
 
   char *result = malloc(body_len + 1 + 8 + 1);
   if (!result) {
-    wally_free_string(canonical);
+    free(canonical);
     return false;
   }
   memcpy(result, canonical, body_len);
@@ -158,7 +164,7 @@ bool descriptor_string_from_descriptor(const struct wally_descriptor *desc,
   memcpy(result + body_len + 1, cksum, 8);
   result[body_len + 9] = '\0';
 
-  wally_free_string(canonical);
+  free(canonical);
   *output = result;
   return true;
 }

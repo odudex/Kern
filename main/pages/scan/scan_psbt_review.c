@@ -122,6 +122,7 @@ static void format_claim_policy(const claim_t *claim, char *out,
              (unsigned)claim->whitelist.account);
     break;
   case CLAIM_REGISTRY:
+  case CLAIM_MUSIG:
     if (claim->registry.entry) {
       const registry_entry_t *entry = claim->registry.entry;
       snprintf(out, out_size, "%s", entry->label[0] ? entry->label : entry->id);
@@ -158,6 +159,7 @@ static void classify_output(const classified_input_t *inputs, size_t num_inputs,
       out->address_index = ownership.source.whitelist.index;
       break;
     case CLAIM_REGISTRY:
+    case CLAIM_MUSIG:
       out->change_chain = (ownership.source.registry.multi_index == 1);
       out->address_index = ownership.source.registry.child_num;
       break;

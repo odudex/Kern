@@ -39,6 +39,9 @@ typedef enum {
   /* our silent payment input, or our silent payment change or self-transfer
    * output */
   CLAIM_SILENT_PAYMENT,
+  /* a registered descriptor whose musig() key holds one of our participant
+   * keys; the entry, multipath index and child number are in `registry` */
+  CLAIM_MUSIG,
 } claim_kind_t;
 
 typedef struct {
@@ -101,9 +104,9 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet);
 
-// True when two claims name the same wallet: one registered descriptor, the
-// silent payment account, or one single-sig purpose, coin and account. Chain
-// and index may differ.
+// True when two claims name the same wallet: one registered descriptor, its
+// musig() keys included, the silent payment account, or one single-sig
+// purpose, coin and account. Chain and index may differ.
 KERN_WARN_UNUSED_RESULT bool psbt_claims_share_policy(const claim_t *a,
                                                       const claim_t *b);
 

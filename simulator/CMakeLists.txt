@@ -168,6 +168,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/dice_mnemonic.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/base43.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_validator.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/miniscript_policy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/multisig_setup.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/key.c
@@ -175,6 +176,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip322.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_gate.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/musig_psbt.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/psbt_parse.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/ss_whitelist.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/registry.c
@@ -182,6 +184,7 @@ set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip138_keys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip138_backup.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/descriptor_checksum.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/musig_leaves.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/bip32_path.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/script_templates.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/address_match.c

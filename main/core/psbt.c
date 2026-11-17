@@ -2,6 +2,7 @@
 #include "bip32_path.h"
 #include "kern_wally.h"
 #include "key.h"
+#include "musig_psbt.h"
 #include "psbt_internal.h"
 #include "script_templates.h"
 #include "sp_psbt.h"
@@ -612,6 +613,14 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
                               &utxo_script_len))
     return result;
 
+  /* Before the fingerprint match: a participant key's origin is ours but
+   * derives no key of the script. */
+  if (musig_psbt_claim(&psbt->inputs[i].taproot_leaf_paths, utxo_script,
+                       utxo_script_len, &result.claim)) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    return result;
+  }
+
   unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
   if (!key_get_fingerprint(our_fp))
     return result;
@@ -730,6 +739,12 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
   if (!output_script(psbt, i, &out_script, &out_script_len))
     return result;
 
+  if (musig_psbt_claim(&psbt->outputs[i].taproot_leaf_paths, out_script,
+                       out_script_len, &result.source)) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    return result;
+  }
+
   unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
   if (!key_get_fingerprint(our_fp))
     return result;
@@ -775,7 +790,7 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
 bool psbt_claims_share_policy(const claim_t *a, const claim_t *b) {
   if (!a || !b || a->kind != b->kind)
     return false;
-  if (a->kind == CLAIM_REGISTRY)
+  if (a->kind == CLAIM_REGISTRY || a->kind == CLAIM_MUSIG)
     return a->registry.entry && a->registry.entry == b->registry.entry;
   if (a->kind == CLAIM_SILENT_PAYMENT)
     return true;
@@ -1044,9 +1059,13 @@ static size_t input_signing_paths(const input_ownership_t *own,
     return count;
   }
 
-  add_signing_path(paths, &count, own->claim.derived_path,
-                   own->claim.derived_path_len);
-  if (own->claim.kind != CLAIM_REGISTRY || !own->claim.registry.entry)
+  /* A CLAIM_MUSIG names no key of its own: its participant keys are signed
+   * by musig_psbt.c, and only the descriptor's other own keys here. */
+  if (own->claim.kind != CLAIM_MUSIG)
+    add_signing_path(paths, &count, own->claim.derived_path,
+                     own->claim.derived_path_len);
+  if ((own->claim.kind != CLAIM_REGISTRY && own->claim.kind != CLAIM_MUSIG) ||
+      !own->claim.registry.entry)
     return count;
   const registry_entry_t *e = own->claim.registry.entry;
   for (size_t k = 0; k < e->num_own_keys; k++) {
@@ -1226,7 +1245,9 @@ static size_t sign_owned_inputs(struct wally_psbt *psbt, bool is_testnet,
 
     signing_path_t paths[REGISTRY_MAX_OWN_KEYS];
     size_t num_paths = input_signing_paths(&ownership, paths);
-    if (!num_paths)
+    /* A musig() key of ours is signed by musig_psbt.c, so a MuSig2 input may
+     * hold no other key of ours. */
+    if (!num_paths && ownership.claim.kind != CLAIM_MUSIG)
       ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
 
     struct ext_key *keys[REGISTRY_MAX_OWN_KEYS] = {0};
