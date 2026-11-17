@@ -21,6 +21,9 @@ static const uint8_t approval_tag[] = "kern-approval";
 /* The alias a registration is stored under, kept whole whatever the filename */
 static const uint8_t alias_tag[] = "kern-alias";
 #define ALIAS_TAG_LEN (sizeof(alias_tag) - 1)
+/* Sets the marks of silent payment account records apart from backup marks */
+static const uint8_t sp_account_tag[] = "kern-sp-account";
+#define SP_ACCOUNT_TAG_LEN (sizeof(sp_account_tag) - 1)
 static const uint8_t alias_separator[] = {0x00};
 #define APPROVAL_KEY_TAG "KERN_BIP138_APPROVAL"
 static const uint32_t approval_path[] = {0x4B45524Eu | BIP32_PATH_HARDENED,
@@ -95,6 +98,13 @@ static bool backup_mac(const uint8_t *descriptor, size_t len,
   const uint8_t *parts[] = {descriptor, alias_separator, alias};
   size_t lens[] = {len, sizeof(alias_separator), alias_len};
   return approval_mac(parts, lens, alias ? 3 : 1, out);
+}
+
+bool bip138_backup_sp_account_mark(const uint8_t *record, size_t len,
+                                   uint8_t mark[BIP138_BACKUP_MARK_LEN]) {
+  const uint8_t *parts[] = {sp_account_tag, record};
+  size_t lens[] = {SP_ACCOUNT_TAG_LEN, len};
+  return approval_mac(parts, lens, 2, mark);
 }
 
 bool bip138_backup_encrypt(const char *descriptor, const char *alias,

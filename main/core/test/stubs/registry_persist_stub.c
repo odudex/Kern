@@ -88,3 +88,11 @@ void storage_descriptor_filename(storage_location_t loc, const char *id,
   snprintf(out, out_size, "%s%s%s",
            loc == STORAGE_FLASH ? STORAGE_DESCRIPTOR_PREFIX : "", id, ext);
 }
+
+bool bip138_backup_sp_account_mark(const uint8_t *record, size_t len,
+                                   uint8_t mark[BIP138_BACKUP_MARK_LEN]) {
+  (void)record;
+  (void)len;
+  memset(mark, 0, BIP138_BACKUP_MARK_LEN);
+  return true;
+}

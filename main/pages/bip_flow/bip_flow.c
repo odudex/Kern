@@ -45,6 +45,7 @@
    BIPQR_CAPABILITY_BIP388_WALLET_POLICIES |                                   \
    BIPQR_CAPABILITY_MINISCRIPT_SEGWIT_V0 |                                     \
    BIPQR_CAPABILITY_MINISCRIPT_TAPROOT |                                       \
+   BIPQR_CAPABILITY_SILENT_PAYMENT_ACCOUNTS |                                  \
    BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR)
 
 typedef struct {
@@ -87,6 +88,7 @@ bool bip_flow_can_handle(const uint8_t *data, size_t len) {
 
 static void cleanup_request(void) {
   registry_clear_preferred();
+  registry_sp_clear_named_scan_keys();
   if (ctx.request) {
     bipqr_request_free(ctx.request);
     ctx.request = NULL;
@@ -604,15 +606,16 @@ register_error_message(descriptor_validation_result_t result) {
 }
 
 // The registration status of the request's alias: a descriptor, stored or
-// for the session
+// for the session, or our silent payment account, always stored
 static void answer_registration(void) {
   const char *alias = ctx.request->body.register_descriptor.descriptor_alias;
   const registry_entry_t *entry = registry_find_by_id(alias);
+  bool sp_account = registry_sp_alias_exists(alias);
   bipqr_response response;
   fill_response_header(&response);
   response.body.registration.descriptor_alias = alias;
-  response.body.registration.registered = entry != NULL;
-  response.body.registration.stored = entry && entry->persisted;
+  response.body.registration.registered = entry || sp_account;
+  response.body.registration.stored = (entry && entry->persisted) || sp_account;
   show_response(&response);
 }
 
@@ -639,8 +642,9 @@ static void register_validation_cb(descriptor_validation_result_t result,
 static void register_descriptor(const registry_entry_t *entry,
                                 const char *descriptor) {
   const char *alias = ctx.request->body.register_descriptor.descriptor_alias;
-  if (entry &&
-      (entry->persisted || !registry_entry_is_descriptor(entry, descriptor))) {
+  if ((entry && (entry->persisted ||
+                 !registry_entry_is_descriptor(entry, descriptor))) ||
+      registry_sp_alias_exists(alias)) {
     show_alias_taken_error();
     return;
   }
@@ -654,6 +658,8 @@ static void register_descriptor(const registry_entry_t *entry,
                                            register_validation_cb, NULL);
 }
 
+static void register_sp_account(const bipqr_register_descriptor *req);
+
 // Without a descriptor the request only asks whether the alias is registered
 static void handle_register(void) {
   debug_log_event("bip_flow handle_register");
@@ -661,6 +667,10 @@ static void handle_register(void) {
   const registry_entry_t *entry = registry_find_by_id(req->descriptor_alias);
   if (!req->descriptor) {
     answer_registration();
+    return;
+  }
+  if (req->descriptor->tag == BIPQR_DESCRIPTOR_SP_KEYS) {
+    register_sp_account(req);
     return;
   }
   char *descriptor = request_descriptor_alloc(req->descriptor);
@@ -699,6 +709,95 @@ static uint8_t resolve_descriptor(const char *alias,
   free(descriptor);
   *entry_out = added ? registry_find_by_id(alias) : NULL;
   return *entry_out ? 0 : BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
+}
+
+// Whose account the request's silent payment keys are
+static sp_account_t request_sp_account(const bipqr_sp_keys *sp) {
+  bool scan_by_path = sp->scan_kind == BIPQR_SCAN_PATH;
+  return sp_account_classify(
+      sp->fingerprint, sp->spend_path.ptr, sp->spend_path.len,
+      scan_by_path ? sp->scan.path.ptr : NULL,
+      scan_by_path ? sp->scan.path.len : 0, scan_by_path ? NULL : sp->scan.key,
+      wallet_is_testnet());
+}
+
+// The scan key of an account whose scan key is not ours, else NULL
+static const unsigned char *scan_key_not_ours(const bipqr_sp_keys *sp,
+                                              sp_account_t account) {
+  return account == SP_ACCOUNT_FOREIGN_SCAN ? sp->scan.key : NULL;
+}
+
+// True for an account of our spend key, else the error is answered
+static bool sp_account_ok(sp_account_t account) {
+  switch (account) {
+  case SP_ACCOUNT_OURS:
+  case SP_ACCOUNT_FOREIGN_SCAN:
+    return true;
+  case SP_ACCOUNT_OTHER_NETWORK:
+    show_error_response(BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH,
+                        "Silent payment account is for another network");
+    return false;
+  case SP_ACCOUNT_NOT_OURS:
+    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+                        "Not this device's silent payment account");
+    return false;
+  case SP_ACCOUNT_BAD_SCAN_KEY:
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Invalid scan key");
+    return false;
+  case SP_ACCOUNT_ERR_KEYS:
+  default:
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+    return false;
+  }
+}
+
+static void sp_register_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!confirmed) {
+    show_error_response(BIPQR_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    return;
+  }
+  const bipqr_register_descriptor *req = &ctx.request->body.register_descriptor;
+  const bipqr_sp_keys *sp = &req->descriptor->value.sp_keys;
+  if (!registry_add_sp_alias(req->descriptor_alias,
+                             scan_key_not_ours(sp, request_sp_account(sp)))) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+                        "Storing the registration failed");
+    return;
+  }
+  answer_registration();
+}
+
+// Registers the request's alias for our silent payment spend key with our
+// scan key or the one the request gives, so later requests may name the
+// account by its alias alone
+static void register_sp_account(const bipqr_register_descriptor *req) {
+  const bipqr_sp_keys *sp = &req->descriptor->value.sp_keys;
+  const char *alias = req->descriptor_alias;
+  sp_account_t account = request_sp_account(sp);
+  if (!sp_account_ok(account))
+    return;
+  if (registry_find_by_id(alias) || registry_sp_alias_exists(alias)) {
+    show_alias_taken_error();
+    return;
+  }
+  if (strlen(alias) >= REGISTRY_ID_MAX_LEN) {
+    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+                        "Alias too long");
+    return;
+  }
+  if (registry_sp_alias_count() >= REGISTRY_MAX_ENTRIES) {
+    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+                        "No room for another silent payment account");
+    return;
+  }
+  char msg[128];
+  snprintf(
+      msg, sizeof(msg), "Register silent payment keys?\n\nAlias: %s%s", alias,
+      scan_key_not_ours(sp, account) ? "\nScan key: external, not this device's"
+                                     : "");
+  dialog_show_confirm(msg, sp_register_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
 static void show_descriptor_error(uint8_t error) {
@@ -949,6 +1048,78 @@ static void verify_descriptor_address(const bipqr_verify_address *req) {
   show_verified_address(address, "bitcoin:", caption);
 }
 
+static void verify_sp_address_with(const bipqr_verify_address *req,
+                                   const unsigned char *scan_secret,
+                                   const unsigned char *spend_pubkey) {
+  char *address = NULL;
+  switch (sp_account_address_alloc(
+      scan_secret, spend_pubkey, req->derivation_path.ptr,
+      req->derivation_path.len, wallet_is_testnet(), &address)) {
+  case SP_ADDRESS_OK:
+    break;
+  case SP_ADDRESS_ERR_LABEL:
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Label must be one step m >= 1");
+    return;
+  case SP_ADDRESS_ERR_KEY:
+    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+                        "Invalid scan key");
+    return;
+  case SP_ADDRESS_ERR_ALLOC:
+  default:
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Address failed");
+    return;
+  }
+  if (req->address && strcasecmp(req->address, address) != 0) {
+    free(address);
+    show_error_response(BIPQR_RESPONSE_ERROR_ADDRESS_MISMATCH,
+                        "Address mismatch");
+    return;
+  }
+  char caption[sizeof(pending_verify_caption)];
+  if (req->derivation_path.len == 1)
+    snprintf(caption, sizeof(caption), "%s label %" PRIu32,
+             req->descriptor_alias, req->derivation_path.ptr[0]);
+  else
+    snprintf(caption, sizeof(caption), "%s base address",
+             req->descriptor_alias);
+  show_verified_address(address, "bitcoin:?sp=", caption);
+}
+
+// An address with the HRP of the other network or of regtest
+static bool sp_address_on_other_network(const char *address) {
+  const char *other = wallet_is_testnet() ? "sp1" : "tsp1";
+  return strncasecmp(address, other, strlen(other)) == 0 ||
+         strncasecmp(address, "sprt1", strlen("sprt1")) == 0;
+}
+
+// The address of our spend key with our scan key, or with `scan_key` when
+// not NULL
+static void verify_own_sp_address(const bipqr_verify_address *req,
+                                  const unsigned char *scan_key) {
+  if (req->address && sp_address_on_other_network(req->address)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH,
+                        "Address is for another network");
+    return;
+  }
+  struct sp_keys keys;
+  if (!sp_account_keys_derive(wallet_is_testnet(), scan_key, &keys)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+    return;
+  }
+  verify_sp_address_with(req, keys.scan_secret, keys.spend_pubkey);
+  sp_keys_wipe(&keys);
+}
+
+// The spend key must be ours, the scan key ours or the one the request gives
+static void verify_sp_address(const bipqr_verify_address *req) {
+  const bipqr_sp_keys *sp = &req->descriptor->value.sp_keys;
+  sp_account_t account = request_sp_account(sp);
+  if (sp_account_ok(account))
+    verify_own_sp_address(req, scan_key_not_ours(sp, account));
+}
+
+// A registered alias names what it was registered for, whatever the body
 static void handle_verify(void) {
   debug_log_event("bip_flow handle_verify");
   const bipqr_verify_address *req = &ctx.request->body.verify_address;
@@ -956,7 +1127,15 @@ static void handle_verify(void) {
     show_foreign_proof_error();
     return;
   }
-  verify_descriptor_address(req);
+  bool sp_body =
+      req->descriptor && req->descriptor->tag == BIPQR_DESCRIPTOR_SP_KEYS;
+  if (registry_sp_alias_exists(req->descriptor_alias))
+    verify_own_sp_address(req,
+                          registry_sp_alias_scan_key(req->descriptor_alias));
+  else if (sp_body && !registry_find_by_id(req->descriptor_alias))
+    verify_sp_address(req);
+  else
+    verify_descriptor_address(req);
 }
 
 static size_t signed_input_count(const struct wally_psbt *psbt) {
@@ -1186,6 +1365,32 @@ static void sign_failed_cb(scan_psbt_failure_t failure, const char *message,
   show_response_with_done(&response, return_from_signing_response);
 }
 
+// Whose account an sp() descriptor is: ours, on our network or the other one,
+// or not ours
+static sp_account_t sp_descriptor_account(const char *descriptor) {
+  bool testnet = wallet_is_testnet();
+  if (sp_descriptor_is_ours(descriptor, testnet))
+    return SP_ACCOUNT_OURS;
+  if (sp_descriptor_is_ours(descriptor, !testnet))
+    return SP_ACCOUNT_OTHER_NETWORK;
+  return SP_ACCOUNT_NOT_OURS;
+}
+
+// True for an account of our spend key, whose scan key, when not ours, the
+// review then pairs with our spend key, else the error is answered
+static bool sign_sp_account_ok(const bipqr_sp_keys *sp) {
+  sp_account_t account = request_sp_account(sp);
+  if (!sp_account_ok(account))
+    return false;
+  const unsigned char *scan_key = scan_key_not_ours(sp, account);
+  if (scan_key && !registry_sp_name_scan_key(scan_key)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+                        "Too many silent payment accounts");
+    return false;
+  }
+  return true;
+}
+
 // True when the inputs spending from `descriptor` can be signed, else the
 // error is answered
 static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
@@ -1194,6 +1399,20 @@ static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
     return false;
   }
   const bipqr_descriptor_body *body = descriptor->body;
+  // A registered alias names what it was registered for, whatever the body
+  if (registry_sp_alias_exists(descriptor->alias))
+    return true;
+  if (body && body->tag == BIPQR_DESCRIPTOR_SP_KEYS &&
+      !registry_find_by_id(descriptor->alias))
+    return sign_sp_account_ok(&body->value.sp_keys);
+  char *descriptor_str = request_descriptor_alloc(body);
+  // An sp() descriptor carries our scan secret and is never registered
+  if (sp_descriptor_is_sp(descriptor_str)) {
+    sp_account_t account = sp_descriptor_account(descriptor_str);
+    SECURE_FREE_STRING(descriptor_str);
+    return sp_account_ok(account);
+  }
+  free(descriptor_str);
   const registry_entry_t *entry = NULL;
   uint8_t error = resolve_descriptor(descriptor->alias, body, &entry);
   if (error)

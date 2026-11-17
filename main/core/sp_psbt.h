@@ -68,15 +68,19 @@ bool sp_psbt_input_is_ours(const struct wally_psbt *psbt, size_t i,
 
 typedef enum {
   SP_OUTPUT_FOREIGN, // not ours, or not a silent payment output
-  SP_OUTPUT_CHANGE,  // our scan key, our spend key labeled m = 0
-  SP_OUTPUT_SELF,    // our scan key, our spend key unlabeled or labeled m > 0
+  SP_OUTPUT_CHANGE,  // the account's scan key, our spend key labeled m = 0
+  SP_OUTPUT_SELF,    // the account's scan key, our spend key unlabeled or
+                     // labeled m > 0
 } sp_output_ownership_t;
 
-// Whose silent payment output `i` is. PSBT_OUT_SP_V0_LABEL, when present, must
-// label our spend key into the output's one; without it, the change label
-// and the unlabeled key are tried.
+// Whose silent payment output `i` is, for the account of our spend key with
+// `scan_secret`, or with our scan key when NULL. PSBT_OUT_SP_V0_LABEL, when
+// present, must label our spend key into the output's one; without it, the
+// change label and the unlabeled key are tried.
 sp_output_ownership_t sp_psbt_output_ownership(const struct wally_psbt *psbt,
-                                               size_t i, bool is_testnet);
+                                               size_t i,
+                                               const unsigned char *scan_secret,
+                                               bool is_testnet);
 
 // Key path signature of our silent payment input `i`, made with the tweaked
 // spend key and no taproot tweak, since the output key already is BIP352's.

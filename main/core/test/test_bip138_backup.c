@@ -9,6 +9,7 @@
 #include "../descriptor_validator.h"
 #include "../key.h"
 #include "../registry.h"
+#include "../silent_payments.h"
 #include "../storage.h"
 #include "../wallet.h"
 #include "esp_err.h"
@@ -171,6 +172,8 @@ void storage_descriptor_filename(storage_location_t loc, const char *id,
   const char *ext = STORAGE_DESCRIPTOR_EXT_TXT;
   if (format == STORAGE_DESCRIPTOR_BIP138)
     ext = STORAGE_DESCRIPTOR_EXT_BIP138;
+  else if (format == STORAGE_DESCRIPTOR_SP_ACCOUNT)
+    ext = STORAGE_DESCRIPTOR_EXT_SP_ACCOUNT;
   snprintf(out, out_size, "%s%s%s",
            loc == STORAGE_FLASH ? STORAGE_DESCRIPTOR_PREFIX : "", id, ext);
 }
@@ -181,6 +184,8 @@ storage_descriptor_format_t storage_descriptor_format(const char *filename) {
     return STORAGE_DESCRIPTOR_BIP138;
   if (len > 11 && strcmp(filename + len - 11, ".bip138.txt") == 0)
     return STORAGE_DESCRIPTOR_BIP138;
+  if (len > 4 && strcmp(filename + len - 4, ".spa") == 0)
+    return STORAGE_DESCRIPTOR_SP_ACCOUNT;
   return STORAGE_DESCRIPTOR_TXT;
 }
 
@@ -921,6 +926,180 @@ static void test_aliases(void) {
   stub_storage_reset();
 }
 
+static void test_sp_aliases(void) {
+  char descriptor[256];
+  registry_clear();
+  stub_storage_reset();
+  check("silent payment alias registers",
+        registry_add_sp_alias("Silent", NULL) &&
+            strcmp(stub_files[0].filename, "d_ddbcf06726488a43.spa") == 0 &&
+            registry_sp_alias_exists("Silent"));
+  check("a silent payment alias registers once",
+        !registry_add_sp_alias("Silent", NULL) && stub_saves == 1 &&
+            registry_name_registered("Silent"));
+  check("descriptor fixture builds",
+        build_wpkh("m/84'/0'/2'", descriptor, sizeof(descriptor)));
+  check("a descriptor cannot take a silent payment alias",
+        !registry_add_from_string("Silent", descriptor, STORAGE_FLASH, true) &&
+            registry_count() == 0);
+  check("a silent payment alias cannot take a descriptor id",
+        registry_add_from_string("Wallet", descriptor, STORAGE_FLASH, false) &&
+            !registry_add_sp_alias("Wallet", NULL) && stub_saves == 1);
+  registry_init(false);
+  check("the silent payment alias loads on restart",
+        registry_sp_alias_exists("Silent") &&
+            !registry_sp_alias_exists("Wallet"));
+
+  check("another seed loads",
+        key_load_from_mnemonic("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo "
+                               "wrong",
+                               "", false) &&
+            wallet_init(WALLET_NETWORK_MAINNET));
+  registry_init(false);
+  check("another seed does not load it", !registry_sp_alias_exists("Silent"));
+  check("original seed on testnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", true) &&
+            wallet_init(WALLET_NETWORK_TESTNET));
+  registry_init(true);
+  check("another network does not load it",
+        !registry_sp_alias_exists("Silent"));
+  check("original seed on mainnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", false) &&
+            wallet_init(WALLET_NETWORK_MAINNET));
+  registry_init(false);
+  check("the original seed loads it again", registry_sp_alias_exists("Silent"));
+  check("the silent payment alias is listed",
+        registry_sp_alias_count() == 1 &&
+            strcmp(registry_sp_alias_get(0), "Silent") == 0);
+
+  /* "Silent" becomes "Silenu": the record no longer matches its mark */
+  stub_files[0].data[stub_files[0].len - BIP138_BACKUP_MARK_LEN - 1]++;
+  registry_init(false);
+  check("a record whose alias was changed does not load",
+        !registry_sp_alias_exists("Silent") &&
+            !registry_sp_alias_exists("Silenu"));
+  stub_files[0].data[stub_files[0].len - BIP138_BACKUP_MARK_LEN - 1]--;
+  registry_init(false);
+  check("de-registration deletes the record",
+        registry_sp_alias_deregister_at(0) &&
+            strcmp(stub_last_deleted, "d_ddbcf06726488a43.spa") == 0 &&
+            !stub_files[0].present && registry_sp_alias_count() == 0);
+  registry_init(false);
+  check("a de-registered alias does not return",
+        !registry_sp_alias_exists("Silent"));
+  registry_clear();
+  stub_storage_reset();
+}
+
+/* The scan key of Register Descriptor "3f82-9b", not ours, and label 2 of our
+ * testnet spend key with it, by the BIP352 label tweak computed outside Kern */
+static const uint8_t FOREIGN_SCAN_KEY[SP_SECRET_LEN] = {
+    0x95, 0x73, 0xaf, 0xf4, 0x99, 0xb1, 0x75, 0x5c, 0x5f, 0xbf, 0xd1,
+    0x27, 0xf5, 0x08, 0xc7, 0xd2, 0xbc, 0xb5, 0xdd, 0x8c, 0xb0, 0x52,
+    0xf2, 0x66, 0x61, 0x04, 0xdb, 0x6f, 0xdf, 0x41, 0xe1, 0x4f};
+static const char FOREIGN_SCAN_LABEL_2_ADDRESS[] =
+    "tsp1qqw27q4xnw5zzpuk8jfqcgf2nu9dneljr7u0mqu2jlvm3jxhjjtnmvqenvk6gmnrhld3a"
+    "6j0uscckjdyxs9wrkyufzncfmgz2rd2f6c6ynvmrjsqd";
+static const uint8_t TEST_FINGERPRINT[] = {0x73, 0xc5, 0xda, 0x0a};
+
+/* The address of `alias`'s account at label `m`, with the scan key the alias
+ * was registered with */
+static bool sp_alias_address_is(const char *alias, uint32_t m,
+                                const char *expected) {
+  struct sp_keys keys;
+  char *address = NULL;
+  bool ok =
+      registry_sp_alias_exists(alias) &&
+      sp_account_keys_derive(true, registry_sp_alias_scan_key(alias), &keys) &&
+      sp_account_address_alloc(keys.scan_secret, keys.spend_pubkey, &m, 1, true,
+                               &address) == SP_ADDRESS_OK &&
+      strcmp(address, expected) == 0;
+  sp_keys_wipe(&keys);
+  free(address);
+  return ok;
+}
+
+static void test_sp_scan_key_aliases(void) {
+  const size_t header = sizeof(TEST_FINGERPRINT) + 1;
+  const char alias[] = "3f82-9b";
+  registry_clear();
+  stub_storage_reset();
+  check("original seed on testnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", true) &&
+            wallet_init(WALLET_NETWORK_TESTNET));
+  check("an alias registers with a scan key not ours",
+        registry_add_sp_alias(alias, FOREIGN_SCAN_KEY) && stub_saves == 1 &&
+            stub_files[0].len == header + SP_SECRET_LEN + strlen(alias) +
+                                     BIP138_BACKUP_MARK_LEN);
+  check("its record holds our fingerprint, the network, the scan key and the "
+        "alias",
+        memcmp(stub_files[0].data, TEST_FINGERPRINT, 4) == 0 &&
+            stub_files[0].data[4] == WALLET_NETWORK_TESTNET &&
+            memcmp(stub_files[0].data + header, FOREIGN_SCAN_KEY,
+                   SP_SECRET_LEN) == 0 &&
+            memcmp(stub_files[0].data + header + SP_SECRET_LEN, alias,
+                   strlen(alias)) == 0);
+  registry_init(true);
+  check("the alias loads with its scan key on restart",
+        registry_sp_alias_exists(alias) && registry_sp_alias_scan_key(alias) &&
+            memcmp(registry_sp_alias_scan_key(alias), FOREIGN_SCAN_KEY,
+                   SP_SECRET_LEN) == 0);
+  check("the alias's label 2 address uses its scan key",
+        sp_alias_address_is(alias, 2, FOREIGN_SCAN_LABEL_2_ADDRESS));
+  check("output ownership checks the alias's scan key",
+        registry_sp_scan_key_get(0) &&
+            memcmp(registry_sp_scan_key_get(0), FOREIGN_SCAN_KEY,
+                   SP_SECRET_LEN) == 0 &&
+            !registry_sp_scan_key_get(1));
+  check("an alias of our scan key registers without one",
+        registry_add_sp_alias("Own", NULL) && registry_sp_alias_exists("Own") &&
+            !registry_sp_alias_scan_key("Own") &&
+            stub_files[2].len ==
+                header + strlen("Own") + BIP138_BACKUP_MARK_LEN &&
+            !registry_sp_scan_key_get(1));
+  uint8_t named[SP_SECRET_LEN];
+  memset(named, 0x11, sizeof(named));
+  check("a scan key the request names follows the registered ones",
+        registry_sp_name_scan_key(named) && registry_sp_name_scan_key(named) &&
+            registry_sp_scan_key_get(1) &&
+            memcmp(registry_sp_scan_key_get(1), named, sizeof(named)) == 0 &&
+            !registry_sp_scan_key_get(2));
+  registry_sp_clear_named_scan_keys();
+  check("clearing the named scan keys keeps the registered one",
+        registry_sp_scan_key_get(0) && !registry_sp_scan_key_get(1));
+
+  stub_files[0].data[header]++;
+  registry_init(true);
+  check("a record whose scan key was changed does not load",
+        !registry_sp_alias_exists(alias) && registry_sp_alias_exists("Own"));
+  stub_files[0].data[header]--;
+  registry_init(true);
+  check("the restored record loads again", registry_sp_alias_exists(alias));
+  registry_clear();
+  stub_storage_reset();
+
+  /* A record written before scan keys were stored: fingerprint, network,
+   * alias, mark */
+  uint8_t record[5 + 3 + BIP138_BACKUP_MARK_LEN];
+  memcpy(record, TEST_FINGERPRINT, 4);
+  record[4] = WALLET_NETWORK_TESTNET;
+  memcpy(record + 5, "Old", 3);
+  check("an old record is written",
+        bip138_backup_sp_account_mark(record, 8, record + 8) &&
+            storage_save_descriptor(STORAGE_FLASH, "0123456789abcdef", record,
+                                    sizeof(record),
+                                    STORAGE_DESCRIPTOR_SP_ACCOUNT) == ESP_OK);
+  registry_init(true);
+  check("an old record loads as an alias of our scan key",
+        registry_sp_alias_exists("Old") && !registry_sp_alias_scan_key("Old") &&
+            !registry_sp_scan_key_get(0));
+  registry_clear();
+  stub_storage_reset();
+  check("original seed on mainnet",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", false) &&
+            wallet_init(WALLET_NETWORK_MAINNET));
+}
+
 static void test_unregister(void) {
   char descriptor[256];
   registry_clear();
@@ -1060,6 +1239,8 @@ int main(void) {
   test_overwrite_and_duplicates();
   test_deregister();
   test_aliases();
+  test_sp_aliases();
+  test_sp_scan_key_aliases();
   test_unregister();
   test_many_origins();
   key_unload();

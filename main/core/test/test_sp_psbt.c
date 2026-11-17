@@ -45,10 +45,14 @@ static const char *TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon "
     "abandon abandon abandon abandon abandon about";
 
-/* Our spend key labeled with m = 0 under RECIPIENT_SCAN, the BIP352
- * receiving vectors' scan key */
+/* BIP352 receiving vectors' scan secret, whose public key is RECIPIENT_SCAN,
+ * and our spend key labeled with it with m = 0 and m = 3 */
+static const char RECIPIENT_SCAN_SECRET[] =
+    "0f694e068028a717f8af6b9411f9a133dd3565258714cc226594b34db90c1f2c";
 static const char RECIPIENT_SCAN_SPEND_LABEL_0[] =
     "02e673195a3b1a0c7cdfdde5649e6e13be05d01791be238329bb58fdb3ea386f56";
+static const char RECIPIENT_SCAN_SPEND_LABEL_3[] =
+    "039a85d8ee2d462711a2f76c45d84243634a445caa32f2509f181101ba23eb24da";
 
 static const unsigned char SCALAR_ONE[32] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -734,9 +738,10 @@ static void test_ownership(void) {
     FAIL("input ownership wrong");
 
   TEST("sp_psbt_output_ownership spots only our m=0 change output");
-  if (psbt && sp_psbt_output_ownership(psbt, 1, false) == SP_OUTPUT_CHANGE &&
-      sp_psbt_output_ownership(psbt, 0, false) == SP_OUTPUT_FOREIGN &&
-      sp_psbt_output_ownership(psbt, 1, true) == SP_OUTPUT_FOREIGN)
+  if (psbt &&
+      sp_psbt_output_ownership(psbt, 1, NULL, false) == SP_OUTPUT_CHANGE &&
+      sp_psbt_output_ownership(psbt, 0, NULL, false) == SP_OUTPUT_FOREIGN &&
+      sp_psbt_output_ownership(psbt, 1, NULL, true) == SP_OUTPUT_FOREIGN)
     PASS();
   else
     FAIL("change detection wrong");
@@ -744,10 +749,13 @@ static void test_ownership(void) {
 }
 
 // Ownership of output 1 of UNSIGNED_PSBT once it pays `scan_hex` and
-// `spend_hex`, with PSBT_OUT_SP_V0_LABEL `label`, or none when it is NULL
+// `spend_hex`, with PSBT_OUT_SP_V0_LABEL `label`, or none when it is NULL,
+// for our spend key's account with `scan_secret_hex`, ours when NULL
 static sp_output_ownership_t ownership_of(const char *scan_hex,
                                           const char *spend_hex,
-                                          const uint32_t *label) {
+                                          const uint32_t *label,
+                                          const char *scan_secret_hex) {
+  unsigned char scan_secret[SP_SECRET_LEN];
   struct wally_psbt *psbt = parse_hex(UNSIGNED_PSBT);
   unsigned char info_key = PSBT_OUT_SP_V0_INFO,
                 label_key = PSBT_OUT_SP_V0_LABEL;
@@ -770,17 +778,21 @@ static sp_output_ownership_t ownership_of(const char *scan_hex,
     ok = wally_map_replace(unknowns, &label_key, 1, label_bytes,
                            sizeof(label_bytes)) == WALLY_OK;
   }
+  if (ok && scan_secret_hex)
+    ok = hex_to(scan_secret_hex, scan_secret, sizeof(scan_secret));
   if (ok)
-    ownership = sp_psbt_output_ownership(psbt, 1, false);
+    ownership = sp_psbt_output_ownership(
+        psbt, 1, scan_secret_hex ? scan_secret : NULL, false);
   wally_psbt_free(psbt);
   return ownership;
 }
 
 static void expect_ownership(const char *name, const char *scan_hex,
                              const char *spend_hex, const uint32_t *label,
+                             const char *scan_secret_hex,
                              sp_output_ownership_t expected) {
   TEST(name);
-  if (ownership_of(scan_hex, spend_hex, label) == expected)
+  if (ownership_of(scan_hex, spend_hex, label, scan_secret_hex) == expected)
     PASS();
   else
     FAIL("output ownership wrong");
@@ -790,20 +802,35 @@ static void test_labels(void) {
   const uint32_t change = 0, three = 3;
 
   expect_ownership("label 0 on the m=0 key is change", OUR_SCAN,
-                   OUR_SPEND_LABEL_0, &change, SP_OUTPUT_CHANGE);
+                   OUR_SPEND_LABEL_0, &change, NULL, SP_OUTPUT_CHANGE);
   expect_ownership("label 3 on the m=3 key is a self-transfer", OUR_SCAN,
-                   OUR_SPEND_LABEL_3, &three, SP_OUTPUT_SELF);
+                   OUR_SPEND_LABEL_3, &three, NULL, SP_OUTPUT_SELF);
   expect_ownership("no label on the unlabeled key is a self-transfer", OUR_SCAN,
-                   OUR_SPEND, NULL, SP_OUTPUT_SELF);
+                   OUR_SPEND, NULL, NULL, SP_OUTPUT_SELF);
   expect_ownership("no label on the m=0 key is change", OUR_SCAN,
-                   OUR_SPEND_LABEL_0, NULL, SP_OUTPUT_CHANGE);
+                   OUR_SPEND_LABEL_0, NULL, NULL, SP_OUTPUT_CHANGE);
   expect_ownership("label 3 on the m=0 key is not ours", OUR_SCAN,
-                   OUR_SPEND_LABEL_0, &three, SP_OUTPUT_FOREIGN);
+                   OUR_SPEND_LABEL_0, &three, NULL, SP_OUTPUT_FOREIGN);
   expect_ownership("a foreign scan key with our m=0 key is not ours",
-                   RECIPIENT_SCAN, OUR_SPEND_LABEL_0, &change,
+                   RECIPIENT_SCAN, OUR_SPEND_LABEL_0, &change, NULL,
                    SP_OUTPUT_FOREIGN);
   expect_ownership("our account does not take the other scan key's change",
+                   RECIPIENT_SCAN, RECIPIENT_SCAN_SPEND_LABEL_0, NULL, NULL,
+                   SP_OUTPUT_FOREIGN);
+  expect_ownership("label 0 with the account's scan key is change",
+                   RECIPIENT_SCAN, RECIPIENT_SCAN_SPEND_LABEL_0, &change,
+                   RECIPIENT_SCAN_SECRET, SP_OUTPUT_CHANGE);
+  expect_ownership("no label with the account's scan key is change",
                    RECIPIENT_SCAN, RECIPIENT_SCAN_SPEND_LABEL_0, NULL,
+                   RECIPIENT_SCAN_SECRET, SP_OUTPUT_CHANGE);
+  expect_ownership("label 3 with the account's scan key is a self-transfer",
+                   RECIPIENT_SCAN, RECIPIENT_SCAN_SPEND_LABEL_3, &three,
+                   RECIPIENT_SCAN_SECRET, SP_OUTPUT_SELF);
+  expect_ownership("our unlabeled key with the account's scan key is ours",
+                   RECIPIENT_SCAN, OUR_SPEND, NULL, RECIPIENT_SCAN_SECRET,
+                   SP_OUTPUT_SELF);
+  expect_ownership("the account does not take our scan key's change", OUR_SCAN,
+                   OUR_SPEND_LABEL_0, &change, RECIPIENT_SCAN_SECRET,
                    SP_OUTPUT_FOREIGN);
 }
 

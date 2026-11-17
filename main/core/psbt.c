@@ -698,12 +698,26 @@ static bool output_script(const struct wally_psbt *psbt, size_t i,
   return *script && *script_len;
 }
 
+// Whose silent payment output `i` is among our account and those of our spend
+// key with a scan key not ours
+static sp_output_ownership_t sp_output_ownership(const struct wally_psbt *psbt,
+                                                 size_t i, bool is_testnet) {
+  sp_output_ownership_t ownership =
+      sp_psbt_output_ownership(psbt, i, NULL, is_testnet);
+  for (size_t pos = 0; ownership == SP_OUTPUT_FOREIGN; pos++) {
+    const unsigned char *scan_secret = registry_sp_scan_key_get(pos);
+    if (!scan_secret)
+      break;
+    ownership = sp_psbt_output_ownership(psbt, i, scan_secret, is_testnet);
+  }
+  return ownership;
+}
+
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
 
-  sp_output_ownership_t sp_ownership =
-      sp_psbt_output_ownership(psbt, i, is_testnet);
+  sp_output_ownership_t sp_ownership = sp_output_ownership(psbt, i, is_testnet);
   if (sp_ownership != SP_OUTPUT_FOREIGN) {
     result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
     result.source.kind = CLAIM_SILENT_PAYMENT;
