@@ -29,7 +29,7 @@ WALLY_PRIV_INCS = \
 # HAVE_PSA_CRYPTO_H: hash through PSA like the device build, so its glue and
 # the uncached BIP341 path are what the tests run. Every libwally link line
 # then needs -lmbedcrypto.
-WALLY_DEFS = -DBUILD_MINIMAL=1 -DBUILD_STANDARD_SECP=1 -DECMULT_WINDOW_SIZE=8 \
+WALLY_DEFS = -DBUILD_MINIMAL=1 -DECMULT_WINDOW_SIZE=8 \
 	-DHAVE_PSA_CRYPTO_H $(SANITIZE_WALLY_DEFS)
 WALLY_CFLAGS = $(WALLY_PRIV_INCS) $(WALLY_DEFS)
 

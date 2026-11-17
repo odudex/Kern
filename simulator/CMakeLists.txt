@@ -69,8 +69,6 @@ target_include_directories(wally PRIVATE
 
 target_compile_definitions(wally PRIVATE
     BUILD_MINIMAL=1
-    # Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
-    BUILD_STANDARD_SECP=1
     ECMULT_WINDOW_SIZE=8
 )
 
