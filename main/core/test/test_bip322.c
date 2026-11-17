@@ -8,6 +8,7 @@
 #include <wally_crypto.h>
 #include <wally_map.h>
 #include <wally_psbt.h>
+#include <wally_script.h>
 #include <wally_transaction.h>
 
 #include "core/bip322.h"
@@ -182,6 +183,49 @@ static void test_message_characters(void) {
   }
 }
 
+/* A nonce cache session carries global key 0x09 too, on a regular
+ * transaction: only the to_sign shape makes a request BIP322. Each case breaks
+ * one field of it. */
+static void test_detect_requires_to_sign(const uint8_t *raw, size_t raw_len) {
+  static const struct {
+    const char *name;
+    uint32_t version, locktime, index, sequence;
+    uint64_t satoshi;
+    unsigned char script;
+  } cases[] = {
+      {"version 2", 2, 0, 0, 0, 0, OP_RETURN},
+      {"locktime 1", 0, 1, 0, 0, 0, OP_RETURN},
+      {"input index 1", 0, 0, 1, 0, 0, OP_RETURN},
+      {"sequence 0xffffffff", 0, 0, 0, 0xffffffff, 0, OP_RETURN},
+      {"output value 1", 0, 0, 0, 0, 1, OP_RETURN},
+      {"output OP_TRUE", 0, 0, 0, 0, 0, OP_TRUE},
+  };
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    printf("bip322_detect ignores field 0x09 with %s: ", cases[i].name);
+    struct wally_psbt *psbt = NULL;
+    if (wally_psbt_from_bytes(raw, raw_len, 0, &psbt) != WALLY_OK) {
+      FAIL("PSBT failed to parse");
+      continue;
+    }
+    struct wally_tx *tx = psbt->tx;
+    tx->version = cases[i].version;
+    tx->locktime = cases[i].locktime;
+    tx->inputs[0].index = cases[i].index;
+    tx->inputs[0].sequence = cases[i].sequence;
+    tx->outputs[0].satoshi = cases[i].satoshi;
+    tx->outputs[0].script[0] = cases[i].script;
+    bip322_request_t req = {0};
+    if (bip322_detect(psbt))
+      FAIL("detected on a regular transaction");
+    else if (bip322_parse(psbt, true, &req))
+      FAIL("parsed a regular transaction");
+    else
+      PASS();
+    bip322_request_free(&req);
+    wally_psbt_free(psbt);
+  }
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -275,6 +319,7 @@ int main(void) {
     PASS(); /* rejected at parse time (current upstream behavior) */
   }
 
+  test_detect_requires_to_sign(raw, raw_len);
   test_message_characters();
 
   printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
