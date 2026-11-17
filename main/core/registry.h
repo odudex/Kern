@@ -119,6 +119,11 @@ KERN_WARN_UNUSED_RESULT bool registry_persist(const char *id, const char *name);
 /* True when a registration on flash already uses `name`, loaded or not. */
 KERN_WARN_UNUSED_RESULT bool registry_name_registered(const char *name);
 
+/* Removes the registration `alias` names, and only it: its descriptor entry
+ * with its backup on flash when it has one. False for an unknown alias;
+ * failure leaves the registration intact. */
+KERN_WARN_UNUSED_RESULT bool registry_unregister(const char *alias);
+
 /* True when `entry` pays the same scripts as `descriptor_str` (see
  * registry_session_has_duplicate_scripts). */
 KERN_WARN_UNUSED_RESULT bool
