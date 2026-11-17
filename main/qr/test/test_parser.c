@@ -427,6 +427,24 @@ static void test_valid_ur_still_processes(void) {
   qr_parser_destroy(parser);
 }
 
+/* A camera frame can carry stray whitespace around the payload: a BBQr part
+ * with whitespace on both sides still parses. */
+static void test_bbqr_trims_frame_whitespace(void) {
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  CHECK(parse_str(parser, " \n\tB$HU020142 \r\n") == 1);
+  CHECK(parse_str(parser, "\tB$HU020041\n") == 0);
+  CHECK(qr_parser_is_complete(parser));
+  CHECK(!qr_parser_is_failed(parser));
+  size_t result_len = 0;
+  char *result = qr_parser_result(parser, &result_len);
+  CHECK(result != NULL);
+  CHECK(result_len == 2);
+  CHECK(memcmp(result, "AB", result_len) == 0);
+  free(result);
+  qr_parser_destroy(parser);
+}
+
 int main(void) {
   test_format_none_still_completes();
   test_incomplete_pmofn_like_text_remains_plain();
@@ -449,6 +467,7 @@ int main(void) {
   test_bbqr_result_failure_clears_length();
   test_valid_bbqr_still_assembles();
   test_valid_ur_still_processes();
+  test_bbqr_trims_frame_whitespace();
 
   if (failures != 0) {
     fprintf(stderr, "%d QR parser test(s) failed\n", failures);
