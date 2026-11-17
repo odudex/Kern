@@ -1154,6 +1154,25 @@ static void drop_unverified_key_path_sigs(struct wally_psbt *psbt,
   }
 }
 
+/* A path derives exactly one key, so two PSBT_IN_TAP_BIP32_DERIVATION entries
+ * naming it under our fingerprint name two different keys for one private
+ * key. Signing either would be picking for an attacker, so such an input
+ * refuses the whole PSBT before anything is signed. */
+static bool input_lists_path_twice(const struct wally_psbt *psbt, size_t i,
+                                   const unsigned char *our_fp) {
+  const struct wally_map *paths = &psbt->inputs[i].taproot_leaf_paths;
+  for (size_t j = 0; j < paths->num_items; j++) {
+    const struct wally_map_item *item = &paths->items[j];
+    if (!keypath_matches_fingerprint(item->value, item->value_len, our_fp))
+      continue;
+    for (size_t k = j + 1; k < paths->num_items; k++)
+      if (paths->items[k].value_len == item->value_len &&
+          memcmp(paths->items[k].value, item->value, item->value_len) == 0)
+        return true;
+  }
+  return false;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1178,12 +1197,24 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
 
   size_t signatures_added = 0;
 
+  unsigned char our_fp[BIP32_KEY_FINGERPRINT_LEN];
+  if (!key_get_fingerprint(our_fp)) {
+    ESP_LOGE(TAG, "No key loaded");
+    goto cleanup;
+  }
+
   /* Classify everything up front, then freeze the inputs we will not sign.
    * Bailing on a snapshot failure rather than signing unprotected. */
   bool signable_any = false;
   for (size_t i = 0; i < num_inputs; i++) {
     plan[i].owner = psbt_classify_input(psbt, i, is_testnet);
     if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
+      /* Rejected here rather than in the signing loop, so a refusal hands
+       * the PSBT back with nothing signed. */
+      if (input_lists_path_twice(psbt, i, our_fp)) {
+        ESP_LOGE(TAG, "Input %zu names two keys on one derivation path", i);
+        goto cleanup;
+      }
       signable_any = true;
       plan[i].sig_baseline = input_signature_count(psbt, i);
       plan[i].had_tap_key_sig = tap_key_sig_present(psbt, i);
