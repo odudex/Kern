@@ -3,8 +3,10 @@
 #include "bip138_backup.h"
 #include "bip32_path.h"
 #include "descriptor_checksum.h"
+#include "descriptor_keys.h"
 #include "descriptor_validator.h"
 #include "key.h"
+#include "musig_leaves.h"
 #include "psbt_internal.h"
 #include "silent_payments.h"
 #include "wallet.h"
@@ -727,6 +729,27 @@ static void collect_own_keys(registry_entry_t *e,
   }
 }
 
+/* Our key at `index`: the key expression itself, or for a musig() its first
+ * participant carrying `wallet_fp`. */
+static bool own_key_ref(const struct wally_descriptor *desc, uint32_t index,
+                        const unsigned char *wallet_fp,
+                        descriptor_key_ref_t *ref_out) {
+  descriptor_key_ref_t ref = {.index = index,
+                              .participant = DESCRIPTOR_KEY_NOT_MUSIG};
+  size_t participants = descriptor_key_musig_participants(desc, index);
+  unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+  for (size_t p = 0; p < (participants ? participants : 1); p++) {
+    if (participants)
+      ref.participant = p;
+    if (descriptor_key_origin_fingerprint(desc, ref, fp) &&
+        memcmp(fp, wallet_fp, sizeof(fp)) == 0) {
+      *ref_out = ref;
+      return true;
+    }
+  }
+  return false;
+}
+
 bool registry_add_parsed(const char *id, struct wally_descriptor *desc,
                          size_t key_index, storage_location_t loc,
                          bool persist) {
@@ -739,17 +762,17 @@ bool registry_add_parsed(const char *id, struct wally_descriptor *desc,
 
   unsigned char wallet_fp[BIP32_KEY_FINGERPRINT_LEN];
   uint32_t num_keys = 0;
+  descriptor_key_ref_t key;
   if (!key_get_fingerprint(wallet_fp) ||
       wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK ||
-      key_index >= num_keys)
+      key_index >= num_keys ||
+      !own_key_ref(desc, (uint32_t)key_index, wallet_fp, &key))
     goto fail;
 
-  char *path_str = NULL;
   uint32_t origin_path[MAX_KEYPATH_ORIGIN_DEPTH];
   size_t origin_path_len = 0;
-  if (wally_descriptor_get_key_origin_path_str(desc, (uint32_t)key_index,
-                                               &path_str) != WALLY_OK ||
-      !path_str) {
+  char *path_str = descriptor_key_origin_path_alloc(desc, key);
+  if (!path_str) {
     ESP_LOGE(TAG, "failed to get origin path for key %zu", key_index);
     goto fail;
   }
@@ -822,19 +845,10 @@ bool registry_add_from_string(const char *id, const char *descriptor_str,
   }
 
   unsigned char wallet_fp[BIP32_KEY_FINGERPRINT_LEN];
-  uint32_t num_keys = 0;
-  if (!key_get_fingerprint(wallet_fp) ||
-      wally_descriptor_get_num_keys(desc, &num_keys) != WALLY_OK) {
-    wally_descriptor_free(desc);
-    return false;
-  }
-  for (uint32_t i = 0; i < num_keys; i++) {
-    unsigned char kfp[BIP32_KEY_FINGERPRINT_LEN];
-    if (wally_descriptor_get_key_origin_fingerprint(
-            desc, i, kfp, BIP32_KEY_FINGERPRINT_LEN) == WALLY_OK &&
-        memcmp(wallet_fp, kfp, BIP32_KEY_FINGERPRINT_LEN) == 0)
-      return registry_add_parsed(id, desc, i, loc, persist);
-  }
+  descriptor_key_ref_t key;
+  if (key_get_fingerprint(wallet_fp) &&
+      descriptor_key_find(desc, wallet_fp, &key))
+    return registry_add_parsed(id, desc, key.index, loc, persist);
   ESP_LOGW(TAG, "wallet fingerprint not found in descriptor '%s'", id);
   wally_descriptor_free(desc);
   return false;
@@ -858,8 +872,13 @@ bool registry_persist(const char *id, const char *name) {
   if (registry_name_registered(name) || !alias_file_id(name, file_id))
     return false;
 
-  char *descriptor_str = NULL;
-  if (wally_descriptor_canonicalize(e->desc, 0, &descriptor_str) != WALLY_OK)
+  char *canonical = NULL;
+  if (wally_descriptor_canonicalize(e->desc, 0, &canonical) != WALLY_OK)
+    return false;
+  /* The backup holds the text a leaf musig() was rewritten from */
+  char *descriptor_str = musig_leaves_restore_alloc(canonical);
+  wally_free_string(canonical);
+  if (!descriptor_str)
     return false;
   uint8_t *blob = NULL;
   size_t blob_len = 0;
@@ -867,7 +886,7 @@ bool registry_persist(const char *id, const char *name) {
             storage_save_descriptor(loc, file_id, blob, blob_len,
                                     STORAGE_DESCRIPTOR_BIP138) == ESP_OK;
   free(blob);
-  wally_free_string(descriptor_str);
+  free(descriptor_str);
   if (!ok) {
     ESP_LOGE(TAG, "registering '%s' failed", name);
     return false;

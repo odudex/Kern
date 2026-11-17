@@ -70,6 +70,52 @@ static char *copy_lower(char *dst, const char *src, size_t len) {
   return dst + len;
 }
 
+/* The text that identifies key expression `i`: the key, or for a musig(),
+ * which libwally lists no key for, its participants joined. Freed with
+ * wally_free_string(), libc free() underneath. */
+static char *key_identity_alloc(const struct wally_descriptor *desc,
+                                uint32_t i) {
+  char *key = NULL;
+  uint32_t features = 0;
+  size_t participants = 0;
+  if (wally_descriptor_get_key(desc, i, &key) == WALLY_OK)
+    return key;
+  if (wally_descriptor_get_key_features(desc, i, &features) != WALLY_OK ||
+      !(features & WALLY_MS_IS_MUSIG) ||
+      wally_descriptor_get_musig_num_participants(desc, i, &participants) !=
+          WALLY_OK)
+    return NULL;
+  static const char prefix[] = "musig(";
+  size_t len = sizeof(prefix) - 1;
+  char *text = participants ? malloc(len + 1) : NULL;
+  if (!text)
+    return NULL;
+  memcpy(text, prefix, sizeof(prefix));
+  for (size_t p = 0; p < participants; p++) {
+    char *participant = NULL;
+    if (wally_descriptor_get_musig_participant_key(desc, i, p, &participant) !=
+        WALLY_OK) {
+      free(text);
+      return NULL;
+    }
+    size_t add = strlen(participant) + 1; /* and its ',' or ')' */
+    char *grown = realloc(text, len + add + 1);
+    if (grown) {
+      memcpy(grown + len, participant, add - 1);
+      len += add;
+      grown[len - 1] = p + 1 < participants ? ',' : ')';
+      grown[len] = '\0';
+    }
+    wally_free_string(participant);
+    if (!grown) {
+      free(text);
+      return NULL;
+    }
+    text = grown;
+  }
+  return text;
+}
+
 size_t
 miniscript_policy_key_letters(const struct wally_descriptor *desc,
                               uint8_t letters[MINISCRIPT_POLICY_MAX_KEY_EXPRS],
@@ -84,8 +130,8 @@ miniscript_policy_key_letters(const struct wally_descriptor *desc,
   size_t num_distinct = 0;
   bool ok = true;
   for (uint32_t i = 0; i < num_keys && ok; i++) {
-    char *key = NULL;
-    if (wally_descriptor_get_key(desc, i, &key) != WALLY_OK || !key) {
+    char *key = key_identity_alloc(desc, i);
+    if (!key) {
       ok = false;
       break;
     }

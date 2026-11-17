@@ -6,6 +6,7 @@
 #include "../bip138_backup.h"
 #include "../bip138_crypto.h"
 #include "../bip138_keys.h"
+#include "../descriptor_checksum.h"
 #include "../descriptor_validator.h"
 #include "../key.h"
 #include "../registry.h"
@@ -1234,6 +1235,107 @@ static void test_many_origins(void) {
   free(many_blob);
 }
 
+#define MUSIG_ACCOUNT "m/87'/1'/0'"
+#define LEGAL_MNEMONIC                                                         \
+  "legal winner thank year wave sausage worth useful legal winner thank "      \
+  "yellow"
+#define LETTER_MNEMONIC                                                        \
+  "letter advice cage absurd amount doctor acoustic avoid letter advice "      \
+  "cage above"
+
+static bool load_testnet(const char *mnemonic) {
+  return key_load_from_mnemonic(mnemonic, "", true) &&
+         wallet_init(WALLET_NETWORK_TESTNET);
+}
+
+/* "[fingerprint/87'/1'/0']tpub..." of `mnemonic` */
+static bool musig_account_key(const char *mnemonic, char *out,
+                              size_t out_size) {
+  char fp[9];
+  char *xpub = NULL;
+  bool ok = load_testnet(mnemonic) && key_get_fingerprint_hex(fp) &&
+            key_get_xpub(MUSIG_ACCOUNT, &xpub);
+  int n = ok ? snprintf(out, out_size, "[%s/%s]%s", fp, MUSIG_ACCOUNT + 2, xpub)
+             : 0;
+  wally_free_string(xpub);
+  return ok && n > 0 && (size_t)n < out_size;
+}
+
+/* `mnemonic` opens the stored backup, which holds `descriptor` */
+static bool opens_backup(const char *mnemonic, const char *descriptor) {
+  char *recovered = NULL;
+  bool ok = load_testnet(mnemonic) &&
+            bip138_backup_decrypt(stub_files[0].data, stub_files[0].len,
+                                  &recovered, NULL, NULL) &&
+            strcmp(recovered, descriptor) == 0;
+  free(recovered);
+  return ok;
+}
+
+/* Registers `descriptor`, whose keys are the 87'/1'/0' accounts of the test,
+ * legal and letter seeds, with the test seed loaded, and reloads it after a
+ * reboot. */
+static void check_musig_backup(const char *descriptor) {
+  uint8_t keys[BIP138_KEYS_MAX * BIP138_KEY_LEN];
+  size_t count = 0;
+  char checksum[9], stored[1024];
+
+  registry_clear();
+  stub_storage_reset();
+  check("musig: test seed loads", load_testnet(TEST_MNEMONIC));
+  check("musig: every participant is a recipient",
+        bip138_keys_from_descriptor(descriptor, WALLY_NETWORK_BITCOIN_TESTNET,
+                                    keys, NULL, BIP138_KEYS_MAX, &count) &&
+            count == 3);
+  check("musig: registration is persisted",
+        registry_add_from_string("Musig", descriptor, STORAGE_FLASH, true) &&
+            stub_saves == 1 && stub_files[0].present &&
+            stub_files[0].format == STORAGE_DESCRIPTOR_BIP138);
+  registry_clear();
+  registry_init(true);
+  check("musig: registration reloads after a reboot",
+        registry_count() == 1 && registry_find_by_id("Musig") != NULL &&
+            registry_find_by_id("Musig")->persisted);
+  check("musig: the backup holds the descriptor with its checksum",
+        descriptor_checksum_from_string(descriptor, checksum) &&
+            snprintf(stored, sizeof(stored), "%s#%s", descriptor, checksum) <
+                (int)sizeof(stored));
+  check("musig: the device opens its own backup",
+        opens_backup(TEST_MNEMONIC, stored));
+  check("musig: the legal seed opens the backup",
+        opens_backup(LEGAL_MNEMONIC, stored));
+  check("musig: the letter seed opens the backup",
+        opens_backup(LETTER_MNEMONIC, stored));
+  check("musig: a foreign seed does not open the backup",
+        !opens_backup("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
+                      stored));
+  registry_clear();
+  stub_storage_reset();
+}
+
+static void test_musig(void) {
+  char device[256], legal[256], letter[256], descriptor[1024];
+
+  check("musig: account keys build",
+        musig_account_key(TEST_MNEMONIC, device, sizeof(device)) &&
+            musig_account_key(LEGAL_MNEMONIC, legal, sizeof(legal)) &&
+            musig_account_key(LETTER_MNEMONIC, letter, sizeof(letter)));
+  snprintf(descriptor, sizeof(descriptor), "tr(musig(%s,%s,%s)/<0;1>/*)",
+           device, legal, letter);
+  check_musig_backup(descriptor);
+  snprintf(descriptor, sizeof(descriptor),
+           "tr(musig(%s/<0;1>/*,%s/<0;1>/*,%s/<0;1>/*))", device, legal,
+           letter);
+  check_musig_backup(descriptor);
+  /* the device key is only in the leaf musig() */
+  snprintf(descriptor, sizeof(descriptor),
+           "tr(%s/<0;1>/*,pk(musig(%s,%s)/<0;1>/*))", legal, device, letter);
+  check_musig_backup(descriptor);
+  check("musig: mainnet test seed reloads",
+        key_load_from_mnemonic(TEST_MNEMONIC, "", false) &&
+            wallet_init(WALLET_NETWORK_MAINNET));
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -1263,6 +1365,7 @@ int main(void) {
   test_sp_scan_key_aliases();
   test_unregister();
   test_many_origins();
+  test_musig();
   key_unload();
   printf("\n%d tests, %d failed\n", tests_run, tests_failed);
   return tests_failed == 0 ? 0 : 1;
