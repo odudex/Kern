@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <wally_address.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
@@ -42,7 +43,8 @@
   (BIPQR_CAPABILITY_BIP380_DESCRIPTORS |                                       \
    BIPQR_CAPABILITY_BIP388_WALLET_POLICIES |                                   \
    BIPQR_CAPABILITY_MINISCRIPT_SEGWIT_V0 |                                     \
-   BIPQR_CAPABILITY_MINISCRIPT_TAPROOT)
+   BIPQR_CAPABILITY_MINISCRIPT_TAPROOT |                                       \
+   BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR)
 
 typedef struct {
   lv_obj_t *parent;
@@ -1199,6 +1201,38 @@ static void handle_sign(void) {
                    NULL);
 }
 
+static void unregister_confirm_cb(bool confirmed, void *user_data) {
+  (void)user_data;
+  if (!confirmed) {
+    show_error_response(BIPQR_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    return;
+  }
+  const char *alias = ctx.request->body.unregister_descriptor.descriptor_alias;
+  if (!registry_unregister(alias)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+                        "Removing the registration failed");
+    return;
+  }
+  debug_logf("bip_flow unregistered alias=%s", alias);
+  bipqr_response response;
+  fill_response_header(&response);
+  response.body.unregistered.descriptor_alias = alias;
+  show_response(&response);
+}
+
+// The user confirms the alias and what it names before it is removed
+static void handle_unregister(void) {
+  const char *alias = ctx.request->body.unregister_descriptor.descriptor_alias;
+  const registry_entry_t *entry = registry_find_by_id(alias);
+  if (entry) {
+    if (!descriptor_loader_confirm_unregister(entry, unregister_confirm_cb))
+      show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+                          "Descriptor review failed");
+  } else {
+    show_descriptor_error(BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS);
+  }
+}
+
 static void dispatch_request(void) {
   debug_logf("bip_flow dispatch message_type=%d", ctx.request->message_type);
   uint8_t unsupported = bip_flow_unsupported_error(ctx.request);
@@ -1224,6 +1258,9 @@ static void dispatch_request(void) {
     break;
   case BIPQR_MESSAGE_SIGNING:
     handle_sign();
+    break;
+  case BIPQR_MESSAGE_UNREGISTER_DESCRIPTOR:
+    handle_unregister();
     break;
   default:
     show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
