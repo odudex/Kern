@@ -15,10 +15,13 @@
 
 /* BIP138 container holding the descriptor, addressed to the descriptor's own
  * root keys, with every key's origin path stored as a recovery hint and this
- * device's approval mark (an HMAC under a key only this seed can derive).
- * Refuses descriptors carrying private keys. *blob_out is malloc'd; the caller
- * frees it. */
+ * device's approval mark (an HMAC under a key only this seed can derive),
+ * which covers the alias too.
+ * Refuses descriptors carrying private keys. `alias` (optional) is the name
+ * the descriptor is registered under. *blob_out is malloc'd; the caller frees
+ * it. */
 KERN_WARN_UNUSED_RESULT bool bip138_backup_encrypt(const char *descriptor,
+                                                   const char *alias,
                                                    uint8_t **blob_out,
                                                    size_t *blob_len);
 
@@ -28,16 +31,19 @@ KERN_WARN_UNUSED_RESULT bool bip138_backup_encrypt(const char *descriptor,
  * wrote it after the user confirmed the descriptor; a backup from another
  * wallet, or one forged from a public xpub, decrypts with approved false.
  * *descriptor_out is malloc'd and NUL-terminated; free it with
- * SECURE_FREE_STRING. */
+ * SECURE_FREE_STRING. *alias_out (optional) receives the registration alias,
+ * malloc'd, or NULL when the backup has none. */
 KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt(const uint8_t *blob,
                                                    size_t blob_len,
                                                    char **descriptor_out,
+                                                   char **alias_out,
                                                    bool *approved_out);
 
 /* Accepts either the binary container or its base64 text. */
 KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt_any(const uint8_t *data,
                                                        size_t len,
                                                        char **descriptor_out,
+                                                       char **alias_out,
                                                        bool *approved_out);
 
 /* Same, trying only the paths the container itself stores, never the common
@@ -48,7 +54,8 @@ KERN_WARN_UNUSED_RESULT bool bip138_backup_decrypt_any(const uint8_t *data,
  * common paths. */
 KERN_WARN_UNUSED_RESULT bool
 bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
-                                 char **descriptor_out, bool *approved_out);
+                                 char **descriptor_out, char **alias_out,
+                                 bool *approved_out);
 
 /* True for a binary container or its base64 text form. */
 bool bip138_backup_detect(const uint8_t *data, size_t len);
