@@ -76,9 +76,6 @@ bip_flow_register_error(descriptor_validation_result_t result) {
     return BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
   }
 }
-// PSBT_OUT_SP_V0_INFO (BIP-375): the output pays a silent payment address
-#define BIP_FLOW_PSBT_OUT_SP_V0_INFO 0x09
-
 // The error a descriptor body needing a capability Kern does not advertise
 // answers with, 0 when Kern takes it: a musig() key gets 0x0F
 static inline uint8_t
@@ -120,26 +117,15 @@ static inline uint8_t bip_flow_unsupported_error(const bipqr_request *request) {
   }
 }
 
-static inline bool bip_flow_map_has_key(const struct wally_map *map,
-                                        uint8_t key) {
-  for (size_t i = 0; i < map->num_items; i++) {
-    if (map->items[i].key_len == 1 && map->items[i].key[0] == key)
-      return true;
-  }
-  return false;
-}
-
-// True for a PSBT needing a capability Kern does not advertise: a silent
-// payment output, or the BIP-373 participant keys of a MuSig2 key
+// True for a PSBT needing a capability Kern does not advertise: the BIP-373
+// participant keys of a MuSig2 key
 static inline bool bip_flow_psbt_is_unsupported(const struct wally_psbt *psbt) {
   for (size_t i = 0; i < psbt->num_inputs; i++) {
     if (psbt->inputs[i].musig2_pubkeys.num_items)
       return true;
   }
   for (size_t i = 0; i < psbt->num_outputs; i++) {
-    if (psbt->outputs[i].musig2_pubkeys.num_items ||
-        bip_flow_map_has_key(&psbt->outputs[i].unknowns,
-                             BIP_FLOW_PSBT_OUT_SP_V0_INFO))
+    if (psbt->outputs[i].musig2_pubkeys.num_items)
       return true;
   }
   return false;

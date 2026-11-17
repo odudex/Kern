@@ -8,6 +8,7 @@
 #include "../../core/registry.h"
 #include "../../core/settings.h"
 #include "../../core/silent_payments.h"
+#include "../../core/sp_psbt.h"
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -45,6 +46,7 @@
    BIPQR_CAPABILITY_BIP388_WALLET_POLICIES |                                   \
    BIPQR_CAPABILITY_MINISCRIPT_SEGWIT_V0 |                                     \
    BIPQR_CAPABILITY_MINISCRIPT_TAPROOT |                                       \
+   BIPQR_CAPABILITY_SILENT_PAYMENT_SENDS |                                     \
    BIPQR_CAPABILITY_SILENT_PAYMENT_ACCOUNTS |                                  \
    BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR)
 
@@ -1278,12 +1280,51 @@ static bool collect_signatures(const struct wally_psbt *psbt,
   return true;
 }
 
+// The ECDH shares and DLEQ proofs Kern contributed: global when it holds
+// every eligible input, else one per eligible input it holds
+static bool append_sp_shares(const struct wally_psbt *psbt,
+                             bipqr_signature **signatures, size_t *len,
+                             size_t *cap) {
+  sp_share_t *shares = NULL;
+  size_t count = 0;
+  if (!sp_psbt_shares_alloc(psbt, wallet_is_testnet(), &shares, &count))
+    return false;
+  bool ok = true;
+  for (size_t i = 0; ok && i < count; i++) {
+    uint32_t input_index = (uint32_t)shares[i].input_index;
+    bipqr_signature share = {.input_index = input_index,
+                             .kind = BIPQR_SIGNATURE_SP_ECDH_SHARE};
+    share.value.sp_ecdh_share.global = shares[i].global;
+    memcpy(share.value.sp_ecdh_share.scan_key, shares[i].scan, SP_PUBKEY_LEN);
+    memcpy(share.value.sp_ecdh_share.share, shares[i].share, SP_PUBKEY_LEN);
+    bipqr_signature proof = {.input_index = input_index,
+                             .kind = BIPQR_SIGNATURE_SP_DLEQ_PROOF};
+    proof.value.sp_dleq_proof.global = shares[i].global;
+    memcpy(proof.value.sp_dleq_proof.scan_key, shares[i].scan, SP_PUBKEY_LEN);
+    memcpy(proof.value.sp_dleq_proof.proof, shares[i].proof,
+           BIPQR_DLEQ_PROOF_LEN);
+    ok = append_signature(signatures, len, cap, &share) &&
+         append_signature(signatures, len, cap, &proof);
+  }
+  free(shares);
+  return ok;
+}
+
 static void answer_signatures(const struct wally_psbt *psbt) {
   bipqr_signature *signatures = NULL;
   size_t len = 0;
   if (!collect_signatures(psbt, &signatures, &len)) {
     show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
                         "Signature extraction failed");
+    return;
+  }
+  // While another signer owes a share there is no signature, only shares
+  size_t cap = len;
+  if (sp_psbt_has_outputs(psbt) &&
+      !append_sp_shares(psbt, &signatures, &len, &cap)) {
+    free_signature_list(signatures, len);
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+                        "Silent payment share extraction failed");
     return;
   }
   if (len == 0) {
@@ -1311,10 +1352,7 @@ static void answer_psbt(const struct wally_psbt *psbt) {
              (unsigned)signed_input_count(export_psbt), trimmed != NULL);
   uint8_t *signed_bytes = NULL;
   bool encoded =
-      wally_psbt_get_length(export_psbt, 0, &signed_len) == WALLY_OK &&
-      (signed_bytes = malloc(signed_len)) != NULL &&
-      wally_psbt_to_bytes(export_psbt, 0, signed_bytes, signed_len,
-                          &signed_len) == WALLY_OK;
+      sp_psbt_serialize_alloc(export_psbt, &signed_bytes, &signed_len);
   if (trimmed)
     wally_psbt_free(trimmed);
   if (!encoded) {
@@ -1420,8 +1458,7 @@ static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
   return !error;
 }
 
-// A PSBT needing a capability Kern does not advertise: a silent payment send
-// or MuSig2 keys
+// A PSBT needing a capability Kern does not advertise: MuSig2 keys
 static bool refuse_unsupported_psbt(const bipqr_sign *req) {
   struct wally_psbt *psbt = NULL;
   // Loose, as a silent payment output has no script until a signer derives it
@@ -1433,7 +1470,7 @@ static bool refuse_unsupported_psbt(const bipqr_sign *req) {
   wally_psbt_free(psbt);
   if (unsupported)
     show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
-                        "Silent payment sends and MuSig2 are not supported");
+                        "MuSig2 is not supported");
   return unsupported;
 }
 
