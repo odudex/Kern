@@ -9,6 +9,7 @@
 #include "../../qr/encoder.h"
 #include "../../qr/scanner.h"
 #include "../../qr/viewer.h"
+#include "../../ui/address_label.h"
 #include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
@@ -69,30 +70,6 @@ static int stored_count = 0;
 static void refresh_address_list(void);
 static void scan_button_cb(lv_event_t *e);
 static void return_from_scan_cb(void);
-
-// Format address as 4-char blocks with alternating main/highlight colors
-static void format_address_colored_blocks(char *dest, size_t dest_size,
-                                          const char *address) {
-  lv_color32_t c1 = lv_color_to_32(primary_color(), LV_OPA_COVER);
-  lv_color32_t c2 = lv_color_to_32(highlight_color(), LV_OPA_COVER);
-  uint32_t hex1 = (c1.red << 16) | (c1.green << 8) | c1.blue;
-  uint32_t hex2 = (c2.red << 16) | (c2.green << 8) | c2.blue;
-
-  size_t len = strlen(address);
-  size_t written = 0;
-  dest[0] = '\0';
-
-  for (size_t pos = 0; pos < len; pos += 4) {
-    uint32_t color = ((pos / 4) % 2 == 0) ? hex1 : hex2;
-    size_t chunk = (len - pos < 4) ? (len - pos) : 4;
-    int n = snprintf(dest + written, dest_size - written, "%s#%06X %.*s#",
-                     (pos > 0) ? " " : "", (unsigned)color, (int)chunk,
-                     address + pos);
-    if (n < 0 || (size_t)n >= dest_size - written)
-      break;
-    written += n;
-  }
-}
 
 static void show_address_detail(int index);
 
@@ -235,19 +212,11 @@ static void show_address_detail(int index) {
   qr_viewer_attach_fullscreen(qr_container, qr_payload, title);
   free(upper);
 
-  // Full address text with alternating colored 4-char blocks
-  char colored_addr[512];
-  format_address_colored_blocks(colored_addr, sizeof(colored_addr), address);
-  lv_obj_t *addr_label = lv_label_create(content);
-  lv_label_set_recolor(addr_label, true);
-  lv_label_set_text(addr_label, colored_addr);
+  lv_obj_t *addr_label = address_label_create(content, address);
   if (landscape)
     lv_obj_set_width(addr_label, scr_w - 2 * pad - square_size - pad);
   else
     lv_obj_set_width(addr_label, LV_PCT(95));
-  lv_label_set_long_mode(addr_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_align(addr_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_font(addr_label, theme_font_medium(), 0);
 
   // Back button
   detail_back_button = ui_create_back_button(parent, detail_back_cb);

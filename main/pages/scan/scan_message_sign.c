@@ -66,7 +66,8 @@ void scan_message_create_display(void) {
   lv_obj_set_width(msg_label, LV_PCT(100));
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
 
-  scan_create_sign_action_row(scan_ctx.info_container, message_sign_button_cb);
+  scan_create_sign_action_row(scan_ctx.info_container, "Sign",
+                              message_sign_button_cb);
 }
 
 // Review screen for a PSBT-based BIP322 signing request. Signing goes through
@@ -102,7 +103,7 @@ void scan_bip322_create_display(void) {
   lv_obj_set_width(msg_label, LV_PCT(100));
   lv_label_set_long_mode(msg_label, LV_LABEL_LONG_WRAP);
 
-  scan_create_sign_action_row(scan_ctx.info_container,
+  scan_create_sign_action_row(scan_ctx.info_container, "Sign",
                               scan_psbt_sign_button_cb);
 }
 

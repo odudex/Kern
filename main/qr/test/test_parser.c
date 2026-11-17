@@ -427,6 +427,53 @@ static void test_valid_ur_still_processes(void) {
   qr_parser_destroy(parser);
 }
 
+/* A single-part BBQr frame carrying a 195 byte binary payload, as a Liana
+ * airgap request arrives. Split out so the whitespace and lowercase variants
+ * assert against the same payload. */
+#define BIP_REQUEST_BODY                                                       \
+  "42495058585801010E151E957222A2B72C605E0A16E9F5740A"                         \
+  "048000003080000000800000008000000204800000308000000080000001800000020"      \
+  "480000030800000008000000280000002048000003080000000800000038000000204"      \
+  "800000308000000080000004800000020480000030800000008000000580000002048"      \
+  "000003080000000800000068000000204800000308000000080000007800000020480"      \
+  "0000308000000080000008800000020480000030800000008000000980000002"
+
+static const unsigned char BIP_REQUEST_PREFIX[] = {
+    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x01, 0x0e,
+    0x15, 0x1e, 0x95, 0x72, 0x22, 0xa2, 0xb7, 0x2c, 0x60,
+    0x5e, 0x0a, 0x16, 0xe9, 0xf5, 0x74, 0x0a};
+
+static void check_bip_request_payload(QRPartParser *parser) {
+  CHECK(qr_parser_is_complete(parser));
+  CHECK(!qr_parser_is_failed(parser));
+  CHECK(qr_parser_get_format(parser) == FORMAT_BBQR);
+  CHECK(qr_parser_get_bbqr_file_type(parser) == 'B');
+  size_t result_len = 0;
+  char *result = qr_parser_result(parser, &result_len);
+  CHECK(result != NULL);
+  CHECK(result_len == 195);
+  CHECK(memcmp(result, BIP_REQUEST_PREFIX, sizeof(BIP_REQUEST_PREFIX)) == 0);
+  free(result);
+}
+
+static void test_bbqr_trims_frame_whitespace(void) {
+  const char *frame = " \n\tB$HB0100" BIP_REQUEST_BODY " \r\n";
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  CHECK(qr_parser_parse_with_len(parser, frame, strlen(frame)) == 0);
+  check_bip_request_payload(parser);
+  qr_parser_destroy(parser);
+}
+
+static void test_bbqr_accepts_lowercase_prefix(void) {
+  const char *frame = "b$hb0100" BIP_REQUEST_BODY;
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  CHECK(qr_parser_parse_with_len(parser, frame, strlen(frame)) == 0);
+  check_bip_request_payload(parser);
+  qr_parser_destroy(parser);
+}
+
 int main(void) {
   test_format_none_still_completes();
   test_incomplete_pmofn_like_text_remains_plain();
@@ -449,6 +496,8 @@ int main(void) {
   test_bbqr_result_failure_clears_length();
   test_valid_bbqr_still_assembles();
   test_valid_ur_still_processes();
+  test_bbqr_trims_frame_whitespace();
+  test_bbqr_accepts_lowercase_prefix();
 
   if (failures != 0) {
     fprintf(stderr, "%d QR parser test(s) failed\n", failures);

@@ -5,6 +5,7 @@
 #include "../../core/psbt.h"
 #include "../../core/secp_hardening.h"
 #include "../../core/settings.h"
+#include "../../core/sp_psbt.h"
 #include "../../qr/parser.h"
 #include "../../qr/viewer.h"
 #include "../../ui/dialog.h"
@@ -21,6 +22,22 @@
 
 static void show_export_choice(void);
 
+/* A caller that opened the flow through scan_review_psbt() takes the signed
+ * PSBT itself; everyone else picks an export from the menu. */
+static void finish_signed_psbt(void) {
+  if (scan_ctx.psbt_signed_cb) {
+    scan_psbt_signed_cb_t cb = scan_ctx.psbt_signed_cb;
+    void *user_data = scan_ctx.psbt_user_data;
+    scan_ctx.psbt_signed_cb = NULL;
+    scan_ctx.psbt_failed_cb = NULL;
+    scan_ctx.psbt_user_data = NULL;
+    scan_page_hide();
+    cb(scan_ctx.psbt, user_data);
+    return;
+  }
+  show_export_choice();
+}
+
 void scan_export_destroy_menu(void) {
   if (scan_ctx.export_menu) {
     ui_menu_destroy(scan_ctx.export_menu);
@@ -30,7 +47,7 @@ void scan_export_destroy_menu(void) {
 
 static void partial_sign_ack_cb(void *user_data) {
   (void)user_data;
-  show_export_choice();
+  finish_signed_psbt();
 }
 
 static void deferred_sign_cb(lv_timer_t *timer) {
@@ -38,7 +55,7 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   if (!scan_ctx.psbt) {
     scan_dismiss_progress();
-    dialog_show_error_timeout("No PSBT loaded", NULL, 2000);
+    scan_psbt_fail(SCAN_PSBT_INTERNAL, "No PSBT loaded", NULL, 2000);
     return;
   }
 
@@ -53,7 +70,8 @@ static void deferred_sign_cb(lv_timer_t *timer) {
 
   if (signatures_added == 0) {
     scan_dismiss_progress();
-    dialog_show_error_timeout("Failed to sign PSBT", NULL, 2000);
+    scan_psbt_fail(SCAN_PSBT_NOTHING_TO_SIGN, "Failed to sign PSBT", NULL,
+                   2000);
     return;
   }
 
@@ -77,12 +95,13 @@ static void deferred_sign_cb(lv_timer_t *timer) {
   scan_dismiss_progress();
 
   if (ret != WALLY_OK) {
-    dialog_show_error_timeout("Failed to encode PSBT", NULL, 2000);
+    scan_psbt_fail(SCAN_PSBT_INTERNAL, "Failed to encode PSBT", NULL, 2000);
     return;
   }
 
-  scan_ctx.saved_return_cb =
-      scan_ctx.complete_cb ? scan_ctx.complete_cb : scan_ctx.return_cb;
+  if (!scan_ctx.psbt_signed_cb)
+    scan_ctx.saved_return_cb =
+        scan_ctx.complete_cb ? scan_ctx.complete_cb : scan_ctx.return_cb;
 
   // A PSBT built so that refused inputs pick up a signature from a key used
   // elsewhere in the same transaction is not an accident. The signatures were
@@ -146,7 +165,28 @@ static void deferred_sign_cb(lv_timer_t *timer) {
     return;
   }
 
-  show_export_choice();
+  finish_signed_psbt();
+}
+
+void scan_psbt_export_shares(void) {
+  if (!scan_ctx.psbt_signed_cb) {
+    struct wally_psbt *trimmed = psbt_trim(scan_ctx.psbt);
+    if (scan_ctx.signed_psbt_base64) {
+      wally_free_string(scan_ctx.signed_psbt_base64);
+      scan_ctx.signed_psbt_base64 = NULL;
+    }
+    bool ok = sp_psbt_base64_alloc(trimmed ? trimmed : scan_ctx.psbt,
+                                   &scan_ctx.signed_psbt_base64);
+    wally_psbt_free(trimmed);
+    if (!ok) {
+      scan_psbt_fail(SCAN_PSBT_INTERNAL, "Failed to encode PSBT",
+                     scan_ctx.return_cb, 0);
+      return;
+    }
+    scan_ctx.saved_return_cb =
+        scan_ctx.complete_cb ? scan_ctx.complete_cb : scan_ctx.return_cb;
+  }
+  finish_signed_psbt();
 }
 
 // Tears down the chooser, then returns to the caller that opened the
@@ -262,7 +302,7 @@ static void deferred_export_save_cb(lv_timer_t *timer) {
   esp_err_t wret;
   if (scan_ctx.source_base64) {
     char *full_b64 = NULL;
-    if (wally_psbt_to_base64(scan_ctx.psbt, 0, &full_b64) != WALLY_OK) {
+    if (!sp_psbt_base64_alloc(scan_ctx.psbt, &full_b64)) {
       dialog_show_error_timeout("Failed to encode PSBT", show_export_choice, 0);
       return;
     }
@@ -270,20 +310,9 @@ static void deferred_export_save_cb(lv_timer_t *timer) {
         sd_card_write_file(path, (const uint8_t *)full_b64, strlen(full_b64));
     wally_free_string(full_b64);
   } else {
-    size_t bin_len = 0;
-    if (wally_psbt_get_length(scan_ctx.psbt, 0, &bin_len) != WALLY_OK) {
-      dialog_show_error_timeout("Failed to encode PSBT", show_export_choice, 0);
-      return;
-    }
-    uint8_t *bin = malloc(bin_len);
-    if (!bin) {
-      dialog_show_error_timeout("Out of memory", show_export_choice, 0);
-      return;
-    }
+    uint8_t *bin = NULL;
     size_t written = 0;
-    if (wally_psbt_to_bytes(scan_ctx.psbt, 0, bin, bin_len, &written) !=
-        WALLY_OK) {
-      free(bin);
+    if (!sp_psbt_serialize_alloc(scan_ctx.psbt, &bin, &written)) {
       dialog_show_error_timeout("Failed to encode PSBT", show_export_choice, 0);
       return;
     }

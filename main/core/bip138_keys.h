@@ -25,8 +25,9 @@ KERN_WARN_UNUSED_RESULT bool bip138_key_from_expression(const char *expr,
                                                         uint8_t xonly_out[32]);
 
 /* Distinct recipient keys of a descriptor, with each key's origin path when
- * origins_out is given. Fails when no key qualifies or more than max_keys do.
- */
+ * origins_out is given. A musig() stands for its participants, which qualify
+ * when a derivation follows the musig() or them. Fails when no key qualifies
+ * or more than max_keys do. */
 KERN_WARN_UNUSED_RESULT bool
 bip138_keys_from_descriptor(const char *descriptor, uint32_t wally_network,
                             uint8_t *keys_out, bip138_key_origin *origins_out,

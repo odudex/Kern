@@ -145,6 +145,15 @@ bool script_template_pubkey_matches_spk(const uint8_t *pubkey,
   return false;
 }
 
+bool script_template_pushes_key(const uint8_t *script, size_t script_len,
+                                const uint8_t *key, size_t key_len) {
+  for (size_t i = 0; i + 1 + key_len <= script_len; i++) {
+    if (script[i] == key_len && memcmp(script + i + 1, key, key_len) == 0)
+      return true;
+  }
+  return false;
+}
+
 char *script_template_address_from_spk(const unsigned char *script,
                                        size_t script_len, bool is_testnet) {
   if (!script || script_len == 0)

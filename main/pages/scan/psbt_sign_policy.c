@@ -91,11 +91,26 @@ static void format_external_inputs(const psbt_gate_report_t *report, char *body,
            report->external_count == 1 ? "is" : "are");
 }
 
+// What a scan_review_psbt() caller is told of the gate that fired
+static scan_psbt_failure_t refusal_of(psbt_gate_t gate) {
+  switch (gate) {
+  case PSBT_GATE_NOTHING_SIGNABLE:
+    return SCAN_PSBT_NOTHING_TO_SIGN;
+  case PSBT_GATE_EXPECTED_OWNED:
+  case PSBT_GATE_PERMISSIVE:
+  case PSBT_GATE_PARTIAL:
+    return SCAN_PSBT_REFUSED;
+  default:
+    return SCAN_PSBT_INVALID;
+  }
+}
+
 bool psbt_sign_policy_allows_review(struct wally_psbt *psbt,
                                     const input_ownership_t *inputs,
                                     const output_ownership_t *outputs,
                                     dialog_callback_t dismissed_cb,
-                                    void (*load_descriptor_cb)(void)) {
+                                    void (*load_descriptor_cb)(void),
+                                    scan_psbt_failure_t *refusal_out) {
   psbt_gate_settings_t settings = {
       .expected_owned = settings_get_expected_owned_signing(),
       .permissive = settings_get_permissive_signing(),
@@ -103,6 +118,7 @@ bool psbt_sign_policy_allows_review(struct wally_psbt *psbt,
   };
   psbt_gate_report_t report;
   psbt_gate_t gate = psbt_gate_check(psbt, inputs, outputs, &settings, &report);
+  *refusal_out = refusal_of(gate);
 
   char body[384];
   switch (gate) {
