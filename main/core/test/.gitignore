@@ -45,4 +45,5 @@ fuzz_psbt
 fuzz_descriptor
 fuzz_text
 test_silentpayments
+test_dleq
 kern_bipqr/
