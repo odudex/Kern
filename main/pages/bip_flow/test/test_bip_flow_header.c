@@ -201,6 +201,46 @@ static void test_unsupported_requests(void) {
       0x00);
 }
 
+static void expect_psbt(const char *name, const struct wally_psbt *psbt,
+                        bool unsupported) {
+  TEST(name);
+  if (bip_flow_psbt_is_unsupported(psbt) == unsupported)
+    PASS();
+  else
+    FAIL(unsupported ? "PSBT taken" : "PSBT refused");
+}
+
+static void test_unsupported_psbts(void) {
+  struct wally_psbt_input input;
+  struct wally_psbt_output output;
+  struct wally_psbt psbt;
+  unsigned char sp_info_key = BIP_FLOW_PSBT_OUT_SP_V0_INFO;
+  unsigned char other_key = 0x08;
+  struct wally_map_item item = {.key = &other_key, .key_len = 1};
+  memset(&input, 0, sizeof(input));
+  memset(&output, 0, sizeof(output));
+  memset(&psbt, 0, sizeof(psbt));
+  psbt.inputs = &input;
+  psbt.num_inputs = 1;
+  psbt.outputs = &output;
+  psbt.num_outputs = 1;
+
+  output.unknowns.items = &item;
+  output.unknowns.num_items = 1;
+  expect_psbt("a PSBT with another unknown output field is taken", &psbt,
+              false);
+  item.key = &sp_info_key;
+  expect_psbt("a silent payment send answers unsupported operation", &psbt,
+              true);
+  output.unknowns.num_items = 0;
+  input.musig2_pubkeys.num_items = 1;
+  expect_psbt("an input MuSig2 key answers unsupported operation", &psbt, true);
+  input.musig2_pubkeys.num_items = 0;
+  output.musig2_pubkeys.num_items = 1;
+  expect_psbt("an output MuSig2 key answers unsupported operation", &psbt,
+              true);
+}
+
 int main(void) {
   printf("BIP flow request header tests\n");
   printf("=============================\n\n");
@@ -208,6 +248,7 @@ int main(void) {
   test_read_header();
   test_decode_error();
   test_unsupported_requests();
+  test_unsupported_psbts();
 
   printf("\nResults: %d failed\n", tests_failed);
   return tests_failed == 0 ? 0 : 1;

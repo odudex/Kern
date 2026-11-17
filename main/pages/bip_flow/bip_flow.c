@@ -4,6 +4,7 @@
 #include "../../core/bip32_path.h"
 #include "../../core/debug_log.h"
 #include "../../core/key.h"
+#include "../../core/psbt.h"
 #include "../../core/registry.h"
 #include "../../core/settings.h"
 #include "../../core/storage.h"
@@ -16,12 +17,14 @@
 #include "../../ui/theme.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/secure_mem.h"
+#include "../scan/scan.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
 #include "bip388.h"
 #include <bipqr.h>
 #include <esp_app_desc.h>
 #include <inttypes.h>
+#include <kern_wally.h>
 #include <sdkconfig.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -31,6 +34,9 @@
 #include <wally_bip32.h>
 #include <wally_core.h>
 #include <wally_descriptor.h>
+#include <wally_map.h>
+#include <wally_psbt.h>
+#include <wally_psbt_members.h>
 
 #define KERN_CAPABILITIES                                                      \
   (BIPQR_CAPABILITY_BIP380_DESCRIPTORS |                                       \
@@ -53,6 +59,7 @@ static char *pending_verified_uri = NULL;
 static char pending_verify_caption[REGISTRY_ID_MAX_LEN + 32];
 static lv_obj_t *verify_address_detail = NULL;
 static lv_obj_t *verify_address_approve_btn = NULL;
+static bool signing_response_return_pending = false;
 
 static void destroy_verify_address_detail(void) {
   if (verify_address_detail) {
@@ -76,6 +83,7 @@ bool bip_flow_can_handle(const uint8_t *data, size_t len) {
 }
 
 static void cleanup_request(void) {
+  registry_clear_preferred();
   if (ctx.request) {
     bipqr_request_free(ctx.request);
     ctx.request = NULL;
@@ -88,6 +96,31 @@ static void return_from_response(void) {
   cleanup_request();
   if (ctx.return_cb)
     ctx.return_cb();
+}
+
+static void signing_response_return_timer_cb(lv_timer_t *timer) {
+  (void)timer;
+  debug_log_event("bip_flow signing_response deferred_return");
+  signing_response_return_pending = false;
+  qr_viewer_page_destroy();
+  cleanup_request();
+  if (ctx.return_cb)
+    ctx.return_cb();
+}
+
+static void return_from_signing_response(void) {
+  debug_log_event("bip_flow signing_response done");
+  if (signing_response_return_pending)
+    return;
+  signing_response_return_pending = true;
+  lv_timer_t *timer =
+      lv_timer_create(signing_response_return_timer_cb, 1, NULL);
+  if (timer) {
+    lv_timer_set_repeat_count(timer, 1);
+  } else {
+    signing_response_return_pending = false;
+    signing_response_return_timer_cb(NULL);
+  }
 }
 
 static void show_response_sized(bipqr_response *response, void (*done_cb)(void),
@@ -892,6 +925,280 @@ static void handle_verify(void) {
   verify_descriptor_address(req);
 }
 
+static size_t signed_input_count(const struct wally_psbt *psbt) {
+  if (!psbt)
+    return 0;
+
+  size_t count = 0;
+  for (size_t i = 0; i < psbt->num_inputs; i++) {
+    size_t n = 0;
+    if (wally_psbt_get_input_signatures_size(psbt, i, &n) == WALLY_OK && n > 0)
+      count++;
+    else if (wally_psbt_get_input_taproot_signature_len(psbt, i, &n) ==
+                 WALLY_OK &&
+             n > 0)
+      count++;
+    else if (psbt->inputs[i].taproot_leaf_signatures.num_items > 0)
+      count++;
+  }
+  return count;
+}
+
+static void free_signature_list(bipqr_signature *signatures, size_t len) {
+  if (!signatures)
+    return;
+  for (size_t i = 0; i < len; i++) {
+    switch (signatures[i].kind) {
+    case BIPQR_SIGNATURE_ECDSA:
+      free((void *)signatures[i].value.ecdsa.signature.ptr);
+      break;
+    case BIPQR_SIGNATURE_TAP_KEY:
+      free((void *)signatures[i].value.tap_key.signature.ptr);
+      break;
+    case BIPQR_SIGNATURE_TAP_SCRIPT:
+      free((void *)signatures[i].value.tap_script.signature.ptr);
+      break;
+    default:
+      break;
+    }
+  }
+  free(signatures);
+}
+
+static bool copy_signature_bytes(const uint8_t *src, size_t len,
+                                 bipqr_bytes *out) {
+  uint8_t *copy = malloc(len);
+  if (!copy)
+    return false;
+  memcpy(copy, src, len);
+  out->ptr = copy;
+  out->len = len;
+  return true;
+}
+
+static bool append_signature(bipqr_signature **signatures, size_t *len,
+                             size_t *cap, const bipqr_signature *sig) {
+  if (*len == *cap) {
+    size_t new_cap = *cap ? *cap * 2 : 4;
+    bipqr_signature *new_signatures =
+        realloc(*signatures, new_cap * sizeof(*new_signatures));
+    if (!new_signatures)
+      return false;
+    *signatures = new_signatures;
+    *cap = new_cap;
+  }
+  (*signatures)[(*len)++] = *sig;
+  return true;
+}
+
+static bool collect_signatures(const struct wally_psbt *psbt,
+                               bipqr_signature **signatures_out,
+                               size_t *len_out) {
+  bipqr_signature *signatures = NULL;
+  size_t len = 0, cap = 0;
+
+  for (size_t input_index = 0; input_index < psbt->num_inputs; input_index++) {
+    const struct wally_psbt_input *input = &psbt->inputs[input_index];
+    for (size_t j = 0; j < input->signatures.num_items; j++) {
+      const struct wally_map_item *item = &input->signatures.items[j];
+      if (item->key_len != BIPQR_PUBLIC_KEY_LEN || !item->key || !item->value)
+        continue;
+      bipqr_signature sig = {.input_index = (uint32_t)input_index,
+                             .kind = BIPQR_SIGNATURE_ECDSA};
+      memcpy(sig.value.ecdsa.public_key, item->key, BIPQR_PUBLIC_KEY_LEN);
+      if (!copy_signature_bytes(item->value, item->value_len,
+                                &sig.value.ecdsa.signature) ||
+          !append_signature(&signatures, &len, &cap, &sig)) {
+        free((void *)sig.value.ecdsa.signature.ptr);
+        free_signature_list(signatures, len);
+        return false;
+      }
+    }
+
+    size_t tap_key_sig_len = 0;
+    if (wally_psbt_get_input_taproot_signature_len(
+            psbt, input_index, &tap_key_sig_len) == WALLY_OK &&
+        tap_key_sig_len > 0) {
+      uint8_t *tap_key_sig = malloc(tap_key_sig_len);
+      size_t written = 0;
+      if (!tap_key_sig ||
+          wally_psbt_get_input_taproot_signature(psbt, input_index, tap_key_sig,
+                                                 tap_key_sig_len,
+                                                 &written) != WALLY_OK ||
+          written != tap_key_sig_len) {
+        free(tap_key_sig);
+        free_signature_list(signatures, len);
+        return false;
+      }
+      bipqr_signature sig = {.input_index = (uint32_t)input_index,
+                             .kind = BIPQR_SIGNATURE_TAP_KEY};
+      sig.value.tap_key.signature.ptr = tap_key_sig;
+      sig.value.tap_key.signature.len = tap_key_sig_len;
+      if (!append_signature(&signatures, &len, &cap, &sig)) {
+        free(tap_key_sig);
+        free_signature_list(signatures, len);
+        return false;
+      }
+    }
+
+    for (size_t j = 0; j < input->taproot_leaf_signatures.num_items; j++) {
+      const struct wally_map_item *item =
+          &input->taproot_leaf_signatures.items[j];
+      if (item->key_len != 64 || !item->key || !item->value)
+        continue;
+      bipqr_signature sig = {.input_index = (uint32_t)input_index,
+                             .kind = BIPQR_SIGNATURE_TAP_SCRIPT};
+      memcpy(sig.value.tap_script.xonly_public_key, item->key, 32);
+      memcpy(sig.value.tap_script.tap_leaf_hash, item->key + 32, 32);
+      if (!copy_signature_bytes(item->value, item->value_len,
+                                &sig.value.tap_script.signature) ||
+          !append_signature(&signatures, &len, &cap, &sig)) {
+        free((void *)sig.value.tap_script.signature.ptr);
+        free_signature_list(signatures, len);
+        return false;
+      }
+    }
+  }
+
+  *signatures_out = signatures;
+  *len_out = len;
+  return true;
+}
+
+static void answer_signatures(const struct wally_psbt *psbt) {
+  bipqr_signature *signatures = NULL;
+  size_t len = 0;
+  if (!collect_signatures(psbt, &signatures, &len)) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+                        "Signature extraction failed");
+    return;
+  }
+  if (len == 0) {
+    free_signature_list(signatures, len);
+    show_error_response(BIPQR_RESPONSE_ERROR_NOTHING_TO_SIGN,
+                        "Nothing to sign");
+    return;
+  }
+  bipqr_response response;
+  fill_response_header(&response);
+  response.body.signed_body.kind = BIPQR_SIGN_RESPONSE_SIGNATURES;
+  response.body.signed_body.value.signatures.ptr = signatures;
+  response.body.signed_body.value.signatures.len = len;
+  show_response_with_done(&response, return_from_signing_response);
+  free_signature_list(signatures, len);
+}
+
+static void answer_psbt(const struct wally_psbt *psbt) {
+  struct wally_psbt *trimmed =
+      ctx.request->body.sign.accept_trimmed ? psbt_trim(psbt) : NULL;
+  const struct wally_psbt *export_psbt = trimmed ? trimmed : psbt;
+  size_t signed_len = 0;
+  debug_logf("bip_flow signed_psbt_cb inputs=%u signed_inputs=%u trimmed=%d",
+             (unsigned)export_psbt->num_inputs,
+             (unsigned)signed_input_count(export_psbt), trimmed != NULL);
+  uint8_t *signed_bytes = NULL;
+  bool encoded =
+      wally_psbt_get_length(export_psbt, 0, &signed_len) == WALLY_OK &&
+      (signed_bytes = malloc(signed_len)) != NULL &&
+      wally_psbt_to_bytes(export_psbt, 0, signed_bytes, signed_len,
+                          &signed_len) == WALLY_OK;
+  if (trimmed)
+    wally_psbt_free(trimmed);
+  if (!encoded) {
+    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "PSBT encode failed");
+    return;
+  }
+  bipqr_response response;
+  fill_response_header(&response);
+  response.body.signed_body.kind = BIPQR_SIGN_RESPONSE_PSBT;
+  response.body.signed_body.value.psbt.ptr = signed_bytes;
+  response.body.signed_body.value.psbt.len = signed_len;
+  show_response_with_done(&response, return_from_signing_response);
+  free(signed_bytes);
+}
+
+// An unknown WANT_KIND decodes as absent, so it gets the PSBT
+static void signed_psbt_cb(struct wally_psbt *psbt, void *user_data) {
+  (void)user_data;
+  if (ctx.request->body.sign.want_kind == BIPQR_SIGN_RESPONSE_SIGNATURES)
+    answer_signatures(psbt);
+  else
+    answer_psbt(psbt);
+}
+
+static uint8_t sign_failure_error(scan_psbt_failure_t failure) {
+  switch (failure) {
+  case SCAN_PSBT_DECLINED:
+    return BIPQR_RESPONSE_ERROR_USER_DECLINED;
+  case SCAN_PSBT_INVALID:
+    return BIPQR_RESPONSE_ERROR_INVALID_PSBT;
+  case SCAN_PSBT_NOTHING_TO_SIGN:
+    return BIPQR_RESPONSE_ERROR_NOTHING_TO_SIGN;
+  case SCAN_PSBT_REFUSED:
+    return BIPQR_RESPONSE_ERROR_VENDOR;
+  case SCAN_PSBT_NETWORK_MISMATCH:
+    return BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH;
+  case SCAN_PSBT_INTERNAL:
+  default:
+    return BIPQR_RESPONSE_ERROR_INTERNAL;
+  }
+}
+
+static void sign_failed_cb(scan_psbt_failure_t failure, const char *message,
+                           void *user_data) {
+  (void)user_data;
+  bipqr_response response;
+  fill_error_response(&response, sign_failure_error(failure), message);
+  show_response_with_done(&response, return_from_signing_response);
+}
+
+// True when the inputs spending from `descriptor` can be signed, else the
+// error is answered
+static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
+  if (descriptor->proof.ptr) {
+    show_foreign_proof_error();
+    return false;
+  }
+  const bipqr_descriptor_body *body = descriptor->body;
+  const registry_entry_t *entry = NULL;
+  uint8_t error = resolve_descriptor(descriptor->alias, body, &entry);
+  if (error)
+    show_descriptor_error(error);
+  return !error;
+}
+
+// A PSBT needing a capability Kern does not advertise: a silent payment send
+// or MuSig2 keys
+static bool refuse_unsupported_psbt(const bipqr_sign *req) {
+  struct wally_psbt *psbt = NULL;
+  // Loose, as a silent payment output has no script until a signer derives it
+  bool unsupported = kern_psbt_from_bytes(req->psbt.ptr, req->psbt.len,
+                                          WALLY_PSBT_PARSE_FLAG_LOOSE |
+                                              WALLY_PSBT_PARSE_FLAG_COMPLETE,
+                                          &psbt) == WALLY_OK &&
+                     bip_flow_psbt_is_unsupported(psbt);
+  wally_psbt_free(psbt);
+  if (unsupported)
+    show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
+                        "Silent payment sends and MuSig2 are not supported");
+  return unsupported;
+}
+
+static void handle_sign(void) {
+  const bipqr_sign *req = &ctx.request->body.sign;
+  for (size_t i = 0; i < req->descriptors.len; i++) {
+    if (!sign_descriptor_ok(&req->descriptors.ptr[i]))
+      return;
+    // A script several entries generate is reviewed under the named alias
+    registry_prefer(req->descriptors.ptr[i].alias);
+  }
+  if (refuse_unsupported_psbt(req))
+    return;
+  scan_review_psbt(ctx.parent, req->psbt.ptr, req->psbt.len, ctx.return_cb,
+                   return_from_signing_response, signed_psbt_cb, sign_failed_cb,
+                   NULL);
+}
+
 static void dispatch_request(void) {
   debug_logf("bip_flow dispatch message_type=%d", ctx.request->message_type);
   uint8_t unsupported = bip_flow_unsupported_error(ctx.request);
@@ -914,6 +1221,9 @@ static void dispatch_request(void) {
     break;
   case BIPQR_MESSAGE_ADDRESS_VERIFICATION:
     handle_verify();
+    break;
+  case BIPQR_MESSAGE_SIGNING:
+    handle_sign();
     break;
   default:
     show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,

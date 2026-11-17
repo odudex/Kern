@@ -391,6 +391,40 @@ static bool own_key_matches(const registry_own_key_t *key, uint32_t multi_index,
                               depth - key->origin_path_len, child_num);
 }
 
+void registry_prefer(const char *id) {
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0)
+      registry_entries[i].preferred = true;
+  }
+}
+
+void registry_clear_preferred(void) {
+  for (size_t i = 0; i < registry_len; i++)
+    registry_entries[i].preferred = false;
+}
+
+static registry_entry_t *match_order_entry(size_t pos) {
+  size_t preferred = 0;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (registry_entries[i].preferred)
+      preferred++;
+  }
+  bool want_preferred = pos < preferred;
+  size_t skip = want_preferred ? pos : pos - preferred;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (registry_entries[i].preferred != want_preferred)
+      continue;
+    if (skip == 0)
+      return &registry_entries[i];
+    skip--;
+  }
+  return NULL;
+}
+
+const registry_entry_t *registry_match_order_get(size_t pos) {
+  return match_order_entry(pos);
+}
+
 registry_entry_t *registry_match_keypath(const uint8_t *keypath,
                                          size_t keypath_len,
                                          registry_match_cursor_t *cursor,
@@ -404,9 +438,8 @@ registry_entry_t *registry_match_keypath(const uint8_t *keypath,
                                MAX_KEYPATH_TOTAL_DEPTH))
     return NULL;
 
-  for (; cursor->entry < registry_len;
-       cursor->entry++, cursor->multi_index = 0) {
-    registry_entry_t *e = &registry_entries[cursor->entry];
+  for (registry_entry_t *e = match_order_entry(cursor->entry); e;
+       e = match_order_entry(++cursor->entry), cursor->multi_index = 0) {
     uint32_t groups = e->num_paths > 1 ? (uint32_t)e->num_paths : 1;
     for (; cursor->multi_index < groups; cursor->multi_index++) {
       for (size_t k = 0; k < e->num_own_keys; k++) {

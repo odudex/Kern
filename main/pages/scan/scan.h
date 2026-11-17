@@ -2,6 +2,26 @@
 #define SCAN_H
 
 #include <lvgl.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct wally_psbt;
+
+typedef void (*scan_psbt_signed_cb_t)(struct wally_psbt *signed_psbt,
+                                      void *user_data);
+
+// Why a PSBT handed to scan_review_psbt() was not signed
+typedef enum {
+  SCAN_PSBT_DECLINED,         // the user backed out of the review
+  SCAN_PSBT_INVALID,          // unparsable, inconsistent or unsafe to sign
+  SCAN_PSBT_NOTHING_TO_SIGN,  // no input this wallet can sign
+  SCAN_PSBT_REFUSED,          // a signing setting or a device limit refuses it
+  SCAN_PSBT_NETWORK_MISMATCH, // the PSBT is for another network
+  SCAN_PSBT_INTERNAL,         // the device failed
+} scan_psbt_failure_t;
+
+typedef void (*scan_psbt_failed_cb_t)(scan_psbt_failure_t failure,
+                                      const char *message, void *user_data);
 
 /**
  * Create the scan page — universal QR content detection
@@ -35,6 +55,17 @@ void scan_page_create(lv_obj_t *parent, void (*return_cb)(void));
 void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                        const char *save_dir, const char *source_name,
                        void (*return_cb)(void), void (*complete_cb)(void));
+
+/**
+ * Review and sign a binary PSBT using the normal scan/sign review flow. On
+ * successful signing, signed_cb is called with the still-owned signed PSBT;
+ * the callback must copy anything it needs before returning. Every refusal,
+ * failure or back-out of the PSBT review calls failed_cb instead.
+ */
+void scan_review_psbt(lv_obj_t *parent, const uint8_t *data, size_t len,
+                      void (*return_cb)(void), void (*complete_cb)(void),
+                      scan_psbt_signed_cb_t signed_cb,
+                      scan_psbt_failed_cb_t failed_cb, void *user_data);
 
 /**
  * Show the scan page

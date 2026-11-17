@@ -225,8 +225,8 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
       if (bip322_detect(scan_ctx.psbt)) {
         if (!bip322_parse(scan_ctx.psbt, scan_ctx.is_testnet,
                           &scan_ctx.bip322)) {
-          dialog_show_error_timeout("Invalid BIP322 message request",
-                                    scan_ctx.return_cb, 0);
+          scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid BIP322 message request",
+                         scan_ctx.return_cb, 0);
           return;
         }
         scan_ctx.is_bip322 = true;
@@ -237,8 +237,24 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
       scan_psbt_resume_review(true);
     }
   } else {
-    dialog_show_error_timeout("Unrecognized format", scan_ctx.return_cb, 0);
+    scan_psbt_fail(SCAN_PSBT_INVALID, "Unrecognized format", scan_ctx.return_cb,
+                   0);
   }
+}
+
+void scan_psbt_fail(scan_psbt_failure_t failure, const char *message,
+                    void (*local_cb)(void), uint32_t timeout_ms) {
+  scan_psbt_failed_cb_t cb = scan_ctx.psbt_failed_cb;
+  if (!cb) {
+    dialog_show_error_timeout(message, local_cb, timeout_ms);
+    return;
+  }
+  void *user_data = scan_ctx.psbt_user_data;
+  scan_ctx.psbt_signed_cb = NULL;
+  scan_ctx.psbt_failed_cb = NULL;
+  scan_ctx.psbt_user_data = NULL;
+  scan_page_hide();
+  cb(failure, message, user_data);
 }
 
 // Camera teardown plus payload parsing — for large PSBTs this can take over a
@@ -444,6 +460,9 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
   reset_export_context(save_dir, source_name);
   scan_ctx.return_cb = return_cb;
   scan_ctx.complete_cb = complete_cb;
+  scan_ctx.psbt_signed_cb = NULL;
+  scan_ctx.psbt_failed_cb = NULL;
+  scan_ctx.psbt_user_data = NULL;
   scan_ctx.screen = theme_create_page_container(parent);
 
   // A file may hold a serialized binary PSBT — try that first (mirroring the
@@ -470,6 +489,27 @@ void scan_load_content(lv_obj_t *parent, const uint8_t *data, size_t len,
                   FORMAT_NONE);
 }
 
+void scan_review_psbt(lv_obj_t *parent, const uint8_t *data, size_t len,
+                      void (*return_cb)(void), void (*complete_cb)(void),
+                      scan_psbt_signed_cb_t signed_cb,
+                      scan_psbt_failed_cb_t failed_cb, void *user_data) {
+  session_cleanup_register(scan_page_destroy);
+  if (!parent || !data || len == 0)
+    return;
+
+  reset_export_context(NULL, NULL);
+  scan_ctx.return_cb = return_cb;
+  scan_ctx.complete_cb = complete_cb;
+  scan_ctx.psbt_signed_cb = signed_cb;
+  scan_ctx.psbt_failed_cb = failed_cb;
+  scan_ctx.psbt_user_data = user_data;
+  scan_ctx.screen = theme_create_page_container(parent);
+
+  scan_psbt_cleanup();
+  bool parsed = psbt_parse_payload(data, len, &scan_ctx.psbt);
+  finish_dispatch(NULL, len, parsed, FORMAT_NONE);
+}
+
 void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   session_cleanup_register(scan_page_destroy);
   if (!parent || !key_is_loaded()) {
@@ -478,6 +518,9 @@ void scan_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
 
   scan_ctx.return_cb = return_cb;
   scan_ctx.complete_cb = NULL;
+  scan_ctx.psbt_signed_cb = NULL;
+  scan_ctx.psbt_failed_cb = NULL;
+  scan_ctx.psbt_user_data = NULL;
   reset_export_context(NULL, NULL);
 
   scan_ctx.screen = theme_create_page_container(parent);
@@ -528,4 +571,7 @@ void scan_page_destroy(void) {
 
   scan_ctx.return_cb = NULL;
   scan_ctx.complete_cb = NULL;
+  scan_ctx.psbt_signed_cb = NULL;
+  scan_ctx.psbt_failed_cb = NULL;
+  scan_ctx.psbt_user_data = NULL;
 }
