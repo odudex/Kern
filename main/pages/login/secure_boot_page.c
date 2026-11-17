@@ -79,6 +79,9 @@ static const char *blocked_reason(secure_boot_check_t check) {
   case SECURE_BOOT_ERR_BUILD:
     return "This firmware build cannot enable secure boot. Install a release "
            "that supports it.";
+  case SECURE_BOOT_ERR_CHIP:
+    return "Not available on this chip revision yet: once locked, it could "
+           "not be flashed over USB again.";
   case SECURE_BOOT_ERR_PIN:
     return "Set up a PIN first.";
   case SECURE_BOOT_ERR_KEY_SLOTS:

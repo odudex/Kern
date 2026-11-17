@@ -4,7 +4,8 @@
  *
  * KERN_SIM_SECURE_BOOT previews the other screens:
  *   ready                                           ready without a PIN
- *   build | pin | slots | app | bootloader | read   blocked, with that reason
+ *   build | chip | pin | slots | app | bootloader | read
+ *                                                   blocked, with that reason
  *   partial | incomplete                            interrupted lockdown
  *   fail                                            the burn reports failure
  */
@@ -39,6 +40,7 @@ void secure_boot_read_status(secure_boot_status_t *out) {
     secure_boot_check_t check;
   } blocked[] = {
       {"build", SECURE_BOOT_ERR_BUILD},
+      {"chip", SECURE_BOOT_ERR_CHIP},
       {"pin", SECURE_BOOT_ERR_PIN},
       {"slots", SECURE_BOOT_ERR_KEY_SLOTS},
       {"app", SECURE_BOOT_ERR_APP},

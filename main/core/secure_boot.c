@@ -3,6 +3,7 @@
 #include "nvs_secure.h"
 #include "pin.h"
 #include "sbv2.h"
+#include <esp_chip_info.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 #include <esp_flash.h>
@@ -118,6 +119,11 @@ out:
   return err;
 }
 
+/* From v3.1 on the flash is unpowered in download mode and powering it takes
+ * register writes, which secure download mode refuses: a locked chip could
+ * never be flashed over USB again, bootloader included. Measured on v3.2. */
+#define NO_LOCKED_USB_FLASH_REV 301
+
 #define FAIL(code, ...)                                                        \
   do {                                                                         \
     ESP_LOGW(TAG, __VA_ARGS__);                                                \
@@ -133,6 +139,12 @@ static secure_boot_check_t check_ready(bool slot_in_use) {
        "built without CONFIG_SECURE_BOOT: its bootloader does not verify "
        "apps");
 #endif
+  esp_chip_info_t chip;
+  esp_chip_info(&chip);
+  if (chip.revision >= NO_LOCKED_USB_FLASH_REV)
+    FAIL(SECURE_BOOT_ERR_CHIP,
+         "chip v%u.%u cannot be flashed over USB once locked",
+         chip.revision / 100, chip.revision % 100);
   if (!pin_keys_sealed())
     FAIL(SECURE_BOOT_ERR_PIN, "PIN not set up, or KEY4/KEY5 not sealed");
   if (slot_in_use)

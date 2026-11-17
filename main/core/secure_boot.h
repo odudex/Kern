@@ -34,6 +34,7 @@ typedef enum {
 typedef enum {
   SECURE_BOOT_READY,
   SECURE_BOOT_ERR_BUILD,      /* firmware not built for secure boot */
+  SECURE_BOOT_ERR_CHIP,       /* chip revision has no USB reflash once locked */
   SECURE_BOOT_ERR_PIN,        /* no PIN, or KEY4/KEY5 not sealed */
   SECURE_BOOT_ERR_KEY_SLOTS,  /* KEY0-KEY2 hold other data, or revoked */
   SECURE_BOOT_ERR_APP,        /* running firmware not signed by a key */
