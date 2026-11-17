@@ -26,9 +26,7 @@ target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_MINIMAL=1")
 # Drops the Elements fields from the public structs. It changes their layout,
 # so it is PUBLIC: every user of the headers must see it.
 target_compile_definitions(${COMPONENT_TARGET} PUBLIC "-DWALLY_ABI_NO_ELEMENTS")
-# Standard libsecp256k1: drops MuSig2 + ecdsa-s2c/anti-exfil (unused by Kern).
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DBUILD_STANDARD_SECP=1")
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DHAVE_PSA_CRYPTO_H")
-# The secp256k1 module set is combined.c's, plus the BIP352 silentpayments
-# module kern_combined.c enables.
+# The secp256k1 module set is combined.c's, MuSig2 included, plus the BIP352
+# silentpayments module kern_combined.c enables.
 target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DECMULT_WINDOW_SIZE=8")
