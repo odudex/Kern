@@ -10,12 +10,14 @@
 #include "../../ui/dialog.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
+#include "../bip_flow/bip_flow.h"
 #include "../home/addresses.h"
 #include "../home/home.h"
 #include "../shared/descriptor_loader.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"
 #include "../shared/qr_scanner.h"
+#include <bip377.h>
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -94,6 +96,32 @@ static void show_psbt_needs_key(void) {
                    unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
+// The request's message type, 0 when it does not decode
+static uint8_t bip_request_type(const uint8_t *content, size_t len) {
+  bip377_header header;
+  if (!bip377_request_header(content, len, &header) ||
+      bip377_request_decode(content, len, NULL, 0, NULL, NULL) != BIP377_OK)
+    return 0;
+  return header.message_type;
+}
+
+static void show_bip_request_needs_key(uint8_t type) {
+  dialog_show_info(type == BIP377_MESSAGE_GET_KEYS ? "Key request detected"
+                                                   : "Wallet request detected",
+                   "Load a seed first to export xpubs or respond to wallet "
+                   "requests.",
+                   unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+// Get Info and a request that does not decode are answered without a seed;
+// every other request needs one
+static void handle_bip_request(const uint8_t *content, size_t len) {
+  uint8_t type = bip_request_type(content, len);
+  if (type == 0 || type == BIP377_MESSAGE_GET_INFO)
+    bip_flow_start(lv_screen_active(), content, len, finish_to_login);
+  else
+    show_bip_request_needs_key(type);
+}
 static void wo_validation_cb(descriptor_validation_result_t result,
                              void *user_data) {
   (void)user_data;
@@ -157,6 +185,7 @@ static void on_scan_done(void) {
   bool psbt_scanned =
       (has_ur && ur_type && strcmp(ur_type, "crypto-psbt") == 0) ||
       payload_looks_like_psbt((const uint8_t *)content, len);
+  bool bip_request_scanned = bip_flow_can_handle((const uint8_t *)content, len);
   char *desc_candidate = descriptor_extract_from_scanner();
 
   qr_scanner_page_hide();
@@ -168,6 +197,12 @@ static void on_scan_done(void) {
   if (psbt_scanned) {
     free(desc_candidate);
     show_psbt_needs_key();
+    return;
+  }
+
+  if (bip_request_scanned) {
+    free(desc_candidate);
+    handle_bip_request((const uint8_t *)content, len);
     return;
   }
 

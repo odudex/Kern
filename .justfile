@@ -151,6 +151,7 @@ clean:
     make -C components/bip138 clean
     make -C components/bip377 clean
     make -C main/qr/test clean
+    make -C main/pages/bip_flow/test clean
     rm -rf components/k_quirc/test/build
     make -C main/core/test clean
 

@@ -4,8 +4,7 @@ if(CMAKE_SCRIPT_MODE_FILE)
 else()
   file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "*.c")
 endif()
-list(FILTER SOURCES EXCLUDE REGEX ".*/core/test/.*")
-list(FILTER SOURCES EXCLUDE REGEX ".*/qr/test/.*")
+list(FILTER SOURCES EXCLUDE REGEX ".*/test/.*")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/boards.cmake)
 kern_board_detect_from_kconfig()
@@ -15,7 +14,7 @@ idf_component_register(
     INCLUDE_DIRS .
     PRIV_REQUIRES lvgl ${KERN_BOARD_TOUCH} k_quirc esp_timer ${KERN_BOARD_REQUIRES}
                   libwally-core cUR sd_card bbqr deflate_codec video spiffs
-                  nvs_flash efuse esp_hw_support esp_app_format mbedtls bip138
+                  nvs_flash efuse esp_hw_support esp_app_format mbedtls bip138 bip377
                   esp_driver_ppa app_update bootloader_support secure_memory bsp_common
                   bus_timeout spi_flash
 )

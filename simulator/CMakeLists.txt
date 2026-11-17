@@ -315,6 +315,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/settings/firmware_update.c
     ${APP_PAGES_DIR}/settings/self_test_page.c
     # Shared pages
+    ${APP_PAGES_DIR}/bip_flow/bip388.c
+    ${APP_PAGES_DIR}/bip_flow/bip_flow.c
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
     ${APP_PAGES_DIR}/shared/kef_decrypt_page.c
@@ -359,6 +361,7 @@ set(QR_SOURCES
 file(GLOB KQUIRC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src/*.c)
 file(GLOB_RECURSE CUR_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src/*.c)
 file(GLOB BIP138_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip138/src/*.c)
+file(GLOB BIP377_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip377/src/*.c)
 
 add_library(lvgl STATIC
     ${LVGL_SOURCES}
@@ -398,6 +401,7 @@ add_executable(kern_simulator
     ${KQUIRC_SOURCES}
     ${CUR_SOURCES}
     ${BIP138_SOURCES}
+    ${BIP377_SOURCES}
 )
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../main/core/sb_digests.cmake)
@@ -420,6 +424,7 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../components
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bbqr/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip138/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip377/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/deflate_codec/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src
@@ -443,6 +448,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<BOOL:${BSP_PMIC_CAN_POWER_OFF}>:BSP_PMIC_CAN_POWER_OFF=1>
     $<$<BOOL:${BSP_BATTERY_ADC}>:BSP_BATTERY_ADC=1>
     ${KERN_BOARD_KCONFIG}=1
+    "CONFIG_KERN_BOARD_NAME=\"${SIM_BOARD}\""
 )
 
 target_compile_options(kern_simulator PRIVATE
