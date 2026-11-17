@@ -9,6 +9,7 @@
 
 #include "../../core/descriptor_validator.h"
 #include <bip377.h>
+#include <wally_psbt.h>
 
 // The error a request that fails to decode with `status` answers with:
 // version 0 is reserved, any other one parses as the version Kern knows, where
@@ -38,6 +39,9 @@ bip_flow_register_error(descriptor_validation_result_t result) {
     return BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
   }
 }
+// PSBT_OUT_SP_V0_INFO (BIP-375): the output pays a silent payment address
+#define BIP_FLOW_PSBT_OUT_SP_V0_INFO 0x09
+
 // The error a descriptor body needing a capability Kern does not advertise
 // answers with, 0 when Kern takes it: a silent payment FORM 0x03 gets 0x06, a
 // musig() key 0x0E
@@ -79,6 +83,31 @@ bip_flow_unsupported_error(const bip377_request *request) {
   default:
     return 0;
   }
+}
+
+static inline bool bip_flow_map_has_key(const struct wally_map *map,
+                                        uint8_t key) {
+  for (size_t i = 0; i < map->num_items; i++) {
+    if (map->items[i].key_len == 1 && map->items[i].key[0] == key)
+      return true;
+  }
+  return false;
+}
+
+// True for a PSBT needing a capability Kern does not advertise: a silent
+// payment output, or the BIP-373 participant keys of a MuSig2 key
+static inline bool bip_flow_psbt_is_unsupported(const struct wally_psbt *psbt) {
+  for (size_t i = 0; i < psbt->num_inputs; i++) {
+    if (psbt->inputs[i].musig2_pubkeys.num_items)
+      return true;
+  }
+  for (size_t i = 0; i < psbt->num_outputs; i++) {
+    if (psbt->outputs[i].musig2_pubkeys.num_items ||
+        bip_flow_map_has_key(&psbt->outputs[i].unknowns,
+                             BIP_FLOW_PSBT_OUT_SP_V0_INFO))
+      return true;
+  }
+  return false;
 }
 
 void bip_flow_start(lv_obj_t *parent, const uint8_t *data, size_t len,

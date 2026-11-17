@@ -10,6 +10,7 @@
 #include "../../core/message_sign.h"
 #include "../../ui/menu.h"
 #include "../../ui/sankey.h"
+#include "scan.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -49,6 +50,12 @@ typedef struct {
   bool is_bip322;
 
   char *scanned_mnemonic;
+
+  /* Set by scan_review_psbt(): the signed PSBT, or why there is none, goes
+   * back to the caller instead of the export menu or an error dialog. */
+  scan_psbt_signed_cb_t psbt_signed_cb;
+  scan_psbt_failed_cb_t psbt_failed_cb;
+  void *psbt_user_data;
 } scan_ctx_t;
 
 extern scan_ctx_t scan_ctx;
@@ -57,6 +64,10 @@ extern scan_ctx_t scan_ctx;
 void scan_dismiss_progress(void);
 void scan_defer_with_progress(const char *title, const char *text,
                               lv_timer_cb_t cb);
+// Hands `failure` to the scan_review_psbt() caller, else shows `message` and
+// then calls local_cb (NULL stays on the current screen)
+void scan_psbt_fail(scan_psbt_failure_t failure, const char *message,
+                    void (*local_cb)(void), uint32_t timeout_ms);
 
 /* scan_review_widgets.c */
 void scan_create_sign_action_row(lv_obj_t *parent, lv_event_cb_t sign_cb);

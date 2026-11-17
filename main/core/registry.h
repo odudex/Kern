@@ -69,6 +69,8 @@ typedef struct {
   bool persisted;
   /* The backup file of a persisted entry */
   char filename[REGISTRY_FILENAME_MAX_LEN];
+  /* Named by the current request: matched before the other entries */
+  bool preferred;
 } registry_entry_t;
 
 /* Where registry_match_keypath resumes; zero-initialise before the first
@@ -152,11 +154,20 @@ void registry_init(bool is_testnet);
 /* Backups registered on this device that the last registry_init skipped
  * because they no longer pass keyed validation (other-network ones aside). */
 KERN_WARN_UNUSED_RESULT size_t registry_rejected_count(void);
-/* Next (entry, multipath group) under which `keypath` (fingerprint, then
- * path) is one of the entry's own keys: some own key's origin followed by its
- * child path expanded at that group and some child number. Writes the group
- * as `multi_index` and the wildcard's value as `child_num`. Only the path is
- * compared; the caller proves ownership by regenerating the script. */
+/* Marks the entry `id` names as preferred, so a script several entries
+ * generate is claimed by the entry a request names. No-op for an unknown id. */
+void registry_prefer(const char *id);
+void registry_clear_preferred(void);
+/* The entry at `pos` in match order: the preferred entries, then the others,
+ * both in registry order. NULL past the last entry. */
+KERN_WARN_UNUSED_RESULT const registry_entry_t *
+registry_match_order_get(size_t pos);
+/* Next (entry, multipath group), entries in match order, under which
+ * `keypath` (fingerprint, then path) is one of the entry's own keys: some own
+ * key's origin followed by its child path expanded at that group and some
+ * child number. Writes the group as `multi_index` and the wildcard's value as
+ * `child_num`. Only the path is compared; the caller proves ownership by
+ * regenerating the script. */
 KERN_WARN_UNUSED_RESULT registry_entry_t *
 registry_match_keypath(const uint8_t *keypath, size_t keypath_len,
                        registry_match_cursor_t *cursor, uint32_t *multi_index,
