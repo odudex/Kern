@@ -4,6 +4,7 @@
 #include "key.h"
 #include "psbt_internal.h"
 #include "script_templates.h"
+#include "sp_psbt.h"
 #include "wallet.h"
 #include <esp_log.h>
 #include <stdlib.h>
@@ -599,6 +600,12 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
                                       bool is_testnet) {
   input_ownership_t result = {0};
 
+  if (sp_psbt_input_is_ours(psbt, i, is_testnet)) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    result.claim.kind = CLAIM_SILENT_PAYMENT;
+    return result;
+  }
+
   unsigned char utxo_script[34];
   size_t utxo_script_len = 0;
   if (!psbt_input_utxo_script(psbt, i, utxo_script, sizeof(utxo_script),
@@ -695,6 +702,15 @@ output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
 
+  sp_output_ownership_t sp_ownership =
+      sp_psbt_output_ownership(psbt, i, is_testnet);
+  if (sp_ownership != SP_OUTPUT_FOREIGN) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    result.source.kind = CLAIM_SILENT_PAYMENT;
+    result.source.silent_payment.is_change = sp_ownership == SP_OUTPUT_CHANGE;
+    return result;
+  }
+
   const unsigned char *out_script = NULL;
   size_t out_script_len = 0;
   if (!output_script(psbt, i, &out_script, &out_script_len))
@@ -747,6 +763,8 @@ bool psbt_claims_share_policy(const claim_t *a, const claim_t *b) {
     return false;
   if (a->kind == CLAIM_REGISTRY)
     return a->registry.entry && a->registry.entry == b->registry.entry;
+  if (a->kind == CLAIM_SILENT_PAYMENT)
+    return true;
   return a->whitelist.purpose == b->whitelist.purpose &&
          a->whitelist.coin == b->whitelist.coin &&
          a->whitelist.account == b->whitelist.account;
@@ -1173,6 +1191,79 @@ static bool input_lists_path_twice(const struct wally_psbt *psbt, size_t i,
   return false;
 }
 
+/* Signs every input the policy cleared: a silent payment input with its
+ * tweaked key (sp_psbt.c), any other with each key input_signing_paths gives
+ * it. */
+static size_t sign_owned_inputs(struct wally_psbt *psbt, bool is_testnet,
+                                input_plan_t *plan, size_t num_inputs) {
+  size_t signatures_added = 0;
+
+  for (size_t i = 0; i < num_inputs; i++) {
+    input_ownership_t ownership = plan[i].owner;
+
+    if (plan[i].denied)
+      continue;
+
+    if (ownership.claim.kind == CLAIM_SILENT_PAYMENT) {
+      plan[i].attempted = true;
+      if (sp_psbt_sign_input(psbt, i, is_testnet))
+        signatures_added++;
+      else
+        ESP_LOGE(TAG, "Failed to sign silent payment input %zu", i);
+      continue;
+    }
+
+    signing_path_t paths[REGISTRY_MAX_OWN_KEYS];
+    size_t num_paths = input_signing_paths(&ownership, paths);
+    if (!num_paths)
+      ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
+
+    struct ext_key *keys[REGISTRY_MAX_OWN_KEYS] = {0};
+    for (size_t p = 0; p < num_paths; p++) {
+      if (!key_get_derived_key_components(paths[p].path, paths[p].len,
+                                          &keys[p])) {
+        ESP_LOGE(TAG, "Failed to derive key %zu for input %zu", p, i);
+        continue;
+      }
+      plan[i].attempted = true;
+      memcpy(plan[i].signing_pubkeys[plan[i].num_signing_pubkeys++],
+             keys[p]->pub_key, EC_PUBLIC_KEY_LEN);
+    }
+
+    /* libwally stops looking at an input's taproot keys once it holds a
+     * key-path signature, so every leaf key signs before the internal key. */
+    unsigned char internal[EC_XONLY_PUBLIC_KEY_LEN];
+    size_t internal_len = 0;
+    bool has_internal =
+        wally_psbt_get_input_taproot_internal_key(
+            psbt, i, internal, sizeof(internal), &internal_len) == WALLY_OK &&
+        internal_len == sizeof(internal);
+    for (int last = 0; last <= 1; last++) {
+      for (size_t p = 0; p < num_paths; p++) {
+        if (!keys[p])
+          continue;
+        bool is_internal =
+            has_internal &&
+            memcmp(keys[p]->pub_key + 1, internal, sizeof(internal)) == 0;
+        if (is_internal != (last == 1))
+          continue;
+        /* With no chain code libwally matches the key by its public key, as
+         * wally_psbt_sign does, without recomputing that public key. */
+        memset(keys[p]->chain_code, 0, sizeof(keys[p]->chain_code));
+        int ret = wally_psbt_sign_bip32(psbt, keys[p], EC_FLAG_GRIND_R);
+        if (ret == WALLY_OK)
+          signatures_added++;
+        else
+          ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
+      }
+    }
+    for (size_t p = 0; p < num_paths; p++)
+      bip32_key_free(keys[p]);
+  }
+
+  return signatures_added;
+}
+
 size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
                  psbt_sign_policy_t policy, psbt_sign_result_t *result) {
   if (result)
@@ -1233,59 +1324,7 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
   wally_psbt_signing_cache_enable(psbt, 0);
 
-  for (size_t i = 0; i < num_inputs; i++) {
-    input_ownership_t ownership = plan[i].owner;
-
-    if (plan[i].denied)
-      continue;
-
-    signing_path_t paths[REGISTRY_MAX_OWN_KEYS];
-    size_t num_paths = input_signing_paths(&ownership, paths);
-    if (!num_paths)
-      ESP_LOGE(TAG, "Invalid signing path for input %zu", i);
-
-    struct ext_key *keys[REGISTRY_MAX_OWN_KEYS] = {0};
-    for (size_t p = 0; p < num_paths; p++) {
-      if (!key_get_derived_key_components(paths[p].path, paths[p].len,
-                                          &keys[p])) {
-        ESP_LOGE(TAG, "Failed to derive key %zu for input %zu", p, i);
-        continue;
-      }
-      plan[i].attempted = true;
-      memcpy(plan[i].signing_pubkeys[plan[i].num_signing_pubkeys++],
-             keys[p]->pub_key, EC_PUBLIC_KEY_LEN);
-    }
-
-    /* libwally stops looking at an input's taproot keys once it holds a
-     * key-path signature, so every leaf key signs before the internal key. */
-    unsigned char internal[EC_XONLY_PUBLIC_KEY_LEN];
-    size_t internal_len = 0;
-    bool has_internal =
-        wally_psbt_get_input_taproot_internal_key(
-            psbt, i, internal, sizeof(internal), &internal_len) == WALLY_OK &&
-        internal_len == sizeof(internal);
-    for (int last = 0; last <= 1; last++) {
-      for (size_t p = 0; p < num_paths; p++) {
-        if (!keys[p])
-          continue;
-        bool is_internal =
-            has_internal &&
-            memcmp(keys[p]->pub_key + 1, internal, sizeof(internal)) == 0;
-        if (is_internal != (last == 1))
-          continue;
-        /* With no chain code libwally matches the key by its public key, as
-         * wally_psbt_sign does, without recomputing that public key. */
-        memset(keys[p]->chain_code, 0, sizeof(keys[p]->chain_code));
-        int ret = wally_psbt_sign_bip32(psbt, keys[p], EC_FLAG_GRIND_R);
-        if (ret == WALLY_OK)
-          signatures_added++;
-        else
-          ESP_LOGE(TAG, "Failed to sign input %zu: %d", i, ret);
-      }
-    }
-    for (size_t p = 0; p < num_paths; p++)
-      bip32_key_free(keys[p]);
-  }
+  signatures_added = sign_owned_inputs(psbt, is_testnet, plan, num_inputs);
 
   drop_unverified_key_path_sigs(psbt, plan, num_inputs, result);
   wally_psbt_signing_cache_disable(psbt);
@@ -1355,5 +1394,9 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
     wally_map_clear(&out->unknowns);
   }
 
+  if (!sp_psbt_copy_fields(psbt, trimmed)) {
+    wally_psbt_free(trimmed);
+    return NULL;
+  }
   return trimmed;
 }

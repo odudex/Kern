@@ -46,4 +46,6 @@ fuzz_descriptor
 fuzz_text
 test_silentpayments
 test_dleq
+test_sp_keys
+test_sp_psbt
 kern_bipqr/
