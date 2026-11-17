@@ -29,10 +29,21 @@ static bool get_message_field(const struct wally_psbt *psbt,
   return true;
 }
 
+/* The BIP322 to_sign shape: version 0, locktime 0, one input spending
+ * to_spend:0 with sequence 0, one 0-value OP_RETURN output. */
+static bool is_to_sign_tx(const struct wally_tx *tx) {
+  return tx && tx->version == 0 && tx->locktime == 0 && tx->num_inputs == 1 &&
+         tx->num_outputs == 1 && tx->inputs[0].index == 0 &&
+         tx->inputs[0].sequence == 0 && tx->outputs[0].satoshi == 0 &&
+         tx->outputs[0].script_len == 1 &&
+         tx->outputs[0].script[0] == OP_RETURN;
+}
+
 bool bip322_detect(const struct wally_psbt *psbt) {
   const unsigned char *msg;
   size_t msg_len;
-  return psbt && get_message_field(psbt, &msg, &msg_len);
+  return psbt && get_message_field(psbt, &msg, &msg_len) &&
+         is_to_sign_tx(psbt->tx);
 }
 
 /* BIP322 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || message). libwally
@@ -92,20 +103,9 @@ bool bip322_parse(const struct wally_psbt *psbt, bool is_testnet,
     return false;
   }
 
-  /* to_sign structure per BIP322 */
   const struct wally_tx *tx = psbt->tx;
-  if (!tx || tx->version != 0 || tx->locktime != 0 || tx->num_inputs != 1 ||
-      tx->num_outputs != 1) {
+  if (!is_to_sign_tx(tx)) {
     ESP_LOGW(TAG, "to_sign transaction structure mismatch");
-    return false;
-  }
-  if (tx->inputs[0].index != 0 || tx->inputs[0].sequence != 0) {
-    ESP_LOGW(TAG, "to_sign input must spend to_spend:0 with sequence 0");
-    return false;
-  }
-  if (tx->outputs[0].satoshi != 0 || tx->outputs[0].script_len != 1 ||
-      tx->outputs[0].script[0] != OP_RETURN) {
-    ESP_LOGW(TAG, "to_sign output must be 0-value OP_RETURN");
     return false;
   }
 
