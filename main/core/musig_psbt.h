@@ -56,15 +56,19 @@ typedef enum {
   MUSIG_STEP_PARTIAL_SIGS,
   /* round 1: the public nonce of each one, and no signature of any kind */
   MUSIG_STEP_PUB_NONCES,
+  /* PSBT_GLOBAL_NONCE_CACHE_SESSION: the partial signature of each one in one
+   * round, from the cached session */
+  MUSIG_STEP_CACHED,
 } musig_step_t;
 
 typedef struct {
   musig_step_t step;
   musig_slot_t *slots;
   size_t num_slots;
-  /* the two-round session the signer derives from the descriptors of the
-   * slots */
+  /* CACHED: the session the PSBT names; otherwise the two-round session the
+   * signer derives from the descriptors of the slots */
   uint8_t session_id[BNC_SESSION_ID_LEN];
+  uint8_t session_ref[BNC_SESSION_REF_LEN];
 } musig_plan_t;
 
 typedef enum {
@@ -73,9 +77,6 @@ typedef enum {
   MUSIG_PSBT_ERR_SESSION,
   /* MuSig2 data the signer cannot sign with */
   MUSIG_PSBT_ERR_INVALID,
-  /* the PSBT names a nonce cache session (PSBT_GLOBAL_NONCE_CACHE_SESSION), a
-   * capability the signer lacks: ERROR 0x0F */
-  MUSIG_PSBT_ERR_UNSUPPORTED,
   /* our public nonces are in and nothing else of ours is to sign: waiting for
    * another participant's nonce */
   MUSIG_PSBT_ERR_NOTHING,
@@ -96,9 +97,9 @@ KERN_WARN_UNUSED_RESULT musig_psbt_result_t
 musig_psbt_check_session(struct wally_psbt *psbt, const musig_plan_t *plan);
 
 /* Runs the plan's step: round 1 stores a new session then sets our
- * PSBT_IN_MUSIG2_PUB_NONCE on every slot; round 2 takes the session, deleted
- * durably before any signature is written, then sets our
- * PSBT_IN_MUSIG2_PARTIAL_SIG on every slot it signs, all or none. Writes the
+ * PSBT_IN_MUSIG2_PUB_NONCE on every slot; round 2 and CACHED take the session,
+ * deleted durably before any signature is written, then set our
+ * PSBT_IN_MUSIG2_PARTIAL_SIG on every slot they sign, all or none. Writes the
  * number of entries set to *added_out. */
 KERN_WARN_UNUSED_RESULT musig_psbt_result_t musig_psbt_sign(
     struct wally_psbt *psbt, const musig_plan_t *plan, size_t *added_out);
@@ -108,6 +109,14 @@ KERN_WARN_UNUSED_RESULT musig_psbt_result_t musig_psbt_sign(
  * something of us. A PSBT that does not parse is left to the review. */
 KERN_WARN_UNUSED_RESULT musig_psbt_result_t musig_psbt_check_request(
     const uint8_t *psbt_bytes, size_t psbt_len, bool is_testnet);
+
+/* True when `path` derives one of our participant keys of a musig() of `desc`:
+ * the participant's own path, followed by the steps its key expression adds
+ * when it has any, at the multipath index and child number `path` ends
+ * with. */
+KERN_WARN_UNUSED_RESULT bool
+musig_psbt_is_participant_path(const struct wally_descriptor *desc,
+                               const uint32_t *path, size_t path_len);
 
 /* True when `participant` is the participant key of one of our MuSig2
  * signatures on input `input_index`. */
