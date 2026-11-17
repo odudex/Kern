@@ -200,6 +200,7 @@ set(APP_CORE_SOURCES
 
 # --- UI components ---
 set(APP_UI_SOURCES
+    ${APP_UI_DIR}/address_label.c
     ${APP_UI_DIR}/dialog.c
     ${APP_UI_DIR}/dropdown_page.c
     ${APP_UI_DIR}/input_helpers.c
