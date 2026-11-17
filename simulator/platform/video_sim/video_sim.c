@@ -27,6 +27,9 @@
 
 static const char *TAG = "VIDEO_SIM";
 
+// Frames each --qr-dir image stays on, so a multi-part QR animates
+#define QR_DIR_FRAMES_PER_IMAGE 12
+
 static app_video_frame_operation_cb_t s_frame_cb = NULL;
 static uint8_t *s_frame_buf = NULL;
 static uint32_t s_width = 800;
@@ -85,6 +88,10 @@ static uint8_t *alloc_blank_rgb565(uint32_t w, uint32_t h, size_t *out_size) {
   return buf;
 }
 
+static int compare_names(const void *a, const void *b) {
+  return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
 static uint8_t *load_next_dir_rgb565(uint32_t *out_w, uint32_t *out_h,
                                      size_t *out_size) {
   if (!s_qr_image_dir)
@@ -122,7 +129,9 @@ static uint8_t *load_next_dir_rgb565(uint32_t *out_w, uint32_t *out_h,
       }
       entries = tmp;
     }
-    entries[count++] = strdup(name);
+    char *copy = strdup(name);
+    if (copy)
+      entries[count++] = copy;
   }
   closedir(dir);
 
@@ -131,6 +140,7 @@ static uint8_t *load_next_dir_rgb565(uint32_t *out_w, uint32_t *out_h,
     free(entries);
     return NULL;
   }
+  qsort(entries, count, sizeof(*entries), compare_names);
 
   size_t pick = s_qr_dir_index % count;
   s_qr_dir_index++;
@@ -206,6 +216,7 @@ static esp_err_t load_configured_frame(bool rotate_dir) {
 
 static void *stream_thread_func(void *arg) {
   (void)arg;
+  unsigned frames = 0;
   while (s_streaming) {
 #ifdef SIM_WEBCAM
     if (s_webcam && s_frame_buf) {
@@ -218,7 +229,11 @@ static void *stream_thread_func(void *arg) {
 #ifdef SIM_WEBCAM
     if (!s_webcam)
 #endif
+    {
+      if (s_qr_image_dir && ++frames % QR_DIR_FRAMES_PER_IMAGE == 0)
+        load_configured_frame(true);
       usleep(33333);
+    }
   }
   return NULL;
 }
