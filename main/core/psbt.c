@@ -4,6 +4,7 @@
 #include "key.h"
 #include "psbt_internal.h"
 #include "script_templates.h"
+#include "sp_psbt.h"
 #include "wallet.h"
 #include <esp_log.h>
 #include <stdlib.h>
@@ -599,6 +600,12 @@ input_ownership_t psbt_classify_input(const struct wally_psbt *psbt, size_t i,
                                       bool is_testnet) {
   input_ownership_t result = {0};
 
+  if (sp_psbt_input_is_ours(psbt, i, is_testnet)) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    result.claim.kind = CLAIM_SILENT_PAYMENT;
+    return result;
+  }
+
   unsigned char utxo_script[34];
   size_t utxo_script_len = 0;
   if (!psbt_input_utxo_script(psbt, i, utxo_script, sizeof(utxo_script),
@@ -691,9 +698,32 @@ static bool output_script(const struct wally_psbt *psbt, size_t i,
   return *script && *script_len;
 }
 
+// Whose silent payment output `i` is among our account and those of our spend
+// key with a scan key not ours
+static sp_output_ownership_t sp_output_ownership(const struct wally_psbt *psbt,
+                                                 size_t i, bool is_testnet) {
+  sp_output_ownership_t ownership =
+      sp_psbt_output_ownership(psbt, i, NULL, is_testnet);
+  for (size_t pos = 0; ownership == SP_OUTPUT_FOREIGN; pos++) {
+    const unsigned char *scan_secret = registry_sp_scan_key_get(pos);
+    if (!scan_secret)
+      break;
+    ownership = sp_psbt_output_ownership(psbt, i, scan_secret, is_testnet);
+  }
+  return ownership;
+}
+
 output_ownership_t psbt_classify_output(const struct wally_psbt *psbt, size_t i,
                                         bool is_testnet) {
   output_ownership_t result = {0};
+
+  sp_output_ownership_t sp_ownership = sp_output_ownership(psbt, i, is_testnet);
+  if (sp_ownership != SP_OUTPUT_FOREIGN) {
+    result.ownership = PSBT_OWNERSHIP_OWNED_SAFE;
+    result.source.kind = CLAIM_SILENT_PAYMENT;
+    result.source.silent_payment.is_change = sp_ownership == SP_OUTPUT_CHANGE;
+    return result;
+  }
 
   const unsigned char *out_script = NULL;
   size_t out_script_len = 0;
@@ -747,6 +777,8 @@ bool psbt_claims_share_policy(const claim_t *a, const claim_t *b) {
     return false;
   if (a->kind == CLAIM_REGISTRY)
     return a->registry.entry && a->registry.entry == b->registry.entry;
+  if (a->kind == CLAIM_SILENT_PAYMENT)
+    return true;
   return a->whitelist.purpose == b->whitelist.purpose &&
          a->whitelist.coin == b->whitelist.coin &&
          a->whitelist.account == b->whitelist.account;
@@ -879,9 +911,10 @@ static size_t input_signature_count(const struct wally_psbt *psbt, size_t i) {
  * after. */
 typedef struct {
   input_ownership_t owner;
-  bool denied;    /* policy refused this input */
-  bool tracked;   /* a snapshot was taken (denied and it names some key) */
-  bool attempted; /* policy cleared it and a signing key was derived */
+  bool denied;      /* policy refused this input */
+  bool tracked;     /* a snapshot was taken (denied and it names some key) */
+  bool attempted;   /* policy cleared it and a signing key was derived */
+  bool sighash_set; /* set_sighash_all gave it SIGHASH_ALL for the pass */
   /* Signature count before the pass began. One wally_psbt_sign() call signs
    * every input naming the key it was given, so an input can already be
    * signed by the time its own turn comes round -- two inputs on one address
@@ -897,6 +930,21 @@ typedef struct {
   unsigned char signing_pubkeys[REGISTRY_MAX_OWN_KEYS][EC_PUBLIC_KEY_LEN];
   size_t num_signing_pubkeys;
 } input_plan_t;
+
+/* BIP375: beside silent payment outputs an input naming no sighash type is
+ * signed with SIGHASH_ALL, not taproot's SIGHASH_DEFAULT. Only the inputs we
+ * sign get the field, for the signing pass only: psbt_sign removes it after. */
+static bool set_sighash_all(struct wally_psbt *psbt, input_plan_t *plan,
+                            size_t num_inputs) {
+  for (size_t i = 0; i < num_inputs; i++) {
+    if (plan[i].denied || psbt->inputs[i].sighash)
+      continue;
+    if (wally_psbt_set_input_sighash(psbt, i, WALLY_SIGHASH_ALL) != WALLY_OK)
+      return false;
+    plan[i].sighash_set = true;
+  }
+  return true;
+}
 
 /* Safe on an untouched plan, and safe twice, so every exit can run it over
  * the whole array without tracking how far the classify loop got. */
@@ -1154,59 +1202,27 @@ static void drop_unverified_key_path_sigs(struct wally_psbt *psbt,
   }
 }
 
-size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
-                 psbt_sign_policy_t policy, psbt_sign_result_t *result) {
-  if (result)
-    memset(result, 0, sizeof(*result));
-
-  if (!psbt) {
-    ESP_LOGE(TAG, "Invalid PSBT");
-    return 0;
-  }
-
-  size_t num_inputs = 0;
-  if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK || !num_inputs) {
-    ESP_LOGE(TAG, "Failed to get number of inputs");
-    return 0;
-  }
-
-  input_plan_t *plan = calloc(num_inputs, sizeof(*plan));
-  if (!plan) {
-    ESP_LOGE(TAG, "Out of memory classifying %zu inputs", num_inputs);
-    return 0;
-  }
-
+/* Signs every input the policy cleared: a silent payment input with its
+ * tweaked key (sp_psbt.c), any other with each key input_signing_paths gives
+ * it. */
+static size_t sign_owned_inputs(struct wally_psbt *psbt, bool is_testnet,
+                                input_plan_t *plan, size_t num_inputs) {
   size_t signatures_added = 0;
-
-  /* Classify everything up front, then freeze the inputs we will not sign.
-   * Bailing on a snapshot failure rather than signing unprotected. */
-  bool signable_any = false;
-  for (size_t i = 0; i < num_inputs; i++) {
-    plan[i].owner = psbt_classify_input(psbt, i, is_testnet);
-    if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
-      signable_any = true;
-      plan[i].sig_baseline = input_signature_count(psbt, i);
-      plan[i].had_tap_key_sig = tap_key_sig_present(psbt, i);
-      continue;
-    }
-    plan[i].denied = true;
-    if (!capture_input_state(psbt, i, &plan[i])) {
-      ESP_LOGE(TAG, "Failed to snapshot denied input %zu; refusing to sign", i);
-      goto cleanup;
-    }
-  }
-
-  if (!signable_any)
-    goto cleanup;
-
-  /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
-  wally_psbt_signing_cache_enable(psbt, 0);
 
   for (size_t i = 0; i < num_inputs; i++) {
     input_ownership_t ownership = plan[i].owner;
 
     if (plan[i].denied)
       continue;
+
+    if (ownership.claim.kind == CLAIM_SILENT_PAYMENT) {
+      plan[i].attempted = true;
+      if (sp_psbt_sign_input(psbt, i, is_testnet))
+        signatures_added++;
+      else
+        ESP_LOGE(TAG, "Failed to sign silent payment input %zu", i);
+      continue;
+    }
 
     signing_path_t paths[REGISTRY_MAX_OWN_KEYS];
     size_t num_paths = input_signing_paths(&ownership, paths);
@@ -1256,6 +1272,62 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
       bip32_key_free(keys[p]);
   }
 
+  return signatures_added;
+}
+
+size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
+                 psbt_sign_policy_t policy, psbt_sign_result_t *result) {
+  if (result)
+    memset(result, 0, sizeof(*result));
+
+  if (!psbt) {
+    ESP_LOGE(TAG, "Invalid PSBT");
+    return 0;
+  }
+
+  size_t num_inputs = 0;
+  if (wally_psbt_get_num_inputs(psbt, &num_inputs) != WALLY_OK || !num_inputs) {
+    ESP_LOGE(TAG, "Failed to get number of inputs");
+    return 0;
+  }
+
+  input_plan_t *plan = calloc(num_inputs, sizeof(*plan));
+  if (!plan) {
+    ESP_LOGE(TAG, "Out of memory classifying %zu inputs", num_inputs);
+    return 0;
+  }
+
+  size_t signatures_added = 0;
+
+  /* Classify everything up front, then freeze the inputs we will not sign.
+   * Bailing on a snapshot failure rather than signing unprotected. */
+  bool signable_any = false;
+  for (size_t i = 0; i < num_inputs; i++) {
+    plan[i].owner = psbt_classify_input(psbt, i, is_testnet);
+    if (input_is_signable(psbt, i, plan[i].owner.ownership, policy)) {
+      signable_any = true;
+      plan[i].sig_baseline = input_signature_count(psbt, i);
+      plan[i].had_tap_key_sig = tap_key_sig_present(psbt, i);
+      continue;
+    }
+    plan[i].denied = true;
+    if (!capture_input_state(psbt, i, &plan[i])) {
+      ESP_LOGE(TAG, "Failed to snapshot denied input %zu; refusing to sign", i);
+      goto cleanup;
+    }
+  }
+
+  if (!signable_any)
+    goto cleanup;
+
+  if (sp_psbt_has_outputs(psbt) && !set_sighash_all(psbt, plan, num_inputs))
+    goto cleanup;
+
+  /* Cache shared sighash midstates so per-input signing is O(n), not O(n^2). */
+  wally_psbt_signing_cache_enable(psbt, 0);
+
+  signatures_added = sign_owned_inputs(psbt, is_testnet, plan, num_inputs);
+
   drop_unverified_key_path_sigs(psbt, plan, num_inputs, result);
   wally_psbt_signing_cache_disable(psbt);
 
@@ -1280,8 +1352,12 @@ size_t psbt_sign(struct wally_psbt *psbt, bool is_testnet,
   }
 
 cleanup:
-  for (size_t i = 0; i < num_inputs; i++)
+  for (size_t i = 0; i < num_inputs; i++) {
+    /* The signatures carry their SIGHASH_ALL byte */
+    if (plan[i].sighash_set)
+      wally_psbt_set_input_sighash(psbt, i, 0);
     release_input_state(&plan[i]);
+  }
   free(plan);
 
   return signatures_added;
@@ -1324,5 +1400,9 @@ struct wally_psbt *psbt_trim(const struct wally_psbt *psbt) {
     wally_map_clear(&out->unknowns);
   }
 
+  if (!sp_psbt_copy_fields(psbt, trimmed)) {
+    wally_psbt_free(trimmed);
+    return NULL;
+  }
   return trimmed;
 }

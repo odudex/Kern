@@ -3,17 +3,20 @@
 
 #include "../../core/psbt.h"
 #include "../../ui/dialog.h"
+#include "scan.h"
 #include <stdbool.h>
 
 /* `inputs` and `outputs` hold the PSBT's classification, one entry per input
  * and per output, shared with the review screen.
  * load_descriptor_cb, when non-NULL, turns the expected-owned rejection into a
  * confirm offering to load a wallet descriptor on the fly; declining falls
- * back to the plain rejection dialog. NULL keeps the old behavior. */
+ * back to the plain rejection dialog. NULL keeps the old behavior. On a
+ * rejection *refusal_out says why. */
 bool psbt_sign_policy_allows_review(struct wally_psbt *psbt,
                                     const input_ownership_t *inputs,
                                     const output_ownership_t *outputs,
                                     dialog_callback_t dismissed_cb,
-                                    void (*load_descriptor_cb)(void));
+                                    void (*load_descriptor_cb)(void),
+                                    scan_psbt_failure_t *refusal_out);
 
 #endif

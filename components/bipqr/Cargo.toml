@@ -1,0 +1,16 @@
+[package]
+name = "kern-bipqr"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+bipqr-ll = { path = "upstream/bipqr-ll", features = ["ffi"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

@@ -8,8 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
-                           size_t *blob_len) {
+bool bip138_backup_encrypt(const char *descriptor, const char *alias,
+                           uint8_t **blob_out, size_t *blob_len) {
+  (void)alias;
   if (!descriptor || !blob_out || !blob_len)
     return false;
   size_t len = strlen(descriptor);
@@ -23,9 +24,12 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
 }
 
 bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
-                               char **descriptor_out, bool *approved_out) {
+                               char **descriptor_out, char **alias_out,
+                               bool *approved_out) {
   if (approved_out)
     *approved_out = true;
+  if (alias_out)
+    *alias_out = NULL;
   if (!data || !descriptor_out)
     return false;
   char *descriptor = malloc(len + 1);
@@ -38,9 +42,10 @@ bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
 }
 
 bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
-                                      char **descriptor_out,
+                                      char **descriptor_out, char **alias_out,
                                       bool *approved_out) {
-  return bip138_backup_decrypt_any(data, len, descriptor_out, approved_out);
+  return bip138_backup_decrypt_any(data, len, descriptor_out, alias_out,
+                                   approved_out);
 }
 
 void bip138_backup_forget_keys(void) {}
@@ -82,4 +87,12 @@ void storage_descriptor_filename(storage_location_t loc, const char *id,
     ext = STORAGE_DESCRIPTOR_EXT_BIP138;
   snprintf(out, out_size, "%s%s%s",
            loc == STORAGE_FLASH ? STORAGE_DESCRIPTOR_PREFIX : "", id, ext);
+}
+
+bool bip138_backup_sp_account_mark(const uint8_t *record, size_t len,
+                                   uint8_t mark[BIP138_BACKUP_MARK_LEN]) {
+  (void)record;
+  (void)len;
+  memset(mark, 0, BIP138_BACKUP_MARK_LEN);
+  return true;
 }

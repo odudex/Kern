@@ -521,6 +521,8 @@ static const char *descriptor_ext(storage_descriptor_format_t format) {
     return STORAGE_DESCRIPTOR_EXT_KEF;
   case STORAGE_DESCRIPTOR_BIP138:
     return STORAGE_DESCRIPTOR_EXT_BIP138;
+  case STORAGE_DESCRIPTOR_SP_ACCOUNT:
+    return STORAGE_DESCRIPTOR_EXT_SP_ACCOUNT;
   default:
     return STORAGE_DESCRIPTOR_EXT_TXT;
   }
@@ -534,6 +536,8 @@ storage_descriptor_format_t storage_descriptor_format(const char *filename) {
     return STORAGE_DESCRIPTOR_BIP138;
   if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_KEF))
     return STORAGE_DESCRIPTOR_KEF;
+  if (filename_has_ext(filename, STORAGE_DESCRIPTOR_EXT_SP_ACCOUNT))
+    return STORAGE_DESCRIPTOR_SP_ACCOUNT;
   return STORAGE_DESCRIPTOR_TXT;
 }
 
@@ -564,8 +568,9 @@ esp_err_t storage_load_descriptor(storage_location_t loc, const char *filename,
 esp_err_t storage_list_descriptors(storage_location_t loc,
                                    char ***filenames_out, int *count_out) {
   const char *exts[] = {STORAGE_DESCRIPTOR_EXT_KEF, STORAGE_DESCRIPTOR_EXT_TXT,
-                        STORAGE_DESCRIPTOR_EXT_BIP138};
-  return item_list(&descriptor_config, loc, exts, 3, filenames_out, count_out);
+                        STORAGE_DESCRIPTOR_EXT_BIP138,
+                        STORAGE_DESCRIPTOR_EXT_SP_ACCOUNT};
+  return item_list(&descriptor_config, loc, exts, 4, filenames_out, count_out);
 }
 
 esp_err_t storage_delete_descriptor(storage_location_t loc,

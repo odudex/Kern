@@ -221,6 +221,55 @@ int main(void) {
       PASS();
   }
 
+  printf("\n--- preferred entries first ---\n");
+  seed_registry();
+  if (!registry_add_from_string("e3", "tr([00000000/86'/0'/0']" XPUB_86 "/0/*)",
+                                STORAGE_FLASH, false))
+    FAIL("registry_add_from_string e3");
+  n = keypath(kp, 5, H(86), H(0), H(0), 0u, 3u);
+  {
+    registry_match_cursor_t cursor = {0};
+    uint32_t mi = 0, cn = 0;
+    TEST("registry order without a preference returns e2");
+    registry_entry_t *r = registry_match_keypath(kp, n, &cursor, &mi, &cn);
+    if (!r || strcmp(r->id, "e2") != 0)
+      FAIL("expected e2");
+    else
+      PASS();
+
+    registry_prefer("e3");
+    cursor = (registry_match_cursor_t){0};
+    TEST("preferred e3 comes first");
+    r = registry_match_keypath(kp, n, &cursor, &mi, &cn);
+    if (!r || strcmp(r->id, "e3") != 0)
+      FAIL("expected e3");
+    else
+      PASS();
+
+    TEST("e2 follows the preferred entry");
+    r = registry_match_keypath(kp, n, &cursor, &mi, &cn);
+    if (!r || strcmp(r->id, "e2") != 0)
+      FAIL("expected e2");
+    else
+      PASS();
+
+    TEST("match order ends after every entry");
+    r = registry_match_keypath(kp, n, &cursor, &mi, &cn);
+    if (r != NULL || registry_match_order_get(4) != NULL)
+      FAIL("expected NULL");
+    else
+      PASS();
+
+    registry_clear_preferred();
+    cursor = (registry_match_cursor_t){0};
+    TEST("cleared preference restores registry order");
+    r = registry_match_keypath(kp, n, &cursor, &mi, &cn);
+    if (!r || strcmp(r->id, "e2") != 0)
+      FAIL("expected e2");
+    else
+      PASS();
+  }
+
   registry_clear();
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,
          tests_failed);
