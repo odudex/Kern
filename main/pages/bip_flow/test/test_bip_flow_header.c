@@ -294,7 +294,8 @@ static void test_unsupported_psbts(void) {
   struct wally_psbt_input input;
   struct wally_psbt_output output;
   struct wally_psbt psbt;
-  unsigned char sp_info_key = BIP_FLOW_PSBT_OUT_SP_V0_INFO;
+  /* PSBT_OUT_SP_V0_INFO (BIP-375): the output pays a silent payment address */
+  unsigned char sp_info_key = 0x09;
   unsigned char other_key = 0x08;
   struct wally_map_item item = {.key = &other_key, .key_len = 1};
   memset(&input, 0, sizeof(input));
@@ -310,8 +311,7 @@ static void test_unsupported_psbts(void) {
   expect_psbt("a PSBT with another unknown output field is taken", &psbt,
               false);
   item.key = &sp_info_key;
-  expect_psbt("a silent payment send answers unsupported operation", &psbt,
-              true);
+  expect_psbt("a silent payment send is taken", &psbt, false);
   output.unknowns.num_items = 0;
   input.musig2_pubkeys.num_items = 1;
   expect_psbt("an input MuSig2 key answers unsupported operation", &psbt, true);
