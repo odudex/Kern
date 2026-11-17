@@ -5,6 +5,7 @@
 
 #include "core/key.h"
 #include "core/ss_whitelist.h"
+#include <wally_core.h>
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -126,6 +127,23 @@ static void test_chain_matches_full_derivation(void) {
   }
 }
 
+static void test_xpub_prefix(const char *name, const char *path,
+                             const char *prefix) {
+  TEST(name);
+  char *xpub = NULL;
+  if (!key_get_xpub(path, &xpub) || !xpub) {
+    FAIL("key_get_xpub failed");
+    return;
+  }
+  if (strncmp(xpub, prefix, strlen(prefix)) != 0) {
+    wally_free_string(xpub);
+    FAIL("wrong xpub prefix");
+    return;
+  }
+  wally_free_string(xpub);
+  PASS();
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -177,6 +195,21 @@ int main(void) {
 
   test_chain_matches_full_derivation();
   key_unload();
+
+  printf("\n--- Group 4: xpub version follows requested coin type ---\n");
+  {
+    TEST("key_load_from_mnemonic testnet");
+    if (!key_load_from_mnemonic(TEST_MNEMONIC, "", true)) {
+      FAIL("failed to load testnet mnemonic");
+    } else {
+      PASS();
+      test_xpub_prefix("testnet seed exports xpub for coin 0'",
+                       "m/48'/0'/0'/2'", "xpub");
+      test_xpub_prefix("testnet seed exports tpub for coin 1'",
+                       "m/48'/1'/0'/2'", "tpub");
+      key_unload();
+    }
+  }
 
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,
          tests_failed);

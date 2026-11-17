@@ -36,8 +36,7 @@ static void check(const char *name, bool ok) {
   printf("Testing: %s... %s\n", name, ok ? "PASS" : "FAIL");
 }
 
-/* ---------- storage stubs (registry persistence is never reached) ----------
- */
+/* ---------- storage stubs (registry persistence writes nowhere) ---------- */
 
 static int storage_saves;
 
@@ -139,7 +138,8 @@ static void done_cb(descriptor_validation_result_t result, void *user_data) {
 }
 
 static void info_cb(const descriptor_info_t *info,
-                    void (*proceed)(bool, void *)) {
+                    void (*proceed)(bool, void *), void *user_data) {
+  (void)user_data;
   info_calls++;
   info_seen = *info;
   /* The validator frees its policy when the flow completes. */
@@ -159,6 +159,15 @@ static void warn_cb(const char *message, void (*proceed)(bool, void *)) {
     proceed(warn_answer, NULL);
   else
     warn_proceed = proceed;
+}
+
+static int id_loc_calls;
+
+static void id_loc_cb(void (*proceed)(const char *id, storage_location_t loc,
+                                      void *user_data),
+                      void *user_data) {
+  id_loc_calls++;
+  proceed("persisted", STORAGE_FLASH, user_data);
 }
 
 static int marker;
@@ -848,7 +857,8 @@ static void test_multisig_and_miniscript(void) {
   check("2-of-3 sortedmulti accepted", run(ms2of3) == VALIDATION_SUCCESS);
   check("info: multisig 2 of 3",
         info_seen.is_multisig && !info_seen.is_miniscript &&
-            info_seen.threshold == 2 && info_seen.num_keys == 3);
+            info_seen.threshold == 2 && info_seen.num_keys == 3 &&
+            info_seen.is_sorted);
   check("info: cosigner fingerprint reported",
         strcmp(info_seen.keys[1].fingerprint_hex, "DEADBEEF") == 0 &&
             strcmp(info_seen.keys[1].derivation, "m/48'/0'/1'/2'") == 0);
@@ -856,14 +866,18 @@ static void test_multisig_and_miniscript(void) {
         strcmp(info_seen.keys[2].fingerprint_hex, "N/A") == 0 &&
             strcmp(info_seen.keys[2].derivation, "N/A") == 0 &&
             strcmp(info_seen.keys[2].xpub, c) == 0);
-  check("session label Multisig (2 of 3)",
-        registry_has_label("Multisig (2 of 3)"));
+  check("session label sortedmulti 2 of 3",
+        registry_has_label("sortedmulti 2 of 3"));
 
   const char *ms_ours_last = descf("wsh(multi(1,[deadbeef/48'/0'/1'/2']%s/0/*,"
                                    "[" FP "/48'/0'/0'/2']%s/0/*))",
                                    b, a);
   check("our key found at a later index",
         run(ms_ours_last) == VALIDATION_SUCCESS);
+  check("info: multi is not sorted", info_seen.is_multisig &&
+                                         !info_seen.is_sorted &&
+                                         info_seen.threshold == 1);
+  check("session label multi 1 of 2", registry_has_label("multi 1 of 2"));
 
   const char *msc1 = descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
                            "older(144)))",
@@ -1117,6 +1131,25 @@ static void test_dedup(void) {
   registry_clear();
 }
 
+/* descriptor_validate_and_load_persistent() registers under the id it is
+ * given, so a descriptor already loaded gets a second id. */
+static void test_persistent_registration(void) {
+  registry_clear();
+  check("seed descriptor loads", run(wpkh84()) == VALIDATION_SUCCESS);
+
+  capture_reset();
+  id_loc_calls = 0;
+  descriptor_validate_and_load_persistent(wpkh84(), done_cb, warn_cb, info_cb,
+                                          id_loc_cb, &marker);
+  check("persistent registration of a loaded descriptor is reviewed",
+        done_result == VALIDATION_SUCCESS && info_calls == 1);
+  check("persistent registration requests the storage id", id_loc_calls == 1);
+  check("persistent registration adds a second entry",
+        registry_count() == 2 && registry_find_by_id("persisted") &&
+            registry_find_by_id("persisted")->persisted);
+  registry_clear();
+}
+
 static void test_generation_guard(void) {
   registry_clear();
   capture_reset();
@@ -1278,6 +1311,7 @@ int main(void) {
   test_long_policy();
   test_network();
   test_dedup();
+  test_persistent_registration();
   test_generation_guard();
   test_watch_only();
 

@@ -25,6 +25,7 @@
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
 #include "../../utils/text_file.h"
+#include "../bip_flow/bip_flow.h"
 #include "../load_descriptor_storage.h"
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
@@ -123,6 +124,14 @@ void scan_dismiss_progress(void) {
 static void finish_dispatch(char *qr_content, size_t qr_content_len,
                             bool parse_success, int detected_format) {
   scan_ctx.is_message_sign = false;
+
+  if (!parse_success && qr_content &&
+      bip_flow_can_handle((const uint8_t *)qr_content, qr_content_len)) {
+    bip_flow_start(lv_screen_active(), (const uint8_t *)qr_content,
+                   qr_content_len, scan_ctx.return_cb);
+    free(qr_content);
+    return;
+  }
 
   // Layer 2: plaintext/binary heuristics — try each parser in priority order
   if (!parse_success && qr_content) {
@@ -300,6 +309,15 @@ static void process_scan_result(void) {
     char bbqr_file_type = qr_scanner_get_bbqr_file_type();
     qr_content = qr_scanner_get_completed_content_with_len(&qr_content_len);
     if (qr_content && qr_content_len > 0) {
+      if (bbqr_file_type == 'B' &&
+          bip_flow_can_handle((const uint8_t *)qr_content, qr_content_len)) {
+        qr_scanner_page_hide();
+        qr_scanner_page_destroy();
+        bip_flow_start(lv_screen_active(), (const uint8_t *)qr_content,
+                       qr_content_len, scan_ctx.return_cb);
+        free(qr_content);
+        return;
+      }
       scan_psbt_cleanup();
       parse_success = psbt_parse_payload((const uint8_t *)qr_content,
                                          qr_content_len, &scan_ctx.psbt);

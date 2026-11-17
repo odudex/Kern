@@ -309,6 +309,19 @@ bool registry_session_has_duplicate_scripts(const struct wally_descriptor *desc,
   return false;
 }
 
+bool registry_entry_is_descriptor(const registry_entry_t *entry,
+                                  const char *descriptor_str) {
+  struct wally_descriptor *desc = NULL;
+  uint8_t id[32];
+  bool same =
+      entry->has_script_id && descriptor_str &&
+      wallet_descriptor_parse(descriptor_str, NULL, wallet_wally_network(),
+                              &desc) == WALLY_OK &&
+      script_id(desc, id) && memcmp(id, entry->script_id, sizeof(id)) == 0;
+  wally_descriptor_free(desc);
+  return same;
+}
+
 bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
                                     size_t out_id_size) {
   if (out_id && out_id_size > 0)
@@ -624,6 +637,24 @@ bool registry_persist(const char *id, const char *name) {
   storage_descriptor_filename(loc, file_id, STORAGE_DESCRIPTOR_BIP138,
                               e->filename, sizeof(e->filename));
   return true;
+}
+
+bool registry_persist_or_add_parsed(const char *id,
+                                    struct wally_descriptor *desc,
+                                    size_t key_index, storage_location_t loc) {
+  if (!id || !desc) {
+    wally_descriptor_free(desc);
+    return false;
+  }
+
+  const registry_entry_t *entry = registry_find_by_id(id);
+  if (!entry)
+    return registry_add_parsed(id, desc, key_index, loc, true);
+  uint8_t sid[32];
+  bool same = entry->has_script_id && script_id(desc, sid) &&
+              memcmp(sid, entry->script_id, sizeof(sid)) == 0;
+  wally_descriptor_free(desc);
+  return same && (entry->persisted || registry_persist(id, id));
 }
 
 bool registry_add_watch_only(const char *id, const char *descriptor_str,
