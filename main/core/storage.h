@@ -41,6 +41,7 @@ typedef enum {
 #define STORAGE_DESCRIPTOR_EXT_TXT ".txt"
 #define STORAGE_DESCRIPTOR_EXT_BIP138 ".bip138"
 #define STORAGE_DESCRIPTOR_EXT_BIP138_TXT ".bip138.txt"
+#define STORAGE_DESCRIPTOR_EXT_SP_ACCOUNT ".spa"
 
 /* On-disk form of a descriptor file, selected by its extension. KEF files are
  * raw on flash and base64 text on SD. BIP138 files are raw binary everywhere;
@@ -49,6 +50,8 @@ typedef enum {
   STORAGE_DESCRIPTOR_TXT = 0, /* plaintext descriptor */
   STORAGE_DESCRIPTOR_KEF,     /* password-encrypted KEF envelope */
   STORAGE_DESCRIPTOR_BIP138,  /* BIP138 container keyed to the descriptor */
+  /* alias registered for the seed's silent payment account, flash only */
+  STORAGE_DESCRIPTOR_SP_ACCOUNT,
 } storage_descriptor_format_t;
 
 /**
@@ -175,7 +178,7 @@ KERN_WARN_UNUSED_RESULT esp_err_t storage_load_descriptor(
 storage_descriptor_format_t storage_descriptor_format(const char *filename);
 
 /**
- * List stored descriptor files (.kef, .txt and .bip138 forms).
+ * List stored descriptor files (.kef, .txt, .bip138 and .spa forms).
  */
 KERN_WARN_UNUSED_RESULT esp_err_t storage_list_descriptors(
     storage_location_t loc, char ***filenames_out, int *count_out);

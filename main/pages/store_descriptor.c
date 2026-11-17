@@ -90,7 +90,7 @@ static void do_save_named(const char *id) {
   if (target_format == STORAGE_DESCRIPTOR_BIP138) {
     uint8_t *blob = NULL;
     size_t blob_len = 0;
-    if (bip138_backup_encrypt(descriptor_text, &blob, &blob_len)) {
+    if (bip138_backup_encrypt(descriptor_text, NULL, &blob, &blob_len)) {
       ret = storage_save_descriptor(target_location, id, blob, blob_len,
                                     STORAGE_DESCRIPTOR_BIP138);
       free(blob);

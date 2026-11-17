@@ -1,5 +1,6 @@
 #include "bip138_keys.h"
 #include "bip32_path.h"
+#include "descriptor_keys.h"
 #include "wallet.h"
 #include <ctype.h>
 #include <stdlib.h>
@@ -84,14 +85,85 @@ static bool parse_origin(const char *str, bip138_key_origin *origin) {
   return true;
 }
 
-static bool key_origin(const struct wally_descriptor *desc, size_t index,
-                       bip138_key_origin *origin) {
-  char *str = NULL;
-  if (wally_descriptor_get_key_origin_path_str(desc, index, &str) != WALLY_OK)
-    return false;
+/* The recipient key of `ref`, if it has one. `derived` is true when a
+ * derivation follows the key expression at `ref.index`, the whole musig() for a
+ * participant; a participant with its own derivation qualifies too. */
+static bool ref_recipient_key(const struct wally_descriptor *desc,
+                              descriptor_key_ref_t ref, bool derived,
+                              uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN]) {
+  char xpub[XPUB_MAX_LEN];
+  char *key_str = descriptor_key_string_alloc(desc, ref);
+  const char *rest = key_str ? split_key(key_str, xpub, sizeof(xpub)) : NULL;
+  bool ok = rest && (derived || rest[0] == '/') && xpub_to_xonly(xpub, xonly);
+  wally_free_string(key_str);
+  return ok;
+}
+
+static bool ref_origin(const struct wally_descriptor *desc,
+                       descriptor_key_ref_t ref, bip138_key_origin *origin) {
+  char *str = descriptor_key_origin_path_alloc(desc, ref);
   bool ok = parse_origin(str, origin);
   wally_free_string(str);
   return ok;
+}
+
+/* Adds the recipient key of `ref` to `keys_out` unless it is there already. A
+ * key that does not qualify (see ref_recipient_key) is skipped. Fails when
+ * `keys_out` is full or the origin does not parse. */
+static bool add_key(const struct wally_descriptor *desc,
+                    descriptor_key_ref_t ref, bool derived, uint8_t *keys_out,
+                    bip138_key_origin *origins_out, size_t max_keys,
+                    size_t *count) {
+  uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN];
+  if (!ref_recipient_key(desc, ref, derived, xonly))
+    return true;
+  for (size_t j = 0; j < *count; j++) {
+    if (memcmp(keys_out + j * BIP138_KEY_LEN, xonly, BIP138_KEY_LEN) == 0)
+      return true;
+  }
+  if (*count == max_keys)
+    return false;
+  if (origins_out && !ref_origin(desc, ref, &origins_out[*count]))
+    return false;
+  memcpy(keys_out + *count * BIP138_KEY_LEN, xonly, BIP138_KEY_LEN);
+  (*count)++;
+  return true;
+}
+
+/* Adds the origin of the recipient key of `ref` to `origins_out` unless it is
+ * there already. A key that does not qualify (see ref_recipient_key), or whose
+ * origin has no path, is skipped. Fails when `origins_out` is full or the
+ * origin does not parse. */
+static bool add_origin(const struct wally_descriptor *desc,
+                       descriptor_key_ref_t ref, bool derived,
+                       bip138_key_origin *origins_out, size_t max_origins,
+                       size_t *count) {
+  uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN];
+  bip138_key_origin origin;
+  if (!ref_recipient_key(desc, ref, derived, xonly))
+    return true;
+  if (!ref_origin(desc, ref, &origin))
+    return false;
+  if (origin.depth == 0)
+    return true;
+  for (size_t j = 0; j < *count; j++) {
+    if (origins_out[j].depth == origin.depth &&
+        memcmp(origins_out[j].child, origin.child,
+               origin.depth * sizeof(origin.child[0])) == 0)
+      return true;
+  }
+  if (*count == max_origins)
+    return false;
+  origins_out[(*count)++] = origin;
+  return true;
+}
+
+/* Whether a derivation follows key expression `i`. */
+static bool key_derived(const struct wally_descriptor *desc, uint32_t i) {
+  size_t child_len = 0;
+  return wally_descriptor_get_key_child_path_str_len(desc, i, &child_len) ==
+             WALLY_OK &&
+         child_len > 0;
 }
 
 /* Parses a descriptor without private keys. */
@@ -111,22 +183,6 @@ static struct wally_descriptor *parse_public(const char *descriptor,
   return desc;
 }
 
-/* The recipient key of key expression `i`, if it has one. */
-static bool recipient_key(const struct wally_descriptor *desc, size_t i,
-                          uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN]) {
-  size_t child_len = 0;
-  char *key_str = NULL;
-  char xpub[XPUB_MAX_LEN];
-  if (wally_descriptor_get_key_child_path_str_len(desc, i, &child_len) !=
-          WALLY_OK ||
-      child_len == 0 || wally_descriptor_get_key(desc, i, &key_str) != WALLY_OK)
-    return false;
-  bool ok = split_key(key_str, xpub, sizeof(xpub)) != NULL &&
-            xpub_to_xonly(xpub, xonly);
-  wally_free_string(key_str);
-  return ok;
-}
-
 bool bip138_keys_from_descriptor(const char *descriptor, uint32_t wally_network,
                                  uint8_t *keys_out,
                                  bip138_key_origin *origins_out,
@@ -142,24 +198,16 @@ bool bip138_keys_from_descriptor(const char *descriptor, uint32_t wally_network,
   if (!desc)
     return false;
 
-  for (size_t i = 0; ok && i < num_keys; i++) {
-    uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN];
-    if (!recipient_key(desc, i, xonly))
-      continue;
-    size_t j = 0;
-    while (j < count &&
-           memcmp(keys_out + j * BIP138_KEY_LEN, xonly, BIP138_KEY_LEN) != 0)
-      j++;
-    if (j < count)
-      continue;
-    if (count == max_keys) {
-      ok = false;
-      break;
-    }
-    memcpy(keys_out + count * BIP138_KEY_LEN, xonly, BIP138_KEY_LEN);
-    if (origins_out)
-      ok = key_origin(desc, i, &origins_out[count]);
-    count++;
+  for (uint32_t i = 0; ok && i < num_keys; i++) {
+    bool derived = key_derived(desc, i);
+    descriptor_key_ref_t ref = {.index = i,
+                                .participant = DESCRIPTOR_KEY_NOT_MUSIG};
+    size_t participants = descriptor_key_musig_participants(desc, i);
+    if (participants == 0)
+      ok = add_key(desc, ref, derived, keys_out, origins_out, max_keys, &count);
+    for (ref.participant = 0; ok && ref.participant < participants;
+         ref.participant++)
+      ok = add_key(desc, ref, derived, keys_out, origins_out, max_keys, &count);
   }
   wally_descriptor_free(desc);
   if (!ok || count == 0)
@@ -183,26 +231,16 @@ bool bip138_origins_from_descriptor(const char *descriptor,
   if (!desc)
     return false;
 
-  for (size_t i = 0; ok && i < num_keys; i++) {
-    uint8_t xonly[EC_XONLY_PUBLIC_KEY_LEN];
-    bip138_key_origin origin;
-    if (!recipient_key(desc, i, xonly))
-      continue;
-    ok = key_origin(desc, i, &origin);
-    if (!ok || origin.depth == 0)
-      continue;
-    size_t j = 0;
-    while (j < count && (origins_out[j].depth != origin.depth ||
-                         memcmp(origins_out[j].child, origin.child,
-                                origin.depth * sizeof(origin.child[0])) != 0))
-      j++;
-    if (j < count)
-      continue;
-    if (count == max_origins) {
-      ok = false;
-      break;
-    }
-    origins_out[count++] = origin;
+  for (uint32_t i = 0; ok && i < num_keys; i++) {
+    bool derived = key_derived(desc, i);
+    descriptor_key_ref_t ref = {.index = i,
+                                .participant = DESCRIPTOR_KEY_NOT_MUSIG};
+    size_t participants = descriptor_key_musig_participants(desc, i);
+    if (participants == 0)
+      ok = add_origin(desc, ref, derived, origins_out, max_origins, &count);
+    for (ref.participant = 0; ok && ref.participant < participants;
+         ref.participant++)
+      ok = add_origin(desc, ref, derived, origins_out, max_origins, &count);
   }
   wally_descriptor_free(desc);
   if (!ok)

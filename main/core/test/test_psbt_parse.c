@@ -50,6 +50,39 @@ static const char PSBT_HEX[] =
 static const char PSET_HEX[] =
     "70736574ff01020402000000010401000105010001fb040200000000";
 static const char PSET_BASE64[] = "cHNldP8BAgQCAAAAAQQBAAEFAQAB+wQCAAAAAA==";
+/* sp_fixture.h's UNSIGNED_PSBT, a silent payment send, with an explicit
+ * PSBT_IN_SIGHASH_TYPE on its input: SIGHASH_DEFAULT (0), then SIGHASH_ALL */
+static const char SP_SIGHASH_DEFAULT_PSBT_HEX[] =
+    "70736274ff0102040200000001030400000000010401010105010201fb04020000000001"
+    "012ba086010000000000225120cba15611f961103c8738f27fefa7b774bc6b242f17b55d"
+    "ae832a3ae2efe332ed010e20222222222222222222222222222222222222222222222222"
+    "2222222222222222010f0400000000012020111111111111111111111111111111111111"
+    "1111111111111111111111111111010304000000000001030860ea000000000000010942"
+    "0220bcfac5b99e04ad1a06ddfb016ee13582609d60b6291e98d01a9bc9a16c96d4025cc9"
+    "856d6f8375350e123978daac200c260cb5b5ae83106cab90484dcd8fcf36000103085898"
+    "000000000000010942024139b0f81042e243a90478e43990c6a27be0e3346f0c71adbbcd"
+    "d511beaea1e3031ec096b3e9917a43e81c6d014acab0dfa32151ea7dcdfa56a1dc89f0ae"
+    "c04ef8010a040000000000";
+static const char SP_SIGHASH_ALL_PSBT_HEX[] =
+    "70736274ff0102040200000001030400000000010401010105010201fb04020000000001"
+    "012ba086010000000000225120cba15611f961103c8738f27fefa7b774bc6b242f17b55d"
+    "ae832a3ae2efe332ed010e20222222222222222222222222222222222222222222222222"
+    "2222222222222222010f0400000000012020111111111111111111111111111111111111"
+    "1111111111111111111111111111010304010000000001030860ea000000000000010942"
+    "0220bcfac5b99e04ad1a06ddfb016ee13582609d60b6291e98d01a9bc9a16c96d4025cc9"
+    "856d6f8375350e123978daac200c260cb5b5ae83106cab90484dcd8fcf36000103085898"
+    "000000000000010942024139b0f81042e243a90478e43990c6a27be0e3346f0c71adbbcd"
+    "d511beaea1e3031ec096b3e9917a43e81c6d014acab0dfa32151ea7dcdfa56a1dc89f0ae"
+    "c04ef8010a040000000000";
+
+/* PSBT_HEX with its explicit SIGHASH_ALL turned into SIGHASH_DEFAULT (0) */
+static const char SIGHASH_DEFAULT_PSBT_HEX[] =
+    "70736274ff01003d00000000017189d386a21d477ce6809ef31f0dfe076f32b6c82d065b"
+    "2b50cc5c9867fd85f6000000000000000000010000000000000000016a00000000010"
+    "90b48656c6c6f20576f726c640001011f000000000000000016001481407ea42dd4f1e3"
+    "8cfff569aea3b2b85b9d53dc01030400000000220603c4c806d0c119b335e39b144bc4ba"
+    "b1a51006cf3d975dbe7407e31ee75939e9e01865fb43fe5400008001000080000000800"
+    "0000000010000000000";
 
 static size_t hex_decode(const char *hex, uint8_t *out, size_t out_size) {
   size_t len = strlen(hex) / 2;
@@ -140,6 +173,22 @@ static void test_pset_rejected(void) {
     wally_psbt_free(psbt);
 }
 
+/* Parse the PSBT `hex` and assert psbt_parse_payload_result's verdict. */
+static void check_hex(const char *name, const char *hex,
+                      psbt_parse_result_t want) {
+  uint8_t buf[640];
+  size_t len = hex_decode(hex, buf, sizeof(buf));
+  struct wally_psbt *psbt = NULL;
+  TEST(name);
+  if (len && psbt_parse_payload_result(buf, len, &psbt) == want &&
+      (psbt != NULL) == (want == PSBT_PARSE_OK))
+    PASS();
+  else
+    FAIL(want == PSBT_PARSE_OK ? "expected the parse to succeed"
+                               : "expected the parse to fail for that reason");
+  wally_psbt_free(psbt);
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -218,6 +267,24 @@ int main(void) {
   }
 
   test_pset_rejected();
+  check_hex("an explicit SIGHASH_DEFAULT with silent payment outputs is "
+            "refused for its sighash",
+            SP_SIGHASH_DEFAULT_PSBT_HEX, PSBT_PARSE_SP_SIGHASH);
+  check_hex("an explicit SIGHASH_ALL with silent payment outputs parses",
+            SP_SIGHASH_ALL_PSBT_HEX, PSBT_PARSE_OK);
+  check_hex("an explicit SIGHASH_DEFAULT without silent payment outputs "
+            "parses",
+            SIGHASH_DEFAULT_PSBT_HEX, PSBT_PARSE_OK);
+
+  TEST("a truncated PSBT is invalid, not refused for its sighash");
+  psbt = NULL;
+  if (psbt_parse_payload_result(base, base_len - 8, &psbt) ==
+          PSBT_PARSE_INVALID &&
+      !psbt)
+    PASS();
+  else
+    FAIL("expected PSBT_PARSE_INVALID");
+  wally_psbt_free(psbt);
 
   printf("\nResults: %d passed, %d failed\n", tests_run - tests_failed,
          tests_failed);

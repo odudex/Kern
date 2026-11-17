@@ -9,6 +9,7 @@
  * asynchronous flow, including the stale-callback generation guard.
  */
 
+#include "../descriptor_checksum.h"
 #include "../descriptor_validator.h"
 #include "../key.h"
 #include "../registry.h"
@@ -36,8 +37,7 @@ static void check(const char *name, bool ok) {
   printf("Testing: %s... %s\n", name, ok ? "PASS" : "FAIL");
 }
 
-/* ---------- storage stubs (registry persistence is never reached) ----------
- */
+/* ---------- storage stubs (registry persistence writes nowhere) ---------- */
 
 static int storage_saves;
 
@@ -139,7 +139,8 @@ static void done_cb(descriptor_validation_result_t result, void *user_data) {
 }
 
 static void info_cb(const descriptor_info_t *info,
-                    void (*proceed)(bool, void *)) {
+                    void (*proceed)(bool, void *), void *user_data) {
+  (void)user_data;
   info_calls++;
   info_seen = *info;
   /* The validator frees its policy when the flow completes. */
@@ -159,6 +160,15 @@ static void warn_cb(const char *message, void (*proceed)(bool, void *)) {
     proceed(warn_answer, NULL);
   else
     warn_proceed = proceed;
+}
+
+static int id_loc_calls;
+
+static void id_loc_cb(void (*proceed)(const char *id, storage_location_t loc,
+                                      void *user_data),
+                      void *user_data) {
+  id_loc_calls++;
+  proceed("persisted", STORAGE_FLASH, user_data);
 }
 
 static int marker;
@@ -848,7 +858,8 @@ static void test_multisig_and_miniscript(void) {
   check("2-of-3 sortedmulti accepted", run(ms2of3) == VALIDATION_SUCCESS);
   check("info: multisig 2 of 3",
         info_seen.is_multisig && !info_seen.is_miniscript &&
-            info_seen.threshold == 2 && info_seen.num_keys == 3);
+            info_seen.threshold == 2 && info_seen.num_keys == 3 &&
+            info_seen.is_sorted);
   check("info: cosigner fingerprint reported",
         strcmp(info_seen.keys[1].fingerprint_hex, "DEADBEEF") == 0 &&
             strcmp(info_seen.keys[1].derivation, "m/48'/0'/1'/2'") == 0);
@@ -856,14 +867,18 @@ static void test_multisig_and_miniscript(void) {
         strcmp(info_seen.keys[2].fingerprint_hex, "N/A") == 0 &&
             strcmp(info_seen.keys[2].derivation, "N/A") == 0 &&
             strcmp(info_seen.keys[2].xpub, c) == 0);
-  check("session label Multisig (2 of 3)",
-        registry_has_label("Multisig (2 of 3)"));
+  check("session label sortedmulti 2 of 3",
+        registry_has_label("sortedmulti 2 of 3"));
 
   const char *ms_ours_last = descf("wsh(multi(1,[deadbeef/48'/0'/1'/2']%s/0/*,"
                                    "[" FP "/48'/0'/0'/2']%s/0/*))",
                                    b, a);
   check("our key found at a later index",
         run(ms_ours_last) == VALIDATION_SUCCESS);
+  check("info: multi is not sorted", info_seen.is_multisig &&
+                                         !info_seen.is_sorted &&
+                                         info_seen.threshold == 1);
+  check("session label multi 1 of 2", registry_has_label("multi 1 of 2"));
 
   const char *msc1 = descf("wsh(and_v(v:pk([" FP "/48'/0'/0'/2']%s/0/*),"
                            "older(144)))",
@@ -1028,6 +1043,121 @@ static void test_long_policy(void) {
   registry_clear();
 }
 
+static void test_musig(void) {
+  registry_clear();
+  const char *ours = xpub_at("m/86'/0'/0'");
+  const char *other = xpub_at("m/86'/0'/1'");
+
+  const char *aggregate_then_derive =
+      descf("tr(musig([" FP "/86'/0'/0']%s,[deadbeef/86'/0'/1']%s)/<0;1>/*)",
+            ours, other);
+  check("musig() aggregate then derive accepted",
+        run(aggregate_then_derive) == VALIDATION_SUCCESS);
+  check("info: one key of two musig() participants",
+        info_seen.num_keys == 1 && info_seen.musig_participants == 2);
+  check("info: our participant shown",
+        strcmp(info_seen.keys[0].fingerprint_hex, FP_UPPER) == 0 &&
+            strcmp(info_seen.keys[0].xpub, ours) == 0);
+  check("info: participants listed in place of a path",
+        strcmp(info_seen.keys[0].derivation, "musig(" FP_UPPER ",DEADBEEF)") ==
+            0);
+  check("info: musig() internal key with us is ours",
+        info_seen.tr_keypath == TR_KEYPATH_OURS);
+  check("musig() labelled MuSig2", registry_has_label("MuSig2 (2 keys)"));
+  const registry_entry_t *entry = registry_get(0);
+  check("registry: our key is the musig() at index 0",
+        registry_count() == 1 && entry->my_key_index == 0);
+  check("registry: origin of our participant",
+        entry->origin_path_len == 3 && entry->origin_path[0] == 0x80000056 &&
+            entry->origin_path[1] == 0x80000000 &&
+            entry->origin_path[2] == 0x80000000);
+  registry_clear();
+
+  const char *derive_then_aggregate = descf(
+      "tr(musig([deadbeef/86'/0'/1']%s/<0;1>/*,[" FP "/86'/0'/0']%s/<0;1>/*))",
+      other, ours);
+  check("musig() derive then aggregate accepted, our key second",
+        run(derive_then_aggregate) == VALIDATION_SUCCESS &&
+            strcmp(info_seen.keys[0].derivation,
+                   "musig(DEADBEEF," FP_UPPER ")") == 0);
+  registry_clear();
+
+  const char *with_tree = descf("tr(musig([" FP "/86'/0'/0']%s,[deadbeef/86'/"
+                                "0'/1']%s)/<0;1>/*,pk([deadbeef/86'/0'/2']%s/"
+                                "<0;1>/*))",
+                                ours, other, xpub_at("m/86'/0'/2'"));
+  check("musig() internal key with a script tree accepted",
+        run(with_tree) == VALIDATION_SUCCESS);
+  check("musig() with other keys is not labelled MuSig2",
+        !registry_has_label("MuSig2 (2 keys)"));
+  registry_clear();
+
+  const char *no_origin =
+      descf("tr(musig([" FP "/86'/0'/0']%s,%s)/<0;1>/*,pk([deadbeef/86'/0'/"
+            "1']%s/<0;1>/*))",
+            ours, other, other);
+  check("musig() internal key with a participant of no origin rejected",
+        run(no_origin) == VALIDATION_TR_INTERNAL_NOT_UNSPENDABLE);
+
+  const char *wrong_xpub =
+      descf("tr(musig([" FP "/86'/0'/0']%s,[deadbeef/86'/0'/1']%s)/<0;1>/*)",
+            other, ours);
+  check("musig() participant with our fingerprint and another xpub rejected",
+        run(wrong_xpub) == VALIDATION_XPUB_MISMATCH);
+
+  const char *foreign =
+      descf("tr(musig([deadbeef/86'/0'/0']%s,[f00dbabe/86'/0'/1']%s)/<0;1>/*)",
+            ours, other);
+  check("musig() without our fingerprint rejected",
+        run(foreign) == VALIDATION_FINGERPRINT_NOT_FOUND);
+  check("musig() rejections register nothing", registry_count() == 0);
+}
+
+static void test_leaf_musig(void) {
+  registry_clear();
+  const char *ours = xpub_at("m/86'/0'/0'");
+  const char *other = xpub_at("m/86'/0'/1'");
+  const char *internal = xpub_at("m/86'/0'/2'");
+
+  const char *leaf = descf("tr([deadbeef/86'/0'/2']%s/<0;1>/*,pk(musig([" FP
+                           "/86'/0'/0']%s,[deadbeef/86'/0'/1']%s)/<0;1>/*))",
+                           internal, ours, other);
+  check("musig() in a leaf accepted", run(leaf) == VALIDATION_SUCCESS);
+  check("info: the leaf musig() lists its participants",
+        info_seen.num_keys == 2 && info_seen.musig_participants == 2 &&
+            strcmp(info_seen.keys[1].fingerprint_hex, FP_UPPER) == 0 &&
+            strcmp(info_seen.keys[1].derivation,
+                   "musig(" FP_UPPER ",DEADBEEF)") == 0);
+  check("info: the internal key is another's",
+        info_seen.tr_keypath == TR_KEYPATH_EXTERNAL);
+  char *text = NULL;
+  check("the leaf musig() is written back as it came",
+        registry_count() == 1 &&
+            descriptor_string_from_descriptor(registry_get(0)->desc, &text) &&
+            strstr(text, ",pk(musig([" FP "/86h/0h/0h]") != NULL &&
+            strstr(text, ")/<0;1>/*))#") != NULL);
+  free(text);
+  registry_clear();
+
+  char checksum[9];
+  check("checksum of the leaf musig() descriptor",
+        descriptor_checksum_from_string(leaf, checksum));
+  check("a leaf musig() descriptor with its checksum accepted",
+        run(descf("%s#%s", leaf, checksum)) == VALIDATION_SUCCESS);
+  registry_clear();
+  checksum[0] = checksum[0] == 'q' ? 'p' : 'q';
+  check("a leaf musig() descriptor with another checksum rejected",
+        run(descf("%s#%s", leaf, checksum)) == VALIDATION_PARSE_ERROR);
+
+  const char *derived =
+      descf("tr([deadbeef/86'/0'/2']%s/<0;1>/*,pk(musig([" FP
+            "/86'/0'/0']%s/<0;1>/*,[deadbeef/86'/0'/1']%s/<0;1>/*)))",
+            internal, ours, other);
+  check("a leaf musig() of derived participants rejected",
+        run(derived) == VALIDATION_PARSE_ERROR);
+  check("leaf musig() rejections register nothing", registry_count() == 0);
+}
+
 static void test_network(void) {
   registry_clear();
   key_unload();
@@ -1114,6 +1244,25 @@ static void test_dedup(void) {
   registry_clear();
   check("cleared session accepts the descriptor again",
         run(wpkh84()) == VALIDATION_SUCCESS);
+  registry_clear();
+}
+
+/* descriptor_validate_and_load_persistent() registers under the id it is
+ * given, so a descriptor already loaded gets a second id. */
+static void test_persistent_registration(void) {
+  registry_clear();
+  check("seed descriptor loads", run(wpkh84()) == VALIDATION_SUCCESS);
+
+  capture_reset();
+  id_loc_calls = 0;
+  descriptor_validate_and_load_persistent(wpkh84(), done_cb, warn_cb, info_cb,
+                                          id_loc_cb, &marker);
+  check("persistent registration of a loaded descriptor is reviewed",
+        done_result == VALIDATION_SUCCESS && info_calls == 1);
+  check("persistent registration requests the storage id", id_loc_calls == 1);
+  check("persistent registration adds a second entry",
+        registry_count() == 2 && registry_find_by_id("persisted") &&
+            registry_find_by_id("persisted")->persisted);
   registry_clear();
 }
 
@@ -1276,8 +1425,11 @@ int main(void) {
   test_taproot_keypath();
   test_key_cap();
   test_long_policy();
+  test_musig();
+  test_leaf_musig();
   test_network();
   test_dedup();
+  test_persistent_registration();
   test_generation_guard();
   test_watch_only();
 
