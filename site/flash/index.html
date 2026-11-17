@@ -77,6 +77,7 @@
       transition: all 0.15s;
     }
     .tab.active { border-color: var(--accent); color: var(--accent); background: rgba(249,115,22,0.08); }
+    .tab:disabled { opacity: 0.4; cursor: not-allowed; }
 
     label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; }
     select {
@@ -156,6 +157,12 @@
     Please use <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> version 89 or later.
   </div>
 
+  <div class="banner banner-warn" id="lockedBanner" style="display:none">
+    🔒 <strong>Secure boot is enabled on this device.</strong> It only starts firmware signed with the
+    keys it was locked to, so CI builds are unavailable: load an official release ZIP. The device cannot
+    be read in this state and writing takes several minutes.
+  </div>
+
   <div class="banner banner-warn">
     ⚠ <strong>Warning:</strong> CI builds are unvetted development snapshots from a research project.
     Secure boot is not enabled. Flash them for experimentation and testnet use; any mainnet use is
@@ -192,7 +199,8 @@
            onclick="document.getElementById('zipInput').click()">
         <div>Drop firmware ZIP here or <strong>click to browse</strong></div>
         <div style="font-size:0.75rem;margin-top:0.3rem;color:var(--muted)">
-          e.g. <code>firmware-wave_4b.zip</code> downloaded from GitHub Actions Artifacts
+          e.g. <code>kern-wave_4b-v0.0.22.zip</code> from a release, or
+          <code>firmware-wave_4b.zip</code> from GitHub Actions Artifacts
         </div>
         <div class="zip-name" id="zipName"></div>
         <input type="file" id="zipInput" accept=".zip"
@@ -258,9 +266,16 @@ function parseFlashFiles(jsonText) {
   } catch { return null; }
 }
 
-const FLASH_MODE = 'dio';
-const FLASH_FREQ = '80m';
-const FLASH_SIZE = '16MB';
+// Image headers are written as built. A release bootloader is signed, and a device with secure
+// boot enabled, or about to enable it, only accepts those exact bytes.
+const FLASH_KEEP = 'keep';
+const FLASH_SIZE_BYTES = 16 * 1024 * 1024;
+// SHA-256 digests of the three release signing keys (kern_secure_boot/README.md)
+const RELEASE_KEY_DIGESTS = [
+  '2c812b5806eb81730e29364b874ded9b14de275d6bbfa66a4dc5e60146dfe264',
+  '808a94e9537be0b506ecf7fb02c3c82cab3c21922af7d5212088c035940a78b9',
+  '71b3a7ba22a4fb8289ee1286bae66a0b1674c3bb679a800118309514138de609',
+];
 // Changing baud means reopening the port, which resets the board into a session without the P4 v3.x flash power-on, so stay at the ROM rate.
 const BAUD       = 115200;
 
@@ -270,6 +285,7 @@ let transport    = null;
 let esploader    = null;
 let customFiles  = null; // [{name, offset, data:Uint8Array}]
 let chipRev      = null; // major * 100 + minor, read on connect
+let locked       = false; // secure download mode: the ROM refuses reads and only signed firmware starts
 
 // ── Browser compatibility ─────────────────────────────────────────────────────
 if (!('serial' in navigator)) {
@@ -302,6 +318,7 @@ function clearProgress() {
 
 // ── Mode switching ────────────────────────────────────────────────────────────
 window.setMode = function (m) {
+  if (locked) m = 'custom';
   currentMode = m;
   document.getElementById('tabCI').classList.toggle('active', m === 'ci');
   document.getElementById('tabCustom').classList.toggle('active', m === 'custom');
@@ -330,6 +347,66 @@ function checkChipRev(name, data) {
     throw new Error(`${name} supports chip revision ${fmtRev(min)} to ${fmtRev(max)}, ` +
                     `but this chip is ${fmtRev(chipRev)}`);
   }
+}
+
+// ── Secure boot ───────────────────────────────────────────────────────────────
+// A signed image ends in a 4 KiB sector of up to three 1216-byte signature blocks. Each block
+// carries its public key at bytes 36 to 812, and the SHA-256 of that is the key's digest.
+async function signerDigests(data) {
+  const SECTOR = 4096, BLOCK = 1216;
+  if (data.length < 2 * SECTOR || data.length % SECTOR !== 0) return [];
+  const sector = data.subarray(data.length - SECTOR);
+  const out = [];
+  for (let i = 0; i < 3 && sector[i * BLOCK] === 0xE7; i++) {
+    const key  = sector.subarray(i * BLOCK + 36, i * BLOCK + 812);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', key));
+    out.push(Array.from(hash, b => b.toString(16).padStart(2, '0')).join(''));
+  }
+  return out;
+}
+
+// What a device locked to the release keys would refuse to start. Empty when the bundle is a
+// release: bootloader signed by all three keys, app by at least one.
+async function releaseSignatureProblems(files, names) {
+  const problems = [];
+  for (let i = 0; i < files.length; i++) {
+    const data = files[i].data;
+    if (data[0] !== 0xE9) continue;
+    const signers = await signerDigests(data);
+    const isBootloader = files[i].address === esploader.chip.BOOTLOADER_FLASH_OFFSET;
+    const ok = isBootloader
+      ? RELEASE_KEY_DIGESTS.every(d => signers.includes(d))
+      : RELEASE_KEY_DIGESTS.some(d => signers.includes(d));
+    if (!ok) {
+      problems.push(`${names[i]} is not signed by ${isBootloader ? 'all three release keys' : 'a release key'}`);
+    }
+  }
+  return problems;
+}
+
+function bundleChipRevRange(files) {
+  const image = files.map(f => f.data).find(d => d.length >= 24 && d[0] === 0xE9);
+  if (!image) return null;
+  const max = image[17] | (image[18] << 8);
+  return `${fmtRev(image[15] | (image[16] << 8))} to ${max === 0xFFFF ? 'any' : fmtRev(max)}`;
+}
+
+// The ROM of a locked chip takes flash data uncompressed, in 1 KiB blocks, and has to be told
+// the flash size: it cannot detect it and refuses writes past 2 MB otherwise.
+async function prepareLockedWrite() {
+  esploader.FLASH_WRITE_SIZE = 0x400;
+  let pkt = new Uint8Array(0);
+  for (const v of [0, FLASH_SIZE_BYTES, 64 * 1024, 4 * 1024, 256, 0xffff]) {
+    pkt = esploader._appendArray(pkt, esploader._intToByteArray(v));
+  }
+  await esploader.checkCommand('set SPI flash size', 0x0b, pkt);
+}
+
+function setLocked(state) {
+  locked = state;
+  document.getElementById('lockedBanner').style.display = state ? 'block' : 'none';
+  document.getElementById('tabCI').disabled = state;
+  if (state) window.setMode('custom');
 }
 
 // ── CI file list ──────────────────────────────────────────────────────────────
@@ -449,8 +526,15 @@ async function doConnect() {
     esploader   = new ESPLoader({ transport, baudrate: BAUD, terminal });
     const chip  = await esploader.main();
     log(`Connected to: ${chip}`, 'l-ok');
-    chipRev = esploader.chip.getChipRevision
-      ? await esploader.chip.getChipRevision(esploader) : null;
+    setLocked(esploader.secureDownloadMode);
+    if (locked) {
+      // Register reads are refused, so the chip revision stays unknown
+      chipRev = null;
+      log('Secure boot is enabled: only a release ZIP signed for this device will start on it.', 'l-ok');
+    } else {
+      chipRev = esploader.chip.getChipRevision
+        ? await esploader.chip.getChipRevision(esploader) : null;
+    }
     window.updateCIFileList();
 
     connectBtn.textContent = '⏏ Disconnect';
@@ -473,6 +557,7 @@ async function doDisconnect() {
   transport = null;
   esploader = null;
   chipRev   = null;
+  setLocked(false);
   window.updateCIFileList();
   connectBtn.textContent = '🔌 Connect';
   connectBtn.classList.remove('connected');
@@ -524,16 +609,33 @@ window.startFlash = async function () {
 
     fileArray.forEach((f, i) => checkChipRev(fileNames[i], f.data));
 
+    if (locked) {
+      const problems = await releaseSignatureProblems(fileArray, fileNames);
+      const range    = bundleChipRevRange(fileArray);
+      const question =
+        (problems.length
+          ? `This bundle is not signed with the release keys:\n- ${problems.join('\n- ')}\n` +
+            'A device locked to those keys will not start it.\n\n'
+          : '') +
+        'The chip revision cannot be read from a locked device.' +
+        (range ? ` This bundle is for chip revision ${range}.` : '') +
+        '\n\nFlash it?';
+      problems.forEach(p => log(p, 'l-err'));
+      if (!window.confirm(question)) throw new Error('Cancelled.');
+      await prepareLockedWrite();
+      log('Writing uncompressed through the ROM: this takes several minutes.');
+    }
+
     log(`Flashing ${fileArray.length} file(s)…`);
     setProgress(0, 'Preparing…');
 
     await esploader.writeFlash({
       fileArray,
-      flashMode: FLASH_MODE,
-      flashFreq: FLASH_FREQ,
-      flashSize: FLASH_SIZE,
+      flashMode: FLASH_KEEP,
+      flashFreq: FLASH_KEEP,
+      flashSize: FLASH_KEEP,
       eraseAll:  false,
-      compress:  true,
+      compress:  !locked,
       reportProgress: (fileIndex, written, total) => {
         const pct  = Math.round((written / total) * 100);
         const name = fileNames[fileIndex] || '';
