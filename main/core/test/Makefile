@@ -93,6 +93,8 @@ SCRIPT_TEMPLATE_SRC = ../script_templates.c ../script_templates.h
 REGISTRY_STUB_SRC = stubs/registry_stub.c
 REGISTRY_PERSIST_STUB_SRC = stubs/registry_persist_stub.c
 VALIDATOR_KEYED_STUB_SRC = stubs/validator_keyed_stub.c
+# debug_logf writes to device storage, never host-linkable
+DEBUG_LOG_STUB_SRC = stubs/debug_log_stub.c
 
 SRCS_REG_PARSE = test_registry_parse.c
 TARGET_REG_PARSE = test_registry_parse
@@ -283,7 +285,7 @@ $(TARGET_DESC_VALIDATOR): $(SRCS_DESC_VALIDATOR) $(DESC_VALIDATOR_SRC) $(KEY_SRC
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(SRCS_DESC_VALIDATOR) \
 		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../key.c ../registry.c $(REGISTRY_PERSIST_STUB_SRC) \
 		../descriptor_checksum.c ../bip32_path.c ../script_templates.c \
-		../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
+		../ss_whitelist.c ../miniscript_policy.c $(DEBUG_LOG_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 # storage.c is built unchanged with its POSIX file calls redirected (see
 # stubs/storage_host_hooks.h) so /spiffs and /sdcard resolve under a temp dir.
@@ -326,7 +328,7 @@ $(TARGET_BIP138_BACKUP): $(SRCS_BIP138_BACKUP) ../bip138_backup.c ../bip138_back
 		../crypto_utils.c ../entropy_pool.c stubs/esp_hw_stub.c $(HOST_PBKDF2) \
 		../wallet.c ../descriptor_parse.c ../key.c ../registry.c ../descriptor_validator.c ../descriptor_checksum.c ../bip32_path.c \
 		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c \
-		$(BIP138_SRCS) $(LIBWALLY) -lmbedcrypto $(KEF_LIBS)
+		$(DEBUG_LOG_STUB_SRC) $(BIP138_SRCS) $(LIBWALLY) -lmbedcrypto $(KEF_LIBS)
 
 $(TARGET_ADDRESS_MATCH): $(SRCS_ADDRESS_MATCH) $(ADDRESS_MATCH_SRC) $(SS_SRC) $(KEY_SRC) $(LIBWALLY)
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wl,--wrap=wally_descriptor_to_script -o $@ $(SRCS_ADDRESS_MATCH) ../address_match.c ../descriptor_branch.c ../descriptor_parse.c ../ss_whitelist.c ../key.c ../bip32_path.c ../script_templates.c $(LIBWALLY) -lmbedcrypto
@@ -383,7 +385,7 @@ fuzz_descriptor: $(FUZZ_DIR)/fuzz_descriptor.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_D
 	$(CC) $(CFLAGS) $(TEST_INCS) -Wno-format-truncation -o $@ $(FUZZ_DIR)/fuzz_descriptor.c $(FUZZ_DIR)/fuzz_stubs.c $(FUZZ_MAIN) \
 		../descriptor_validator.c ../wallet.c ../descriptor_parse.c ../key.c ../registry.c \
 		$(REGISTRY_PERSIST_STUB_SRC) ../descriptor_checksum.c ../bip32_path.c \
-		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c $(LIBWALLY) -lmbedcrypto
+		../script_templates.c ../ss_whitelist.c ../miniscript_policy.c $(DEBUG_LOG_STUB_SRC) $(LIBWALLY) -lmbedcrypto
 
 fuzz_text: $(FUZZ_DIR)/fuzz_text.c $(FUZZ_DEPS) ../message_sign.c $(KEY_SRC) $(MULTISIG_SETUP_SRC) $(DESCRIPTOR_TEXT_SRC) ../../utils/text_file.c
 	$(CC) $(CFLAGS) $(TEST_INCS) -o $@ $(FUZZ_DIR)/fuzz_text.c $(FUZZ_MAIN) ../message_sign.c ../key.c \

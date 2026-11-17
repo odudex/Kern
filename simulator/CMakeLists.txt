@@ -156,6 +156,7 @@ set(APP_UTIL_SOURCES
 # --- Core application modules ---
 set(APP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/settings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/debug_log.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/nvs_secure.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/esp_idf_stubs/storage_sim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/core/pin.c
@@ -303,6 +304,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/settings/firmware_update.c
     ${APP_PAGES_DIR}/settings/self_test_page.c
     # Shared pages
+    ${APP_PAGES_DIR}/bip_flow/bip388.c
+    ${APP_PAGES_DIR}/bip_flow/bip_flow.c
     ${APP_PAGES_DIR}/shared/address_checker.c
     ${APP_PAGES_DIR}/shared/descriptor_loader.c
     ${APP_PAGES_DIR}/shared/kef_decrypt_page.c
@@ -373,6 +376,24 @@ target_link_libraries(lvgl PUBLIC
     ${SDL2_LIBRARIES}
 )
 
+# --- kern-bipqr: the firmware's Rust staticlib, built for the host. The bipqr
+# flow decodes its requests and encodes its responses through it. ---
+set(KERN_BIPQR_TARGET_DIR ${CMAKE_CURRENT_BINARY_DIR}/kern_bipqr)
+set(KERN_BIPQR_LIB ${KERN_BIPQR_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}kern_bipqr${CMAKE_STATIC_LIBRARY_SUFFIX})
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+# Always runs: cargo tracks the crate sources and only relinks on a change
+add_custom_target(kern_bipqr_rust
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${KERN_BIPQR_TARGET_DIR}
+            ${CARGO_EXECUTABLE} build --release
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/Cargo.toml
+    BYPRODUCTS ${KERN_BIPQR_LIB}
+    COMMENT "Building kern-bipqr for the host"
+    VERBATIM
+)
+add_library(kern_bipqr STATIC IMPORTED GLOBAL)
+set_target_properties(kern_bipqr PROPERTIES IMPORTED_LOCATION ${KERN_BIPQR_LIB})
+add_dependencies(kern_bipqr kern_bipqr_rust)
+
 add_executable(kern_simulator
     ${SIM_SOURCES}
     ${STUB_SOURCES}
@@ -409,6 +430,8 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/video
+    # kern-bipqr C headers: the bipqr submodule
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/upstream/bipqr-ll/include
     # LVGL
     ${LVGL_DIR}
     ${LVGL_DIR}/src
@@ -432,6 +455,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
     $<$<STREQUAL:${SIM_BOARD},wave_7b>:CONFIG_KERN_BOARD_WAVE_7B=1>
     $<$<STREQUAL:${SIM_BOARD},p4_pico>:CONFIG_KERN_BOARD_P4_PICO=1>
+    "CONFIG_KERN_BOARD_NAME=\"${SIM_BOARD}\""
 )
 
 target_compile_options(kern_simulator PRIVATE
@@ -472,6 +496,8 @@ target_link_libraries(kern_simulator PRIVATE
     Threads::Threads
     m
     wally
+    kern_bipqr
+    ${CMAKE_DL_LIBS}
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}
     ${MBEDX509_LIB}

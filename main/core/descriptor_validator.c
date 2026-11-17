@@ -1,4 +1,5 @@
 #include "descriptor_validator.h"
+#include "debug_log.h"
 #include "key.h"
 #include "wallet.h"
 #include <esp_log.h>
@@ -41,7 +42,8 @@ typedef struct {
   struct wally_descriptor *descriptor;
   int key_index;
   char descriptor_checksum[9];
-  bool watch_only;                /* keyless: skip key/xpub stages */
+  bool watch_only; /* keyless: skip key/xpub stages */
+  bool force_persistent;
   wallet_network_t watch_network; /* network for the watch-only registry add */
   bool psb_warn; /* purpose/script-binding warning pending after the gates */
   char psb_msg[160]; /* stashed PSB warning text (descriptor freed early) */
@@ -206,7 +208,8 @@ descriptor_scripts_are_generatable(const struct wally_descriptor *desc) {
          written <= sizeof(work);
 }
 
-// Parse multisig threshold from descriptor string (e.g., "multi(2,..." -> 2)
+// Parse multisig threshold from descriptor string ("multi(2,..." or
+// "sortedmulti(2,..." -> 2)
 static uint32_t parse_multisig_threshold(const char *descriptor_str) {
   const char *multi = strstr(descriptor_str, "multi(");
   if (!multi) {
@@ -386,6 +389,7 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
 
   if (info->is_multisig) {
     info->threshold = parse_multisig_threshold(descriptor_str);
+    info->is_sorted = strstr(descriptor_str, "sortedmulti(") != NULL;
   }
 
   /* Each distinct key is listed by its first expression. */
@@ -436,9 +440,26 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   return true;
 }
 
+void descriptor_info_policy_name(const descriptor_info_t *info, char *out,
+                                 size_t out_len) {
+  if (info->is_miniscript)
+    snprintf(out, out_len, "Miniscript (%u key%s)", info->num_keys,
+             info->num_keys == 1 ? "" : "s");
+  else if (info->is_multisig)
+    snprintf(out, out_len, "%s %u of %u",
+             info->is_sorted ? "sortedmulti" : "multi", info->threshold,
+             info->num_keys);
+  else if (info->script_type)
+    snprintf(out, out_len, "Single-sig (%s)", info->script_type);
+  else
+    snprintf(out, out_len, "Single-sig");
+}
+
 static void id_loc_proceed(const char *id, storage_location_t loc,
                            void *user_data) {
   (void)user_data;
+  debug_logf("descriptor_validator id_loc_proceed id=%s loc=%d", id ? id : "",
+             loc);
   if (!ctx_callback_is_live())
     return;
   pending_generation = 0;
@@ -446,8 +467,8 @@ static void id_loc_proceed(const char *id, storage_location_t loc,
     complete_validation(VALIDATION_USER_DECLINED);
     return;
   }
-  bool added = registry_add_parsed(id, current_ctx->descriptor,
-                                   (size_t)current_ctx->key_index, loc, true);
+  bool added = registry_persist_or_add_parsed(
+      id, current_ctx->descriptor, (size_t)current_ctx->key_index, loc);
   current_ctx->descriptor = NULL;
   if (!added) {
     ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
@@ -477,25 +498,6 @@ static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
   return false;
 }
 
-static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
-  if (!out)
-    return;
-
-  if (current_ctx->info.is_miniscript) {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Miniscript (%u key%s)",
-             current_ctx->info.num_keys,
-             current_ctx->info.num_keys == 1 ? "" : "s");
-  } else if (current_ctx->info.is_multisig) {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
-             current_ctx->info.threshold, current_ctx->info.num_keys);
-  } else if (current_ctx->info.script_type) {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig (%s)",
-             current_ctx->info.script_type);
-  } else {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig");
-  }
-}
-
 static void session_register_current_descriptor(void) {
   char id[REGISTRY_ID_MAX_LEN];
   if (!build_session_descriptor_id(id)) {
@@ -521,7 +523,7 @@ static void session_register_current_descriptor(void) {
   }
 
   char label[REGISTRY_LABEL_MAX_LEN];
-  build_session_descriptor_label(label);
+  descriptor_info_policy_name(&current_ctx->info, label, sizeof(label));
   // The descriptor is loaded either way; without a label it lists under its id.
   if (!registry_set_label(id, label))
     ESP_LOGW(TAG, "Failed to label session descriptor '%s'", id);
@@ -534,6 +536,7 @@ static void session_register_current_descriptor(void) {
 // Callback after user confirms/declines descriptor info
 static void info_confirm_proceed(bool confirmed, void *user_data) {
   (void)user_data;
+  debug_logf("descriptor_validator info_confirm confirmed=%d", confirmed);
   if (!ctx_callback_is_live())
     return;
   pending_generation = 0;
@@ -546,9 +549,11 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
   /* Descriptor registration is disabled: load into the in-memory session
    * registry only. Keep id_loc_cb wired for the future registration flow, but
    * skip it until encrypted descriptor backups are ready. */
-  if (DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED && current_ctx->id_loc_cb) {
+  if ((DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED ||
+       current_ctx->force_persistent) &&
+      current_ctx->id_loc_cb) {
     pending_generation = current_ctx->generation;
-    current_ctx->id_loc_cb(id_loc_proceed, NULL);
+    current_ctx->id_loc_cb(id_loc_proceed, current_ctx->user_data);
   } else {
     session_register_current_descriptor();
   }
@@ -558,7 +563,8 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
 static void show_info_or_auto_confirm(void) {
   pending_generation = current_ctx->generation;
   if (current_ctx->info_confirm_cb)
-    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed,
+                                 current_ctx->user_data);
   else
     info_confirm_proceed(true, NULL);
 }
@@ -917,6 +923,46 @@ void descriptor_validate_and_load(const char *descriptor_str,
   if (!checksum_and_dedup(descriptor))
     return;
 
+  show_keyed_info(descriptor, key_index);
+}
+
+void descriptor_validate_and_load_persistent(
+    const char *descriptor_str, validation_complete_cb callback,
+    validation_confirm_cb confirm_cb,
+    validation_info_confirm_cb info_confirm_cb, validation_id_loc_cb id_loc_cb,
+    void *user_data) {
+  if (descriptor_str && callback &&
+      (!key_is_loaded() || !wallet_is_initialized())) {
+    cleanup_context();
+    callback(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+
+  struct wally_descriptor *descriptor = NULL;
+  if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
+                       &descriptor) != VALIDATION_SUCCESS)
+    return;
+
+  current_ctx->confirm_cb = confirm_cb;
+  current_ctx->id_loc_cb = id_loc_cb;
+  current_ctx->force_persistent = true;
+
+  int key_index = find_matching_key_index(descriptor, 0);
+  if (key_index < 0) {
+    ESP_LOGE(TAG, "Wallet fingerprint not found in descriptor");
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_FINGERPRINT_NOT_FOUND);
+    return;
+  }
+
+  descriptor_validation_result_t keys_result = verify_own_keys(descriptor);
+  if (keys_result != VALIDATION_SUCCESS) {
+    wally_descriptor_free(descriptor);
+    complete_validation(keys_result);
+    return;
+  }
+
+  // One descriptor may be registered under several aliases
   show_keyed_info(descriptor, key_index);
 }
 

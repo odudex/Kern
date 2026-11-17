@@ -61,6 +61,9 @@ main/core/test/test_bip138_keys
 main/core/test/test_bip138_backup
 main/core/test/combined.o
 main/core/test/libwally.a
+main/pages/bip_flow/test/test_bip_flow_register
+main/pages/bip_flow/test/test_bip_flow_header
+main/pages/bip_flow/test/test_bip388
 
 # IDE / tools
 .vscode/

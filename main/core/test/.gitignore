@@ -44,3 +44,4 @@ test_self_test
 fuzz_psbt
 fuzz_descriptor
 fuzz_text
+kern_bipqr/

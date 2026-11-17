@@ -99,6 +99,13 @@ registry_add_from_string(const char *id, const char *descriptor_str,
 KERN_WARN_UNUSED_RESULT bool
 registry_add_parsed(const char *id, struct wally_descriptor *desc,
                     size_t key_index, storage_location_t loc, bool persist);
+/* registry_add_parsed, persisting, unless an entry already holds `id`: then
+ * that entry, when it pays the same scripts as `desc`, is persisted if it is
+ * not yet. Takes ownership of `desc` either way. */
+KERN_WARN_UNUSED_RESULT bool
+registry_persist_or_add_parsed(const char *id, struct wally_descriptor *desc,
+                               size_t key_index, storage_location_t loc);
+
 /* Register a session entry: writes its BIP138 backup, `name` included, to a
  * flash file named after `name`, then renames and labels the entry.
  * Registered descriptors load automatically whenever a key of theirs is
@@ -109,6 +116,12 @@ KERN_WARN_UNUSED_RESULT bool registry_persist(const char *id, const char *name);
 
 /* True when a registration on flash already uses `name`, loaded or not. */
 KERN_WARN_UNUSED_RESULT bool registry_name_registered(const char *name);
+
+/* True when `entry` pays the same scripts as `descriptor_str` (see
+ * registry_session_has_duplicate_scripts). */
+KERN_WARN_UNUSED_RESULT bool
+registry_entry_is_descriptor(const registry_entry_t *entry,
+                             const char *descriptor_str);
 
 /* Watch-only (keyless) session add: registers a descriptor for address viewing
  * without requiring the loaded key's fingerprint to be present. `my_key_index`
