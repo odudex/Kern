@@ -81,6 +81,9 @@ fuzz iterations="20000":
     make -C main/core/test SANITIZE=1 FUZZ_ITERATIONS={{iterations}} fuzz
     make -C main/core/test clean
 
+rust-setup:
+    rustup target add riscv32imafc-unknown-none-elf
+
 clean:
     rm -fRd build build_wave_4b build_wave_35 build_wave_5 build_wave_43 build_crowpanel build_wave_7b build_p4_pico
     rm -fRd build_*_v3
