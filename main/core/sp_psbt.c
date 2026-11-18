@@ -402,7 +402,19 @@ static sp_psbt_result_t input_eligibility(const struct wally_psbt *psbt,
 typedef struct {
   const struct sp_keys *keys;
   unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
+  bool is_testnet;
 } signer_t;
+
+// Derives the seed's silent payment keys into *keys, which *signer points to.
+// SENSITIVE: wipe *keys with sp_keys_wipe() once used.
+static bool signer_init(signer_t *signer, struct sp_keys *keys,
+                        bool is_testnet) {
+  signer->keys = keys;
+  signer->is_testnet = is_testnet;
+  if (!key_get_fingerprint(signer->fingerprint))
+    return false;
+  return sp_keys_derive(is_testnet, keys);
+}
 
 // The key a PSBT key origin names, when the origin is our seed. The path only
 // locates the key: the caller proves it against the script it spends.
@@ -449,11 +461,73 @@ static sp_psbt_result_t match_output_key(unsigned char *key,
 
 // d = b_spend + tweak, ours when x(d*G) is the P2TR output key it spends
 // (signer.rs reconstruct_signing_key)
+static sp_psbt_result_t tweak_spend_key(const struct wally_map_item *tweak,
+                                        const struct wally_tx_output *prevout,
+                                        const unsigned char *spend_secret,
+                                        bool *owned, unsigned char *key_out) {
+  memcpy(key_out, spend_secret, SP_SECRET_LEN);
+  if (!secp256k1_ec_seckey_tweak_add(secp_ctx(), key_out, tweak->value)) {
+    secure_memzero(key_out, SP_SECRET_LEN);
+    return SP_PSBT_ERR_FIELD;
+  }
+  return match_output_key(key_out, prevout->script + P2TR_KEY_OFFSET, owned);
+}
+
+static bool is_zero_fingerprint(const unsigned char *fingerprint) {
+  static const unsigned char zero[BIP32_KEY_FINGERPRINT_LEN] = {0};
+  return memcmp(fingerprint, zero, sizeof(zero)) == 0;
+}
+
+// b_spend of one PSBT_IN_SP_SPEND_BIP32_DERIVATION entry (BIP376): the key
+// its path derives on our spend branch when its origin is our seed, our
+// account's spend key when a zero fingerprint hides the origin. *found is
+// false for another seed's origin, a path off our network's spend branch, or
+// an entry key its path does not derive.
+static sp_psbt_result_t spend_entry_secret(const struct wally_map_item *item,
+                                           const signer_t *signer, bool *found,
+                                           unsigned char *secret_out) {
+  uint32_t path[MAX_KEYPATH_DEPTH];
+  size_t depth = 0;
+  struct ext_key *key = NULL;
+
+  *found = false;
+  if (item->key_len != 1 + SP_PUBKEY_LEN ||
+      item->value_len < BIP32_KEY_FINGERPRINT_LEN ||
+      !bip32_path_from_keypath(item->value, item->value_len, path, &depth,
+                               MAX_KEYPATH_DEPTH))
+    return SP_PSBT_ERR_FIELD;
+  if (is_zero_fingerprint(item->value)) {
+    *found =
+        memcmp(item->key + 1, signer->keys->spend_pubkey, SP_PUBKEY_LEN) == 0;
+    if (*found)
+      memcpy(secret_out, signer->keys->spend_secret, SP_SECRET_LEN);
+    return SP_PSBT_OK;
+  }
+  if (memcmp(item->value, signer->fingerprint, BIP32_KEY_FINGERPRINT_LEN) !=
+          0 ||
+      !sp_path_on_branch(path, depth, signer->is_testnet, SP_SPEND_BRANCH))
+    return SP_PSBT_OK;
+  if (!key_get_derived_key_components(path, depth, &key))
+    return SP_PSBT_ERR_KEYS;
+  *found = memcmp(key->pub_key, item->key + 1, SP_PUBKEY_LEN) == 0;
+  if (*found)
+    memcpy(secret_out, key->priv_key + 1, SP_SECRET_LEN);
+  bip32_key_free(key);
+  return SP_PSBT_OK;
+}
+
+// The tweaked key of a silent payment input, from the spend key its
+// PSBT_IN_SP_SPEND_BIP32_DERIVATION names, or from our account's spend key
+// when it names none
 static sp_psbt_result_t sp_tweak_signing_key(
     const struct wally_psbt_input *in, const struct wally_tx_output *prevout,
-    const unsigned char *spend_secret, bool *owned, unsigned char *key_out) {
+    const signer_t *signer, bool *owned, unsigned char *key_out) {
   const struct wally_map_item *tweak =
       find_unkeyed_field(&in->unknowns, PSBT_IN_SP_TWEAK);
+  const struct wally_map *unknowns = &in->unknowns;
+  unsigned char secret[SP_SECRET_LEN];
+  sp_psbt_result_t result = SP_PSBT_OK;
+  bool named = false, found = false;
 
   *owned = false;
   if (!tweak)
@@ -462,12 +536,20 @@ static sp_psbt_result_t sp_tweak_signing_key(
     return SP_PSBT_ERR_FIELD;
   if (script_type(prevout) != WALLY_SCRIPT_TYPE_P2TR)
     return SP_PSBT_OK;
-  memcpy(key_out, spend_secret, SP_SECRET_LEN);
-  if (!secp256k1_ec_seckey_tweak_add(secp_ctx(), key_out, tweak->value)) {
-    secure_memzero(key_out, SP_SECRET_LEN);
-    return SP_PSBT_ERR_FIELD;
+  for (size_t j = 0; result == SP_PSBT_OK && !*owned && j < unknowns->num_items;
+       j++) {
+    if (!is_field_type(&unknowns->items[j], PSBT_IN_SP_SPEND_BIP32_DERIVATION))
+      continue;
+    named = true;
+    result = spend_entry_secret(&unknowns->items[j], signer, &found, secret);
+    if (result == SP_PSBT_OK && found)
+      result = tweak_spend_key(tweak, prevout, secret, owned, key_out);
   }
-  return match_output_key(key_out, prevout->script + P2TR_KEY_OFFSET, owned);
+  secure_memzero(secret, sizeof(secret));
+  if (result != SP_PSBT_OK || named)
+    return result;
+  return tweak_spend_key(tweak, prevout, signer->keys->spend_secret, owned,
+                         key_out);
 }
 
 // One PSBT_IN_TAP_BIP32_DERIVATION entry: its key, BIP341 tweaked by the
@@ -520,8 +602,7 @@ static sp_psbt_result_t taproot_signing_key(
     const struct wally_psbt_input *in, const struct wally_tx_output *prevout,
     const signer_t *signer, bool *owned, unsigned char *key_out) {
   if (find_unkeyed_field(&in->unknowns, PSBT_IN_SP_TWEAK))
-    return sp_tweak_signing_key(in, prevout, signer->keys->spend_secret, owned,
-                                key_out);
+    return sp_tweak_signing_key(in, prevout, signer, owned, key_out);
   return taproot_origin_key(in, prevout->script + P2TR_KEY_OFFSET,
                             signer->fingerprint, owned, key_out);
 }
@@ -1183,16 +1264,6 @@ static sp_psbt_result_t reparse_strict(struct wally_psbt **psbt) {
   return SP_PSBT_OK;
 }
 
-// The inputs of `psbt` as BIP352 sees them, for the seed's keys
-static sp_psbt_result_t classify_inputs(const struct wally_psbt *psbt,
-                                        const struct sp_keys *keys,
-                                        input_set_t *set) {
-  signer_t signer = {.keys = keys};
-  if (!key_get_fingerprint(signer.fingerprint))
-    return SP_PSBT_ERR_KEYS;
-  return collect_inputs(psbt, &signer, set);
-}
-
 static bool sp_scripts_set(const struct wally_psbt *psbt) {
   for (size_t i = 0; i < psbt->num_outputs; i++)
     if (psbt->outputs[i].script && output_has_info(&psbt->outputs[i]))
@@ -1209,7 +1280,7 @@ static bool preset_scripts_frozen(const struct wally_psbt *psbt) {
 }
 
 static sp_psbt_result_t complete_with_keys(struct wally_psbt *psbt,
-                                           const struct sp_keys *keys,
+                                           const signer_t *signer,
                                            bool *pending) {
   sp_recipient_t *recipients = NULL;
   size_t count = 0;
@@ -1222,7 +1293,7 @@ static sp_psbt_result_t complete_with_keys(struct wally_psbt *psbt,
       (!share_maps_are_paired(psbt) || !preset_scripts_frozen(psbt)))
     result = SP_PSBT_ERR_FIELD;
   if (result == SP_PSBT_OK)
-    result = classify_inputs(psbt, keys, &set);
+    result = collect_inputs(psbt, signer, &set);
   if (result == SP_PSBT_OK)
     result = sum_input_keys(&set, &input_point);
   if (result == SP_PSBT_OK && !serialize_point(&input_point, input_sum))
@@ -1255,6 +1326,7 @@ static bool outputs_well_formed(const struct wally_psbt *psbt) {
 sp_psbt_result_t sp_psbt_complete(struct wally_psbt **psbt, bool is_testnet) {
   struct wally_psbt *completed = NULL;
   struct sp_keys keys;
+  signer_t signer;
   bool pending = false;
   sp_psbt_result_t result;
 
@@ -1265,11 +1337,11 @@ sp_psbt_result_t sp_psbt_complete(struct wally_psbt **psbt, bool is_testnet) {
     return SP_PSBT_ERR_PSBT;
   if (!sp_psbt_has_outputs(*psbt))
     return outputs_well_formed(*psbt) ? SP_PSBT_OK : SP_PSBT_ERR_FIELD;
-  if (!sp_keys_derive(is_testnet, &keys))
+  if (!signer_init(&signer, &keys, is_testnet))
     return SP_PSBT_ERR_KEYS;
   // Completed on a copy, so a refused PSBT is left as it came
   result = kern_psbt_clone_alloc(*psbt, 0, &completed) == WALLY_OK
-               ? complete_with_keys(completed, &keys, &pending)
+               ? complete_with_keys(completed, &signer, &pending)
                : SP_PSBT_ERR_PSBT;
   sp_keys_wipe(&keys);
   // A pending PSBT keeps scriptless outputs, which only parse loosely
@@ -1288,16 +1360,17 @@ bool sp_psbt_input_is_ours(const struct wally_psbt *psbt, size_t i,
                            bool is_testnet) {
   const struct wally_tx_output *prevout = NULL;
   struct sp_keys keys;
+  signer_t signer;
   unsigned char key[SP_SECRET_LEN];
   bool owned = false;
 
   if (!psbt || i >= psbt->num_inputs ||
       !find_unkeyed_field(&psbt->inputs[i].unknowns, PSBT_IN_SP_TWEAK) ||
       input_prevout(&psbt->inputs[i], &prevout) != SP_PSBT_OK ||
-      !sp_keys_derive(is_testnet, &keys))
+      !signer_init(&signer, &keys, is_testnet))
     return false;
-  if (sp_tweak_signing_key(&psbt->inputs[i], prevout, keys.spend_secret, &owned,
-                           key) != SP_PSBT_OK)
+  if (sp_tweak_signing_key(&psbt->inputs[i], prevout, &signer, &owned, key) !=
+      SP_PSBT_OK)
     owned = false;
   sp_keys_wipe(&keys);
   secure_memzero(key, sizeof(key));
@@ -1383,15 +1456,16 @@ static bool sign_key_path(struct wally_psbt *psbt, size_t i,
 bool sp_psbt_sign_input(struct wally_psbt *psbt, size_t i, bool is_testnet) {
   const struct wally_tx_output *prevout = NULL;
   struct sp_keys keys;
+  signer_t signer;
   unsigned char key[SP_SECRET_LEN];
   bool owned = false, ok;
 
   if (!psbt || i >= psbt->num_inputs ||
       input_prevout(&psbt->inputs[i], &prevout) != SP_PSBT_OK ||
-      !sp_keys_derive(is_testnet, &keys))
+      !signer_init(&signer, &keys, is_testnet))
     return false;
-  ok = sp_tweak_signing_key(&psbt->inputs[i], prevout, keys.spend_secret,
-                            &owned, key) == SP_PSBT_OK &&
+  ok = sp_tweak_signing_key(&psbt->inputs[i], prevout, &signer, &owned, key) ==
+           SP_PSBT_OK &&
        owned && sign_key_path(psbt, i, key);
   sp_keys_wipe(&keys);
   secure_memzero(key, sizeof(key));
@@ -1495,6 +1569,7 @@ static bool collect_shares(const struct wally_psbt *psbt,
 bool sp_psbt_shares_alloc(const struct wally_psbt *psbt, bool is_testnet,
                           sp_share_t **out, size_t *count) {
   struct sp_keys keys;
+  signer_t signer;
   input_set_t set = {0};
   sp_share_t *shares = NULL;
   size_t n = 0;
@@ -1502,9 +1577,10 @@ bool sp_psbt_shares_alloc(const struct wally_psbt *psbt, bool is_testnet,
 
   *out = NULL;
   *count = 0;
-  if (!psbt || !sp_psbt_has_outputs(psbt) || !sp_keys_derive(is_testnet, &keys))
+  if (!psbt || !sp_psbt_has_outputs(psbt) ||
+      !signer_init(&signer, &keys, is_testnet))
     return false;
-  ok = classify_inputs(psbt, &keys, &set) == SP_PSBT_OK;
+  ok = collect_inputs(psbt, &signer, &set) == SP_PSBT_OK;
   sp_keys_wipe(&keys);
   if (!ok)
     return false;

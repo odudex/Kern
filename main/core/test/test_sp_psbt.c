@@ -878,6 +878,171 @@ static void test_sign(void) {
   wally_psbt_free(psbt);
 }
 
+// Our spend branch key m/352'/coin'/0'/0'/`index`: its secret and public key
+static bool spend_branch_key(bool is_testnet, uint32_t index,
+                             unsigned char *secret, unsigned char *pubkey) {
+  uint32_t path[SP_PATH_DEPTH];
+  struct ext_key *key = NULL;
+
+  sp_account_key_path(is_testnet, SP_SPEND_BRANCH, path);
+  path[SP_PATH_DEPTH - 1] = index;
+  if (!key_get_derived_key_components(path, SP_PATH_DEPTH, &key))
+    return false;
+  memcpy(secret, key->priv_key + 1, SP_SECRET_LEN);
+  memcpy(pubkey, key->pub_key, SP_PUBKEY_LEN);
+  bip32_key_free(key);
+  return true;
+}
+
+// Adds to input 0 of `psbt` a PSBT_IN_SP_SPEND_BIP32_DERIVATION naming
+// `pubkey` at m/352'/coin'/0'/0'/`index` under `fingerprint`
+static bool add_spend_derivation(struct wally_psbt *psbt,
+                                 const unsigned char *pubkey,
+                                 const unsigned char *fingerprint,
+                                 bool is_testnet, uint32_t index) {
+  uint32_t path[SP_PATH_DEPTH];
+  unsigned char key[1 + SP_PUBKEY_LEN];
+  unsigned char value[4 + 4 * SP_PATH_DEPTH];
+
+  sp_account_key_path(is_testnet, SP_SPEND_BRANCH, path);
+  path[SP_PATH_DEPTH - 1] = index;
+  key[0] = PSBT_IN_SP_SPEND_BIP32_DERIVATION;
+  memcpy(key + 1, pubkey, SP_PUBKEY_LEN);
+  memcpy(value, fingerprint, 4);
+  for (size_t i = 0; i < SP_PATH_DEPTH; i++)
+    for (size_t b = 0; b < 4; b++)
+      value[4 + 4 * i + b] = (unsigned char)(path[i] >> (8 * b));
+  return wally_map_replace(&psbt->inputs[0].unknowns, key, sizeof(key), value,
+                           sizeof(value)) == WALLY_OK;
+}
+
+// Moves input 0's PSBT_IN_SP_TWEAK from our account's spend key to the spend
+// key at `index`, so that both give the same output key: t' = t + b0 - b_index
+static bool retweak_for_index(struct wally_psbt *psbt, bool is_testnet,
+                              uint32_t index, unsigned char *pubkey_out) {
+  unsigned char type = PSBT_IN_SP_TWEAK, tweak[32];
+  unsigned char b0[SP_SECRET_LEN], b0_pub[SP_PUBKEY_LEN];
+  unsigned char bi[SP_SECRET_LEN];
+  struct wally_map *unknowns = &psbt->inputs[0].unknowns;
+  const secp256k1_context *ctx = wally_get_secp_context();
+  size_t found = 0;
+
+  if (wally_map_find(unknowns, &type, 1, &found) != WALLY_OK || !found ||
+      unknowns->items[found - 1].value_len != sizeof(tweak))
+    return false;
+  memcpy(tweak, unknowns->items[found - 1].value, sizeof(tweak));
+  return spend_branch_key(false, 0, b0, b0_pub) &&
+         spend_branch_key(is_testnet, index, bi, pubkey_out) &&
+         secp256k1_ec_seckey_negate(ctx, bi) &&
+         secp256k1_ec_seckey_tweak_add(ctx, tweak, b0) &&
+         secp256k1_ec_seckey_tweak_add(ctx, tweak, bi) &&
+         wally_map_replace(unknowns, &type, 1, tweak, sizeof(tweak)) ==
+             WALLY_OK;
+}
+
+static bool input_unsigned(struct wally_psbt *psbt, size_t i) {
+  size_t written = 0;
+  return wally_psbt_get_input_taproot_signature_len(psbt, i, &written) ==
+             WALLY_OK &&
+         written == 0;
+}
+
+// Whether input 0 of UNSIGNED_PSBT, once `edit` changed it, is ours and gets
+// a valid signature
+static void expect_spend(const char *name,
+                         bool (*edit)(struct wally_psbt *psbt), bool signs) {
+  struct wally_psbt *psbt = parse_hex(UNSIGNED_PSBT);
+  bool ok = psbt && edit(psbt);
+
+  TEST(name);
+  if (ok && signs)
+    ok = sp_psbt_input_is_ours(psbt, 0, false) &&
+         sp_psbt_complete(&psbt, false) == SP_PSBT_OK &&
+         sp_psbt_sign_input(psbt, 0, false) && signature_verifies(psbt, 0);
+  else if (ok)
+    ok = !sp_psbt_input_is_ours(psbt, 0, false) &&
+         !sp_psbt_sign_input(psbt, 0, false) && input_unsigned(psbt, 0);
+  if (ok)
+    PASS();
+  else
+    FAIL(signs ? "input not signed" : "input signed");
+  wally_psbt_free(psbt);
+}
+
+static const uint32_t OTHER_SPEND_INDEX = 5;
+static const unsigned char ZERO_FINGERPRINT[4] = {0};
+static const unsigned char FOREIGN_FINGERPRINT[4] = {0xde, 0xad, 0xbe, 0xef};
+
+// Input 0 spends with the key at `index` on the spend branch of `is_testnet`,
+// named by its PSBT_IN_SP_SPEND_BIP32_DERIVATION under our fingerprint
+static bool spend_at(struct wally_psbt *psbt, bool is_testnet, uint32_t index) {
+  unsigned char pubkey[SP_PUBKEY_LEN], fingerprint[4];
+  return retweak_for_index(psbt, is_testnet, index, pubkey) &&
+         key_get_fingerprint(fingerprint) &&
+         add_spend_derivation(psbt, pubkey, fingerprint, is_testnet, index);
+}
+
+static bool spend_at_other_index(struct wally_psbt *psbt) {
+  return spend_at(psbt, false, OTHER_SPEND_INDEX);
+}
+
+static bool spend_on_testnet_branch(struct wally_psbt *psbt) {
+  return spend_at(psbt, true, 0);
+}
+
+static bool other_index_without_field(struct wally_psbt *psbt) {
+  unsigned char pubkey[SP_PUBKEY_LEN];
+  return retweak_for_index(psbt, false, OTHER_SPEND_INDEX, pubkey);
+}
+
+static bool key_not_derived_by_path(struct wally_psbt *psbt) {
+  unsigned char secret[SP_SECRET_LEN], b0_pub[SP_PUBKEY_LEN];
+  unsigned char pubkey[SP_PUBKEY_LEN], fingerprint[4];
+  return retweak_for_index(psbt, false, OTHER_SPEND_INDEX, pubkey) &&
+         spend_branch_key(false, 0, secret, b0_pub) &&
+         key_get_fingerprint(fingerprint) &&
+         add_spend_derivation(psbt, b0_pub, fingerprint, false,
+                              OTHER_SPEND_INDEX);
+}
+
+static bool named_with(struct wally_psbt *psbt,
+                       const unsigned char *fingerprint) {
+  unsigned char secret[SP_SECRET_LEN], pubkey[SP_PUBKEY_LEN];
+  return spend_branch_key(false, 0, secret, pubkey) &&
+         add_spend_derivation(psbt, pubkey, fingerprint, false, 0);
+}
+
+static bool zero_fingerprint(struct wally_psbt *psbt) {
+  return named_with(psbt, ZERO_FINGERPRINT);
+}
+
+static bool foreign_fingerprint(struct wally_psbt *psbt) {
+  return named_with(psbt, FOREIGN_FINGERPRINT);
+}
+
+static bool our_default_key_named(struct wally_psbt *psbt) {
+  unsigned char fingerprint[4];
+  return key_get_fingerprint(fingerprint) && named_with(psbt, fingerprint);
+}
+
+// BIP376: the spend key of a silent payment input is the one its
+// PSBT_IN_SP_SPEND_BIP32_DERIVATION names
+static void test_spend_derivation(void) {
+  expect_spend("our account's spend key named by its path signs",
+               our_default_key_named, true);
+  expect_spend("a spend key at another index on our spend branch signs",
+               spend_at_other_index, true);
+  expect_spend("without the field, only our account's spend key is tried",
+               other_index_without_field, false);
+  expect_spend("a spend path off our network's spend branch is not ours",
+               spend_on_testnet_branch, false);
+  expect_spend("a field key its path does not derive is not ours",
+               key_not_derived_by_path, false);
+  expect_spend("a zero fingerprint falls back to our account's spend key",
+               zero_fingerprint, true);
+  expect_spend("a foreign fingerprint is not ours", foreign_fingerprint, false);
+}
+
 int main(void) {
   if (!key_load_from_mnemonic(TEST_MNEMONIC, NULL, false)) {
     printf("FAIL: could not load the test mnemonic\n");
@@ -898,6 +1063,7 @@ int main(void) {
   test_ownership();
   test_labels();
   test_sign();
+  test_spend_derivation();
   key_unload();
 
   printf("\n%d passed, %d failed\n", tests_passed, tests_failed);

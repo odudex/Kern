@@ -62,7 +62,10 @@ KERN_WARN_UNUSED_RESULT sp_psbt_result_t
 sp_psbt_complete(struct wally_psbt **psbt, bool is_testnet);
 
 // True when input `i` spends one of our silent payment outputs: its
-// PSBT_IN_SP_TWEAK added to our spend key reproduces its P2TR output key.
+// PSBT_IN_SP_TWEAK added to our spend key reproduces its P2TR output key. The
+// spend key is the one its PSBT_IN_SP_SPEND_BIP32_DERIVATION names on our
+// spend branch, or our account's when it names none or hides its origin
+// behind a zero fingerprint; sp_psbt_sign_input signs with the same key.
 bool sp_psbt_input_is_ours(const struct wally_psbt *psbt, size_t i,
                            bool is_testnet);
 
