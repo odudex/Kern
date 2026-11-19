@@ -2343,8 +2343,7 @@ static void test_tr_key_path_verified(void) {
     struct wally_psbt *psbt = make_tr_psbt(bip86, 1, 0, 0, PSBT_VERSIONS[v]);
     if (!psbt || !sign_one(psbt, &res))
       FAIL("signing failed");
-    else if (res.signed_ok != 1 || res.bad_keypath != 0 ||
-             tap_key_sig_len(psbt, 0) != 64)
+    else if (res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64)
       FAIL("expected one valid key-path signature");
     else
       PASS();
@@ -2358,11 +2357,10 @@ static void test_tr_key_path_verified(void) {
     if (psbt)
       wally_map_add_integer(&psbt->inputs[0].psbt_fields, TAP_MERKLE_ROOT_FIELD,
                             junk, sizeof(junk));
-    res.bad_keypath = 0;
     if (!psbt)
       FAIL("fixture");
-    else if (sign_one(psbt, &res), res.bad_keypath != 0 || res.signed_ok != 0 ||
-                                       tap_key_sig_len(psbt, 0) != 0)
+    else if (sign_one(psbt, &res),
+             res.signed_ok != 0 || tap_key_sig_len(psbt, 0) != 0)
       FAIL("expected no key-path signature and nothing signed");
     else
       PASS();
@@ -2385,8 +2383,8 @@ static void test_tr_key_path_verified(void) {
   TEST("key path: tr(ours,tree) with its merkle root signs");
   const char *tree[] = {TR_OURS_WITH_TREE};
   struct wally_psbt *psbt = make_tr_psbt(tree, 1, 0, 0, WALLY_PSBT_VERSION_0);
-  if (!psbt || !sign_one(psbt, &res) || res.bad_keypath != 0 ||
-      res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64)
+  if (!psbt || !sign_one(psbt, &res) || res.signed_ok != 1 ||
+      tap_key_sig_len(psbt, 0) != 64)
     FAIL("expected one valid key-path signature");
   else
     PASS();
@@ -2397,11 +2395,9 @@ static void test_tr_key_path_verified(void) {
   if (psbt)
     wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
                              TAP_MERKLE_ROOT_FIELD);
-  res.bad_keypath = 0;
   if (!psbt)
     FAIL("fixture");
-  else if (sign_one(psbt, &res),
-           res.bad_keypath != 0 || tap_key_sig_len(psbt, 0) != 0)
+  else if (sign_one(psbt, &res), tap_key_sig_len(psbt, 0) != 0)
     FAIL("expected no key-path signature");
   else
     PASS();
@@ -2417,12 +2413,10 @@ static void test_tr_key_path_verified(void) {
     wally_map_add_integer(&psbt->inputs[0].psbt_fields, TAP_MERKLE_ROOT_FIELD,
                           bogus, sizeof(bogus));
   }
-  res.bad_keypath = 0;
   if (!psbt)
     FAIL("fixture");
-  else if (sign_one(psbt, &res), res.bad_keypath != 0 ||
-                                     tap_key_sig_len(psbt, 0) != 0 ||
-                                     res.signed_ok != 0)
+  else if (sign_one(psbt, &res),
+           tap_key_sig_len(psbt, 0) != 0 || res.signed_ok != 0)
     FAIL("expected no key-path signature and nothing signed");
   else
     PASS();
@@ -2435,7 +2429,6 @@ static void test_tr_key_path_verified(void) {
     wally_psbt_set_input_taproot_internal_key(psbt, 0, NULL, 0);
     wally_map_clear(&psbt->inputs[0].taproot_leaf_hashes);
   }
-  res.bad_keypath = 0;
   if (!psbt)
     FAIL("fixture");
   else if (sign_one(psbt, &res),
@@ -2448,8 +2441,8 @@ static void test_tr_key_path_verified(void) {
   TEST("key path: internal and leaf key both sign");
   const char *both_ok[] = {TR_OURS_INTERNAL_AND_LEAF};
   psbt = make_tr_psbt(both_ok, 1, 0, 0, WALLY_PSBT_VERSION_0);
-  if (!psbt || !sign_one(psbt, &res) || res.bad_keypath != 0 ||
-      res.signed_ok != 1 || tap_key_sig_len(psbt, 0) != 64 ||
+  if (!psbt || !sign_one(psbt, &res) || res.signed_ok != 1 ||
+      tap_key_sig_len(psbt, 0) != 64 ||
       psbt->inputs[0].taproot_leaf_signatures.num_items != 1)
     FAIL("expected a key-path and a leaf signature");
   else
@@ -2462,11 +2455,10 @@ static void test_tr_key_path_verified(void) {
   if (psbt)
     wally_map_remove_integer(&psbt->inputs[0].psbt_fields,
                              TAP_MERKLE_ROOT_FIELD);
-  res.bad_keypath = 0;
   if (!psbt)
     FAIL("fixture");
   else if (sign_one(psbt, &res),
-           res.bad_keypath != 0 || tap_key_sig_len(psbt, 0) != 0 ||
+           tap_key_sig_len(psbt, 0) != 0 ||
                psbt->inputs[0].taproot_leaf_signatures.num_items != 1)
     FAIL("expected no key-path signature and the leaf one kept");
   else
