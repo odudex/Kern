@@ -1987,8 +1987,9 @@ static void test_registry_change_index_cap(void) {
   const registry_entry_t *e = registry_find_by_id("t");
   bool built = false;
 
-  TEST("psbt_classify_output: registry change at /1/199 -> OWNED_SAFE");
-  output_ownership_t r = classify_registry_output(e, 1, 199, &built);
+  TEST("psbt_classify_output: registry change at /1/999 -> OWNED_SAFE");
+  output_ownership_t r =
+      classify_registry_output(e, 1, SS_MAX_OUT_ADDR_INDEX - 1, &built);
   if (!built)
     FAIL("fixture");
   else if (r.ownership != PSBT_OWNERSHIP_OWNED_SAFE ||
@@ -1997,7 +1998,7 @@ static void test_registry_change_index_cap(void) {
   else
     PASS();
 
-  TEST("psbt_classify_output: registry change at /1/200 -> OWNED_UNSAFE");
+  TEST("psbt_classify_output: registry change at /1/1000 -> OWNED_UNSAFE");
   r = classify_registry_output(e, 1, SS_MAX_OUT_ADDR_INDEX, &built);
   char path[80];
   if (!built)
@@ -2006,7 +2007,7 @@ static void test_registry_change_index_cap(void) {
     FAIL("expected OWNED_UNSAFE");
   else if (!psbt_format_keypath(r.raw_keypath, r.raw_keypath_len, path,
                                 sizeof(path)) ||
-           strcmp(path, "m/48'/0'/0'/2'/1/200") != 0)
+           strcmp(path, "m/48'/0'/0'/2'/1/1000") != 0)
     FAIL("raw keypath should name the capped path");
   else
     PASS();

@@ -35,8 +35,9 @@ typedef struct {
 
 #define SS_MAX_ACCOUNT 100
 /* Output-only cap: change beyond any gap limit is ours but unrecoverable.
+ * 1000 is Bitcoin Core's default keypool look-ahead.
  * Inputs already exist on-chain, so they pass SS_ADDR_INDEX_UNCAPPED. */
-#define SS_MAX_OUT_ADDR_INDEX 200
+#define SS_MAX_OUT_ADDR_INDEX 1000
 #define SS_ADDR_INDEX_UNCAPPED UINT32_MAX
 
 #define MAX_KEYPATH_ORIGIN_DEPTH 6
