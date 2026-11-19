@@ -183,25 +183,28 @@ static void test_message_characters(void) {
   }
 }
 
-/* A nonce cache session carries global key 0x09 too, on a regular
- * transaction: only the to_sign shape makes a request BIP322. Each case breaks
- * one field of it. */
+/* BIP322 tells a request from an ordinary PSBT by the message field, a first
+ * input spending output 0 and a single 0-value OP_RETURN output. A request in
+ * a form this signer does not support is still a request: it is detected and
+ * refused, never passed on as a transaction. */
 static void test_detect_requires_to_sign(const uint8_t *raw, size_t raw_len) {
   static const struct {
     const char *name;
     uint32_t version, locktime, index, sequence;
     uint64_t satoshi;
     unsigned char script;
+    bool is_request;
   } cases[] = {
-      {"version 2", 2, 0, 0, 0, 0, OP_RETURN},
-      {"locktime 1", 0, 1, 0, 0, 0, OP_RETURN},
-      {"input index 1", 0, 0, 1, 0, 0, OP_RETURN},
-      {"sequence 0xffffffff", 0, 0, 0, 0xffffffff, 0, OP_RETURN},
-      {"output value 1", 0, 0, 0, 0, 1, OP_RETURN},
-      {"output OP_TRUE", 0, 0, 0, 0, 0, OP_TRUE},
+      {"version 2", 2, 0, 0, 0, 0, OP_RETURN, true},
+      {"locktime 1", 0, 1, 0, 0, 0, OP_RETURN, true},
+      {"sequence 0xffffffff", 0, 0, 0, 0xffffffff, 0, OP_RETURN, true},
+      {"input index 1", 0, 0, 1, 0, 0, OP_RETURN, false},
+      {"output value 1", 0, 0, 0, 0, 1, OP_RETURN, false},
+      {"output OP_TRUE", 0, 0, 0, 0, 0, OP_TRUE, false},
   };
   for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-    printf("bip322_detect ignores field 0x09 with %s: ", cases[i].name);
+    printf("field 0x09 with %s is %s: ", cases[i].name,
+           cases[i].is_request ? "a refused request" : "an ordinary PSBT");
     struct wally_psbt *psbt = NULL;
     if (wally_psbt_from_bytes(raw, raw_len, 0, &psbt) != WALLY_OK) {
       FAIL("PSBT failed to parse");
@@ -215,10 +218,39 @@ static void test_detect_requires_to_sign(const uint8_t *raw, size_t raw_len) {
     tx->outputs[0].satoshi = cases[i].satoshi;
     tx->outputs[0].script[0] = cases[i].script;
     bip322_request_t req = {0};
-    if (bip322_detect(psbt))
-      FAIL("detected on a regular transaction");
+    if (bip322_detect(psbt) != cases[i].is_request)
+      FAIL("wrong detection");
     else if (bip322_parse(psbt, true, &req))
-      FAIL("parsed a regular transaction");
+      FAIL("parsed");
+    else
+      PASS();
+    bip322_request_free(&req);
+    wally_psbt_free(psbt);
+  }
+}
+
+/* A v2 PSBT has no global transaction: the shape is read from its inputs and
+ * outputs, and the request is refused as v2 is not supported. */
+static void test_detect_v2(const uint8_t *raw, size_t raw_len) {
+  for (int ordinary = 0; ordinary <= 1; ordinary++) {
+    printf("v2 PSBT with field 0x09 %s: ",
+           ordinary ? "and a paying output is an ordinary PSBT"
+                    : "over to_sign is a refused request");
+    struct wally_psbt *psbt = NULL;
+    if (wally_psbt_from_bytes(raw, raw_len, 0, &psbt) != WALLY_OK ||
+        wally_psbt_set_version(psbt, 0, WALLY_PSBT_VERSION_2) != WALLY_OK ||
+        psbt->tx) {
+      FAIL("could not build the v2 PSBT");
+      wally_psbt_free(psbt);
+      continue;
+    }
+    if (ordinary)
+      psbt->outputs[0].amount = 1;
+    bip322_request_t req = {0};
+    if (bip322_detect(psbt) != !ordinary)
+      FAIL("wrong detection");
+    else if (bip322_parse(psbt, true, &req))
+      FAIL("parsed");
     else
       PASS();
     bip322_request_free(&req);
@@ -320,6 +352,7 @@ int main(void) {
   }
 
   test_detect_requires_to_sign(raw, raw_len);
+  test_detect_v2(raw, raw_len);
   test_message_characters();
 
   printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);

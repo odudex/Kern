@@ -29,21 +29,30 @@ static bool get_message_field(const struct wally_psbt *psbt,
   return true;
 }
 
-/* The BIP322 to_sign shape: version 0, locktime 0, one input spending
- * to_spend:0 with sequence 0, one 0-value OP_RETURN output. */
-static bool is_to_sign_tx(const struct wally_tx *tx) {
-  return tx && tx->version == 0 && tx->locktime == 0 && tx->num_inputs == 1 &&
-         tx->num_outputs == 1 && tx->inputs[0].index == 0 &&
-         tx->inputs[0].sequence == 0 && tx->outputs[0].satoshi == 0 &&
-         tx->outputs[0].script_len == 1 &&
-         tx->outputs[0].script[0] == OP_RETURN;
+/* What BIP322 has a signer tell a message request from an ordinary PSBT by,
+ * beside the message field: a first input spending output 0 and a single
+ * 0-value OP_RETURN output. A v2 PSBT has no global transaction, so it is read
+ * from its inputs and outputs. */
+static bool has_to_sign_shape(const struct wally_psbt *psbt) {
+  if (psbt->num_inputs < 1 || psbt->num_outputs != 1)
+    return false;
+  if (psbt->tx) {
+    const struct wally_tx *tx = psbt->tx;
+    return tx->num_inputs >= 1 && tx->num_outputs == 1 &&
+           tx->inputs[0].index == 0 && tx->outputs[0].satoshi == 0 &&
+           tx->outputs[0].script_len == 1 &&
+           tx->outputs[0].script[0] == OP_RETURN;
+  }
+  const struct wally_psbt_output *out = &psbt->outputs[0];
+  return psbt->inputs[0].index == 0 && out->has_amount && out->amount == 0 &&
+         out->script_len == 1 && out->script[0] == OP_RETURN;
 }
 
 bool bip322_detect(const struct wally_psbt *psbt) {
   const unsigned char *msg;
   size_t msg_len;
   return psbt && get_message_field(psbt, &msg, &msg_len) &&
-         is_to_sign_tx(psbt->tx);
+         has_to_sign_shape(psbt);
 }
 
 /* BIP322 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || message). libwally
@@ -103,9 +112,16 @@ bool bip322_parse(const struct wally_psbt *psbt, bool is_testnet,
     return false;
   }
 
-  const struct wally_tx *tx = psbt->tx;
-  if (!is_to_sign_tx(tx)) {
+  if (!has_to_sign_shape(psbt)) {
     ESP_LOGW(TAG, "to_sign transaction structure mismatch");
+    return false;
+  }
+  /* Only the simple format in a v0 PSBT is supported: no time locks and no
+   * proof of funds inputs. */
+  const struct wally_tx *tx = psbt->tx;
+  if (!tx || tx->version != 0 || tx->locktime != 0 || tx->num_inputs != 1 ||
+      tx->inputs[0].sequence != 0) {
+    ESP_LOGW(TAG, "unsupported to_sign transaction");
     return false;
   }
 
