@@ -12,10 +12,10 @@ static int tests_failed = 0;
     tests_failed++;                                                            \
   } while (0)
 
-/* ENCODING.md's get_keys_request_one_path vector: version 1, Get Keys,
+/* BIP-377's get_keys_request_one_path vector: version 1, Get Keys,
  * request id 0x0001 */
 static const uint8_t GET_KEYS_REQUEST[] = {
-    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x02, 0x00, 0x01,
+    0x42, 0x49, 0x50, 0x33, 0x37, 0x37, 0x01, 0x02, 0x00, 0x01,
     0x01, 0x04, 0x80, 0x00, 0x00, 0x30, 0x80, 0x00, 0x00, 0x00,
     0x80, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x02, 0x00};
 
@@ -69,18 +69,18 @@ static void test_read_header(void) {
                   9);
 }
 
-/* bipqr test vectors (efccc5b): unregister_descriptor_request and
+/* bip377 test vectors (efccc5b): unregister_descriptor_request and
  * unregister_descriptor_response for the alias "main", request id 0x0001 */
-static const uint8_t UNREGISTER_REQUEST[] = {0x42, 0x49, 0x50, 0x58, 0x58,
-                                             0x58, 0x01, 0x07, 0x00, 0x01,
+static const uint8_t UNREGISTER_REQUEST[] = {0x42, 0x49, 0x50, 0x33, 0x37,
+                                             0x37, 0x01, 0x07, 0x00, 0x01,
                                              0x04, 0x6d, 0x61, 0x69, 0x6e};
-static const uint8_t UNREGISTER_RESPONSE[] = {0x42, 0x49, 0x50, 0x58, 0x58,
-                                              0x58, 0x01, 0x87, 0x00, 0x01,
+static const uint8_t UNREGISTER_RESPONSE[] = {0x42, 0x49, 0x50, 0x33, 0x37,
+                                              0x37, 0x01, 0x87, 0x00, 0x01,
                                               0x04, 0x6d, 0x61, 0x69, 0x6e};
 
 static void test_unregister_request(void) {
   bip_flow_header_t header;
-  const bipqr_request *request = NULL;
+  const bip377_request *request = NULL;
   TEST("an Unregister Descriptor request header is read");
   if (bip_flow_read_request_header(UNREGISTER_REQUEST,
                                    sizeof(UNREGISTER_REQUEST), &header) &&
@@ -91,15 +91,15 @@ static void test_unregister_request(void) {
     FAIL("header fields differ");
 
   TEST("an Unregister Descriptor request decodes to its alias");
-  if (bipqr_request_decode(UNREGISTER_REQUEST, sizeof(UNREGISTER_REQUEST),
-                           &request, NULL) == BIPQR_OK &&
+  if (bip377_request_decode(UNREGISTER_REQUEST, sizeof(UNREGISTER_REQUEST),
+                            &request, NULL) == BIP377_OK &&
       request->message_type == 0x07 && request->id[0] == 0x00 &&
       request->id[1] == 0x01 &&
       strcmp(request->body.unregister_descriptor.descriptor_alias, "main") == 0)
     PASS();
   else
     FAIL("request differs");
-  bipqr_request_free(request);
+  bip377_request_free(request);
 }
 
 /* A request whose header reads but whose body does not decode, as
@@ -107,17 +107,17 @@ static void test_unregister_request(void) {
 static void expect_malformed(const char *name, const uint8_t *message,
                              size_t len) {
   bip_flow_header_t header;
-  const bipqr_request *request = NULL;
+  const bip377_request *request = NULL;
   TEST(name);
   int32_t status = bip_flow_read_request_header(message, len, &header)
-                       ? bipqr_request_decode(message, len, &request, NULL)
-                       : BIPQR_OK;
-  if (status != BIPQR_OK && !request &&
+                       ? bip377_request_decode(message, len, &request, NULL)
+                       : BIP377_OK;
+  if (status != BIP377_OK && !request &&
       bip_flow_decode_error(&header, status) == 0x03)
     PASS();
   else
     FAIL("not answered with malformed request");
-  bipqr_request_free(request);
+  bip377_request_free(request);
 }
 
 static void test_unregister_malformed(void) {
@@ -134,20 +134,20 @@ static void test_unregister_malformed(void) {
 }
 
 static void test_unregister_response(void) {
-  bipqr_response response;
-  bipqr_buf encoded = {0};
+  bip377_response response;
+  bip377_buf encoded = {0};
   memset(&response, 0, sizeof(response));
   response.id[1] = 0x01;
-  response.message_type = BIPQR_MESSAGE_UNREGISTER_DESCRIPTOR;
+  response.message_type = BIP377_MESSAGE_UNREGISTER_DESCRIPTOR;
   response.body.unregistered.descriptor_alias = "main";
   TEST("the Unregister Descriptor ok response echoes the alias");
-  if (bipqr_response_encode(&response, &encoded, NULL) == BIPQR_OK &&
+  if (bip377_response_encode(&response, &encoded, NULL) == BIP377_OK &&
       encoded.len == sizeof(UNREGISTER_RESPONSE) &&
       memcmp(encoded.ptr, UNREGISTER_RESPONSE, encoded.len) == 0)
     PASS();
   else
     FAIL("encoding differs from the vector");
-  bipqr_buf_free(encoded);
+  bip377_buf_free(encoded);
 }
 
 static void expect_decode_error(const char *name, uint8_t version,
@@ -162,16 +162,16 @@ static void expect_decode_error(const char *name, uint8_t version,
 
 static void test_decode_error(void) {
   expect_decode_error("version 0 answers unsupported protocol version", 0x00,
-                      BIPQR_ERR_TRUNCATED, 0x02);
+                      BIP377_ERR_TRUNCATED, 0x02);
   expect_decode_error("version 1 answers malformed request", 0x01,
-                      BIPQR_ERR_TRUNCATED, 0x03);
+                      BIP377_ERR_TRUNCATED, 0x03);
   expect_decode_error("a newer version answers malformed request", 0x02,
-                      BIPQR_ERR_TRUNCATED, 0x03);
+                      BIP377_ERR_TRUNCATED, 0x03);
   expect_decode_error("an unknown FORM answers unsupported descriptor form",
-                      0x01, BIPQR_ERR_UNKNOWN_DESCRIPTOR_FORM, 0x06);
+                      0x01, BIP377_ERR_UNKNOWN_DESCRIPTOR_FORM, 0x06);
   expect_decode_error("an unknown FORM of version 0 answers unsupported "
                       "protocol version",
-                      0x00, BIPQR_ERR_UNKNOWN_DESCRIPTOR_FORM, 0x02);
+                      0x00, BIP377_ERR_UNKNOWN_DESCRIPTOR_FORM, 0x02);
 }
 
 int main(void) {

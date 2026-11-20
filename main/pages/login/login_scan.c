@@ -16,7 +16,7 @@
 #include "../shared/descriptor_loader.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"
-#include <bipqr.h>
+#include <bip377.h>
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,19 +97,20 @@ static void show_psbt_needs_key(void) {
 
 // The request's message type, 0 when it does not decode
 static uint8_t bip_request_type(const uint8_t *content, size_t len) {
-  const bipqr_request *request = NULL;
+  const bip377_request *request = NULL;
   const char *err = NULL;
   uint8_t type = 0;
-  if (bipqr_request_decode(content, len, &request, &err) == BIPQR_OK && request)
+  if (bip377_request_decode(content, len, &request, &err) == BIP377_OK &&
+      request)
     type = request->message_type;
   if (request)
-    bipqr_request_free(request);
+    bip377_request_free(request);
   return type;
 }
 
 static void show_bip_request_needs_key(uint8_t type) {
-  dialog_show_info(type == BIPQR_MESSAGE_GET_KEYS ? "Key request detected"
-                                                  : "Wallet request detected",
+  dialog_show_info(type == BIP377_MESSAGE_GET_KEYS ? "Key request detected"
+                                                   : "Wallet request detected",
                    "Load a seed first to export xpubs or respond to wallet "
                    "requests.",
                    unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
@@ -119,7 +120,7 @@ static void show_bip_request_needs_key(uint8_t type) {
 // every other request needs one
 static void handle_bip_request(const uint8_t *content, size_t len) {
   uint8_t type = bip_request_type(content, len);
-  if (type == 0 || type == BIPQR_MESSAGE_GET_INFO)
+  if (type == 0 || type == BIP377_MESSAGE_GET_INFO)
     bip_flow_start(lv_screen_active(), content, len, finish_to_login);
   else
     show_bip_request_needs_key(type);

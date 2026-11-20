@@ -205,7 +205,7 @@ void test_bbqr_binary_file_type(void) {
 void test_bbqr_hex_binary_encode(void) {
   TEST("bbqr hex binary encode");
 
-  const uint8_t original[] = {0x42, 0x49, 0x50, 0x58, 0x58, 0x58,
+  const uint8_t original[] = {0x42, 0x49, 0x50, 0x33, 0x37, 0x37,
                               0x01, 0x04, 0xde, 0xad, 0xbe, 0xef};
   BBQrParts *parts =
       bbqr_encode_hex(original, sizeof(original), BBQR_TYPE_BINARY, 18);

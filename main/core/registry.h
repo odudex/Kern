@@ -13,7 +13,7 @@
 #include "wallet.h"
 
 #define REGISTRY_MAX_ENTRIES 16
-/* A 32-byte bipqr DESCRIPTOR_ALIAS and its NUL */
+/* A 32-byte bip377 DESCRIPTOR_ALIAS and its NUL */
 #define REGISTRY_ID_MAX_LEN 33
 #define REGISTRY_LABEL_MAX_LEN 48
 #define REGISTRY_MAX_OWN_KEYS 8

@@ -118,7 +118,7 @@ BBQrParts *bbqr_encode(const uint8_t *data, size_t data_len, char file_type,
  * @brief Encode binary data as hex BBQr parts.
  *
  * Encodes the input data using BBQr hexadecimal encoding, without compression.
- * This is the transport used by bipqr response messages (B$HB).
+ * This is the transport used by bip377 response messages (B$HB).
  *
  * @param data Binary data to encode
  * @param data_len Length of data

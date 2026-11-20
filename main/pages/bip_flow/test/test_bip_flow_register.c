@@ -36,7 +36,7 @@ int main(void) {
                "duplicate descriptor answers registration failed");
   expect_error(VALIDATION_XPUB_MISMATCH, 0x05,
                "xpub mismatch answers registration failed");
-  expect_error(VALIDATION_NETWORK_MISMATCH, 0x10,
+  expect_error(VALIDATION_NETWORK_MISMATCH, 0x0F,
                "network mismatch answers network mismatch");
   expect_error(VALIDATION_INTERNAL_ERROR, 0x0B,
                "internal error answers internal device error");

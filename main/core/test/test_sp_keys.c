@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <bipqr.h>
+#include <bip377.h>
 #include <wally_core.h>
 
 #include "core/key.h"
@@ -257,17 +257,17 @@ static void test_path_on_branch(void) {
 /* Register Descriptor "3f82-9b" for our testnet spend key m/352'/1'/0'/0'/0
  * with the scan key REQUEST_SCAN_SECRET, not ours (SCAN_PATH absent) */
 static const char REGISTER_FOREIGN_SCAN_REQUEST[] =
-    "4249505858580103000607336638322d3962010373c5da0a058000016080000001800000"
+    "4249503337370103000607336638322d3962010373c5da0a058000016080000001800000"
     "00800000000000000000019573aff499b1755c5fbfd127f508c7d2bcb5dd8cb052f26661"
     "04db6fdf41e14f";
 static const char REQUEST_SCAN_SECRET[] =
     "9573aff499b1755c5fbfd127f508c7d2bcb5dd8cb052f2666104db6fdf41e14f";
 static const char REQUEST_SCAN_PUBKEY[] =
     "0395e054d3750420f2c79241842553e15b3cfe43f71fb07152fb37191af292e7b6";
-/* bipqr test vector address_verification_sp_foreign_scan_request (7178668):
+/* bip377 test vector address_verification_sp_foreign_scan_request:
  * label 2 of our testnet spend key with VECTOR_SCAN_SECRET */
 static const char VERIFY_FOREIGN_SCAN_REQUEST[] =
-    "42495058585801040001046d61696e010000000201077370317178797a010373c5da0a05"
+    "42495033373701040001046d61696e010000000201077370317178797a010373c5da0a05"
     "800001608000000180000000800000000000000000010f694e068028a717f8af6b9411f9"
     "a133dd3565258714cc226594b34db90c1f2c00";
 /* Label 2 of our testnet spend key with VECTOR_SCAN_SECRET, by the BIP352
@@ -376,18 +376,18 @@ static void test_account_keys(void) {
   sp_keys_wipe(&account);
 }
 
-static const bipqr_request *decode_hex(const char *hex) {
+static const bip377_request *decode_hex(const char *hex) {
   unsigned char bytes[256];
   size_t len = 0;
-  const bipqr_request *request = NULL;
+  const bip377_request *request = NULL;
   if (wally_hex_to_bytes(hex, bytes, sizeof(bytes), &len) != WALLY_OK ||
-      bipqr_request_decode(bytes, len, &request, NULL) != BIPQR_OK)
+      bip377_request_decode(bytes, len, &request, NULL) != BIP377_OK)
     return NULL;
   return request;
 }
 
-static sp_account_t request_account(const bipqr_sp_keys *sp, bool is_testnet) {
-  bool by_path = sp->scan_kind == BIPQR_SCAN_PATH;
+static sp_account_t request_account(const bip377_sp_keys *sp, bool is_testnet) {
+  bool by_path = sp->scan_kind == BIP377_SCAN_PATH;
   return sp_account_classify(
       sp->fingerprint, sp->spend_path.ptr, sp->spend_path.len,
       by_path ? sp->scan.path.ptr : NULL, by_path ? sp->scan.path.len : 0,
@@ -396,20 +396,20 @@ static sp_account_t request_account(const bipqr_sp_keys *sp, bool is_testnet) {
 
 static void test_register_foreign_scan_request(void) {
   unsigned char scan_secret[SP_SECRET_LEN];
-  const bipqr_request *request = decode_hex(REGISTER_FOREIGN_SCAN_REQUEST);
-  const bipqr_register_descriptor *reg =
+  const bip377_request *request = decode_hex(REGISTER_FOREIGN_SCAN_REQUEST);
+  const bip377_register_descriptor *reg =
       request ? &request->body.register_descriptor : NULL;
-  const bipqr_descriptor_body *body = reg ? reg->descriptor : NULL;
-  const bipqr_sp_keys *sp = body ? &body->value.sp_keys : NULL;
+  const bip377_descriptor_body *body = reg ? reg->descriptor : NULL;
+  const bip377_sp_keys *sp = body ? &body->value.sp_keys : NULL;
 
   TEST("the Register Descriptor request with a scan key decodes");
-  if (sp && request->message_type == BIPQR_MESSAGE_REGISTER_DESCRIPTOR &&
+  if (sp && request->message_type == BIP377_MESSAGE_REGISTER_DESCRIPTOR &&
       strcmp(reg->descriptor_alias, "3f82-9b") == 0 &&
-      body->tag == BIPQR_DESCRIPTOR_SP_KEYS &&
+      body->tag == BIP377_DESCRIPTOR_SP_KEYS &&
       memcmp(sp->fingerprint, OUR_FINGERPRINT, 4) == 0 &&
       sp->spend_path.len == 5 &&
       memcmp(sp->spend_path.ptr, TESTNET_SPEND, sizeof(TESTNET_SPEND)) == 0 &&
-      sp->scan_kind == BIPQR_SCAN_KEY &&
+      sp->scan_kind == BIP377_SCAN_KEY &&
       hex_to(REQUEST_SCAN_SECRET, scan_secret, sizeof(scan_secret)) &&
       memcmp(sp->scan.key, scan_secret, SP_SECRET_LEN) == 0)
     PASS();
@@ -421,20 +421,20 @@ static void test_register_foreign_scan_request(void) {
     PASS();
   else
     FAIL("account refused");
-  bipqr_request_free(request);
+  bip377_request_free(request);
 }
 
 static void test_verify_foreign_scan_request(void) {
-  const bipqr_request *request = decode_hex(VERIFY_FOREIGN_SCAN_REQUEST);
-  const bipqr_verify_address *verify =
+  const bip377_request *request = decode_hex(VERIFY_FOREIGN_SCAN_REQUEST);
+  const bip377_verify_address *verify =
       request ? &request->body.verify_address : NULL;
-  const bipqr_sp_keys *sp =
+  const bip377_sp_keys *sp =
       verify && verify->descriptor ? &verify->descriptor->value.sp_keys : NULL;
   struct sp_keys keys;
   char *address = NULL;
 
-  TEST("the bipqr labelled scan key vector names our spend key");
-  if (sp && request->message_type == BIPQR_MESSAGE_ADDRESS_VERIFICATION &&
+  TEST("the bip377 labelled scan key vector names our spend key");
+  if (sp && request->message_type == BIP377_MESSAGE_ADDRESS_VERIFICATION &&
       request_account(sp, true) == SP_ACCOUNT_FOREIGN_SCAN)
     PASS();
   else
@@ -453,7 +453,7 @@ static void test_verify_foreign_scan_request(void) {
     FAIL(address ? address : "no address");
   sp_keys_wipe(&keys);
   free(address);
-  bipqr_request_free(request);
+  bip377_request_free(request);
 }
 
 int main(void) {

@@ -12,8 +12,8 @@ pub use bip_nonces_cache_ll::ffi::{
     bnc_held_session, bnc_issue, bnc_secret_free, bnc_session_field_decode, bnc_sign_musig,
     bnc_signer_free, bnc_signer_new, bnc_two_round_session_id,
 };
-pub use bipqr_ll::ffi::{
-    bipqr_buf_free, bipqr_request_decode, bipqr_request_free, bipqr_response_encode,
+pub use bip377_ll::ffi::{
+    bip377_buf_free, bip377_request_decode, bip377_request_free, bip377_response_encode,
 };
 
 #[cfg(target_os = "none")]

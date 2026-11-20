@@ -10,9 +10,9 @@
 [submodule "components/bip138"]
 	path = components/bip138
 	url = https://github.com/odudex/bip138.git
-[submodule "components/bipqr/upstream"]
-	path = components/bipqr/upstream
-	url = https://github.com/pythcoiner/bipqr.git
+[submodule "components/bip377/upstream"]
+	path = components/bip377/upstream
+	url = https://github.com/pythcoiner/bip377.git
 [submodule "components/bip_nonces_cache/upstream"]
 	path = components/bip_nonces_cache/upstream
 	url = https://github.com/pythcoiner/bip_nonces_cache.git

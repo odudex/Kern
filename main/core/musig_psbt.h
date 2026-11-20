@@ -20,7 +20,7 @@ KERN_WARN_UNUSED_RESULT bool musig_psbt_claim(const struct wally_map *tap_paths,
                                               size_t spk_len,
                                               claim_t *claim_out);
 
-/* One of our MuSig2 signatures (ENCODING.md, Signing, MuSig2): an input and the
+/* One of our MuSig2 signatures (BIP-377, Signing, MuSig2): an input and the
  * BIP-373 key `participant | aggregate [| leaf_hash]`, the participant being
  * our key. The tr() internal musig() signs the key path, a leaf musig() the
  * leaf script it is pushed in (musig_leaves.h). */

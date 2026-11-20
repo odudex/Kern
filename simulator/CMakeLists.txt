@@ -383,23 +383,23 @@ target_link_libraries(lvgl PUBLIC
     ${SDL2_LIBRARIES}
 )
 
-# --- kern-bipqr: the firmware's Rust staticlib, built for the host. The
+# --- kern-bip377: the firmware's Rust staticlib, built for the host. The
 # MuSig2 signer reaches its nonce cache sessions through it. ---
-set(KERN_BIPQR_TARGET_DIR ${CMAKE_CURRENT_BINARY_DIR}/kern_bipqr)
-set(KERN_BIPQR_LIB ${KERN_BIPQR_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}kern_bipqr${CMAKE_STATIC_LIBRARY_SUFFIX})
+set(KERN_BIP377_TARGET_DIR ${CMAKE_CURRENT_BINARY_DIR}/kern_bip377)
+set(KERN_BIP377_LIB ${KERN_BIP377_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}kern_bip377${CMAKE_STATIC_LIBRARY_SUFFIX})
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 # Always runs: cargo tracks the crate sources and only relinks on a change
-add_custom_target(kern_bipqr_rust
-    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${KERN_BIPQR_TARGET_DIR}
+add_custom_target(kern_bip377_rust
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${KERN_BIP377_TARGET_DIR}
             ${CARGO_EXECUTABLE} build --release
-            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/Cargo.toml
-    BYPRODUCTS ${KERN_BIPQR_LIB}
-    COMMENT "Building kern-bipqr for the host"
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip377/Cargo.toml
+    BYPRODUCTS ${KERN_BIP377_LIB}
+    COMMENT "Building kern-bip377 for the host"
     VERBATIM
 )
-add_library(kern_bipqr STATIC IMPORTED GLOBAL)
-set_target_properties(kern_bipqr PROPERTIES IMPORTED_LOCATION ${KERN_BIPQR_LIB})
-add_dependencies(kern_bipqr kern_bipqr_rust)
+add_library(kern_bip377 STATIC IMPORTED GLOBAL)
+set_target_properties(kern_bip377 PROPERTIES IMPORTED_LOCATION ${KERN_BIP377_LIB})
+add_dependencies(kern_bip377 kern_bip377_rust)
 
 add_executable(kern_simulator
     ${SIM_SOURCES}
@@ -437,8 +437,8 @@ target_include_directories(kern_simulator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/cUR/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/video
-    # kern-bipqr C headers: the bipqr and bip_nonces_cache submodules
-    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bipqr/upstream/bipqr-ll/include
+    # kern-bip377 C headers: the bip377 and bip_nonces_cache submodules
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip377/upstream/bip377-ll/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/bip_nonces_cache/upstream/bip-nonces-cache-ll/include
     # LVGL
     ${LVGL_DIR}
@@ -504,7 +504,7 @@ target_link_libraries(kern_simulator PRIVATE
     Threads::Threads
     m
     wally
-    kern_bipqr
+    kern_bip377
     ${CMAKE_DL_LIBS}
     ${MBEDTLS_LIB}
     ${MBEDCRYPTO_LIB}

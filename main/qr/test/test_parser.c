@@ -431,7 +431,7 @@ static void test_valid_ur_still_processes(void) {
  * airgap request arrives. Split out so the whitespace and lowercase variants
  * assert against the same payload. */
 #define BIP_REQUEST_BODY                                                       \
-  "42495058585801010E151E957222A2B72C605E0A16E9F5740A"                         \
+  "42495033373701010E151E957222A2B72C605E0A16E9F5740A"                         \
   "048000003080000000800000008000000204800000308000000080000001800000020"      \
   "480000030800000008000000280000002048000003080000000800000038000000204"      \
   "800000308000000080000004800000020480000030800000008000000580000002048"      \
@@ -439,7 +439,7 @@ static void test_valid_ur_still_processes(void) {
   "0000308000000080000008800000020480000030800000008000000980000002"
 
 static const unsigned char BIP_REQUEST_PREFIX[] = {
-    0x42, 0x49, 0x50, 0x58, 0x58, 0x58, 0x01, 0x01, 0x0e,
+    0x42, 0x49, 0x50, 0x33, 0x37, 0x37, 0x01, 0x01, 0x0e,
     0x15, 0x1e, 0x95, 0x72, 0x22, 0xa2, 0xb7, 0x2c, 0x60,
     0x5e, 0x0a, 0x16, 0xe9, 0xf5, 0x74, 0x0a};
 

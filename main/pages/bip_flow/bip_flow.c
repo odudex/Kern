@@ -25,7 +25,7 @@
 #include "../shared/address_checker.h"
 #include "../shared/descriptor_loader.h"
 #include "bip388.h"
-#include <bipqr.h>
+#include <bip377.h>
 #include <esp_app_desc.h>
 #include <inttypes.h>
 #include <sdkconfig.h>
@@ -43,20 +43,20 @@
 #include <wally_psbt_members.h>
 
 #define KERN_CAPABILITIES                                                      \
-  (BIPQR_CAPABILITY_BIP380_DESCRIPTORS |                                       \
-   BIPQR_CAPABILITY_BIP388_WALLET_POLICIES |                                   \
-   BIPQR_CAPABILITY_MINISCRIPT_SEGWIT_V0 |                                     \
-   BIPQR_CAPABILITY_MINISCRIPT_TAPROOT |                                       \
-   BIPQR_CAPABILITY_SILENT_PAYMENT_SENDS |                                     \
-   BIPQR_CAPABILITY_SILENT_PAYMENT_ACCOUNTS |                                  \
-   BIPQR_CAPABILITY_UNREGISTER_DESCRIPTOR | BIPQR_CAPABILITY_MUSIG2 |          \
-   BIPQR_CAPABILITY_NONCE_CACHE)
+  (BIP377_CAPABILITY_BIP380_DESCRIPTORS |                                      \
+   BIP377_CAPABILITY_BIP388_WALLET_POLICIES |                                  \
+   BIP377_CAPABILITY_MINISCRIPT_SEGWIT_V0 |                                    \
+   BIP377_CAPABILITY_MINISCRIPT_TAPROOT |                                      \
+   BIP377_CAPABILITY_SILENT_PAYMENT_SENDS |                                    \
+   BIP377_CAPABILITY_SILENT_PAYMENT_ACCOUNTS |                                 \
+   BIP377_CAPABILITY_UNREGISTER_DESCRIPTOR | BIP377_CAPABILITY_MUSIG2 |        \
+   BIP377_CAPABILITY_NONCE_CACHE)
 
 typedef struct {
   lv_obj_t *parent;
   void (*return_cb)(void);
   bip_flow_header_t header;
-  const bipqr_request *request;
+  const bip377_request *request;
 } bip_flow_ctx_t;
 
 static bip_flow_ctx_t ctx;
@@ -94,7 +94,7 @@ static void cleanup_request(void) {
   registry_clear_preferred();
   registry_sp_clear_named_scan_keys();
   if (ctx.request) {
-    bipqr_request_free(ctx.request);
+    bip377_request_free(ctx.request);
     ctx.request = NULL;
   }
 }
@@ -132,13 +132,13 @@ static void return_from_signing_response(void) {
   }
 }
 
-static void show_response_sized(bipqr_response *response, void (*done_cb)(void),
-                                int max_chars) {
+static void show_response_sized(bip377_response *response,
+                                void (*done_cb)(void), int max_chars) {
   debug_logf("bip_flow show_response is_error=%d", response->is_error);
-  bipqr_buf encoded = {0};
+  bip377_buf encoded = {0};
   const char *err = NULL;
-  int32_t rc = bipqr_response_encode(response, &encoded, &err);
-  if (rc != BIPQR_OK || !encoded.ptr || encoded.len == 0) {
+  int32_t rc = bip377_response_encode(response, &encoded, &err);
+  if (rc != BIP377_OK || !encoded.ptr || encoded.len == 0) {
     cleanup_request();
     dialog_show_error_timeout(err ? err : "Failed to encode response",
                               ctx.return_cb, 0);
@@ -147,9 +147,7 @@ static void show_response_sized(bipqr_response *response, void (*done_cb)(void),
 
   BBQrParts *parts =
       bbqr_encode_hex(encoded.ptr, encoded.len, BBQR_TYPE_BINARY, max_chars);
-  // A Get Keys response can hold a private key
-  secure_memzero(encoded.ptr, encoded.len);
-  bipqr_buf_free(encoded);
+  bip377_buf_free(encoded);
   if (!parts) {
     cleanup_request();
     dialog_show_error_timeout("Failed to encode response QR", ctx.return_cb, 0);
@@ -165,22 +163,22 @@ static void show_response_sized(bipqr_response *response, void (*done_cb)(void),
   qr_viewer_page_show();
 }
 
-static void show_response_with_done(bipqr_response *response,
+static void show_response_with_done(bip377_response *response,
                                     void (*done_cb)(void)) {
   show_response_sized(response, done_cb, settings_get_qr_density());
 }
 
-static void show_response(bipqr_response *response) {
+static void show_response(bip377_response *response) {
   show_response_with_done(response, return_from_response);
 }
 
-static void fill_response_header(bipqr_response *response) {
+static void fill_response_header(bip377_response *response) {
   memset(response, 0, sizeof(*response));
-  memcpy(response->id, ctx.header.id, BIPQR_REQUEST_ID_LEN);
+  memcpy(response->id, ctx.header.id, BIP377_REQUEST_ID_LEN);
   response->message_type = ctx.header.message_type;
 }
 
-static void fill_error_response(bipqr_response *response, uint8_t error,
+static void fill_error_response(bip377_response *response, uint8_t error,
                                 const char *message) {
   debug_logf("bip_flow error_response code=%u msg=%s", (unsigned)error,
              message ? message : "");
@@ -191,7 +189,7 @@ static void fill_error_response(bipqr_response *response, uint8_t error,
 }
 
 static void show_error_response(uint8_t error, const char *message) {
-  bipqr_response response;
+  bip377_response response;
   fill_error_response(&response, error, message);
   show_response(&response);
 }
@@ -199,7 +197,7 @@ static void show_error_response(uint8_t error, const char *message) {
 // Kern keeps its registrations on the device and issues no proof of
 // registration, so a proof it receives is not one of its own
 static void show_foreign_proof_error(void) {
-  show_error_response(BIPQR_RESPONSE_ERROR_INVALID_PROOF,
+  show_error_response(BIP377_RESPONSE_ERROR_INVALID_PROOF,
                       "Kern issues no proof of registration");
 }
 
@@ -208,7 +206,7 @@ static bool wallet_is_testnet(void) {
 }
 
 static void fill_device_fields(const char **vendor, const char **model,
-                               bipqr_firmware_version *version,
+                               bip377_firmware_version *version,
                                uint32_t *capabilities) {
   *vendor = "Kern";
   *model = CONFIG_KERN_BOARD_NAME;
@@ -218,15 +216,16 @@ static void fill_device_fields(const char **vendor, const char **model,
     sscanf(desc->version, "%u.%u.%u", &major, &minor, &patch);
   version->major = (uint16_t)major;
   version->minor = (uint16_t)minor;
-  version->patch = patch;
-  version->flag = BIPQR_RELEASE_STABLE;
+  version->patch = (uint16_t)patch;
+  version->channel = BIP377_RELEASE_STABLE;
+  version->number = 0;
   *capabilities = KERN_CAPABILITIES;
 }
 
 // Ready with a loaded seed, locked while an encrypted one waits on flash
 static bool device_state(uint8_t *state_out) {
   if (key_is_loaded()) {
-    *state_out = BIPQR_STATE_READY;
+    *state_out = BIP377_STATE_READY;
     return true;
   }
   char **files = NULL;
@@ -234,29 +233,29 @@ static bool device_state(uint8_t *state_out) {
   if (storage_list_mnemonics(STORAGE_FLASH, &files, &count) != ESP_OK)
     return false;
   storage_free_file_list(files, count);
-  *state_out = count > 0 ? BIPQR_STATE_LOCKED : BIPQR_STATE_UNINITIALIZED;
+  *state_out = count > 0 ? BIP377_STATE_LOCKED : BIP377_STATE_UNINITIALIZED;
   return true;
 }
 
 static void handle_get_info(void) {
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
-  bipqr_info *info = &response.body.info;
+  bip377_info *info = &response.body.info;
   fill_device_fields(&info->vendor, &info->model, &info->version,
                      &info->capabilities);
   if (!device_state(&info->state)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Storage failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Storage failed");
     return;
   }
   // Coin 1' covers testnet and signet; no regtest, Kern only encodes tb
   // addresses
   info->networks =
-      BIPQR_NETWORK_MAINNET | BIPQR_NETWORK_TESTNET | BIPQR_NETWORK_SIGNET;
+      BIP377_NETWORK_MAINNET | BIP377_NETWORK_TESTNET | BIP377_NETWORK_SIGNET;
   info->max_message = QR_PARSER_MAX_STORED_BYTES;
   info->max_alias = REGISTRY_ID_MAX_LEN - 1;
-  if (info->state == BIPQR_STATE_READY) {
+  if (info->state == BIP377_STATE_READY) {
     if (!key_get_fingerprint(info->fingerprint)) {
-      show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Fingerprint failed");
+      show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Fingerprint failed");
       return;
     }
     info->has_fingerprint = 1;
@@ -264,11 +263,11 @@ static void handle_get_info(void) {
   show_response(&response);
 }
 
-static bool xpub_base58_to_wire(const char *xpub, bipqr_extended_key *out) {
+static bool xpub_base58_to_wire(const char *xpub, bip377_extended_key *out) {
   struct ext_key *key = NULL;
   bool ok = false;
   if (bip32_key_from_base58_alloc(xpub, &key) == WALLY_OK && key) {
-    uint8_t serialized[BIPQR_EXTENDED_KEY_LEN];
+    uint8_t serialized[BIP377_EXTENDED_KEY_LEN];
     if (bip32_key_serialize(key, BIP32_FLAG_KEY_PUBLIC, serialized,
                             sizeof(serialized)) == WALLY_OK) {
       memcpy(out->bytes, serialized, sizeof(out->bytes));
@@ -280,8 +279,8 @@ static bool xpub_base58_to_wire(const char *xpub, bipqr_extended_key *out) {
   return ok;
 }
 
-static bool public_key_to_wire(const bipqr_path *path,
-                               bipqr_extended_key *out) {
+static bool public_key_to_wire(const bip377_path *path,
+                               bip377_extended_key *out) {
   char *xpub = NULL;
   bool ok = key_get_xpub_components(path->ptr, path->len, &xpub) && xpub &&
             xpub_base58_to_wire(xpub, out);
@@ -290,18 +289,7 @@ static bool public_key_to_wire(const bipqr_path *path,
   return ok;
 }
 
-static bool private_key_to_wire(const bipqr_path *path,
-                                bipqr_extended_key *out) {
-  struct ext_key *key = NULL;
-  if (!key_get_derived_key_components(path->ptr, path->len, &key))
-    return false;
-  bool ok = bip32_key_serialize(key, BIP32_FLAG_KEY_PRIVATE, out->bytes,
-                                sizeof(out->bytes)) == WALLY_OK;
-  bip32_key_free(key);
-  return ok;
-}
-
-static void free_keys(bipqr_extended_key *keys, size_t n) {
+static void free_keys(bip377_extended_key *keys, size_t n) {
   secure_memzero(keys, n * sizeof(*keys));
   free(keys);
 }
@@ -309,38 +297,34 @@ static void free_keys(bipqr_extended_key *keys, size_t n) {
 static void get_keys_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
   if (!confirmed) {
-    show_error_response(BIPQR_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    show_error_response(BIP377_RESPONSE_ERROR_USER_DECLINED, "Declined");
     return;
   }
 
-  const bipqr_get_keys *req = &ctx.request->body.get_keys;
+  const bip377_get_keys *req = &ctx.request->body.get_keys;
   size_t n = req->keys.len;
-  bipqr_extended_key *keys = calloc(n, sizeof(*keys));
+  bip377_extended_key *keys = calloc(n, sizeof(*keys));
   // An empty KEYS vector is valid and gets an empty one back
   if (!keys && n) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Out of memory");
     return;
   }
 
   for (size_t i = 0; i < n; i++) {
-    const bipqr_key_request *key = &req->keys.ptr[i];
-    bool ok = key->kind == BIPQR_KEY_PRIVATE
-                  ? private_key_to_wire(&key->derivation_path, &keys[i])
-                  : public_key_to_wire(&key->derivation_path, &keys[i]);
-    if (!ok) {
+    if (!public_key_to_wire(&req->keys.ptr[i], &keys[i])) {
       free_keys(keys, n);
-      show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+      show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Key failed");
       return;
     }
   }
 
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
   response.body.keys.keys.ptr = keys;
   response.body.keys.keys.len = n;
   if (!key_get_fingerprint(response.body.keys.fingerprint)) {
     free_keys(keys, n);
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Fingerprint failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Fingerprint failed");
     return;
   }
   fill_device_fields(&response.body.keys.vendor, &response.body.keys.model,
@@ -353,7 +337,7 @@ static void get_keys_confirm_cb(bool confirmed, void *user_data) {
   free_keys(keys, n);
 }
 
-static bool path_requested_network(const bipqr_path *path,
+static bool path_requested_network(const bip377_path *path,
                                    wallet_network_t *network_out) {
   if (!path || !network_out || path->len < 2)
     return false;
@@ -370,7 +354,7 @@ static bool path_requested_network(const bipqr_path *path,
   return false;
 }
 
-static bool get_keys_network_matches_wallet(const bipqr_key_request_list *keys,
+static bool get_keys_network_matches_wallet(const bip377_path_list *keys,
                                             char *message,
                                             size_t message_size) {
   if (!keys || !keys->ptr)
@@ -380,7 +364,7 @@ static bool get_keys_network_matches_wallet(const bipqr_key_request_list *keys,
   wallet_network_t requested = WALLET_NETWORK_MAINNET;
   for (size_t i = 0; i < keys->len; i++) {
     wallet_network_t path_network;
-    if (!path_requested_network(&keys->ptr[i].derivation_path, &path_network))
+    if (!path_requested_network(&keys->ptr[i], &path_network))
       continue;
     if (!have_network) {
       requested = path_network;
@@ -426,24 +410,23 @@ static size_t append_path_component(char *buf, size_t buf_size, size_t off,
              : appendf(buf, buf_size, off, "/%u", (unsigned)child);
 }
 
-static bool format_key_path_range(const bipqr_key_request_list *keys, char *buf,
+static bool format_key_path_range(const bip377_path_list *keys, char *buf,
                                   size_t buf_size) {
   if (!keys || keys->len < 2 || !keys->ptr || !buf || buf_size == 0)
     return false;
 
-  uint8_t depth = keys->ptr[0].derivation_path.len;
+  uint8_t depth = keys->ptr[0].len;
   if (depth == 0)
     return false;
 
   int varying_index = -1;
   for (uint8_t i = 0; i < depth; i++) {
-    uint32_t first = keys->ptr[0].derivation_path.ptr[i];
+    uint32_t first = keys->ptr[0].ptr[i];
     bool varies = false;
     for (size_t j = 1; j < keys->len; j++) {
-      if (!keys->ptr[j].derivation_path.ptr ||
-          keys->ptr[j].derivation_path.len != depth)
+      if (!keys->ptr[j].ptr || keys->ptr[j].len != depth)
         return false;
-      if (keys->ptr[j].derivation_path.ptr[i] != first)
+      if (keys->ptr[j].ptr[i] != first)
         varies = true;
     }
     if (!varies)
@@ -455,11 +438,11 @@ static bool format_key_path_range(const bipqr_key_request_list *keys, char *buf,
   if (varying_index < 0)
     return false;
 
-  uint32_t first = keys->ptr[0].derivation_path.ptr[varying_index];
+  uint32_t first = keys->ptr[0].ptr[varying_index];
   bool hardened = bip32_path_is_hardened(first);
   uint32_t first_child = bip32_path_unharden(first);
   for (size_t i = 1; i < keys->len; i++) {
-    uint32_t component = keys->ptr[i].derivation_path.ptr[varying_index];
+    uint32_t component = keys->ptr[i].ptr[varying_index];
     if (bip32_path_is_hardened(component) != hardened)
       return false;
     if (bip32_path_unharden(component) != first_child + i)
@@ -473,8 +456,7 @@ static bool format_key_path_range(const bipqr_key_request_list *keys, char *buf,
       off = appendf(buf, buf_size, off, hardened ? "/{%u-%u}'" : "/{%u-%u}",
                     (unsigned)first_child, (unsigned)last_child);
     } else {
-      off = append_path_component(buf, buf_size, off,
-                                  keys->ptr[0].derivation_path.ptr[i]);
+      off = append_path_component(buf, buf_size, off, keys->ptr[0].ptr[i]);
     }
   }
 
@@ -482,7 +464,7 @@ static bool format_key_path_range(const bipqr_key_request_list *keys, char *buf,
 }
 
 static size_t append_key_request_paths(char *msg, size_t msg_size, size_t off,
-                                       const bipqr_key_request_list *keys) {
+                                       const bip377_path_list *keys) {
   char range_path[128];
   if (format_key_path_range(keys, range_path, sizeof(range_path)))
     return appendf(msg, msg_size, off, "\n\n%s", range_path);
@@ -490,8 +472,7 @@ static size_t append_key_request_paths(char *msg, size_t msg_size, size_t off,
   size_t shown = keys->len < 6 ? keys->len : 6;
   for (size_t i = 0; i < shown && off < msg_size; i++) {
     char path[96];
-    if (!bip32_path_format(keys->ptr[i].derivation_path.ptr,
-                           keys->ptr[i].derivation_path.len, path,
+    if (!bip32_path_format(keys->ptr[i].ptr, keys->ptr[i].len, path,
                            sizeof(path))) {
       snprintf(path, sizeof(path), "<invalid path>");
     }
@@ -502,58 +483,28 @@ static size_t append_key_request_paths(char *msg, size_t msg_size, size_t off,
   return off;
 }
 
-static bool get_keys_has_private(const bipqr_key_request_list *keys) {
-  for (size_t i = 0; i < keys->len; i++) {
-    if (keys->ptr[i].kind == BIPQR_KEY_PRIVATE)
-      return true;
-  }
-  return false;
-}
-
-// Only the BIP352 scan key leaves the device, so a wallet can scan
-static bool get_keys_private_allowed(const bipqr_key_request_list *keys) {
-  for (size_t i = 0; i < keys->len; i++) {
-    const bipqr_path *path = &keys->ptr[i].derivation_path;
-    if (keys->ptr[i].kind == BIPQR_KEY_PRIVATE &&
-        !sp_path_on_branch(path->ptr, path->len, wallet_is_testnet(),
-                           SP_SCAN_BRANCH))
-      return false;
-  }
-  return true;
-}
-
 static void handle_get_keys(void) {
-  const bipqr_get_keys *req = &ctx.request->body.get_keys;
+  const bip377_get_keys *req = &ctx.request->body.get_keys;
   char mismatch[80];
   if (!get_keys_network_matches_wallet(&req->keys, mismatch,
                                        sizeof(mismatch))) {
     debug_logf("bip_flow keys_network_mismatch msg=%s", mismatch);
-    show_error_response(BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH, mismatch);
+    show_error_response(BIP377_RESPONSE_ERROR_NETWORK_MISMATCH, mismatch);
     return;
   }
-  if (!get_keys_private_allowed(&req->keys)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_PRIVATE_KEY_EXPORT_REFUSED,
-                        "Private key export refused");
-    return;
-  }
-
   char msg[512];
   size_t off =
       snprintf(msg, sizeof(msg), "Export %zu key(s)?\n", req->keys.len);
-  off = append_key_request_paths(msg, sizeof(msg), off, &req->keys);
-  if (get_keys_has_private(&req->keys))
-    appendf(msg, sizeof(msg), off,
-            "\n\nIncludes the scan private key: whoever holds it sees every "
-            "payment this account receives, but cannot spend them.");
+  append_key_request_paths(msg, sizeof(msg), off, &req->keys);
   dialog_show_confirm(msg, get_keys_confirm_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
-static char *request_descriptor_alloc(const bipqr_descriptor_body *body) {
+static char *request_descriptor_alloc(const bip377_descriptor_body *body) {
   if (!body)
     return NULL;
-  if (body->tag == BIPQR_DESCRIPTOR_BIP380)
+  if (body->tag == BIP377_DESCRIPTOR_BIP380)
     return body->value.bip380 ? strdup(body->value.bip380) : NULL;
-  if (body->tag == BIPQR_DESCRIPTOR_BIP388)
+  if (body->tag == BIP377_DESCRIPTOR_BIP388)
     return bip388_descriptor_alloc(body->value.bip388.policy,
                                    body->value.bip388.keys.ptr,
                                    body->value.bip388.keys.len);
@@ -563,15 +514,15 @@ static char *request_descriptor_alloc(const bipqr_descriptor_body *body) {
 // The error a body request_descriptor_alloc() gives no descriptor for answers
 // with: registration failed when it holds none, such as a wallet policy whose
 // @N names no key, internal error when the descriptor could not be allocated
-static uint8_t request_descriptor_error(const bipqr_descriptor_body *body) {
+static uint8_t request_descriptor_error(const bip377_descriptor_body *body) {
   bool has_descriptor =
-      body && ((body->tag == BIPQR_DESCRIPTOR_BIP380 && body->value.bip380) ||
-               (body->tag == BIPQR_DESCRIPTOR_BIP388 &&
+      body && ((body->tag == BIP377_DESCRIPTOR_BIP380 && body->value.bip380) ||
+               (body->tag == BIP377_DESCRIPTOR_BIP388 &&
                 bip388_policy_is_valid(body->value.bip388.policy,
                                        body->value.bip388.keys.ptr,
                                        body->value.bip388.keys.len)));
-  return has_descriptor ? BIPQR_RESPONSE_ERROR_INTERNAL
-                        : BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
+  return has_descriptor ? BIP377_RESPONSE_ERROR_INTERNAL
+                        : BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
 }
 
 static const char *
@@ -615,7 +566,7 @@ static void answer_registration(void) {
   const char *alias = ctx.request->body.register_descriptor.descriptor_alias;
   const registry_entry_t *entry = registry_find_by_id(alias);
   bool sp_account = registry_sp_alias_exists(alias);
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
   response.body.registration.descriptor_alias = alias;
   response.body.registration.registered = entry || sp_account;
@@ -624,7 +575,7 @@ static void answer_registration(void) {
 }
 
 static void show_alias_taken_error(void) {
-  show_error_response(BIPQR_RESPONSE_ERROR_ALREADY_REGISTERED,
+  show_error_response(BIP377_RESPONSE_ERROR_ALREADY_REGISTERED,
                       "Alias already registered");
 }
 
@@ -653,7 +604,7 @@ static void register_descriptor(const registry_entry_t *entry,
     return;
   }
   if (strlen(alias) >= REGISTRY_ID_MAX_LEN) {
-    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+    show_error_response(BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
                         "Alias too long");
     return;
   }
@@ -662,25 +613,26 @@ static void register_descriptor(const registry_entry_t *entry,
                                            register_validation_cb, NULL);
 }
 
-static void register_sp_account(const bipqr_register_descriptor *req);
+static void register_sp_account(const bip377_register_descriptor *req);
 
 // Without a descriptor the request only asks whether the alias is registered
 static void handle_register(void) {
   debug_log_event("bip_flow handle_register");
-  const bipqr_register_descriptor *req = &ctx.request->body.register_descriptor;
+  const bip377_register_descriptor *req =
+      &ctx.request->body.register_descriptor;
   const registry_entry_t *entry = registry_find_by_id(req->descriptor_alias);
   if (!req->descriptor) {
     answer_registration();
     return;
   }
-  if (req->descriptor->tag == BIPQR_DESCRIPTOR_SP_KEYS) {
+  if (req->descriptor->tag == BIP377_DESCRIPTOR_SP_KEYS) {
     register_sp_account(req);
     return;
   }
   char *descriptor = request_descriptor_alloc(req->descriptor);
   if (!descriptor) {
     uint8_t error = request_descriptor_error(req->descriptor);
-    show_error_response(error, error == BIPQR_RESPONSE_ERROR_INTERNAL
+    show_error_response(error, error == BIP377_RESPONSE_ERROR_INTERNAL
                                    ? "Out of memory"
                                    : "Invalid wallet policy");
     return;
@@ -692,13 +644,13 @@ static void handle_register(void) {
 // The registry entry of `alias`, the session registering `body` under it
 // when the alias is unknown. Returns 0 or the error code to answer with.
 static uint8_t resolve_descriptor(const char *alias,
-                                  const bipqr_descriptor_body *body,
+                                  const bip377_descriptor_body *body,
                                   const registry_entry_t **entry_out) {
   *entry_out = registry_find_by_id(alias);
   if (*entry_out)
     return 0;
   if (!body)
-    return BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS;
+    return BIP377_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS;
   char *descriptor = request_descriptor_alloc(body);
   if (!descriptor)
     return request_descriptor_error(body);
@@ -706,18 +658,18 @@ static uint8_t resolve_descriptor(const char *alias,
   if (descriptor_infer_network(descriptor, &network) &&
       network != wallet_get_network()) {
     free(descriptor);
-    return BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH;
+    return BIP377_RESPONSE_ERROR_NETWORK_MISMATCH;
   }
   bool added =
       registry_add_from_string(alias, descriptor, STORAGE_FLASH, false);
   free(descriptor);
   *entry_out = added ? registry_find_by_id(alias) : NULL;
-  return *entry_out ? 0 : BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
+  return *entry_out ? 0 : BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED;
 }
 
 // Whose account the request's silent payment keys are
-static sp_account_t request_sp_account(const bipqr_sp_keys *sp) {
-  bool scan_by_path = sp->scan_kind == BIPQR_SCAN_PATH;
+static sp_account_t request_sp_account(const bip377_sp_keys *sp) {
+  bool scan_by_path = sp->scan_kind == BIP377_SCAN_PATH;
   return sp_account_classify(
       sp->fingerprint, sp->spend_path.ptr, sp->spend_path.len,
       scan_by_path ? sp->scan.path.ptr : NULL,
@@ -726,7 +678,7 @@ static sp_account_t request_sp_account(const bipqr_sp_keys *sp) {
 }
 
 // The scan key of an account whose scan key is not ours, else NULL
-static const unsigned char *scan_key_not_ours(const bipqr_sp_keys *sp,
+static const unsigned char *scan_key_not_ours(const bip377_sp_keys *sp,
                                               sp_account_t account) {
   return account == SP_ACCOUNT_FOREIGN_SCAN ? sp->scan.key : NULL;
 }
@@ -738,20 +690,20 @@ static bool sp_account_ok(sp_account_t account) {
   case SP_ACCOUNT_FOREIGN_SCAN:
     return true;
   case SP_ACCOUNT_OTHER_NETWORK:
-    show_error_response(BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH,
+    show_error_response(BIP377_RESPONSE_ERROR_NETWORK_MISMATCH,
                         "Silent payment account is for another network");
     return false;
   case SP_ACCOUNT_NOT_OURS:
-    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+    show_error_response(BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
                         "Not this device's silent payment account");
     return false;
   case SP_ACCOUNT_BAD_SCAN_KEY:
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Invalid scan key");
     return false;
   case SP_ACCOUNT_ERR_KEYS:
   default:
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Key failed");
     return false;
   }
 }
@@ -759,14 +711,15 @@ static bool sp_account_ok(sp_account_t account) {
 static void sp_register_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
   if (!confirmed) {
-    show_error_response(BIPQR_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    show_error_response(BIP377_RESPONSE_ERROR_USER_DECLINED, "Declined");
     return;
   }
-  const bipqr_register_descriptor *req = &ctx.request->body.register_descriptor;
-  const bipqr_sp_keys *sp = &req->descriptor->value.sp_keys;
+  const bip377_register_descriptor *req =
+      &ctx.request->body.register_descriptor;
+  const bip377_sp_keys *sp = &req->descriptor->value.sp_keys;
   if (!registry_add_sp_alias(req->descriptor_alias,
                              scan_key_not_ours(sp, request_sp_account(sp)))) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
                         "Storing the registration failed");
     return;
   }
@@ -776,8 +729,8 @@ static void sp_register_confirm_cb(bool confirmed, void *user_data) {
 // Registers the request's alias for our silent payment spend key with our
 // scan key or the one the request gives, so later requests may name the
 // account by its alias alone
-static void register_sp_account(const bipqr_register_descriptor *req) {
-  const bipqr_sp_keys *sp = &req->descriptor->value.sp_keys;
+static void register_sp_account(const bip377_register_descriptor *req) {
+  const bip377_sp_keys *sp = &req->descriptor->value.sp_keys;
   const char *alias = req->descriptor_alias;
   sp_account_t account = request_sp_account(sp);
   if (!sp_account_ok(account))
@@ -787,12 +740,12 @@ static void register_sp_account(const bipqr_register_descriptor *req) {
     return;
   }
   if (strlen(alias) >= REGISTRY_ID_MAX_LEN) {
-    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+    show_error_response(BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
                         "Alias too long");
     return;
   }
   if (registry_sp_alias_count() >= REGISTRY_MAX_ENTRIES) {
-    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+    show_error_response(BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
                         "No room for another silent payment account");
     return;
   }
@@ -806,16 +759,16 @@ static void register_sp_account(const bipqr_register_descriptor *req) {
 
 static void show_descriptor_error(uint8_t error) {
   switch (error) {
-  case BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS:
+  case BIP377_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS:
     show_error_response(error, "Unknown descriptor alias");
     break;
-  case BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH:
+  case BIP377_RESPONSE_ERROR_NETWORK_MISMATCH:
     show_error_response(error, "Descriptor network mismatch");
     break;
-  case BIPQR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM:
+  case BIP377_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM:
     show_error_response(error, "Descriptor form not taken here");
     break;
-  case BIPQR_RESPONSE_ERROR_INTERNAL:
+  case BIP377_RESPONSE_ERROR_INTERNAL:
     show_error_response(error, "Out of memory");
     break;
   default:
@@ -827,7 +780,7 @@ static void show_descriptor_error(uint8_t error) {
 // The address at `path`, the path under the descriptor: the position in its
 // <a;b> tuple when it has several paths, then the index when it is ranged
 static bool address_from_entry_path(const registry_entry_t *entry,
-                                    const bipqr_path *path, char **out) {
+                                    const bip377_path *path, char **out) {
   uint32_t features = 0;
   if (wally_descriptor_get_features(entry->desc, &features) != WALLY_OK)
     return false;
@@ -876,13 +829,13 @@ static uint8_t address_error(const char *given, const char *derived) {
                    wally_addr_segwit_to_bytes(given, "bcrt", 0, given_script,
                                               sizeof(given_script),
                                               &given_len) == WALLY_OK
-               ? BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH
-               : BIPQR_RESPONSE_ERROR_ADDRESS_MISMATCH;
+               ? BIP377_RESPONSE_ERROR_NETWORK_MISMATCH
+               : BIP377_RESPONSE_ERROR_ADDRESS_MISMATCH;
   bool same = address_to_spk(derived, testnet, derived_script,
                              sizeof(derived_script), &derived_len) &&
               given_len == derived_len &&
               memcmp(given_script, derived_script, given_len) == 0;
-  return same ? 0 : BIPQR_RESPONSE_ERROR_ADDRESS_MISMATCH;
+  return same ? 0 : BIP377_RESPONSE_ERROR_ADDRESS_MISMATCH;
 }
 
 static void verify_address_approve_enable_cb(lv_timer_t *timer) {
@@ -894,7 +847,7 @@ static void verify_address_approve_enable_cb(lv_timer_t *timer) {
 static void verify_address_done_cb(lv_event_t *e) {
   (void)e;
   destroy_verify_address_detail();
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
   response.body.address_uri.uri = pending_verified_uri;
   show_response(&response);
@@ -976,7 +929,7 @@ static void show_verified_address(char *address, const char *uri_prefix,
            caption);
   pending_verified_uri = malloc(uri_len);
   if (!pending_verified_uri) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Out of memory");
     return;
   }
   snprintf(pending_verified_uri, uri_len, "%s%s", uri_prefix, address);
@@ -989,7 +942,7 @@ static void show_verified_address(char *address, const char *uri_prefix,
 // reads it
 static void descriptor_address_caption(const char *alias,
                                        const registry_entry_t *entry,
-                                       const bipqr_path *path, char *out,
+                                       const bip377_path *path, char *out,
                                        size_t out_len) {
   bool multipath = entry->num_paths > 1;
   bool ranged = path->len > (multipath ? 1 : 0);
@@ -1016,7 +969,7 @@ static void descriptor_address_caption(const char *alias,
     snprintf(out, out_len, "%s", alias);
 }
 
-static void verify_descriptor_address(const bipqr_verify_address *req) {
+static void verify_descriptor_address(const bip377_verify_address *req) {
   const registry_entry_t *entry = NULL;
   uint8_t error =
       resolve_descriptor(req->descriptor_alias, req->descriptor, &entry);
@@ -1027,21 +980,21 @@ static void verify_descriptor_address(const bipqr_verify_address *req) {
   char *derived = NULL;
   if (!address_from_entry_path(entry, &req->derivation_path, &derived) ||
       !derived) {
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Path does not fit the descriptor");
     return;
   }
   char *address = strdup(derived);
   wally_free_string(derived);
   if (!address) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Out of memory");
     return;
   }
   uint8_t mismatch = req->address ? address_error(req->address, address) : 0;
   if (mismatch) {
     free(address);
     show_error_response(mismatch,
-                        mismatch == BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH
+                        mismatch == BIP377_RESPONSE_ERROR_NETWORK_MISMATCH
                             ? "Address is for another network"
                             : "Address mismatch");
     return;
@@ -1052,7 +1005,7 @@ static void verify_descriptor_address(const bipqr_verify_address *req) {
   show_verified_address(address, "bitcoin:", caption);
 }
 
-static void verify_sp_address_with(const bipqr_verify_address *req,
+static void verify_sp_address_with(const bip377_verify_address *req,
                                    const unsigned char *scan_secret,
                                    const unsigned char *spend_pubkey) {
   char *address = NULL;
@@ -1062,21 +1015,21 @@ static void verify_sp_address_with(const bipqr_verify_address *req,
   case SP_ADDRESS_OK:
     break;
   case SP_ADDRESS_ERR_LABEL:
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Label must be one step m >= 1");
     return;
   case SP_ADDRESS_ERR_KEY:
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Invalid scan key");
     return;
   case SP_ADDRESS_ERR_ALLOC:
   default:
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Address failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Address failed");
     return;
   }
   if (req->address && strcasecmp(req->address, address) != 0) {
     free(address);
-    show_error_response(BIPQR_RESPONSE_ERROR_ADDRESS_MISMATCH,
+    show_error_response(BIP377_RESPONSE_ERROR_ADDRESS_MISMATCH,
                         "Address mismatch");
     return;
   }
@@ -1099,16 +1052,16 @@ static bool sp_address_on_other_network(const char *address) {
 
 // The address of our spend key with our scan key, or with `scan_key` when
 // not NULL
-static void verify_own_sp_address(const bipqr_verify_address *req,
+static void verify_own_sp_address(const bip377_verify_address *req,
                                   const unsigned char *scan_key) {
   if (req->address && sp_address_on_other_network(req->address)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH,
+    show_error_response(BIP377_RESPONSE_ERROR_NETWORK_MISMATCH,
                         "Address is for another network");
     return;
   }
   struct sp_keys keys;
   if (!sp_account_keys_derive(wallet_is_testnet(), scan_key, &keys)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Key failed");
     return;
   }
   verify_sp_address_with(req, keys.scan_secret, keys.spend_pubkey);
@@ -1116,8 +1069,8 @@ static void verify_own_sp_address(const bipqr_verify_address *req,
 }
 
 // The spend key must be ours, the scan key ours or the one the request gives
-static void verify_sp_address(const bipqr_verify_address *req) {
-  const bipqr_sp_keys *sp = &req->descriptor->value.sp_keys;
+static void verify_sp_address(const bip377_verify_address *req) {
+  const bip377_sp_keys *sp = &req->descriptor->value.sp_keys;
   sp_account_t account = request_sp_account(sp);
   if (sp_account_ok(account))
     verify_own_sp_address(req, scan_key_not_ours(sp, account));
@@ -1126,13 +1079,13 @@ static void verify_sp_address(const bipqr_verify_address *req) {
 // A registered alias names what it was registered for, whatever the body
 static void handle_verify(void) {
   debug_log_event("bip_flow handle_verify");
-  const bipqr_verify_address *req = &ctx.request->body.verify_address;
+  const bip377_verify_address *req = &ctx.request->body.verify_address;
   if (req->proof.ptr) {
     show_foreign_proof_error();
     return;
   }
   bool sp_body =
-      req->descriptor && req->descriptor->tag == BIPQR_DESCRIPTOR_SP_KEYS;
+      req->descriptor && req->descriptor->tag == BIP377_DESCRIPTOR_SP_KEYS;
   if (registry_sp_alias_exists(req->descriptor_alias))
     verify_own_sp_address(req,
                           registry_sp_alias_scan_key(req->descriptor_alias));
@@ -1161,18 +1114,18 @@ static size_t signed_input_count(const struct wally_psbt *psbt) {
   return count;
 }
 
-static void free_signature_list(bipqr_signature *signatures, size_t len) {
+static void free_signature_list(bip377_signature *signatures, size_t len) {
   if (!signatures)
     return;
   for (size_t i = 0; i < len; i++) {
     switch (signatures[i].kind) {
-    case BIPQR_SIGNATURE_ECDSA:
+    case BIP377_SIGNATURE_ECDSA:
       free((void *)signatures[i].value.ecdsa.signature.ptr);
       break;
-    case BIPQR_SIGNATURE_TAP_KEY:
+    case BIP377_SIGNATURE_TAP_KEY:
       free((void *)signatures[i].value.tap_key.signature.ptr);
       break;
-    case BIPQR_SIGNATURE_TAP_SCRIPT:
+    case BIP377_SIGNATURE_TAP_SCRIPT:
       free((void *)signatures[i].value.tap_script.signature.ptr);
       break;
     default:
@@ -1183,7 +1136,7 @@ static void free_signature_list(bipqr_signature *signatures, size_t len) {
 }
 
 static bool copy_signature_bytes(const uint8_t *src, size_t len,
-                                 bipqr_bytes *out) {
+                                 bip377_bytes *out) {
   uint8_t *copy = malloc(len);
   if (!copy)
     return false;
@@ -1193,11 +1146,11 @@ static bool copy_signature_bytes(const uint8_t *src, size_t len,
   return true;
 }
 
-static bool append_signature(bipqr_signature **signatures, size_t *len,
-                             size_t *cap, const bipqr_signature *sig) {
+static bool append_signature(bip377_signature **signatures, size_t *len,
+                             size_t *cap, const bip377_signature *sig) {
   if (*len == *cap) {
     size_t new_cap = *cap ? *cap * 2 : 4;
-    bipqr_signature *new_signatures =
+    bip377_signature *new_signatures =
         realloc(*signatures, new_cap * sizeof(*new_signatures));
     if (!new_signatures)
       return false;
@@ -1208,24 +1161,24 @@ static bool append_signature(bipqr_signature **signatures, size_t *len,
   return true;
 }
 
-#define MUSIG_KEY_LEN (2 * BIPQR_PUBLIC_KEY_LEN)
-#define MUSIG_LEAF_KEY_LEN (MUSIG_KEY_LEN + BIPQR_TAP_LEAF_HASH_LEN)
+#define MUSIG_KEY_LEN (2 * BIP377_PUBLIC_KEY_LEN)
+#define MUSIG_LEAF_KEY_LEN (MUSIG_KEY_LEN + BIP377_TAP_LEAF_HASH_LEN)
 
 /* The BIP-373 key participant | aggregate [| leaf_hash] of a MuSig2 entry. */
 static void musig_entry_key(const struct wally_map_item *item,
                             uint8_t *participant, uint8_t *aggregate,
                             uint8_t *has_leaf_hash, uint8_t *leaf_hash) {
-  memcpy(participant, item->key, BIPQR_PUBLIC_KEY_LEN);
-  memcpy(aggregate, item->key + BIPQR_PUBLIC_KEY_LEN, BIPQR_PUBLIC_KEY_LEN);
+  memcpy(participant, item->key, BIP377_PUBLIC_KEY_LEN);
+  memcpy(aggregate, item->key + BIP377_PUBLIC_KEY_LEN, BIP377_PUBLIC_KEY_LEN);
   *has_leaf_hash = item->key_len == MUSIG_LEAF_KEY_LEN;
   if (*has_leaf_hash)
-    memcpy(leaf_hash, item->key + MUSIG_KEY_LEN, BIPQR_TAP_LEAF_HASH_LEN);
+    memcpy(leaf_hash, item->key + MUSIG_KEY_LEN, BIP377_TAP_LEAF_HASH_LEN);
 }
 
 /* A PSBT_IN_MUSIG2_PUB_NONCE entry. */
 static bool musig_pub_nonce_entry(const struct wally_map_item *item,
-                                  bipqr_signature *sig) {
-  bipqr_musig_pub_nonce *nonce = &sig->value.musig_pub_nonce;
+                                  bip377_signature *sig) {
+  bip377_musig_pub_nonce *nonce = &sig->value.musig_pub_nonce;
   if (item->value_len != sizeof(nonce->nonce))
     return false;
   musig_entry_key(item, nonce->participant, nonce->aggregate,
@@ -1236,8 +1189,8 @@ static bool musig_pub_nonce_entry(const struct wally_map_item *item,
 
 /* A PSBT_IN_MUSIG2_PARTIAL_SIG entry. */
 static bool musig_partial_sig_entry(const struct wally_map_item *item,
-                                    bipqr_signature *sig) {
-  bipqr_musig_partial_sig *partial_sig = &sig->value.musig_partial_sig;
+                                    bip377_signature *sig) {
+  bip377_musig_partial_sig *partial_sig = &sig->value.musig_partial_sig;
   if (item->value_len != sizeof(partial_sig->signature))
     return false;
   musig_entry_key(item, partial_sig->participant, partial_sig->aggregate,
@@ -1250,7 +1203,7 @@ static bool musig_partial_sig_entry(const struct wally_map_item *item,
 static bool append_musig_entries(const struct wally_psbt *psbt,
                                  size_t input_index,
                                  const struct wally_map *map, uint8_t kind,
-                                 bipqr_signature **signatures, size_t *len,
+                                 bip377_signature **signatures, size_t *len,
                                  size_t *cap) {
   for (size_t j = 0; j < map->num_items; j++) {
     const struct wally_map_item *item = &map->items[j];
@@ -1258,8 +1211,8 @@ static bool append_musig_entries(const struct wally_psbt *psbt,
          item->key_len != MUSIG_LEAF_KEY_LEN) ||
         !musig_psbt_is_own_participant(psbt, input_index, item->key))
       continue;
-    bipqr_signature sig = {.input_index = (uint32_t)input_index, .kind = kind};
-    bool filled = kind == BIPQR_SIGNATURE_MUSIG_PUB_NONCE
+    bip377_signature sig = {.input_index = (uint32_t)input_index, .kind = kind};
+    bool filled = kind == BIP377_SIGNATURE_MUSIG_PUB_NONCE
                       ? musig_pub_nonce_entry(item, &sig)
                       : musig_partial_sig_entry(item, &sig);
     if (!filled || !append_signature(signatures, len, cap, &sig))
@@ -1269,20 +1222,20 @@ static bool append_musig_entries(const struct wally_psbt *psbt,
 }
 
 static bool collect_signatures(const struct wally_psbt *psbt,
-                               bipqr_signature **signatures_out,
+                               bip377_signature **signatures_out,
                                size_t *len_out) {
-  bipqr_signature *signatures = NULL;
+  bip377_signature *signatures = NULL;
   size_t len = 0, cap = 0;
 
   for (size_t input_index = 0; input_index < psbt->num_inputs; input_index++) {
     const struct wally_psbt_input *input = &psbt->inputs[input_index];
     for (size_t j = 0; j < input->signatures.num_items; j++) {
       const struct wally_map_item *item = &input->signatures.items[j];
-      if (item->key_len != BIPQR_PUBLIC_KEY_LEN || !item->key || !item->value)
+      if (item->key_len != BIP377_PUBLIC_KEY_LEN || !item->key || !item->value)
         continue;
-      bipqr_signature sig = {.input_index = (uint32_t)input_index,
-                             .kind = BIPQR_SIGNATURE_ECDSA};
-      memcpy(sig.value.ecdsa.public_key, item->key, BIPQR_PUBLIC_KEY_LEN);
+      bip377_signature sig = {.input_index = (uint32_t)input_index,
+                              .kind = BIP377_SIGNATURE_ECDSA};
+      memcpy(sig.value.ecdsa.public_key, item->key, BIP377_PUBLIC_KEY_LEN);
       if (!copy_signature_bytes(item->value, item->value_len,
                                 &sig.value.ecdsa.signature) ||
           !append_signature(&signatures, &len, &cap, &sig)) {
@@ -1307,8 +1260,8 @@ static bool collect_signatures(const struct wally_psbt *psbt,
         free_signature_list(signatures, len);
         return false;
       }
-      bipqr_signature sig = {.input_index = (uint32_t)input_index,
-                             .kind = BIPQR_SIGNATURE_TAP_KEY};
+      bip377_signature sig = {.input_index = (uint32_t)input_index,
+                              .kind = BIP377_SIGNATURE_TAP_KEY};
       sig.value.tap_key.signature.ptr = tap_key_sig;
       sig.value.tap_key.signature.len = tap_key_sig_len;
       if (!append_signature(&signatures, &len, &cap, &sig)) {
@@ -1323,8 +1276,8 @@ static bool collect_signatures(const struct wally_psbt *psbt,
           &input->taproot_leaf_signatures.items[j];
       if (item->key_len != 64 || !item->key || !item->value)
         continue;
-      bipqr_signature sig = {.input_index = (uint32_t)input_index,
-                             .kind = BIPQR_SIGNATURE_TAP_SCRIPT};
+      bip377_signature sig = {.input_index = (uint32_t)input_index,
+                              .kind = BIP377_SIGNATURE_TAP_SCRIPT};
       memcpy(sig.value.tap_script.xonly_public_key, item->key, 32);
       memcpy(sig.value.tap_script.tap_leaf_hash, item->key + 32, 32);
       if (!copy_signature_bytes(item->value, item->value_len,
@@ -1337,10 +1290,10 @@ static bool collect_signatures(const struct wally_psbt *psbt,
     }
 
     if (!append_musig_entries(psbt, input_index, &input->musig2_pubnonces,
-                              BIPQR_SIGNATURE_MUSIG_PUB_NONCE, &signatures,
+                              BIP377_SIGNATURE_MUSIG_PUB_NONCE, &signatures,
                               &len, &cap) ||
         !append_musig_entries(psbt, input_index, &input->musig2_partial_sigs,
-                              BIPQR_SIGNATURE_MUSIG_PARTIAL_SIG, &signatures,
+                              BIP377_SIGNATURE_MUSIG_PARTIAL_SIG, &signatures,
                               &len, &cap)) {
       free_signature_list(signatures, len);
       return false;
@@ -1355,7 +1308,7 @@ static bool collect_signatures(const struct wally_psbt *psbt,
 // The ECDH shares and DLEQ proofs Kern contributed: global when it holds
 // every eligible input, else one per eligible input it holds
 static bool append_sp_shares(const struct wally_psbt *psbt,
-                             bipqr_signature **signatures, size_t *len,
+                             bip377_signature **signatures, size_t *len,
                              size_t *cap) {
   sp_share_t *shares = NULL;
   size_t count = 0;
@@ -1364,17 +1317,17 @@ static bool append_sp_shares(const struct wally_psbt *psbt,
   bool ok = true;
   for (size_t i = 0; ok && i < count; i++) {
     uint32_t input_index = (uint32_t)shares[i].input_index;
-    bipqr_signature share = {.input_index = input_index,
-                             .kind = BIPQR_SIGNATURE_SP_ECDH_SHARE};
+    bip377_signature share = {.input_index = input_index,
+                              .kind = BIP377_SIGNATURE_SP_ECDH_SHARE};
     share.value.sp_ecdh_share.global = shares[i].global;
     memcpy(share.value.sp_ecdh_share.scan_key, shares[i].scan, SP_PUBKEY_LEN);
     memcpy(share.value.sp_ecdh_share.share, shares[i].share, SP_PUBKEY_LEN);
-    bipqr_signature proof = {.input_index = input_index,
-                             .kind = BIPQR_SIGNATURE_SP_DLEQ_PROOF};
+    bip377_signature proof = {.input_index = input_index,
+                              .kind = BIP377_SIGNATURE_SP_DLEQ_PROOF};
     proof.value.sp_dleq_proof.global = shares[i].global;
     memcpy(proof.value.sp_dleq_proof.scan_key, shares[i].scan, SP_PUBKEY_LEN);
     memcpy(proof.value.sp_dleq_proof.proof, shares[i].proof,
-           BIPQR_DLEQ_PROOF_LEN);
+           BIP377_DLEQ_PROOF_LEN);
     ok = append_signature(signatures, len, cap, &share) &&
          append_signature(signatures, len, cap, &proof);
   }
@@ -1383,10 +1336,10 @@ static bool append_sp_shares(const struct wally_psbt *psbt,
 }
 
 static void answer_signatures(const struct wally_psbt *psbt) {
-  bipqr_signature *signatures = NULL;
+  bip377_signature *signatures = NULL;
   size_t len = 0;
   if (!collect_signatures(psbt, &signatures, &len)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
                         "Signature extraction failed");
     return;
   }
@@ -1395,19 +1348,19 @@ static void answer_signatures(const struct wally_psbt *psbt) {
   if (sp_psbt_has_outputs(psbt) &&
       !append_sp_shares(psbt, &signatures, &len, &cap)) {
     free_signature_list(signatures, len);
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
                         "Silent payment share extraction failed");
     return;
   }
   if (len == 0) {
     free_signature_list(signatures, len);
-    show_error_response(BIPQR_RESPONSE_ERROR_NOTHING_TO_SIGN,
+    show_error_response(BIP377_RESPONSE_ERROR_NOTHING_TO_SIGN,
                         "Nothing to sign");
     return;
   }
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
-  response.body.signed_body.kind = BIPQR_SIGN_RESPONSE_SIGNATURES;
+  response.body.signed_body.kind = BIP377_SIGN_RESPONSE_SIGNATURES;
   response.body.signed_body.value.signatures.ptr = signatures;
   response.body.signed_body.value.signatures.len = len;
   show_response_with_done(&response, return_from_signing_response);
@@ -1428,12 +1381,12 @@ static void answer_psbt(const struct wally_psbt *psbt) {
   if (trimmed)
     wally_psbt_free(trimmed);
   if (!encoded) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "PSBT encode failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "PSBT encode failed");
     return;
   }
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
-  response.body.signed_body.kind = BIPQR_SIGN_RESPONSE_PSBT;
+  response.body.signed_body.kind = BIP377_SIGN_RESPONSE_PSBT;
   response.body.signed_body.value.psbt.ptr = signed_bytes;
   response.body.signed_body.value.psbt.len = signed_len;
   show_response_with_done(&response, return_from_signing_response);
@@ -1443,7 +1396,7 @@ static void answer_psbt(const struct wally_psbt *psbt) {
 // An unknown WANT_KIND decodes as absent, so it gets the PSBT
 static void signed_psbt_cb(struct wally_psbt *psbt, void *user_data) {
   (void)user_data;
-  if (ctx.request->body.sign.want_kind == BIPQR_SIGN_RESPONSE_SIGNATURES)
+  if (ctx.request->body.sign.want_kind == BIP377_SIGN_RESPONSE_SIGNATURES)
     answer_signatures(psbt);
   else
     answer_psbt(psbt);
@@ -1452,25 +1405,25 @@ static void signed_psbt_cb(struct wally_psbt *psbt, void *user_data) {
 static uint8_t sign_failure_error(scan_psbt_failure_t failure) {
   switch (failure) {
   case SCAN_PSBT_DECLINED:
-    return BIPQR_RESPONSE_ERROR_USER_DECLINED;
+    return BIP377_RESPONSE_ERROR_USER_DECLINED;
   case SCAN_PSBT_INVALID:
-    return BIPQR_RESPONSE_ERROR_INVALID_PSBT;
+    return BIP377_RESPONSE_ERROR_INVALID_PSBT;
   case SCAN_PSBT_NOTHING_TO_SIGN:
-    return BIPQR_RESPONSE_ERROR_NOTHING_TO_SIGN;
+    return BIP377_RESPONSE_ERROR_NOTHING_TO_SIGN;
   case SCAN_PSBT_REFUSED:
-    return BIPQR_RESPONSE_ERROR_VENDOR;
+    return BIP377_RESPONSE_ERROR_VENDOR;
   case SCAN_PSBT_NETWORK_MISMATCH:
-    return BIPQR_RESPONSE_ERROR_NETWORK_MISMATCH;
+    return BIP377_RESPONSE_ERROR_NETWORK_MISMATCH;
   case SCAN_PSBT_INTERNAL:
   default:
-    return BIPQR_RESPONSE_ERROR_INTERNAL;
+    return BIP377_RESPONSE_ERROR_INTERNAL;
   }
 }
 
 static void sign_failed_cb(scan_psbt_failure_t failure, const char *message,
                            void *user_data) {
   (void)user_data;
-  bipqr_response response;
+  bip377_response response;
   fill_error_response(&response, sign_failure_error(failure), message);
   show_response_with_done(&response, return_from_signing_response);
 }
@@ -1488,13 +1441,13 @@ static sp_account_t sp_descriptor_account(const char *descriptor) {
 
 // True for an account of our spend key, whose scan key, when not ours, the
 // review then pairs with our spend key, else the error is answered
-static bool sign_sp_account_ok(const bipqr_sp_keys *sp) {
+static bool sign_sp_account_ok(const bip377_sp_keys *sp) {
   sp_account_t account = request_sp_account(sp);
   if (!sp_account_ok(account))
     return false;
   const unsigned char *scan_key = scan_key_not_ours(sp, account);
   if (scan_key && !registry_sp_name_scan_key(scan_key)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
+    show_error_response(BIP377_RESPONSE_ERROR_DESCRIPTOR_REGISTRATION_FAILED,
                         "Too many silent payment accounts");
     return false;
   }
@@ -1503,16 +1456,16 @@ static bool sign_sp_account_ok(const bipqr_sp_keys *sp) {
 
 // True when the inputs spending from `descriptor` can be signed, else the
 // error is answered
-static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
+static bool sign_descriptor_ok(const bip377_descriptor *descriptor) {
   if (descriptor->proof.ptr) {
     show_foreign_proof_error();
     return false;
   }
-  const bipqr_descriptor_body *body = descriptor->body;
+  const bip377_descriptor_body *body = descriptor->body;
   // A registered alias names what it was registered for, whatever the body
   if (registry_sp_alias_exists(descriptor->alias))
     return true;
-  if (body && body->tag == BIPQR_DESCRIPTOR_SP_KEYS &&
+  if (body && body->tag == BIP377_DESCRIPTOR_SP_KEYS &&
       !registry_find_by_id(descriptor->alias))
     return sign_sp_account_ok(&body->value.sp_keys);
   char *descriptor_str = request_descriptor_alloc(body);
@@ -1531,32 +1484,32 @@ static bool sign_descriptor_ok(const bipqr_descriptor *descriptor) {
 }
 
 /* A MuSig2 session or step refused before the user is asked. */
-static bool refuse_musig_request(const bipqr_sign *req) {
+static bool refuse_musig_request(const bip377_sign *req) {
   switch (musig_psbt_check_request(req->psbt.ptr, req->psbt.len,
                                    wallet_is_testnet())) {
   case MUSIG_PSBT_OK:
     return false;
   case MUSIG_PSBT_ERR_SESSION:
-    show_error_response(BIPQR_RESPONSE_ERROR_MUSIG_SESSION,
+    show_error_response(BIP377_RESPONSE_ERROR_MUSIG_SESSION,
                         "MuSig2 session missing, consumed or mismatched");
     return true;
   case MUSIG_PSBT_ERR_NOTHING:
-    show_error_response(BIPQR_RESPONSE_ERROR_NOTHING_TO_SIGN,
+    show_error_response(BIP377_RESPONSE_ERROR_NOTHING_TO_SIGN,
                         "Waiting for another participant's MuSig2 nonce");
     return true;
   case MUSIG_PSBT_ERR_INVALID:
-    show_error_response(BIPQR_RESPONSE_ERROR_INVALID_PSBT,
+    show_error_response(BIP377_RESPONSE_ERROR_INVALID_PSBT,
                         "Invalid MuSig2 fields");
     return true;
   case MUSIG_PSBT_ERR_INTERNAL:
   default:
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "MuSig2 check failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "MuSig2 check failed");
     return true;
   }
 }
 
 static void handle_sign(void) {
-  const bipqr_sign *req = &ctx.request->body.sign;
+  const bip377_sign *req = &ctx.request->body.sign;
   for (size_t i = 0; i < req->descriptors.len; i++) {
     if (!sign_descriptor_ok(&req->descriptors.ptr[i]))
       return;
@@ -1572,15 +1525,15 @@ static void handle_sign(void) {
 
 /* The optional DESCRIPTOR names a descriptor whose musig() has our key at the
  * request's path as a participant. */
-static bool prepare_descriptor_ok(const bipqr_prepare_nonces *req) {
-  const bipqr_descriptor_body *body = req->descriptor->body;
-  if (body && body->tag == BIPQR_DESCRIPTOR_SP_KEYS) {
-    show_descriptor_error(BIPQR_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM);
+static bool prepare_descriptor_ok(const bip377_prepare_nonces *req) {
+  const bip377_descriptor_body *body = req->descriptor->body;
+  if (body && body->tag == BIP377_DESCRIPTOR_SP_KEYS) {
+    show_descriptor_error(BIP377_RESPONSE_ERROR_UNSUPPORTED_DESCRIPTOR_FORM);
     return false;
   }
   // Our silent payment account holds no MuSig2 key
   if (registry_sp_alias_exists(req->descriptor->alias)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Not a MuSig2 participant key of the descriptor");
     return false;
   }
@@ -1593,7 +1546,7 @@ static bool prepare_descriptor_ok(const bipqr_prepare_nonces *req) {
   }
   if (!musig_psbt_is_participant_path(entry->desc, req->derivation_path.ptr,
                                       req->derivation_path.len)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Not a MuSig2 participant key of the descriptor");
     return false;
   }
@@ -1603,23 +1556,24 @@ static bool prepare_descriptor_ok(const bipqr_prepare_nonces *req) {
 static void show_issue_error(nonce_cache_result_t result) {
   switch (result) {
   case NONCE_CACHE_ERR_SESSION:
-    show_error_response(BIPQR_RESPONSE_ERROR_MUSIG_SESSION,
+    show_error_response(BIP377_RESPONSE_ERROR_MUSIG_SESSION,
                         "Nonce session missing or mismatched");
     break;
   case NONCE_CACHE_ERR_INVALID:
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Invalid nonce request");
     break;
   case NONCE_CACHE_OK:
   case NONCE_CACHE_ERR_INTERNAL:
   default:
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Nonce issuance failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
+                        "Nonce issuance failed");
     break;
   }
 }
 
 static void handle_prepare_nonces(void) {
-  const bipqr_prepare_nonces *req = &ctx.request->body.prepare_nonces;
+  const bip377_prepare_nonces *req = &ctx.request->body.prepare_nonces;
   if (req->descriptor && !prepare_descriptor_ok(req))
     return;
   bnc_issuance issuance = {
@@ -1633,15 +1587,15 @@ static void handle_prepare_nonces(void) {
 
   /* The codec rejects an empty input count and a reversed range */
   size_t count = (size_t)(issuance.end - issuance.start) + 1;
-  if (count > SIZE_MAX / sizeof(bipqr_pub_nonce) / issuance.inputs) {
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+  if (count > SIZE_MAX / sizeof(bip377_pub_nonce) / issuance.inputs) {
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Too many nonces");
     return;
   }
   count *= issuance.inputs;
-  bipqr_pub_nonce *nonces = calloc(count, sizeof(*nonces));
+  bip377_pub_nonce *nonces = calloc(count, sizeof(*nonces));
   if (!nonces) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Out of memory");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Out of memory");
     return;
   }
   nonce_cache_issued_t issued;
@@ -1655,9 +1609,9 @@ static void handle_prepare_nonces(void) {
     return;
   }
 
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
-  bipqr_nonces_prepared *prepared = &response.body.nonces_prepared;
+  bip377_nonces_prepared *prepared = &response.body.nonces_prepared;
   prepared->has_session = issued.new_session;
   memcpy(prepared->session_id, issued.session_id, sizeof(prepared->session_id));
   memcpy(prepared->session_ref, issued.session_ref,
@@ -1671,17 +1625,17 @@ static void handle_prepare_nonces(void) {
 static void unregister_confirm_cb(bool confirmed, void *user_data) {
   (void)user_data;
   if (!confirmed) {
-    show_error_response(BIPQR_RESPONSE_ERROR_USER_DECLINED, "Declined");
+    show_error_response(BIP377_RESPONSE_ERROR_USER_DECLINED, "Declined");
     return;
   }
   const char *alias = ctx.request->body.unregister_descriptor.descriptor_alias;
   if (!registry_unregister(alias)) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
                         "Removing the registration failed");
     return;
   }
   debug_logf("bip_flow unregistered alias=%s", alias);
-  bipqr_response response;
+  bip377_response response;
   fill_response_header(&response);
   response.body.unregistered.descriptor_alias = alias;
   show_response(&response);
@@ -1696,7 +1650,7 @@ static void confirm_sp_unregister(const char *alias) {
   sp_account_key_path(wallet_is_testnet(), SP_SPEND_BRANCH, spend_path);
   if (!key_get_fingerprint_hex(fingerprint) ||
       !bip32_path_format(spend_path, SP_PATH_DEPTH, spend, sizeof(spend))) {
-    show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL, "Key failed");
+    show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Key failed");
     return;
   }
   char msg[192];
@@ -1717,41 +1671,41 @@ static void handle_unregister(void) {
   const registry_entry_t *entry = registry_find_by_id(alias);
   if (entry) {
     if (!descriptor_loader_confirm_unregister(entry, unregister_confirm_cb))
-      show_error_response(BIPQR_RESPONSE_ERROR_INTERNAL,
+      show_error_response(BIP377_RESPONSE_ERROR_INTERNAL,
                           "Descriptor review failed");
   } else if (registry_sp_alias_exists(alias)) {
     confirm_sp_unregister(alias);
   } else {
-    show_descriptor_error(BIPQR_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS);
+    show_descriptor_error(BIP377_RESPONSE_ERROR_UNKNOWN_DESCRIPTOR_ALIAS);
   }
 }
 
 static void dispatch_request(void) {
   debug_logf("bip_flow dispatch message_type=%d", ctx.request->message_type);
   switch (ctx.request->message_type) {
-  case BIPQR_MESSAGE_GET_INFO:
+  case BIP377_MESSAGE_GET_INFO:
     handle_get_info();
     break;
-  case BIPQR_MESSAGE_GET_KEYS:
+  case BIP377_MESSAGE_GET_KEYS:
     handle_get_keys();
     break;
-  case BIPQR_MESSAGE_REGISTER_DESCRIPTOR:
+  case BIP377_MESSAGE_REGISTER_DESCRIPTOR:
     handle_register();
     break;
-  case BIPQR_MESSAGE_ADDRESS_VERIFICATION:
+  case BIP377_MESSAGE_ADDRESS_VERIFICATION:
     handle_verify();
     break;
-  case BIPQR_MESSAGE_SIGNING:
+  case BIP377_MESSAGE_SIGNING:
     handle_sign();
     break;
-  case BIPQR_MESSAGE_NONCE_PREPARATION:
+  case BIP377_MESSAGE_NONCE_PREPARATION:
     handle_prepare_nonces();
     break;
-  case BIPQR_MESSAGE_UNREGISTER_DESCRIPTOR:
+  case BIP377_MESSAGE_UNREGISTER_DESCRIPTOR:
     handle_unregister();
     break;
   default:
-    show_error_response(BIPQR_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
+    show_error_response(BIP377_RESPONSE_ERROR_UNSUPPORTED_OPERATION,
                         "Unsupported request");
     break;
   }
@@ -1766,13 +1720,13 @@ void bip_flow_start(lv_obj_t *parent, const uint8_t *data, size_t len,
   clear_pending_verify();
   if (!bip_flow_read_request_header(data, len, &ctx.header)) {
     debug_log_event("bip_flow unreadable_request");
-    show_error_response(BIPQR_RESPONSE_ERROR_MALFORMED_REQUEST,
+    show_error_response(BIP377_RESPONSE_ERROR_MALFORMED_REQUEST,
                         "Unreadable request");
     return;
   }
   const char *err = NULL;
-  int32_t rc = bipqr_request_decode(data, len, &ctx.request, &err);
-  if (rc != BIPQR_OK || !ctx.request) {
+  int32_t rc = bip377_request_decode(data, len, &ctx.request, &err);
+  if (rc != BIP377_OK || !ctx.request) {
     debug_logf("bip_flow decode_error rc=%d err=%s", (int)rc, err ? err : "");
     cleanup_request();
     show_error_response(bip_flow_decode_error(&ctx.header, rc),
