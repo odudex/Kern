@@ -190,6 +190,11 @@ static void test_fingerprint_and_xpubs(void) {
   check("root path yields the master xpub",
         key_get_xpub("m", &xpub) && xpub && strcmp(xpub, MASTER_XPUB) == 0);
   wally_free_string(xpub);
+  xpub = NULL;
+  check("components at depth zero yield the master xpub",
+        key_get_xpub_components(NULL, 0, &xpub) && xpub &&
+            strcmp(xpub, MASTER_XPUB) == 0);
+  wally_free_string(xpub);
 
   check("malformed path rejected",
         !key_get_xpub("m/84'/x/0'", &xpub) && !key_get_xpub("m//0", &xpub));

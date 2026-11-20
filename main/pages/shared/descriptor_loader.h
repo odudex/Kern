@@ -2,6 +2,7 @@
 #define DESCRIPTOR_LOADER_H
 
 #include "../../core/descriptor_validator.h"
+#include "../../core/registry.h"
 #include <lvgl.h>
 #include <stdbool.h>
 
@@ -40,6 +41,16 @@ void descriptor_loader_process_string(const char *descriptor_str,
                                       void *user_data);
 
 /**
+ * Process a descriptor with the normal warning and descriptor-info review UI,
+ * but register it under a caller-supplied id/location instead of prompting.
+ * The exact text is registered: no BlueWallet conversion and no derivation
+ * suffix appended.
+ */
+void descriptor_loader_process_string_with_id(
+    const char *descriptor_str, const char *id, storage_location_t loc,
+    validation_complete_cb validation_cb, void *user_data);
+
+/**
  * Watch-only (keyless) variant of process_string: normalize, infer the network
  * from the descriptor, enter watch-only mode, and validate/load without a key.
  * Reuses the same "Load?" dialog. validation_cb receives VALIDATION_PARSE_ERROR
@@ -56,6 +67,15 @@ void descriptor_loader_process_string_watch_only(
  * for a name). done_cb runs once the user is through, whatever they chose.
  */
 void descriptor_loader_show_loaded_menu(void (*done_cb)(void));
+
+/**
+ * Ask whether to unregister `entry`: its alias with the review of its
+ * descriptor it was loaded with. False when the review cannot be built;
+ * proceed is then never called.
+ */
+KERN_WARN_UNUSED_RESULT bool descriptor_loader_confirm_unregister(
+    const registry_entry_t *entry,
+    void (*proceed)(bool confirmed, void *user_data));
 
 /**
  * Show a source selection menu for loading descriptors.
