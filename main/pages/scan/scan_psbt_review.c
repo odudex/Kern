@@ -501,7 +501,8 @@ static bool output_sp_address(size_t output_index, char **out) {
   *out = NULL;
   if (!sp_output_keys(&scan_ctx.psbt->outputs[output_index], scan, spend))
     return true;
-  return sp_address_alloc(scan, spend, scan_ctx.is_testnet, out);
+  return sp_address_alloc(scan, spend, sp_address_hrp(scan_ctx.is_testnet),
+                          out);
 }
 
 static bool review_data_collect(review_data_t *d, const psbt_owners_t *owners) {

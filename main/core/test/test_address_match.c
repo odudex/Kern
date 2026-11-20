@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <wally_address.h>
@@ -205,6 +206,72 @@ static void test_single_path_sweeps_receive_only(void) {
     PASS();
 }
 
+/* BIP173 and BIP350 testnet vectors, and their bcrt forms: the same witness
+ * program re-encoded with the reference bech32 implementation */
+static const char TESTNET_P2WSH[] =
+    "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7";
+static const char REGTEST_P2WSH[] =
+    "bcrt1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qzf4jry";
+static const char TESTNET_P2TR[] =
+    "tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c";
+static const char REGTEST_P2TR[] =
+    "bcrt1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesyga46z";
+
+static void expect_regtest_form(const char *name, const char *testnet,
+                                const char *regtest) {
+  char *out = NULL;
+  TEST(name);
+  if (address_match_regtest_alloc(testnet, &out) && strcmp(out, regtest) == 0)
+    PASS();
+  else
+    FAIL(out ? out : "no regtest address");
+  free(out);
+}
+
+static void test_regtest_forms(void) {
+  expect_regtest_form("a testnet P2WSH address re-encodes under bcrt",
+                      TESTNET_P2WSH, REGTEST_P2WSH);
+  expect_regtest_form("a testnet P2TR address re-encodes under bcrt (bech32m)",
+                      TESTNET_P2TR, REGTEST_P2TR);
+
+  char *out = NULL;
+  TEST("a mainnet or base58 address has no regtest form");
+  if (!address_match_regtest_alloc("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                                   &out) &&
+      !address_match_regtest_alloc("mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn",
+                                   &out) &&
+      out == NULL)
+    PASS();
+  else
+    FAIL("regtest form of a non testnet segwit address");
+  free(out);
+}
+
+static void test_regtest_decode(void) {
+  uint8_t regtest[ADDRESS_MATCH_SPK_MAX], testnet[ADDRESS_MATCH_SPK_MAX];
+  size_t regtest_len = 0, testnet_len = 0;
+
+  TEST("a bcrt address decodes to its testnet twin's scriptPubKey");
+  if (address_match_decode_regtest(REGTEST_P2TR, regtest, sizeof(regtest),
+                                   &regtest_len) &&
+      address_match_decode(TESTNET_P2TR, true, testnet, sizeof(testnet),
+                           &testnet_len) &&
+      regtest_len == testnet_len && memcmp(regtest, testnet, regtest_len) == 0)
+    PASS();
+  else
+    FAIL("scriptPubKeys differ");
+
+  TEST("only a bcrt address decodes as regtest");
+  if (!address_match_decode_regtest(TESTNET_P2TR, regtest, sizeof(regtest),
+                                    &regtest_len) &&
+      !address_match_decode_regtest(
+          "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", regtest,
+          sizeof(regtest), &regtest_len))
+    PASS();
+  else
+    FAIL("a non regtest address decoded");
+}
+
 int main(void) {
   /* The host libwally hashes through PSA, as the device does, which needs
    * wally_init. */
@@ -224,6 +291,8 @@ int main(void) {
   test_wrong_network_rejected();
   test_descriptor_base58_case_variant();
   test_single_path_sweeps_receive_only();
+  test_regtest_forms();
+  test_regtest_decode();
 
   key_unload();
 

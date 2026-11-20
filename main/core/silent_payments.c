@@ -197,18 +197,21 @@ bool sp_descriptor_is_ours(const char *descriptor, bool is_testnet) {
   return same;
 }
 
+const char *sp_address_hrp(bool is_testnet) {
+  return is_testnet ? SP_HRP_TESTNET : SP_HRP_MAINNET;
+}
+
 bool sp_address_alloc(const unsigned char *scan_pubkey,
-                      const unsigned char *spend_pubkey, bool is_testnet,
+                      const unsigned char *spend_pubkey, const char *hrp,
                       char **out) {
   unsigned char payload[2 * SP_PUBKEY_LEN];
   char address[KERN_BECH32M_MAX_LEN + 1];
 
-  if (!scan_pubkey || !spend_pubkey || !out)
+  if (!scan_pubkey || !spend_pubkey || !hrp || !out)
     return false;
   memcpy(payload, scan_pubkey, SP_PUBKEY_LEN);
   memcpy(payload + SP_PUBKEY_LEN, spend_pubkey, SP_PUBKEY_LEN);
-  if (kern_bech32m_encode(is_testnet ? "tsp" : "sp", SP_VERSION, payload,
-                          sizeof(payload), address,
+  if (kern_bech32m_encode(hrp, SP_VERSION, payload, sizeof(payload), address,
                           sizeof(address)) != WALLY_OK)
     return false;
   *out = strdup(address);
@@ -264,7 +267,7 @@ sp_address_result_t sp_account_address_alloc(const unsigned char *scan_secret,
                                              const unsigned char *spend_pubkey,
                                              const uint32_t *label_path,
                                              size_t label_path_len,
-                                             bool is_testnet, char **out) {
+                                             const char *hrp, char **out) {
   secp256k1_pubkey scan_point, spend_point;
   unsigned char scan_pubkey[SP_PUBKEY_LEN], spend[SP_PUBKEY_LEN];
 
@@ -282,7 +285,6 @@ sp_address_result_t sp_account_address_alloc(const unsigned char *scan_secret,
   else if (!sp_labeled_spend_pubkey(scan_secret, spend_pubkey, label_path[0],
                                     spend))
     return SP_ADDRESS_ERR_KEY;
-  return sp_address_alloc(scan_pubkey, spend, is_testnet, out)
-             ? SP_ADDRESS_OK
-             : SP_ADDRESS_ERR_ALLOC;
+  return sp_address_alloc(scan_pubkey, spend, hrp, out) ? SP_ADDRESS_OK
+                                                        : SP_ADDRESS_ERR_ALLOC;
 }

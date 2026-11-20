@@ -23,6 +23,19 @@ KERN_WARN_UNUSED_RESULT bool address_match_decode(const char *address,
                                                   size_t spk_cap,
                                                   size_t *spk_len);
 
+/* Decode a segwit regtest address (bcrt HRP) into the scriptPubKey it pays.
+ * Legacy regtest addresses are testnet ones, which address_match_decode
+ * reads. */
+KERN_WARN_UNUSED_RESULT bool address_match_decode_regtest(const char *address,
+                                                          uint8_t *spk,
+                                                          size_t spk_cap,
+                                                          size_t *spk_len);
+
+/* The regtest form of segwit testnet `address`: the same scriptPubKey under
+ * the bcrt HRP. On success *out must be freed with free(). */
+KERN_WARN_UNUSED_RESULT bool address_match_regtest_alloc(const char *address,
+                                                         char **out);
+
 typedef struct {
   uint32_t chain; /* 0 receive, 1 change */
   uint32_t index;

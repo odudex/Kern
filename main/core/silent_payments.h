@@ -13,6 +13,10 @@
 // BIP352 reserves label m = 0 for change
 #define SP_CHANGE_LABEL 0
 #define SP_PATH_DEPTH 5
+// BIP352 address HRPs: testnet and signet share tsp
+#define SP_HRP_MAINNET "sp"
+#define SP_HRP_TESTNET "tsp"
+#define SP_HRP_REGTEST "sprt"
 
 // BIP352 account keys of the loaded seed, account 0'.
 // SENSITIVE: wipe with sp_keys_wipe() once used.
@@ -75,11 +79,14 @@ bool sp_descriptor_is_sp(const char *descriptor);
 // sp_descriptor_alloc() builds, its checksum aside.
 bool sp_descriptor_is_ours(const char *descriptor, bool is_testnet);
 
-// The sp1/tsp1 address of a scan and spend public key pair.
+// The HRP of our network's silent payment addresses, sp or tsp.
+const char *sp_address_hrp(bool is_testnet);
+
+// The address of a scan and spend public key pair under `hrp` (SP_HRP_*).
 // On success *out must be freed with free().
 KERN_WARN_UNUSED_RESULT bool sp_address_alloc(const unsigned char *scan_pubkey,
                                               const unsigned char *spend_pubkey,
-                                              bool is_testnet, char **out);
+                                              const char *hrp, char **out);
 
 // The spend public key labelled with m: spend_pubkey + hash(scan_secret || m)*G
 // (BIP352 labels).
@@ -97,11 +104,12 @@ typedef enum {
 
 // The address of the account of `scan_secret` and `spend_pubkey` at
 // `label_path`: empty for the base address, one step m for the address
-// labelled m. Label 0 is change, so it is refused.
+// labelled m, encoded under `hrp` (SP_HRP_*). Label 0 is change, so it is
+// refused.
 // On SP_ADDRESS_OK *out must be freed with free().
 KERN_WARN_UNUSED_RESULT sp_address_result_t sp_account_address_alloc(
     const unsigned char *scan_secret, const unsigned char *spend_pubkey,
-    const uint32_t *label_path, size_t label_path_len, bool is_testnet,
+    const uint32_t *label_path, size_t label_path_len, const char *hrp,
     char **out);
 
 #endif // SILENT_PAYMENTS_H

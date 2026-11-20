@@ -1,6 +1,7 @@
 #include "bip_flow.h"
 
 #include "../../components/bbqr/src/bbqr.h"
+#include "../../core/address_match.h"
 #include "../../core/bip32_path.h"
 #include "../../core/debug_log.h"
 #include "../../core/key.h"
@@ -247,10 +248,10 @@ static void handle_get_info(void) {
     show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Storage failed");
     return;
   }
-  // Coin 1' covers testnet and signet; no regtest, Kern only encodes tb
-  // addresses
-  info->networks =
-      BIP377_NETWORK_MAINNET | BIP377_NETWORK_TESTNET | BIP377_NETWORK_SIGNET;
+  // Coin 1' covers testnet, signet and regtest: on testnet, an address the
+  // request gives on regtest is shown on regtest
+  info->networks = BIP377_NETWORK_MAINNET | BIP377_NETWORK_TESTNET |
+                   BIP377_NETWORK_SIGNET | BIP377_NETWORK_REGTEST;
   info->max_message = QR_PARSER_MAX_STORED_BYTES;
   info->max_alias = REGISTRY_ID_MAX_LEN - 1;
   if (info->state == BIP377_STATE_READY) {
@@ -813,22 +814,25 @@ static bool address_to_spk(const char *address, bool is_testnet,
                                        script, script_len, written) == WALLY_OK;
 }
 
-// 0 when `given` pays the script of `derived` on the wallet network, else the
-// error to answer: Kern signs for the other network on another setting and
-// never for regtest
+// 0 when `given` pays the script of `derived` on the wallet network, regtest
+// included on testnet, else the error to answer: Kern signs for the other
+// network on another setting
 static uint8_t address_error(const char *given, const char *derived) {
   bool testnet = wallet_is_testnet();
   unsigned char given_script[128];
   unsigned char derived_script[128];
   size_t given_len = 0;
   size_t derived_len = 0;
-  if (!address_to_spk(given, testnet, given_script, sizeof(given_script),
-                      &given_len))
+  bool readable =
+      address_to_spk(given, testnet, given_script, sizeof(given_script),
+                     &given_len) ||
+      (testnet && address_match_decode_regtest(
+                      given, given_script, sizeof(given_script), &given_len));
+  if (!readable)
     return address_to_spk(given, !testnet, given_script, sizeof(given_script),
                           &given_len) ||
-                   wally_addr_segwit_to_bytes(given, "bcrt", 0, given_script,
-                                              sizeof(given_script),
-                                              &given_len) == WALLY_OK
+                   address_match_decode_regtest(
+                       given, given_script, sizeof(given_script), &given_len)
                ? BIP377_RESPONSE_ERROR_NETWORK_MISMATCH
                : BIP377_RESPONSE_ERROR_ADDRESS_MISMATCH;
   bool same = address_to_spk(derived, testnet, derived_script,
@@ -999,10 +1003,37 @@ static void verify_descriptor_address(const bip377_verify_address *req) {
                             : "Address mismatch");
     return;
   }
+  // A regtest address given on testnet is shown on regtest
+  unsigned char script[ADDRESS_MATCH_SPK_MAX];
+  size_t script_len = 0;
+  if (req->address && address_match_decode_regtest(
+                          req->address, script, sizeof(script), &script_len)) {
+    char *regtest = NULL;
+    bool ok = address_match_regtest_alloc(address, &regtest);
+    free(address);
+    if (!ok) {
+      show_error_response(BIP377_RESPONSE_ERROR_INTERNAL, "Address failed");
+      return;
+    }
+    address = regtest;
+  }
   char caption[sizeof(pending_verify_caption)];
   descriptor_address_caption(req->descriptor_alias, entry,
                              &req->derivation_path, caption, sizeof(caption));
   show_verified_address(address, "bitcoin:", caption);
+}
+
+static bool is_sp_regtest_address(const char *address) {
+  return strncasecmp(address, SP_HRP_REGTEST "1",
+                     sizeof(SP_HRP_REGTEST "1") - 1) == 0;
+}
+
+// The silent payment HRP to show: regtest's when the request gives a regtest
+// address, which only passes on testnet
+static const char *sp_request_hrp(const bip377_verify_address *req) {
+  if (req->address && is_sp_regtest_address(req->address))
+    return SP_HRP_REGTEST;
+  return sp_address_hrp(wallet_is_testnet());
 }
 
 static void verify_sp_address_with(const bip377_verify_address *req,
@@ -1011,7 +1042,7 @@ static void verify_sp_address_with(const bip377_verify_address *req,
   char *address = NULL;
   switch (sp_account_address_alloc(
       scan_secret, spend_pubkey, req->derivation_path.ptr,
-      req->derivation_path.len, wallet_is_testnet(), &address)) {
+      req->derivation_path.len, sp_request_hrp(req), &address)) {
   case SP_ADDRESS_OK:
     break;
   case SP_ADDRESS_ERR_LABEL:
@@ -1043,11 +1074,12 @@ static void verify_sp_address_with(const bip377_verify_address *req,
   show_verified_address(address, "bitcoin:?sp=", caption);
 }
 
-// An address with the HRP of the other network or of regtest
+// An address with the HRP of the other network, or of regtest on mainnet
 static bool sp_address_on_other_network(const char *address) {
-  const char *other = wallet_is_testnet() ? "sp1" : "tsp1";
+  bool testnet = wallet_is_testnet();
+  const char *other = testnet ? SP_HRP_MAINNET "1" : SP_HRP_TESTNET "1";
   return strncasecmp(address, other, strlen(other)) == 0 ||
-         strncasecmp(address, "sprt1", strlen("sprt1")) == 0;
+         (!testnet && is_sp_regtest_address(address));
 }
 
 // The address of our spend key with our scan key, or with `scan_key` when

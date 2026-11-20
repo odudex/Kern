@@ -1012,8 +1012,8 @@ static bool sp_alias_address_is(const char *alias, uint32_t m,
   bool ok =
       registry_sp_alias_exists(alias) &&
       sp_account_keys_derive(true, registry_sp_alias_scan_key(alias), &keys) &&
-      sp_account_address_alloc(keys.scan_secret, keys.spend_pubkey, &m, 1, true,
-                               &address) == SP_ADDRESS_OK &&
+      sp_account_address_alloc(keys.scan_secret, keys.spend_pubkey, &m, 1,
+                               SP_HRP_TESTNET, &address) == SP_ADDRESS_OK &&
       strcmp(address, expected) == 0;
   sp_keys_wipe(&keys);
   free(address);

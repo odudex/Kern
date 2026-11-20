@@ -1,6 +1,7 @@
 #include "address_match.h"
 #include "descriptor_branch.h"
 #include "psbt_internal.h"
+#include <stdlib.h>
 #include <string.h>
 #include <wally_address.h>
 #include <wally_core.h>
@@ -22,6 +23,38 @@ bool address_match_decode(const char *address, bool is_testnet, uint8_t *spk,
     return false;
   *spk_len = written;
   return true;
+}
+
+#define REGTEST_HRP "bcrt"
+
+bool address_match_decode_regtest(const char *address, uint8_t *spk,
+                                  size_t spk_cap, size_t *spk_len) {
+  size_t written = 0;
+  if (!address || !spk || !spk_len ||
+      wally_addr_segwit_to_bytes(address, REGTEST_HRP, 0, spk, spk_cap,
+                                 &written) != WALLY_OK ||
+      written == 0 || written > spk_cap)
+    return false;
+  *spk_len = written;
+  return true;
+}
+
+bool address_match_regtest_alloc(const char *address, char **out) {
+  uint8_t spk[ADDRESS_MATCH_SPK_MAX];
+  size_t len = 0;
+  char *encoded = NULL;
+  if (!out)
+    return false;
+  *out = NULL;
+  if (!address ||
+      wally_addr_segwit_to_bytes(address, "tb", 0, spk, sizeof(spk), &len) !=
+          WALLY_OK ||
+      wally_addr_segwit_from_bytes(spk, len, REGTEST_HRP, 0, &encoded) !=
+          WALLY_OK)
+    return false;
+  *out = strdup(encoded);
+  wally_free_string(encoded);
+  return *out != NULL;
 }
 
 static bool spk_equal(const uint8_t *a, size_t a_len, const uint8_t *b,

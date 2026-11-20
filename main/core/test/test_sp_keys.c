@@ -70,6 +70,11 @@ static const char VECTOR_LABEL_1001337_ADDRESS[] =
 static const char VECTOR_TESTNET_LABEL_1_ADDRESS[] =
     "tsp1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqaxww2fnhrx05c"
     "ghth75n0qcj59e3e2anscr0q9wyknjxtxycg07y9weewf";
+/* VECTOR_TESTNET_LABEL_1_ADDRESS re-encoded under sprt with the reference
+ * bech32m implementation */
+static const char VECTOR_REGTEST_LABEL_1_ADDRESS[] =
+    "sprt1qqgste7k9hx0qftg6qmwlkqtwuy6cycyavzmzj85c6qdfhjdpdjtdgqaxww2fnhrx05c"
+    "ghth75n0qcj59e3e2anscr0q9wyknjxtxycg07yhdda0m";
 static const char VECTOR_LABEL_1_SPEND_PUBKEY[] =
     "03a6739499dc667d308baefea4de0c4a85cc72aece181bc05712d3919662610ff1";
 
@@ -112,7 +117,7 @@ static void test_address(void) {
   TEST("sp_address_alloc builds the BIP352 vector address");
   if (hex_to(VECTOR_SCAN_PUBKEY, scan, sizeof(scan)) &&
       hex_to(VECTOR_SPEND_PUBKEY, spend, sizeof(spend)) &&
-      sp_address_alloc(scan, spend, false, &address) &&
+      sp_address_alloc(scan, spend, SP_HRP_MAINNET, &address) &&
       strcmp(address, VECTOR_ADDRESS) == 0)
     PASS();
   else
@@ -121,14 +126,14 @@ static void test_address(void) {
 }
 
 static void expect_account_address(const char *name, const uint32_t *label,
-                                   size_t label_len, bool is_testnet,
+                                   size_t label_len, const char *hrp,
                                    const char *expected) {
   unsigned char scan_secret[SP_SECRET_LEN], spend[SP_PUBKEY_LEN];
   char *address = NULL;
   TEST(name);
   if (hex_to(VECTOR_SCAN_SECRET, scan_secret, sizeof(scan_secret)) &&
       hex_to(VECTOR_SPEND_PUBKEY, spend, sizeof(spend)) &&
-      sp_account_address_alloc(scan_secret, spend, label, label_len, is_testnet,
+      sp_account_address_alloc(scan_secret, spend, label, label_len, hrp,
                                &address) == SP_ADDRESS_OK &&
       strcmp(address, expected) == 0)
     PASS();
@@ -147,8 +152,8 @@ static void expect_account_address_error(const char *name,
   TEST(name);
   if (hex_to(scan_secret_hex, scan_secret, sizeof(scan_secret)) &&
       hex_to(VECTOR_SPEND_PUBKEY, spend, sizeof(spend)) &&
-      sp_account_address_alloc(scan_secret, spend, label, label_len, false,
-                               &address) == expected &&
+      sp_account_address_alloc(scan_secret, spend, label, label_len,
+                               SP_HRP_MAINNET, &address) == expected &&
       !address)
     PASS();
   else
@@ -166,15 +171,20 @@ static void test_account_address(void) {
   unsigned char labeled[SP_PUBKEY_LEN], expected[SP_PUBKEY_LEN];
 
   expect_account_address("sp_account_address_alloc gives the base address",
-                         NULL, 0, false, VECTOR_ADDRESS);
+                         NULL, 0, SP_HRP_MAINNET, VECTOR_ADDRESS);
   expect_account_address("sp_account_address_alloc labels with m = 1", label_1,
-                         1, false, VECTOR_LABEL_1_ADDRESS);
+                         1, SP_HRP_MAINNET, VECTOR_LABEL_1_ADDRESS);
   expect_account_address("sp_account_address_alloc labels with m = 2", label_2,
-                         1, false, VECTOR_LABEL_2_ADDRESS);
+                         1, SP_HRP_MAINNET, VECTOR_LABEL_2_ADDRESS);
   expect_account_address("sp_account_address_alloc labels with m = 1001337",
-                         label_1001337, 1, false, VECTOR_LABEL_1001337_ADDRESS);
+                         label_1001337, 1, SP_HRP_MAINNET,
+                         VECTOR_LABEL_1001337_ADDRESS);
   expect_account_address("sp_account_address_alloc encodes tsp on testnet",
-                         label_1, 1, true, VECTOR_TESTNET_LABEL_1_ADDRESS);
+                         label_1, 1, SP_HRP_TESTNET,
+                         VECTOR_TESTNET_LABEL_1_ADDRESS);
+  expect_account_address("sp_account_address_alloc encodes sprt on regtest",
+                         label_1, 1, SP_HRP_REGTEST,
+                         VECTOR_REGTEST_LABEL_1_ADDRESS);
   expect_account_address_error(
       "sp_account_address_alloc refuses the change label", VECTOR_SCAN_SECRET,
       label_0, 1, SP_ADDRESS_ERR_LABEL);
@@ -444,9 +454,10 @@ static void test_verify_foreign_scan_request(void) {
   if (sp && verify->derivation_path.len == 1 &&
       verify->derivation_path.ptr[0] == 2 &&
       sp_account_keys_derive(true, sp->scan.key, &keys) &&
-      sp_account_address_alloc(
-          keys.scan_secret, keys.spend_pubkey, verify->derivation_path.ptr,
-          verify->derivation_path.len, true, &address) == SP_ADDRESS_OK &&
+      sp_account_address_alloc(keys.scan_secret, keys.spend_pubkey,
+                               verify->derivation_path.ptr,
+                               verify->derivation_path.len, SP_HRP_TESTNET,
+                               &address) == SP_ADDRESS_OK &&
       strcmp(address, VECTOR_SCAN_OUR_SPEND_LABEL_2_TESTNET_ADDRESS) == 0)
     PASS();
   else
