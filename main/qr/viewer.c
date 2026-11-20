@@ -33,9 +33,6 @@ static lv_obj_t *settings_overlay;
 static lv_obj_t *density_slider;
 static lv_obj_t *settings_button;
 static lv_obj_t *done_button;
-static lv_obj_t *playback_panel;
-static lv_obj_t *play_label;
-static lv_obj_t *jump_slider;
 static lv_timer_t *controls_timer;
 static lv_timer_t *message_timer;
 static lv_timer_t *animation_timer;
@@ -48,7 +45,6 @@ static uint8_t qr_shade = QR_SHADE_DEFAULT;
 static uint8_t qr_fps = QR_FPS_DEFAULT;
 
 static void show_controls(void);
-static void create_playback_controls(void);
 
 static lv_color_t current_light_color(void) {
   uint8_t v = (uint8_t)(255 * qr_shade / 100);
@@ -71,13 +67,11 @@ static void hide_controls(void) {
     lv_obj_add_flag(settings_button, LV_OBJ_FLAG_HIDDEN);
   if (done_button)
     lv_obj_add_flag(done_button, LV_OBJ_FLAG_HIDDEN);
-  if (playback_panel)
-    lv_obj_add_flag(playback_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void controls_timer_cb(lv_timer_t *timer) { hide_controls(); }
 
-static void position_controls(void) {
+static void position_done_button(void) {
   if (!view || !done_button)
     return;
   int x = 0, y = 0;
@@ -88,9 +82,6 @@ static void position_controls(void) {
       y = -(lv_obj_get_height(view->status) + theme_small_padding());
   }
   lv_obj_align(done_button, LV_ALIGN_BOTTOM_MID, x, y);
-  if (playback_panel)
-    lv_obj_align_to(playback_panel, done_button, LV_ALIGN_OUT_TOP_MID, 0,
-                    -theme_small_padding());
 }
 
 static void show_controls(void) {
@@ -104,11 +95,7 @@ static void show_controls(void) {
     lv_obj_clear_flag(done_button, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(done_button);
   }
-  if (playback_panel) {
-    lv_obj_clear_flag(playback_panel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(playback_panel);
-  }
-  position_controls();
+  position_done_button();
   if (controls_timer) {
     lv_timer_del(controls_timer);
     controls_timer = NULL;
@@ -118,7 +105,6 @@ static void show_controls(void) {
     lv_timer_set_repeat_count(controls_timer, 1);
 }
 
-// The controls overlap the QR, so a paused frame must be able to shed them.
 static void screen_clicked_cb(lv_event_t *e) {
   if (done_button && !lv_obj_has_flag(done_button, LV_OBJ_FLAG_HIDDEN))
     hide_controls();
@@ -302,8 +288,6 @@ static void set_paused(bool value) {
       lv_timer_resume(animation_timer);
     }
   }
-  if (play_label)
-    lv_label_set_text(play_label, paused ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
 }
 
 static bool display_frame(uint32_t index) {
@@ -311,20 +295,15 @@ static bool display_frame(uint32_t index) {
   if (!frame || qr_update_optimal(view->qr, frame, NULL) != LV_RESULT_OK) {
     set_paused(true);
     show_controls();
-    dialog_show_message("QR export paused",
-                        playback_panel
-                            ? "Could not display the next frame. Try Play "
-                              "again or restart the export."
-                            : "Could not display the next frame. Restart the "
-                              "export.");
+    dialog_show_message(
+        "QR export paused",
+        "Could not display the next frame. Restart the export.");
     return false;
   }
   uint32_t previous = view->index;
   view->index = index;
   qr_set_light_color(view->qr, current_light_color());
   update_status(view, previous);
-  if (jump_slider)
-    lv_slider_set_value(jump_slider, index + 1, LV_ANIM_OFF);
   return true;
 }
 
@@ -339,82 +318,6 @@ static void animation_timer_cb(lv_timer_t *timer) {
   display_frame(next);
 }
 
-static void play_cb(lv_event_t *e) {
-  set_paused(!paused);
-  show_controls();
-}
-
-static void step_cb(lv_event_t *e) {
-  set_paused(true);
-  int direction = (int)(intptr_t)lv_event_get_user_data(e);
-  uint32_t count = qr_export_part_count(view->source);
-  uint32_t next = direction < 0 ? (view->index + count - 1) % count
-                                : (view->index + 1) % count;
-  display_frame(next);
-  show_controls();
-}
-
-static void jump_cb(lv_event_t *e) {
-  set_paused(true);
-  uint32_t index = lv_slider_get_value(jump_slider) - 1;
-  if (!display_frame(index))
-    lv_slider_set_value(jump_slider, view->index + 1, LV_ANIM_OFF);
-  show_controls();
-}
-
-static void jump_pressed_cb(lv_event_t *e) { set_paused(true); }
-
-static lv_obj_t *playback_button(lv_obj_t *parent, const char *text,
-                                 lv_event_cb_t cb, void *data) {
-  lv_obj_t *button = theme_create_button(parent, text, true);
-  lv_obj_set_size(button, theme_corner_button_width(),
-                  theme_corner_button_height());
-  lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, data);
-  return button;
-}
-
-static void create_playback_controls(void) {
-  if (playback_panel)
-    lv_obj_delete(playback_panel);
-  playback_panel = NULL;
-  play_label = NULL;
-  jump_slider = NULL;
-  // Fountain frames never repeat: there is none to hold or to go back to.
-  if (qr_export_part_count(view->source) <= 1 ||
-      qr_export_is_fountain(view->source))
-    return;
-  int gap = theme_button_spacing();
-  playback_panel = lv_obj_create(qr_viewer_screen);
-  theme_apply_frame(playback_panel);
-  lv_obj_set_style_bg_opa(playback_panel, LV_OPA_COVER, 0);
-  lv_obj_set_size(playback_panel, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(playback_panel, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(playback_panel, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(playback_panel, gap, 0);
-  lv_obj_set_style_pad_row(playback_panel, gap, 0);
-  lv_obj_t *row = theme_create_flex_row(playback_panel);
-  lv_obj_set_style_pad_column(row, gap, 0);
-  playback_button(row, LV_SYMBOL_PREV, step_cb, (void *)(intptr_t)-1);
-  lv_obj_t *play = playback_button(
-      row, paused ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE, play_cb, NULL);
-  play_label = lv_obj_get_child(play, 0);
-  playback_button(row, LV_SYMBOL_NEXT, step_cb, (void *)(intptr_t)1);
-  jump_slider = lv_slider_create(playback_panel);
-  // As wide as the buttons, less the half knob that overhangs each end.
-  lv_obj_set_width(jump_slider, 3 * theme_corner_button_width() + 2 * gap -
-                                    theme_min_touch_size());
-  lv_slider_set_range(jump_slider, 1, qr_export_part_count(view->source));
-  lv_slider_set_value(jump_slider, view->index + 1, LV_ANIM_OFF);
-  theme_apply_slider(jump_slider);
-  lv_obj_set_style_margin_ver(jump_slider, theme_slider_knob_pad(), 0);
-  lv_obj_add_event_cb(jump_slider, jump_pressed_cb, LV_EVENT_PRESSED, NULL);
-  lv_obj_add_event_cb(jump_slider, jump_cb, LV_EVENT_RELEASED, NULL);
-  lv_obj_add_flag(playback_panel, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_update_layout(playback_panel);
-  position_controls();
-}
-
 static bool rebuild_qr(uint16_t density) {
   export_view_t *replacement = prepare_view(density);
   if (!replacement)
@@ -423,9 +326,7 @@ static bool rebuild_qr(uint16_t density) {
   view = replacement;
   free_view(old);
   qr_density = density;
-  create_playback_controls();
-  // Without the controls there is no Play to resume with.
-  set_paused(paused && playback_panel);
+  set_paused(false);
   return true;
 }
 
@@ -564,12 +465,12 @@ static bool setup_qr_viewer_ui(lv_obj_t *parent, const char *title) {
   lv_obj_set_style_bg_color(settings_button, bg_color(), 0);
   lv_obj_add_flag(settings_button, LV_OBJ_FLAG_HIDDEN);
   done_button = theme_create_button(qr_viewer_screen, "Done", true);
-  lv_obj_set_size(done_button, theme_button_width(), theme_button_height());
+  lv_obj_set_size(done_button, theme_min_dim() * 3 / 5,
+                  theme_button_height() * 3 / 2);
   lv_obj_set_style_bg_opa(done_button, LV_OPA_COVER, 0);
   lv_obj_add_event_cb(done_button, done_button_cb, LV_EVENT_CLICKED, NULL);
   lv_obj_add_flag(done_button, LV_OBJ_FLAG_HIDDEN);
-  create_playback_controls();
-  position_controls();
+  position_done_button();
   if (title) {
     lv_obj_t *msgbox = lv_obj_create(qr_viewer_screen);
     lv_obj_set_size(msgbox, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -690,7 +591,6 @@ void qr_viewer_page_destroy(void) {
     lv_obj_del(qr_viewer_screen);
   qr_viewer_screen = NULL;
   settings_overlay = density_slider = settings_button = done_button = NULL;
-  playback_panel = play_label = jump_slider = NULL;
   return_callback = NULL;
   paused = false;
 }
