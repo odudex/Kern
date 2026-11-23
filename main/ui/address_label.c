@@ -22,8 +22,8 @@ static uint32_t color_hex(lv_color_t color) {
 }
 
 // Show `address` in `block_size`-char blocks with alternating primary and
-// highlight colors, or plain when `block_size` is 0. Returns false when out of
-// memory, the label then keeps its text.
+// highlight colors, or plain when `block_size` is 0. Returns false on failure,
+// the label then keeps its text.
 static bool set_blocks_text(lv_obj_t *label, const char *address,
                             size_t block_size) {
   if (block_size == 0) {
@@ -45,9 +45,14 @@ static bool set_blocks_text(lv_obj_t *label, const char *address,
   for (size_t pos = 0; pos < len; pos += block_size) {
     uint32_t color = ((pos / block_size) % 2 == 0) ? hex1 : hex2;
     size_t chunk = (len - pos < block_size) ? (len - pos) : block_size;
-    written += snprintf(text + written, size - written, "%s#%06X %.*s#",
-                        (pos > 0) ? " " : "", (unsigned)color, (int)chunk,
-                        address + pos);
+    int n = snprintf(text + written, size - written, "%s#%06X %.*s#",
+                     (pos > 0) ? " " : "", (unsigned)color, (int)chunk,
+                     address + pos);
+    if (n < 0 || (size_t)n >= size - written) {
+      free(text);
+      return false;
+    }
+    written += (size_t)n;
   }
 
   lv_label_set_text(label, text);
