@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Workflows pin actions by commit SHA; this keeps the pins and their version comments current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
