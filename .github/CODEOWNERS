@@ -1,0 +1,18 @@
+# Paths that decide what firmware users end up running: CI, release tooling, published keys, the web flasher, the bootloader and update verification.
+
+/.github/                       @odudex
+/SECURITY.md                    @odudex
+/scripts/release.sh             @odudex
+/scripts/sign_release.sh        @odudex
+/scripts/freeze_bootloader.sh   @odudex
+/scripts/bootloader_*.sh        @odudex
+/scripts/check_bootloaders.sh   @odudex
+/kern_secure_boot/              @odudex
+/site/flash/                    @odudex
+/bootloader_components/         @odudex
+/sdkconfig.secure               @odudex
+/sdkconfig.release              @odudex
+/partitions.csv                 @odudex
+/main/core/secure_boot.*        @odudex
+/main/core/sb_digests.cmake     @odudex
+/main/core/fw_update.*          @odudex
