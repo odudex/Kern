@@ -258,7 +258,7 @@ Pre-release firmware is provided **for research and testing purposes only**. Any
 
 ### Steps
 
-1. Download the zip for your device from the [Releases](https://github.com/odudex/Kern/releases) page (e.g. `kern-wave_4b-v0.0.3.zip`). Boards with ESP32-P4 chip revision v3.x need the `_v3` zip (e.g. `kern-wave_4b_v3-v0.0.3.zip`); esptool prints the revision when it connects, as in `Chip type: ESP32-P4 (revision v3.2)`.
+1. Download the zip for your device from the [Releases](https://github.com/odudex/Kern/releases) page (e.g. `kern-wave_4b-v0.0.3.zip`). Boards with ESP32-P4 chip revision v3.x need the `_v3` zip (e.g. `kern-wave_4b_v3-v0.0.3.zip`); esptool prints the revision when it connects, as in `Chip type: ESP32-P4 (revision v3.2)`. Download `SHA256SUMS` and its signature from the same release and [verify the zip](#verifying-a-release) before flashing.
 
 2. Unzip the package:
 
@@ -287,6 +287,24 @@ esptool --chip esp32p4 --baud 460800 write-flash 0x0 kern-v0.0.3.hex
 ```
 
 > **Note:** The `.hex` image is sparse: it writes only the regions it contains, so the NVS partition (PIN, settings) and stored data survive reflashing. For a factory-clean install, erase everything first: `esptool --chip esp32p4 erase-flash`, then flash the image.
+
+### Verifying a Release
+
+Each release carries `SHA256SUMS`, the checksums of its zips, and `SHA256SUMS.asc`, a GPG signature over that file (`SHA256SUMS.sig` in releases up to v0.0.21). The signing key is published at https://github.com/odudex.gpg, with the fingerprint:
+
+```
+CD48 298A 386C E34F 3A9F  EE3E B9AA 47C3 E81D D14C
+```
+
+Next to the zip and the two checksum files, run:
+
+```bash
+curl -fsSL https://github.com/odudex.gpg | gpg --import
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+`gpg --verify` must report a good signature and print the fingerprint above; its warning that the key is not certified is expected for a key you have not signed yourself. `sha256sum` must report `OK` for the zip you downloaded. The same key signs `kern_secure_boot/SHA256SUMS`, which covers the secure boot public keys and the frozen bootloaders.
 
 ### Updating via SD card
 

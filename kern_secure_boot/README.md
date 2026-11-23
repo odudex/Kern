@@ -58,9 +58,12 @@ Compare the digests shown on screen against the values above (and against those 
 
 ## Verifying These Files
 
-Before trusting these keys, verify the GPG signature and checksums:
+Before trusting these keys, verify the GPG signature and checksums. The signing key is published at https://github.com/odudex.gpg, fingerprint `CD48 298A 386C E34F 3A9F  EE3E B9AA 47C3 E81D D14C`; `gpg --verify` must print that fingerprint.
 
 ```bash
+# 0. Import the release signing key
+curl -fsSL https://github.com/odudex.gpg | gpg --import
+
 # 1. Verify the GPG signature on SHA256SUMS
 gpg --verify SHA256SUMS.sig SHA256SUMS
 
