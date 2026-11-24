@@ -39,6 +39,10 @@ either sensor works on any board. The 4B is the one board sold without a camera:
 pair it with an OV5647 module carrying a DW9714 voice coil motor, which is the
 only combination that gets autofocus.
 
+### Enclosures
+
+3D-printable enclosures for several of these boards live in their own repository, [P4Enclosures](https://github.com/odudex/P4Enclosures), with one folder per board named after its Kern target. The FreeCAD designs that used to be in this repository's `enclosures/` folder are kept there under `FreeCAD_legacy/`.
+
 ## Prerequisites
 
 Kern targets [ESP-IDF v6.1.1](https://docs.espressif.com/projects/esp-idf/en/v6.1.1/esp32p4/get-started/index.html). Install it for the `esp32p4` target:

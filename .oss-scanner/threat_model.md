@@ -30,7 +30,7 @@ Less important or out of scope:
 - `components/wave_*`, `components/crowpanel`, `components/bsp_common`, `components/bus_timeout`, `components/video`: board support and camera pipeline. Out of scope unless an input-controlled bug lives there.
 - `managed_components/` (Espressif registry packages fetched at build time), ESP-IDF itself, LVGL: third-party, out of scope. Report bugs there to their projects.
 - `simulator/platform/`: host stubs standing in for ESP-IDF; not shipped. `simulator/src/` only wires the real code to SDL. Bugs that exist only under the stubs are out of scope.
-- `site/` (static website and the web flasher), `tools/`, `scripts/`, `enclosures/`, `docs/`: not on the device.
+- `site/` (static website and the web flasher), `tools/`, `scripts/`, `docs/`: not on the device.
 
 ## How to exercise it
 
