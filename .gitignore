@@ -71,6 +71,7 @@ main/core/test/libwally.a
 main/pages/bip_flow/test/test_bip_flow_register
 main/pages/bip_flow/test/test_bip_flow_header
 main/pages/bip_flow/test/test_bip388
+main/pages/bip_flow/test/test_liana
 
 # IDE / tools
 .vscode/

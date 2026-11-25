@@ -464,6 +464,67 @@ static void test_bbqr_accepts_lowercase_prefix(void) {
   qr_parser_destroy(parser);
 }
 
+/* The split vector of Liana's BBQr encoder: parts of a fixed size with a
+ * shorter last one, scanned out of order and one of them twice. */
+static void test_bbqr_binary_parts_join(void) {
+  static const char *const frames[] = {
+      "B$HB030271727374",
+      "B$HB03006162636465666768",
+      "B$HB03006162636465666768",
+      "B$HB0301696A6B6C6D6E6F70",
+  };
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  for (size_t i = 0; i < sizeof(frames) / sizeof(frames[0]); i++) {
+    CHECK(!qr_parser_is_complete(parser));
+    CHECK(qr_parser_parse_with_len(parser, frames[i], strlen(frames[i])) >= 0);
+  }
+  CHECK(qr_parser_is_complete(parser));
+  CHECK(!qr_parser_is_failed(parser));
+  CHECK(qr_parser_get_bbqr_file_type(parser) == 'B');
+  size_t result_len = 0;
+  char *result = qr_parser_result(parser, &result_len);
+  CHECK(result != NULL);
+  CHECK(result_len == 20);
+  CHECK(result && memcmp(result, "abcdefghijklmnopqrst", 20) == 0);
+  free(result);
+  qr_parser_destroy(parser);
+}
+
+/* Liana's Get Keys request for the ten testnet accounts, as its default
+ * density frames it: a BIP 377 message of 181 bytes in two parts */
+static void test_bbqr_bip377_request(void) {
+  static const char *const frames[] = {
+      "B$HB0200424950333737010200010A0480000030800000018000000080000002048000"
+      "0030800000018000000180000002048000003080000001800000028000000204800000"
+      "3080000001800000038000000204800000308000000180000004800000020480000030"
+      "8000000180000005800000020480000030800000018000000680000002048000003080"
+      "000001800000078000000204800000308000000180000008800000",
+      "B$HB0201020480000030800000018000000980000002",
+  };
+  QRPartParser *parser = qr_parser_create();
+  CHECK(parser != NULL);
+  for (int i = 0; i < 2; i++)
+    CHECK(qr_parser_parse_with_len(parser, frames[i], strlen(frames[i])) == i);
+  CHECK(qr_parser_is_complete(parser));
+  CHECK(qr_parser_get_bbqr_file_type(parser) == 'B');
+  size_t result_len = 0;
+  unsigned char *result =
+      (unsigned char *)qr_parser_result(parser, &result_len);
+  CHECK(result != NULL);
+  CHECK(result_len == 181);
+  CHECK(result && memcmp(result, "BIP377\001\002", 8) == 0);
+  CHECK(result && result[10] == 10);
+  /* the last path: m/48'/1'/9'/2' */
+  static const unsigned char last[] = {0x04, 0x80, 0x00, 0x00, 0x30, 0x80,
+                                       0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+                                       0x09, 0x80, 0x00, 0x00, 0x02};
+  CHECK(result && result_len == 181 &&
+        memcmp(result + 181 - sizeof(last), last, sizeof(last)) == 0);
+  free(result);
+  qr_parser_destroy(parser);
+}
+
 int main(void) {
   test_format_none_still_completes();
   test_incomplete_pmofn_like_text_remains_plain();
@@ -487,6 +548,8 @@ int main(void) {
   test_valid_bbqr_still_assembles();
   test_valid_ur_still_processes();
   test_bbqr_accepts_lowercase_prefix();
+  test_bbqr_binary_parts_join();
+  test_bbqr_bip377_request();
 
   if (failures != 0) {
     fprintf(stderr, "%d QR parser test(s) failed\n", failures);

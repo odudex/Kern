@@ -202,6 +202,51 @@ void test_bbqr_binary_file_type(void) {
   PASS();
 }
 
+/* What Liana's joiner takes: B$HB, the part count and index as two uppercase
+ * base36 digits each, then an even number of hex digits. Its QR codes are
+ * alphanumeric, which has no lowercase. */
+void test_bbqr_hex_binary_parts_format(void) {
+  TEST("bbqr hex binary parts format");
+
+  uint8_t original[600];
+  for (size_t i = 0; i < sizeof(original); i++)
+    original[i] = (uint8_t)(i * 7 + 3);
+  BBQrParts *parts =
+      bbqr_encode_hex(original, sizeof(original), BBQR_TYPE_BINARY, 34);
+  if (!parts || parts->count <= 36) {
+    bbqr_parts_free(parts);
+    FAIL("Expected more than 36 parts");
+    return;
+  }
+
+  static const char base36[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  size_t offset = 0;
+  bool valid = true;
+  for (int i = 0; valid && i < parts->count; i++) {
+    const char *part = parts->parts[i];
+    size_t len = strlen(part);
+    valid = len > BBQR_HEADER_LEN && len <= 34 && len % 2 == 0 &&
+            memcmp(part, "B$HB", 4) == 0 &&
+            part[4] == base36[parts->count / 36] &&
+            part[5] == base36[parts->count % 36] && part[6] == base36[i / 36] &&
+            part[7] == base36[i % 36];
+    for (size_t j = BBQR_HEADER_LEN; valid && j < len; j += 2) {
+      static const char hex[] = "0123456789ABCDEF";
+      valid = offset < sizeof(original) &&
+              part[j] == hex[original[offset] >> 4] &&
+              part[j + 1] == hex[original[offset] & 0x0f];
+      offset++;
+    }
+  }
+  bbqr_parts_free(parts);
+
+  if (!valid || offset != sizeof(original)) {
+    FAIL("A part is not in the expected form");
+    return;
+  }
+  PASS();
+}
+
 void test_bbqr_hex_binary_encode(void) {
   TEST("bbqr hex binary encode");
 
@@ -727,6 +772,7 @@ int main(void) {
   test_bbqr_parse_header();
   test_bbqr_binary_file_type();
   test_bbqr_hex_binary_encode();
+  test_bbqr_hex_binary_parts_format();
   test_bbqr_roundtrip();
   test_bbqr_unpadded_base32();
   test_bbqr_compression_quality();
