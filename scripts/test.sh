@@ -22,6 +22,9 @@ make -C "$REPO_ROOT/main/qr/test" run
 echo "Running bip138 tests..."
 make -C "$REPO_ROOT/components/bip138" run
 
+echo "Running bip377 tests..."
+make -C "$REPO_ROOT/components/bip377" run
+
 echo "Running core tests..."
 make -C "$REPO_ROOT/main/core/test" run
 

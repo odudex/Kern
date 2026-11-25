@@ -149,6 +149,7 @@ clean:
     make -C components/bbqr/test clean
     make -C components/secure_memory/test clean
     make -C components/bip138 clean
+    make -C components/bip377 clean
     make -C main/qr/test clean
     rm -rf components/k_quirc/test/build
     make -C main/core/test clean

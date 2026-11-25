@@ -40,6 +40,10 @@ components/secure_memory/test/test_secret_alloc
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/deflate_codec/test/test_deflate_codec
+components/bip377/src/*.o
+components/bip377/src/libbip377.a
+components/bip377/test/test_vectors
+components/bip377/test/test_api
 main/qr/test/test_parser
 main/qr/test/test_progress
 main/qr/test/test_yuv420

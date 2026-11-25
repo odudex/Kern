@@ -41,6 +41,7 @@ DIRS=(
     "$REPO_ROOT/components/secure_memory"
     "$REPO_ROOT/components/bbqr"
     "$REPO_ROOT/components/bip138"
+    "$REPO_ROOT/components/bip377"
     "$REPO_ROOT/components/bsp_common"
     "$REPO_ROOT/components/bus_timeout"
     "$REPO_ROOT/components/cUR"
