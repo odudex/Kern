@@ -12,8 +12,6 @@
 #include <wally_core.h>
 #include <wally_crypto.h>
 
-#define SP_PURPOSE 352
-#define SP_ACCOUNT 0
 #define SP_VERSION 0
 #define SP_DESCRIPTOR_PREFIX "sp("
 

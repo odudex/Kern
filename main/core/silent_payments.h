@@ -8,6 +8,9 @@
 
 #define SP_SECRET_LEN 32
 #define SP_PUBKEY_LEN 33
+#define SP_PURPOSE 352
+// Kern's only BIP352 account
+#define SP_ACCOUNT 0
 #define SP_SCAN_BRANCH 1
 #define SP_SPEND_BRANCH 0
 // BIP352 reserves label m = 0 for change

@@ -1043,6 +1043,56 @@ static void test_spend_derivation(void) {
   expect_spend("a foreign fingerprint is not ours", foreign_fingerprint, false);
 }
 
+// UNSIGNED_PSBT with its one input turned into a P2WPKH input of our key at
+// `path`, listed under our fingerprint
+static struct wally_psbt *p2wpkh_input_at(const char *path) {
+  struct wally_psbt *psbt = parse_hex(UNSIGNED_PSBT);
+  struct ext_key *key = NULL;
+  uint32_t comps[KEY_MAX_DERIVATION_DEPTH];
+  size_t depth = 0, spk_len = 0;
+  unsigned char spk[WALLY_SCRIPTPUBKEY_P2WPKH_LEN];
+  unsigned char fp[BIP32_KEY_FINGERPRINT_LEN];
+  struct wally_tx_output *utxo = NULL;
+  bool ok = psbt && key_get_fingerprint(fp) &&
+            bip32_path_parse(path, comps, &depth, KEY_MAX_DERIVATION_DEPTH) &&
+            key_get_derived_key(path, &key) &&
+            wally_witness_program_from_bytes(
+                key->pub_key, EC_PUBLIC_KEY_LEN, WALLY_SCRIPT_HASH160, spk,
+                sizeof(spk), &spk_len) == WALLY_OK &&
+            wally_tx_output_init_alloc(100000, spk, spk_len, &utxo) == WALLY_OK;
+  if (ok) {
+    struct wally_psbt_input *in = &psbt->inputs[0];
+    wally_map_clear(&in->unknowns);
+    wally_map_clear(&in->taproot_leaf_paths);
+    wally_map_clear(&in->taproot_leaf_hashes);
+    // The input set is frozen, so the keypath goes on the input itself
+    ok = wally_psbt_set_input_witness_utxo(psbt, 0, utxo) == WALLY_OK &&
+         wally_psbt_input_keypath_add(in, key->pub_key, EC_PUBLIC_KEY_LEN, fp,
+                                      sizeof(fp), comps, depth) == WALLY_OK;
+  }
+  wally_tx_output_free(utxo);
+  bip32_key_free(key);
+  if (!ok) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  return psbt;
+}
+
+// An input of the exported scan key is not ours: Kern makes no share with it
+static void test_scan_key_input(void) {
+  struct wally_psbt *psbt = p2wpkh_input_at("m/352'/0'/0'/0'/0");
+  TEST("an input of the BIP352 spend key gives the shares");
+  if (psbt && sp_psbt_complete(&psbt, false) == SP_PSBT_OK)
+    PASS();
+  else
+    FAIL("expected the outputs completed");
+  wally_psbt_free(psbt);
+
+  expect_waiting("an input of the BIP352 scan key is another signer's",
+                 p2wpkh_input_at("m/352'/0'/0'/1'/0"));
+}
+
 int main(void) {
   if (!key_load_from_mnemonic(TEST_MNEMONIC, NULL, false)) {
     printf("FAIL: could not load the test mnemonic\n");
@@ -1064,6 +1114,7 @@ int main(void) {
   test_labels();
   test_sign();
   test_spend_derivation();
+  test_scan_key_input();
   key_unload();
 
   printf("\n%d passed, %d failed\n", tests_passed, tests_failed);

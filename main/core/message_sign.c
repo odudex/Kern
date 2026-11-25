@@ -159,8 +159,12 @@ bool message_sign_sign(const char *derivation_path, const char *message,
     return false;
   }
 
+  uint32_t path[KEY_MAX_DERIVATION_DEPTH];
+  size_t path_len = 0;
   struct ext_key *derived_key = NULL;
-  if (!key_get_derived_key(derivation_path, &derived_key)) {
+  if (!bip32_path_parse(derivation_path, path, &path_len,
+                        KEY_MAX_DERIVATION_DEPTH) ||
+      !key_get_signing_key(path, path_len, &derived_key)) {
     ESP_LOGE(TAG, "Failed to derive key at %s", derivation_path);
     return false;
   }

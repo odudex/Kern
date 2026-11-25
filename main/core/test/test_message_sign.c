@@ -128,6 +128,18 @@ static void test_signing_is_deterministic(void) {
   wally_free_string(b);
 }
 
+/* The parser takes no m/352' path, and message_sign_sign refuses one off the
+ * BIP352 spend branch all the same: the scan key leaves the device. */
+static void expect_signs(const char *name, const char *path, bool ok) {
+  char *b64 = NULL;
+  TEST(name);
+  if (message_sign_sign(path, "Hello Kern", &b64) == ok)
+    PASS();
+  else
+    FAIL(ok ? "expected a signature" : "signed");
+  wally_free_string(b64);
+}
+
 int main(void) {
   /* Set up libwally as the firmware does, hooks included. */
   if (!crypto_init()) {
@@ -160,6 +172,10 @@ int main(void) {
                  "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu");
   test_signature_recovers_key();
   test_signing_is_deterministic();
+  expect_signs("the BIP352 scan key does not sign a message",
+               "m/352'/0'/0'/1'/0", false);
+  expect_signs("the BIP352 spend key signs a message", "m/352'/0'/0'/0'/0",
+               true);
 
   key_unload();
   printf("\n=== Results: %d passed, %d failed ===\n", tests_passed,

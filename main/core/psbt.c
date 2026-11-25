@@ -1283,8 +1283,7 @@ static size_t sign_owned_inputs(struct wally_psbt *psbt, bool is_testnet,
 
     struct ext_key *keys[REGISTRY_MAX_OWN_KEYS] = {0};
     for (size_t p = 0; p < num_paths; p++) {
-      if (!key_get_derived_key_components(paths[p].path, paths[p].len,
-                                          &keys[p])) {
+      if (!key_get_signing_key(paths[p].path, paths[p].len, &keys[p])) {
         ESP_LOGE(TAG, "Failed to derive key %zu for input %zu", p, i);
         continue;
       }

@@ -57,6 +57,14 @@ KERN_WARN_UNUSED_RESULT bool key_get_derived_key(const char *path,
 KERN_WARN_UNUSED_RESULT bool
 key_get_derived_key_components(const uint32_t *path, size_t path_depth,
                                struct ext_key **key_out);
+/* key_get_derived_key_components() for a key to sign with. Under m/352' only
+ * the BIP352 spend key, m/352'/coin'/0'/0'/x on the loaded network, signs:
+ * the scan key leaves the device, so a coordinator holding it could pass it
+ * off as one of ours in a wallet it spends alone. Free with bip32_key_free().
+ */
+KERN_WARN_UNUSED_RESULT bool key_get_signing_key(const uint32_t *path,
+                                                 size_t path_depth,
+                                                 struct ext_key **key_out);
 /* The key at `path` with its private part removed, for deriving unhardened
  * children publicly. Free with bip32_key_free(). */
 KERN_WARN_UNUSED_RESULT bool

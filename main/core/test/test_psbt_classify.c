@@ -5633,6 +5633,229 @@ static void test_gate_taproot_missing_amount(void) {
   wally_psbt_free(segwit);
 }
 
+/* ================================================================
+ * BIP352 key gate: a coordinator that holds our exported scan key can list it
+ * as one of ours in a wallet it spends alone (the Krux scan key co-signing
+ * attack). Under m/352' only the spend key signs, whatever claim cleared the
+ * input.
+ * ================================================================ */
+
+#define SCAN_KEY_PATH "m/352'/0'/0'/1'/0"
+#define SPEND_KEY_PATH "m/352'/0'/0'/0'/0"
+
+static const psbt_sign_policy_t PERMISSIVE = {.allow_unsafe = true,
+                                              .allow_expected_owned = true};
+
+/* A foreign co-signer's key: the secp256k1 generator */
+static const uint8_t FOREIGN_PUBKEY[EC_PUBLIC_KEY_LEN] = {
+    0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+    0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
+    0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98};
+
+static bool own_key_at(const char *path, uint32_t *comps, size_t *depth,
+                       unsigned char pub[EC_PUBLIC_KEY_LEN]) {
+  struct ext_key *k = NULL;
+  if (!bip32_path_parse(path, comps, depth, KEY_MAX_DERIVATION_DEPTH) ||
+      !key_get_derived_key(path, &k))
+    return false;
+  memcpy(pub, k->pub_key, EC_PUBLIC_KEY_LEN);
+  bip32_key_free(k);
+  return true;
+}
+
+/* A 2-of-2 P2WSH input of our key at `path` and FOREIGN_PUBKEY, our key
+ * listed under our fingerprint, as the PoC's malicious multisig. */
+static struct wally_psbt *make_352_multisig_psbt(const char *path,
+                                                 unsigned char *pub) {
+  uint32_t comps[KEY_MAX_DERIVATION_DEPTH];
+  size_t depth = 0;
+  uint8_t witness[3 + 2 * (1 + EC_PUBLIC_KEY_LEN)], spk[34];
+  size_t spk_len = 0;
+  const unsigned char fp[4] = {0};
+  if (!own_key_at(path, comps, &depth, pub))
+    return NULL;
+  size_t n = 0;
+  witness[n++] = OP_2;
+  witness[n++] = EC_PUBLIC_KEY_LEN;
+  memcpy(witness + n, pub, EC_PUBLIC_KEY_LEN);
+  n += EC_PUBLIC_KEY_LEN;
+  witness[n++] = EC_PUBLIC_KEY_LEN;
+  memcpy(witness + n, FOREIGN_PUBKEY, EC_PUBLIC_KEY_LEN);
+  n += EC_PUBLIC_KEY_LEN;
+  witness[n++] = OP_2;
+  witness[n++] = OP_CHECKMULTISIG;
+  if (wally_witness_program_from_bytes(witness, n, WALLY_SCRIPT_SHA256, spk,
+                                       sizeof(spk), &spk_len) != WALLY_OK)
+    return NULL;
+  struct wally_psbt *psbt = make_test_psbt(spk, spk_len, NULL, 0, NULL, 0);
+  if (!psbt)
+    return NULL;
+  wally_map_clear(&psbt->inputs[0].keypaths);
+  if (wally_psbt_set_input_witness_script(psbt, 0, witness, n) != WALLY_OK ||
+      wally_psbt_add_input_keypath(psbt, 0, pub, EC_PUBLIC_KEY_LEN, fp,
+                                   sizeof(fp), comps, depth) != WALLY_OK) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  return psbt;
+}
+
+/* A P2TR key-path input whose internal key is our key at `path`, as the PoC's
+ * taproot variant. */
+static struct wally_psbt *make_352_taproot_psbt(const char *path) {
+  uint32_t comps[KEY_MAX_DERIVATION_DEPTH];
+  size_t depth = 0;
+  unsigned char pub[EC_PUBLIC_KEY_LEN], tweaked[EC_PUBLIC_KEY_LEN];
+  uint8_t spk[34];
+  const unsigned char fp[4] = {0};
+  if (!own_key_at(path, comps, &depth, pub) ||
+      wally_ec_public_key_bip341_tweak(pub, sizeof(pub), NULL, 0, 0, tweaked,
+                                       sizeof(tweaked)) != WALLY_OK)
+    return NULL;
+  spk[0] = OP_1;
+  spk[1] = EC_XONLY_PUBLIC_KEY_LEN;
+  memcpy(spk + 2, tweaked + 1, EC_XONLY_PUBLIC_KEY_LEN);
+  struct wally_psbt *psbt = make_test_psbt(spk, sizeof(spk), NULL, 0, NULL, 0);
+  if (!psbt)
+    return NULL;
+  wally_map_clear(&psbt->inputs[0].keypaths);
+  if (wally_psbt_set_input_taproot_internal_key(
+          psbt, 0, pub + 1, EC_XONLY_PUBLIC_KEY_LEN) != WALLY_OK ||
+      wally_psbt_add_input_taproot_keypath(
+          psbt, 0, 0, pub + 1, EC_XONLY_PUBLIC_KEY_LEN, NULL, 0, fp, sizeof(fp),
+          comps, depth) != WALLY_OK) {
+    wally_psbt_free(psbt);
+    return NULL;
+  }
+  return psbt;
+}
+
+static bool signed_by(const struct wally_psbt *psbt, const unsigned char *pub) {
+  size_t idx = 0;
+  return wally_map_find(&psbt->inputs[0].signatures, pub, EC_PUBLIC_KEY_LEN,
+                        &idx) == WALLY_OK &&
+         idx != 0;
+}
+
+static void test_scan_key_multisig_not_signed(void) {
+  unsigned char pub[EC_PUBLIC_KEY_LEN];
+
+  TEST("bip352 gate: the scan key in a 2-of-2 multisig signs nothing");
+  struct wally_psbt *psbt = make_352_multisig_psbt(SCAN_KEY_PATH, pub);
+  psbt_sign_result_t res;
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_classify_input(psbt, 0, false).ownership ==
+           PSBT_OWNERSHIP_EXTERNAL)
+    FAIL("the policy should clear the input, leaving the key gate to refuse");
+  else if (psbt_sign(psbt, false, PERMISSIVE, &res) != 0 ||
+           res.signed_ok != 0 || signed_by(psbt, pub) ||
+           psbt->inputs[0].signatures.num_items != 0)
+    FAIL("signed with the scan key");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("bip352 gate: the spend key in a 2-of-2 multisig signs");
+  psbt = make_352_multisig_psbt(SPEND_KEY_PATH, pub);
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_sign(psbt, false, PERMISSIVE, &res) != 1 ||
+           !signed_by(psbt, pub))
+    FAIL("expected a signature by the spend key");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+}
+
+static void test_scan_key_taproot_not_signed(void) {
+  TEST("bip352 gate: the scan key as a taproot internal key signs nothing");
+  struct wally_psbt *psbt = make_352_taproot_psbt(SCAN_KEY_PATH);
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_classify_input(psbt, 0, false).ownership ==
+           PSBT_OWNERSHIP_EXTERNAL)
+    FAIL("the policy should clear the input, leaving the key gate to refuse");
+  else if (psbt_sign(psbt, false, PERMISSIVE, NULL) != 0 ||
+           tap_key_sig_len(psbt, 0) != 0)
+    FAIL("key-path signed with the scan key");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+
+  TEST("bip352 gate: the spend key as a taproot internal key signs");
+  psbt = make_352_taproot_psbt(SPEND_KEY_PATH);
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_sign(psbt, false, PERMISSIVE, NULL) != 1 ||
+           tap_key_sig_len(psbt, 0) != 64)
+    FAIL("expected a key-path signature by the spend key");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+}
+
+/* The registered-wallet form: a descriptor naming our scan branch xpub as a
+ * key of ours clears the input as OWNED_SAFE, and still signs nothing. */
+static void test_scan_key_registry_not_signed(void) {
+  char *xpub = NULL, desc[512];
+  registry_clear();
+  TEST("bip352 gate: a registered wallet on the scan branch signs nothing");
+  if (!key_get_xpub("m/352'/0'/0'/1'", &xpub)) {
+    FAIL("key_get_xpub");
+    return;
+  }
+  snprintf(desc, sizeof(desc),
+           "wsh(multi(2,[00000000/352'/0'/0'/1']%s/<0;1>/*,"
+           "[11111111/48'/0'/0'/2']" XPUB_86 "/<0;1>/*))",
+           xpub);
+  wally_free_string(xpub);
+  if (!registry_add_from_string("scan", desc, STORAGE_FLASH, false)) {
+    FAIL("registry_add_from_string");
+    return;
+  }
+  const registry_entry_t *e = registry_find_by_id("scan");
+  uint8_t spk[34], witness[PSBT_MAX_INNER_SCRIPT_LEN];
+  size_t spk_len = 0, witness_len = 0;
+  unsigned char pub[EC_PUBLIC_KEY_LEN];
+  uint32_t comps[KEY_MAX_DERIVATION_DEPTH];
+  size_t depth = 0;
+  const unsigned char fp[4] = {0};
+  struct wally_psbt *psbt = NULL;
+  if (e &&
+      wally_descriptor_to_script(e->desc, 1, 0, 0, 0, 3, 0, witness,
+                                 sizeof(witness), &witness_len) == WALLY_OK &&
+      witness_len <= sizeof(witness) &&
+      wally_witness_program_from_bytes(witness, witness_len,
+                                       WALLY_SCRIPT_SHA256, spk, sizeof(spk),
+                                       &spk_len) == WALLY_OK &&
+      own_key_at("m/352'/0'/0'/1'/0/3", comps, &depth, pub))
+    psbt = make_test_psbt(spk, spk_len, NULL, 0, NULL, 0);
+  if (psbt) {
+    wally_map_clear(&psbt->inputs[0].keypaths);
+    if (wally_psbt_set_input_witness_script(psbt, 0, witness, witness_len) !=
+            WALLY_OK ||
+        wally_psbt_add_input_keypath(psbt, 0, pub, sizeof(pub), fp, sizeof(fp),
+                                     comps, depth) != WALLY_OK) {
+      wally_psbt_free(psbt);
+      psbt = NULL;
+    }
+  }
+  psbt_sign_result_t res;
+  if (!psbt)
+    FAIL("fixture");
+  else if (psbt_classify_input(psbt, 0, false).ownership !=
+           PSBT_OWNERSHIP_OWNED_SAFE)
+    FAIL("expected OWNED_SAFE");
+  else if (psbt_sign(psbt, false, (psbt_sign_policy_t){0}, &res) != 0 ||
+           res.signed_ok != 0 || psbt->inputs[0].signatures.num_items != 0)
+    FAIL("signed with a scan branch key");
+  else
+    PASS();
+  wally_psbt_free(psbt);
+  registry_clear();
+}
+
 int main(void) {
   /* Set up libwally as the firmware does, hooks included. */
   if (!crypto_init()) {
@@ -5795,6 +6018,9 @@ int main(void) {
   test_claims_share_policy();
   test_registry_claim_tuple_position();
   test_sign_non_witness_utxo_only_segwit();
+  test_scan_key_multisig_not_signed();
+  test_scan_key_taproot_not_signed();
+  test_scan_key_registry_not_signed();
 
   printf("\n=== taproot parse/sign tests ===\n\n");
 

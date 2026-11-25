@@ -333,8 +333,7 @@ nonce_cache_result_t nonce_cache_issue(bnc_issuance *request, bool draw_session,
       (draw_session && !draw_session_id(signer, request->session_id)))
     return NONCE_CACHE_ERR_INTERNAL;
   struct ext_key *key = NULL;
-  if (!path || path_len == 0 ||
-      !key_get_derived_key_components(path, path_len, &key))
+  if (!path || path_len == 0 || !key_get_signing_key(path, path_len, &key))
     return NONCE_CACHE_ERR_INVALID;
   uint8_t fresh[BNC_SECRET_LEN];
   int32_t status = BNC_ERR_CRYPTO;

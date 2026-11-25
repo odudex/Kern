@@ -7,6 +7,7 @@
  */
 
 #include "../../utils/secure_mem.h"
+#include "../bip32_path.h"
 #include "../key.h"
 #include "kern_wally.h"
 #include <pthread.h>
@@ -251,6 +252,52 @@ static void test_derived_keys(void) {
   check("derived key NULL args rejected",
         !key_get_derived_key(NULL, &k) && !key_get_derived_key("m/0", NULL) &&
             !key_get_derived_key_components(comps, 3, NULL));
+}
+
+/* The exported BIP352 scan key, or any other key under m/352' but the spend
+ * key, must not sign: a coordinator holding the scan secret could otherwise
+ * present it as one of ours in a wallet it spends alone. */
+static bool signs(const char *path) {
+  uint32_t comps[KEY_MAX_DERIVATION_DEPTH];
+  size_t len = 0;
+  struct ext_key *k = NULL;
+  bool ok = bip32_path_parse(path, comps, &len, KEY_MAX_DERIVATION_DEPTH) &&
+            key_get_signing_key(comps, len, &k) && k;
+  bip32_key_free(k);
+  return ok;
+}
+
+static void test_signing_key(void) {
+  check("mainnet: the spend key signs", signs("m/352'/0'/0'/0'/0"));
+  check("mainnet: any key on the spend branch signs",
+        signs("m/352'/0'/0'/0'/7"));
+  check("mainnet: the scan key does not sign", !signs("m/352'/0'/0'/1'/0"));
+  check("mainnet: the testnet spend key does not sign",
+        !signs("m/352'/1'/0'/0'/0"));
+  check("mainnet: the spend branch of account 1' does not sign",
+        !signs("m/352'/0'/1'/0'/0"));
+  check("mainnet: an unknown branch does not sign",
+        !signs("m/352'/0'/0'/2'/0"));
+  check("mainnet: the spend branch key itself does not sign",
+        !signs("m/352'/0'/0'/0'"));
+  check("mainnet: a key under the spend key does not sign",
+        !signs("m/352'/0'/0'/0'/0/0"));
+  check("mainnet: the account key does not sign", !signs("m/352'/0'/0'"));
+  check("mainnet: m/352' does not sign", !signs("m/352'"));
+  check("mainnet: unhardened 352 signs", signs("m/352/0/0/1/0"));
+  check("mainnet: BIP84 signs", signs("m/84'/0'/0'/0/0"));
+  check("mainnet: the master key signs", signs("m"));
+
+  struct ext_key *k = NULL;
+  check("signing key NULL path with depth rejected",
+        !key_get_signing_key(NULL, 1, &k) && k == NULL);
+
+  check("switch to testnet", key_set_network(true));
+  check("testnet: the spend key signs", signs("m/352'/1'/0'/0'/0"));
+  check("testnet: the scan key does not sign", !signs("m/352'/1'/0'/1'/0"));
+  check("testnet: the mainnet spend key does not sign",
+        !signs("m/352'/0'/0'/0'/0"));
+  check("switch back to mainnet", key_set_network(false));
 }
 
 static void test_mnemonic_access(void) {
@@ -628,6 +675,7 @@ int main(void) {
   test_load_and_reject();
   test_fingerprint_and_xpubs();
   test_derived_keys();
+  test_signing_key();
   test_mnemonic_access();
   test_passphrase_and_network();
   test_set_network_keeps_passphrase();

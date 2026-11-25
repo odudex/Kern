@@ -1414,6 +1414,52 @@ static void test_participant_path(void) {
   registry_clear();
 }
 
+/* ---------- BIP352 key gate ---------- */
+
+/* Our participant on the BIP352 scan branch, whose key a coordinator holding
+ * the exported scan key could hold too, gets no nonce or partial signature */
+#define SCAN_BRANCH "m/352'/1'/0'/1'"
+#define SCAN_BRANCH_MUSIG                                                      \
+  "tr(musig([" FP "/352'/1'/0'/1']%s/<0;1>/*,[deadbeef/86'/1'/1']%s/<0;1>/*))"
+
+static void test_scan_key_participant(void) {
+  char ours[128], cosigner[128];
+  snprintf(descriptor_buf, sizeof(descriptor_buf), SCAN_BRANCH_MUSIG,
+           xpub_at(SCAN_BRANCH, ours, sizeof(ours)),
+           xpub_at(COSIGNER, cosigner, sizeof(cosigner)));
+  registry_clear();
+  check("a musig() of our scan branch registers",
+        registry_add_from_string("m", descriptor_buf, STORAGE_FLASH, false));
+  const uint32_t path[] = {0x80000160, 0x80000001, 0x80000000,
+                           0x80000001, 0,          CHILD};
+  unsigned char value[4 + 4 * 6];
+  size_t value_len = origin(OUR_FP, path, 6, value);
+  fixture_t f;
+  check("PSBT builds", fixture(SCAN_BRANCH "/0/3", COSIGNER "/0/3", value,
+                               value_len, true, &f) &&
+                           key_path_output(&f));
+  check("our scan branch participant is not ours to sign for",
+        !musig_psbt_is_own_participant(f.psbt, 0, f.ours));
+  size_t added = 0;
+  (void)sign(f.psbt, &added);
+  check("round 1 adds no nonce for the scan branch participant",
+        added == 0 && f.psbt->inputs[0].musig2_pubnonces.num_items == 0);
+  fixture_free(&f);
+  registry_clear();
+
+  bnc_issuance request = {.inputs = 1, .start = 0, .end = 0};
+  uint8_t nonces[BNC_PUBNONCE_LEN];
+  nonce_cache_issued_t issued;
+  const uint32_t scan[] = {0x80000160, 0x80000001, 0x80000000, 0x80000001, 0};
+  const uint32_t spend[] = {0x80000160, 0x80000001, 0x80000000, 0x80000000, 0};
+  check("Nonce Preparation refuses the BIP352 scan key",
+        prepare(&request, true, scan, 5, nonces, 1, &issued) ==
+            NONCE_CACHE_ERR_INVALID);
+  check("Nonce Preparation serves the BIP352 spend key",
+        prepare(&request, true, spend, 5, nonces, 1, &issued) ==
+            NONCE_CACHE_OK);
+}
+
 int main(void) {
   char dir[] = "/tmp/kern_musig_psbt_XXXXXX";
   if (!mkdtemp(dir)) {
@@ -1435,6 +1481,7 @@ int main(void) {
   test_nonce_preparation();
   test_three_seeds();
   test_participant_path();
+  test_scan_key_participant();
   registry_clear();
   key_unload();
   wallet_cleanup();

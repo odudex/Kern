@@ -469,7 +469,7 @@ static bool own_participant(const registry_entry_t *entry,
   slot->path_len += steps_len;
 
   struct ext_key *derived = NULL;
-  ok = key_get_derived_key_components(slot->path, slot->path_len, &derived) &&
+  ok = key_get_signing_key(slot->path, slot->path_len, &derived) &&
        memcmp(derived->pub_key, slot->participant, EC_PUBLIC_KEY_LEN) == 0;
   bip32_key_free(derived);
   return ok;
@@ -756,7 +756,7 @@ void musig_plan_free(musig_plan_t *plan) {
 
 /* Our participant's private key of the slot, wiped by bip32_key_free(). */
 static bool slot_key(const musig_slot_t *slot, struct ext_key **key_out) {
-  return key_get_derived_key_components(slot->path, slot->path_len, key_out);
+  return key_get_signing_key(slot->path, slot->path_len, key_out);
 }
 
 static musig_psbt_result_t cached_nonce(bnc_signer *signer,

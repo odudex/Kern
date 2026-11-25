@@ -428,7 +428,7 @@ static bool derive_origin_key(const unsigned char *keypath, size_t keypath_len,
          memcmp(keypath, fingerprint, BIP32_KEY_FINGERPRINT_LEN) == 0 &&
          bip32_path_from_keypath(keypath, keypath_len, path, &depth,
                                  MAX_KEYPATH_DEPTH) &&
-         key_get_derived_key_components(path, depth, key_out);
+         key_get_signing_key(path, depth, key_out);
 }
 
 // Keeps `key` when its x-only public key is `output_key`, negated to the

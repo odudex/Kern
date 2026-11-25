@@ -3,6 +3,7 @@
 #include "bip32_path.h"
 #include "kern_wally.h"
 #include "secure_memory.h"
+#include "silent_payments.h"
 #include <esp_log.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,6 +12,8 @@
 #include <wally_bip85.h>
 #include <wally_core.h>
 #include <wally_crypto.h>
+
+static const char *TAG = "key";
 
 static struct ext_key *master_key = NULL;
 static unsigned char fingerprint[BIP32_KEY_FINGERPRINT_LEN];
@@ -361,6 +364,28 @@ bool key_get_derived_key_components(const uint32_t *path, size_t path_depth,
   int ret = kern_bip32_key_from_parent_path_alloc(
       master_key, path, path_depth, BIP32_FLAG_KEY_PRIVATE, key_out);
   return (ret == WALLY_OK);
+}
+
+static bool path_signable(const uint32_t *path, size_t path_depth) {
+  const uint32_t h = BIP32_INITIAL_HARDENED_CHILD;
+  if (!path_depth || path[0] != (h | SP_PURPOSE))
+    return true;
+  uint32_t coin = master_key->version == BIP32_VER_TEST_PRIVATE ? 1 : 0;
+  return path_depth == SP_PATH_DEPTH && path[1] == (h | coin) &&
+         path[2] == (h | SP_ACCOUNT) && path[3] == (h | SP_SPEND_BRANCH);
+}
+
+bool key_get_signing_key(const uint32_t *path, size_t path_depth,
+                         struct ext_key **key_out) {
+  if (key_out)
+    *key_out = NULL;
+  if (!key_loaded || (!path && path_depth > 0))
+    return false;
+  if (!path_signable(path, path_depth)) {
+    ESP_LOGW(TAG, "Refusing to sign with a BIP352 key off the spend branch");
+    return false;
+  }
+  return key_get_derived_key_components(path, path_depth, key_out);
 }
 
 bool key_get_public_key_components(const uint32_t *path, size_t path_depth,
