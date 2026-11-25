@@ -8,6 +8,7 @@
 #include "psbt_internal.h"
 #include "wallet.h"
 #include <esp_log.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wally_address.h>
@@ -77,10 +78,7 @@ bool registry_deregister_at(size_t idx) {
   if (idx >= registry_len || !registry_entries[idx].persisted)
     return false;
   registry_entry_t *entry = &registry_entries[idx];
-  char filename[64];
-  storage_descriptor_filename(entry->loc, entry->id, STORAGE_DESCRIPTOR_BIP138,
-                              filename, sizeof(filename));
-  esp_err_t err = storage_delete_descriptor(entry->loc, filename);
+  esp_err_t err = storage_delete_descriptor(entry->loc, entry->filename);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "De-registering '%s' failed (%d)", entry->id, err);
     return false;
@@ -128,6 +126,48 @@ static bool scan_validate(const char *descriptor_str,
   return result == VALIDATION_SUCCESS;
 }
 
+/* The file id a registration is stored under: the hex of the first bytes of
+ * the alias's SHA-256, so any alias fits a SPIFFS name. */
+static bool alias_file_id(const char *alias,
+                          char out[REGISTRY_ALIAS_FILE_ID_LEN + 1]) {
+  unsigned char hash[SHA256_LEN];
+  if (wally_sha256((const unsigned char *)alias, strlen(alias), hash,
+                   sizeof(hash)) != WALLY_OK)
+    return false;
+  for (size_t i = 0; i < REGISTRY_ALIAS_FILE_ID_LEN / 2; i++)
+    snprintf(out + 2 * i, 3, "%02x", hash[i]);
+  return true;
+}
+
+/* A name whose file cannot be named counts as taken */
+bool registry_name_registered(const char *name) {
+  char file_id[REGISTRY_ALIAS_FILE_ID_LEN + 1];
+  return !alias_file_id(name, file_id) ||
+         storage_descriptor_exists(STORAGE_FLASH, file_id,
+                                   STORAGE_DESCRIPTOR_BIP138);
+}
+
+bool registry_unregister(const char *alias) {
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, alias, REGISTRY_ID_MAX_LEN) == 0)
+      return registry_entries[i].persisted ? registry_deregister_at(i)
+                                           : registry_remove_at(i);
+  }
+  return false;
+}
+
+/* The id of a backup: the alias it holds, else its filename for a backup
+ * written before aliases were stored */
+static bool backup_id(const char *fname, const char *alias, char *id,
+                      size_t id_size) {
+  if (!alias)
+    return descriptor_id_from_filename(fname, id, id_size);
+  if (strlen(alias) >= id_size)
+    return false;
+  strcpy(id, alias);
+  return true;
+}
+
 /* Registers every flash backup that this device wrote for the loaded key
  * (valid approval mark) and that still passes keyed validation. Backups
  * without a mark, plaintext and KEF files stay explicit imports. Each backup
@@ -138,9 +178,10 @@ static void registry_init_scan(void) {
   if (storage_list_descriptors(STORAGE_FLASH, &files, &count) != ESP_OK)
     return;
   bip138_backup_hold_approval_key();
-  for (int i = 0; i < count && registry_len < REGISTRY_MAX_ENTRIES; i++) {
+  for (int i = 0; i < count; i++) {
     const char *fname = files[i];
-    if (storage_descriptor_format(fname) != STORAGE_DESCRIPTOR_BIP138)
+    if (storage_descriptor_format(fname) != STORAGE_DESCRIPTOR_BIP138 ||
+        registry_len >= REGISTRY_MAX_ENTRIES)
       continue;
     uint8_t *data = NULL;
     size_t data_len = 0;
@@ -150,35 +191,36 @@ static void registry_init_scan(void) {
     char *desc_str = NULL;
     struct wally_descriptor *desc = NULL;
     int key_index = -1;
+    char *alias = NULL;
     char id[REGISTRY_ID_MAX_LEN];
-    char existing[REGISTRY_ID_MAX_LEN];
     bool approved = false;
-    if (!bip138_backup_decrypt_any_hinted(data, data_len, &desc_str,
+    if (!bip138_backup_decrypt_any_hinted(data, data_len, &desc_str, &alias,
                                           &approved)) {
       ESP_LOGI(TAG, "Skipping '%s': not addressed to the loaded key", fname);
     } else if (!approved) {
       ESP_LOGI(TAG, "Skipping '%s': not registered on this device", fname);
     } else if (!scan_validate(desc_str, &desc, &key_index)) {
       ESP_LOGW(TAG, "Skipping '%s': failed validation", fname);
-    } else if (!descriptor_id_from_filename(fname, id, sizeof(id))) {
-      ESP_LOGW(TAG, "Skipping '%s': unexpected filename", fname);
-    } else if (registry_session_has_duplicate_scripts(desc, existing,
-                                                      sizeof(existing))) {
-      ESP_LOGI(TAG, "Skipping '%s': same descriptor as '%s'", fname, existing);
+    } else if (!backup_id(fname, alias, id, sizeof(id))) {
+      ESP_LOGW(TAG, "Skipping '%s': unexpected filename or alias", fname);
     } else if (registry_find_by_id(id)) {
       ESP_LOGW(TAG, "Skipping '%s': id '%s' already registered", fname, id);
     } else {
       bool added = registry_add_parsed(id, desc, (size_t)key_index,
                                        STORAGE_FLASH, false);
       desc = NULL; /* owned by the registry, or freed on failure */
-      if (added)
-        registry_entries[registry_len - 1].persisted = true;
-      else
+      if (added) {
+        registry_entry_t *e = &registry_entries[registry_len - 1];
+        e->persisted = true;
+        snprintf(e->filename, sizeof(e->filename), "%s", fname);
+      } else {
         ESP_LOGW(TAG, "Skipping stored descriptor '%s': failed to register",
                  id);
+      }
     }
     wally_descriptor_free(desc);
     SECURE_FREE_STRING(desc_str);
+    free(alias);
     free(data);
   }
   bip138_backup_release_approval_key();
@@ -276,6 +318,19 @@ bool registry_session_has_duplicate_scripts(const struct wally_descriptor *desc,
   return false;
 }
 
+bool registry_entry_is_descriptor(const registry_entry_t *entry,
+                                  const char *descriptor_str) {
+  struct wally_descriptor *desc = NULL;
+  uint8_t id[32];
+  bool same =
+      entry->has_script_id && descriptor_str &&
+      wallet_descriptor_parse(descriptor_str, NULL, wallet_wally_network(),
+                              &desc) == WALLY_OK &&
+      script_id(desc, id) && memcmp(id, entry->script_id, sizeof(id)) == 0;
+  wally_descriptor_free(desc);
+  return same;
+}
+
 bool registry_session_has_duplicate(const char *descriptor_str, char *out_id,
                                     size_t out_id_size) {
   if (out_id && out_id_size > 0)
@@ -345,6 +400,40 @@ static bool own_key_matches(const registry_own_key_t *key, uint32_t multi_index,
                               depth - key->origin_path_len, child_num);
 }
 
+void registry_prefer(const char *id) {
+  for (size_t i = 0; i < registry_len; i++) {
+    if (strncmp(registry_entries[i].id, id, REGISTRY_ID_MAX_LEN) == 0)
+      registry_entries[i].preferred = true;
+  }
+}
+
+void registry_clear_preferred(void) {
+  for (size_t i = 0; i < registry_len; i++)
+    registry_entries[i].preferred = false;
+}
+
+static registry_entry_t *match_order_entry(size_t pos) {
+  size_t preferred = 0;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (registry_entries[i].preferred)
+      preferred++;
+  }
+  bool want_preferred = pos < preferred;
+  size_t skip = want_preferred ? pos : pos - preferred;
+  for (size_t i = 0; i < registry_len; i++) {
+    if (registry_entries[i].preferred != want_preferred)
+      continue;
+    if (skip == 0)
+      return &registry_entries[i];
+    skip--;
+  }
+  return NULL;
+}
+
+const registry_entry_t *registry_match_order_get(size_t pos) {
+  return match_order_entry(pos);
+}
+
 registry_entry_t *registry_match_keypath(const uint8_t *keypath,
                                          size_t keypath_len,
                                          registry_match_cursor_t *cursor,
@@ -358,9 +447,8 @@ registry_entry_t *registry_match_keypath(const uint8_t *keypath,
                                MAX_KEYPATH_TOTAL_DEPTH))
     return NULL;
 
-  for (; cursor->entry < registry_len;
-       cursor->entry++, cursor->multi_index = 0) {
-    registry_entry_t *e = &registry_entries[cursor->entry];
+  for (registry_entry_t *e = match_order_entry(cursor->entry); e;
+       e = match_order_entry(++cursor->entry), cursor->multi_index = 0) {
     uint32_t groups = e->num_paths > 1 ? (uint32_t)e->num_paths : 1;
     for (; cursor->multi_index < groups; cursor->multi_index++) {
       for (size_t k = 0; k < e->num_own_keys; k++) {
@@ -564,7 +652,8 @@ bool registry_persist(const char *id, const char *name) {
   if (strncmp(id, name, REGISTRY_ID_MAX_LEN) != 0 && registry_find_by_id(name))
     return false;
   /* Another seed's backup may sit under this name without being loaded. */
-  if (storage_descriptor_exists(loc, name, STORAGE_DESCRIPTOR_BIP138))
+  char file_id[REGISTRY_ALIAS_FILE_ID_LEN + 1];
+  if (registry_name_registered(name) || !alias_file_id(name, file_id))
     return false;
 
   char *descriptor_str = NULL;
@@ -572,8 +661,8 @@ bool registry_persist(const char *id, const char *name) {
     return false;
   uint8_t *blob = NULL;
   size_t blob_len = 0;
-  bool ok = bip138_backup_encrypt(descriptor_str, &blob, &blob_len) &&
-            storage_save_descriptor(loc, name, blob, blob_len,
+  bool ok = bip138_backup_encrypt(descriptor_str, name, &blob, &blob_len) &&
+            storage_save_descriptor(loc, file_id, blob, blob_len,
                                     STORAGE_DESCRIPTOR_BIP138) == ESP_OK;
   free(blob);
   wally_free_string(descriptor_str);
@@ -587,7 +676,27 @@ bool registry_persist(const char *id, const char *name) {
   e->label[REGISTRY_LABEL_MAX_LEN - 1] = '\0';
   e->loc = loc;
   e->persisted = true;
+  storage_descriptor_filename(loc, file_id, STORAGE_DESCRIPTOR_BIP138,
+                              e->filename, sizeof(e->filename));
   return true;
+}
+
+bool registry_persist_or_add_parsed(const char *id,
+                                    struct wally_descriptor *desc,
+                                    size_t key_index, storage_location_t loc) {
+  if (!id || !desc) {
+    wally_descriptor_free(desc);
+    return false;
+  }
+
+  const registry_entry_t *entry = registry_find_by_id(id);
+  if (!entry)
+    return registry_add_parsed(id, desc, key_index, loc, true);
+  uint8_t sid[32];
+  bool same = entry->has_script_id && script_id(desc, sid) &&
+              memcmp(sid, entry->script_id, sizeof(sid)) == 0;
+  wally_descriptor_free(desc);
+  return same && (entry->persisted || registry_persist(id, id));
 }
 
 bool registry_add_watch_only(const char *id, const char *descriptor_str,

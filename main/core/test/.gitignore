@@ -45,3 +45,4 @@ test_sbv2
 fuzz_psbt
 fuzz_descriptor
 fuzz_text
+kern_bipqr/

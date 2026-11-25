@@ -142,10 +142,8 @@ static void test_network(wallet_network_t network) {
   replace_key(2, true);
   assert(wallet_is_initialized() && wallet_get_network() == network);
   assert(registry_count() == 0);
-  assert(
-      storage_descriptor_exists(STORAGE_FLASH, a, STORAGE_DESCRIPTOR_BIP138));
-  assert(
-      storage_descriptor_exists(STORAGE_FLASH, b, STORAGE_DESCRIPTOR_BIP138));
+  assert(registry_name_registered(a));
+  assert(registry_name_registered(b));
   puts("PASS: a key without backups loads with an empty registry; backups "
        "remain");
 }

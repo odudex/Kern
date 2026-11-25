@@ -13,10 +13,15 @@
 #include <wally_crypto.h>
 
 /* Approval mark: a vendor item whose data is HMAC-SHA256 over the descriptor
- * bytes under a key derived from this seed. Recipients of the backup hold only
- * public keys, so they can read it but not forge it. */
+ * bytes, then a 0x00 and the alias when the backup has one, under a key
+ * derived from this seed. Recipients of the backup hold only public keys, so
+ * they can read it but not forge it. */
 static const uint8_t approval_tag[] = "kern-approval";
 #define APPROVAL_TAG_LEN (sizeof(approval_tag) - 1)
+/* The alias a registration is stored under, kept whole whatever the filename */
+static const uint8_t alias_tag[] = "kern-alias";
+#define ALIAS_TAG_LEN (sizeof(alias_tag) - 1)
+static const uint8_t alias_separator[] = {0x00};
 #define APPROVAL_KEY_TAG "KERN_BIP138_APPROVAL"
 static const uint32_t approval_path[] = {0x4B45524Eu | BIP32_PATH_HARDENED,
                                          138u | BIP32_PATH_HARDENED};
@@ -60,19 +65,40 @@ static bool approval_key(uint8_t out[32]) {
   return true;
 }
 
-static bool approval_mac(const uint8_t *descriptor, size_t len,
-                         uint8_t out[HMAC_SHA256_LEN]) {
+/* The mark over the concatenation of `n` parts */
+static bool approval_mac(const uint8_t *const *parts, const size_t *lens,
+                         size_t n, uint8_t out[HMAC_SHA256_LEN]) {
+  size_t len = 0;
+  for (size_t i = 0; i < n; i++)
+    len += lens[i];
+  uint8_t *data = malloc(len ? len : 1);
   uint8_t mac_key[32];
-  if (!approval_key(mac_key))
-    return false;
-  bool ok = wally_hmac_sha256(mac_key, sizeof(mac_key), descriptor, len, out,
-                              HMAC_SHA256_LEN) == WALLY_OK;
+  bool ok = data && approval_key(mac_key);
+  if (ok) {
+    size_t off = 0;
+    for (size_t i = 0; i < n; i++) {
+      memcpy(data + off, parts[i], lens[i]);
+      off += lens[i];
+    }
+    ok = wally_hmac_sha256(mac_key, sizeof(mac_key), data, len, out,
+                           HMAC_SHA256_LEN) == WALLY_OK;
+  }
   secure_memzero(mac_key, sizeof(mac_key));
+  free(data);
   return ok;
 }
 
-bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
-                           size_t *blob_len) {
+/* The mark of a backup: over the descriptor, and its alias when present */
+static bool backup_mac(const uint8_t *descriptor, size_t len,
+                       const uint8_t *alias, size_t alias_len,
+                       uint8_t out[HMAC_SHA256_LEN]) {
+  const uint8_t *parts[] = {descriptor, alias_separator, alias};
+  size_t lens[] = {len, sizeof(alias_separator), alias_len};
+  return approval_mac(parts, lens, alias ? 3 : 1, out);
+}
+
+bool bip138_backup_encrypt(const char *descriptor, const char *alias,
+                           uint8_t **blob_out, size_t *blob_len) {
   uint8_t keys[BIP138_KEYS_MAX * BIP138_KEY_LEN];
   bip138_key_origin origins[BIP138_BACKUP_MAX_PATHS];
   bip138_path paths[BIP138_BACKUP_MAX_PATHS];
@@ -96,17 +122,22 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
     paths[i].depth = origins[i].depth;
   }
   size_t descriptor_len = strlen(descriptor);
-  if (!approval_mac((const uint8_t *)descriptor, descriptor_len, mac))
+  if (!backup_mac((const uint8_t *)descriptor, descriptor_len,
+                  (const uint8_t *)alias, alias ? strlen(alias) : 0, mac))
     return false;
 
-  bip138_item items[2] = {
+  bip138_item items[3] = {
       {{BIP138_CONTENT_BIP, BIP138_BIP_DESCRIPTOR, NULL, 0},
        (const uint8_t *)descriptor,
        descriptor_len},
       {{BIP138_CONTENT_PROPRIETARY, 0, approval_tag, APPROVAL_TAG_LEN},
        mac,
-       sizeof(mac)}};
-  size_t pt_len = bip138_plaintext_size(items, 2, 0);
+       sizeof(mac)},
+      {{BIP138_CONTENT_PROPRIETARY, 0, alias_tag, ALIAS_TAG_LEN},
+       (const uint8_t *)alias,
+       alias ? strlen(alias) : 0}};
+  size_t n_items = alias ? 3 : 2;
+  size_t pt_len = bip138_plaintext_size(items, n_items, 0);
   size_t cap =
       bip138_encrypt_size(bip138_secret_bucket(count), paths, n_paths, pt_len);
   if (pt_len == 0 || cap == 0)
@@ -115,12 +146,12 @@ bool bip138_backup_encrypt(const char *descriptor, uint8_t **blob_out,
   uint8_t *blob = malloc(cap);
   /* Every origin is kept, common ones included, so recovery under any of the
    * descriptor's keys is a single derivation instead of a common-path walk. */
-  bool ok =
-      pt && blob &&
-      bip138_plaintext_encode(items, 2, 0, pt, pt_len, &pt_len) == BIP138_OK &&
-      bip138_encrypt_flags(kern_bip138_crypto(), keys, count, paths, n_paths,
-                           BIP138_FLAG_KEEP_COMMON_PATHS, pt, pt_len, blob, cap,
-                           blob_len) == BIP138_OK;
+  bool ok = pt && blob &&
+            bip138_plaintext_encode(items, n_items, 0, pt, pt_len, &pt_len) ==
+                BIP138_OK &&
+            bip138_encrypt_flags(kern_bip138_crypto(), keys, count, paths,
+                                 n_paths, BIP138_FLAG_KEEP_COMMON_PATHS, pt,
+                                 pt_len, blob, cap, blob_len) == BIP138_OK;
   SECURE_FREE_BUFFER(pt, pt_len);
   if (!ok) {
     free(blob);
@@ -222,33 +253,58 @@ static size_t collect_hints(const bip138_container *cont, hint_path_t *hints) {
   return n;
 }
 
+static bool is_proprietary(const bip138_item *item, const uint8_t *tag,
+                           size_t tag_len) {
+  return item->content.type == BIP138_CONTENT_PROPRIETARY &&
+         item->content.tag_len == tag_len &&
+         memcmp(item->content.tag, tag, tag_len) == 0;
+}
+
+/* The descriptor, approval mark and alias items, in that order in `slots` */
 static bool find_items(const uint8_t *pt, size_t pt_len, bip138_item *slots,
-                       bool *have_mark) {
+                       bool *have_mark, bool *have_alias) {
   bip138_item_iter it;
   bip138_item item;
   bool have_descriptor = false;
   *have_mark = false;
+  *have_alias = false;
   bip138_item_iter_init(&it, pt, pt_len);
   while (bip138_item_next(&it, &item) == 1) {
     if (!have_descriptor && item.content.type == BIP138_CONTENT_BIP &&
         item.content.bip == BIP138_BIP_DESCRIPTOR) {
       slots[0] = item;
       have_descriptor = true;
-    } else if (!*have_mark && item.content.type == BIP138_CONTENT_PROPRIETARY &&
-               item.content.tag_len == APPROVAL_TAG_LEN &&
-               memcmp(item.content.tag, approval_tag, APPROVAL_TAG_LEN) == 0 &&
+    } else if (!*have_mark &&
+               is_proprietary(&item, approval_tag, APPROVAL_TAG_LEN) &&
                item.data_len == HMAC_SHA256_LEN) {
       slots[1] = item;
       *have_mark = true;
+    } else if (!*have_alias &&
+               is_proprietary(&item, alias_tag, ALIAS_TAG_LEN)) {
+      slots[2] = item;
+      *have_alias = true;
     }
   }
   return have_descriptor;
 }
 
+static char *item_string_alloc(const bip138_item *item) {
+  char *out = malloc(item->data_len + 1);
+  if (out) {
+    memcpy(out, item->data, item->data_len);
+    out[item->data_len] = '\0';
+  }
+  return out;
+}
+
+/* `alias_item` is NULL for a backup without alias */
 static bool mark_is_valid(const bip138_item *descriptor_item,
-                          const bip138_item *mark_item) {
+                          const bip138_item *mark_item,
+                          const bip138_item *alias_item) {
   uint8_t expected[HMAC_SHA256_LEN];
-  if (!approval_mac(descriptor_item->data, descriptor_item->data_len, expected))
+  if (!backup_mac(descriptor_item->data, descriptor_item->data_len,
+                  alias_item ? alias_item->data : NULL,
+                  alias_item ? alias_item->data_len : 0, expected))
     return false;
   uint8_t diff = 0;
   for (size_t i = 0; i < HMAC_SHA256_LEN; i++)
@@ -257,8 +313,8 @@ static bool mark_is_valid(const bip138_item *descriptor_item,
 }
 
 static bool decrypt_impl(const uint8_t *blob, size_t blob_len,
-                         char **descriptor_out, bool *approved_out,
-                         bool walk_common) {
+                         char **descriptor_out, char **alias_out,
+                         bool *approved_out, bool walk_common) {
   bip138_container cont;
   hint_path_t hints[BIP138_BACKUP_MAX_PATHS];
   uint8_t xonly[BIP138_KEY_LEN];
@@ -267,6 +323,8 @@ static bool decrypt_impl(const uint8_t *blob, size_t blob_len,
 
   if (approved_out)
     *approved_out = false;
+  if (alias_out)
+    *alias_out = NULL;
   if (!blob || !descriptor_out || blob_len > BIP138_BACKUP_MAX_LEN ||
       bip138_parse(blob, blob_len, &cont) != BIP138_OK)
     return false;
@@ -291,17 +349,24 @@ static bool decrypt_impl(const uint8_t *blob, size_t blob_len,
   }
 
   bool ok = false;
-  bip138_item slots[2];
+  bip138_item slots[3];
   bool have_mark = false;
-  if (found && find_items(pt, pt_len, slots, &have_mark)) {
-    char *descriptor = malloc(slots[0].data_len + 1);
-    if (descriptor) {
-      memcpy(descriptor, slots[0].data, slots[0].data_len);
-      descriptor[slots[0].data_len] = '\0';
+  bool have_alias = false;
+  if (found && find_items(pt, pt_len, slots, &have_mark, &have_alias)) {
+    char *descriptor = item_string_alloc(&slots[0]);
+    char *alias = alias_out && have_alias ? item_string_alloc(&slots[2]) : NULL;
+    if (descriptor && (!alias_out || !have_alias || alias)) {
       *descriptor_out = descriptor;
+      if (alias_out)
+        *alias_out = alias;
       if (approved_out)
-        *approved_out = have_mark && mark_is_valid(&slots[0], &slots[1]);
+        *approved_out =
+            have_mark &&
+            mark_is_valid(&slots[0], &slots[1], have_alias ? &slots[2] : NULL);
       ok = true;
+    } else {
+      free(descriptor);
+      free(alias);
     }
   }
   SECURE_FREE_BUFFER(pt, pt_cap);
@@ -309,8 +374,10 @@ static bool decrypt_impl(const uint8_t *blob, size_t blob_len,
 }
 
 bool bip138_backup_decrypt(const uint8_t *blob, size_t blob_len,
-                           char **descriptor_out, bool *approved_out) {
-  return decrypt_impl(blob, blob_len, descriptor_out, approved_out, true);
+                           char **descriptor_out, char **alias_out,
+                           bool *approved_out) {
+  return decrypt_impl(blob, blob_len, descriptor_out, alias_out, approved_out,
+                      true);
 }
 
 bool bip138_backup_detect(const uint8_t *data, size_t len) {
@@ -320,33 +387,39 @@ bool bip138_backup_detect(const uint8_t *data, size_t len) {
 }
 
 static bool decrypt_any_impl(const uint8_t *data, size_t len,
-                             char **descriptor_out, bool *approved_out,
-                             bool walk_common) {
+                             char **descriptor_out, char **alias_out,
+                             bool *approved_out, bool walk_common) {
   if (approved_out)
     *approved_out = false;
+  if (alias_out)
+    *alias_out = NULL;
   if (!data || len == 0 || len > BIP138_BACKUP_MAX_LEN * 2)
     return false;
   if (bip138_is_container(data, len))
-    return decrypt_impl(data, len, descriptor_out, approved_out, walk_common);
+    return decrypt_impl(data, len, descriptor_out, alias_out, approved_out,
+                        walk_common);
   size_t cap = BIP138_BASE64_DECODED_MAX(len);
   uint8_t *blob = malloc(cap);
   size_t blob_len = 0;
-  bool ok =
-      blob &&
-      bip138_base64_decode((const char *)data, len, blob, cap, &blob_len) ==
-          BIP138_OK &&
-      decrypt_impl(blob, blob_len, descriptor_out, approved_out, walk_common);
+  bool ok = blob &&
+            bip138_base64_decode((const char *)data, len, blob, cap,
+                                 &blob_len) == BIP138_OK &&
+            decrypt_impl(blob, blob_len, descriptor_out, alias_out,
+                         approved_out, walk_common);
   free(blob);
   return ok;
 }
 
 bool bip138_backup_decrypt_any(const uint8_t *data, size_t len,
-                               char **descriptor_out, bool *approved_out) {
-  return decrypt_any_impl(data, len, descriptor_out, approved_out, true);
+                               char **descriptor_out, char **alias_out,
+                               bool *approved_out) {
+  return decrypt_any_impl(data, len, descriptor_out, alias_out, approved_out,
+                          true);
 }
 
 bool bip138_backup_decrypt_any_hinted(const uint8_t *data, size_t len,
-                                      char **descriptor_out,
+                                      char **descriptor_out, char **alias_out,
                                       bool *approved_out) {
-  return decrypt_any_impl(data, len, descriptor_out, approved_out, false);
+  return decrypt_any_impl(data, len, descriptor_out, alias_out, approved_out,
+                          false);
 }
