@@ -1,30 +1,32 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.22)
 project(kern_simulator C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-
-# Configurable display resolution (default 720x720)
-if(NOT DEFINED SIM_LCD_H_RES)
-  set(SIM_LCD_H_RES 720)
-endif()
-if(NOT DEFINED SIM_LCD_V_RES)
-  set(SIM_LCD_V_RES 720)
-endif()
 
 # Board identity (passed from justfile, default wave_4b)
 if(NOT DEFINED SIM_BOARD)
   set(SIM_BOARD "wave_4b")
 endif()
 
-# Board feature flags
-if(SIM_BOARD STREQUAL "wave_35")
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/boards.cmake)
+kern_board_load_by_name("${SIM_BOARD}")
+
+# Configurable display resolution (defaults to the selected board's panel)
+if(NOT DEFINED SIM_LCD_H_RES)
+  set(SIM_LCD_H_RES ${KERN_BOARD_WIDTH})
+endif()
+if(NOT DEFINED SIM_LCD_V_RES)
+  set(SIM_LCD_V_RES ${KERN_BOARD_HEIGHT})
+endif()
+
+# Board feature flags derived from boards.json
+if(KERN_BOARD_PMIC STREQUAL "custom")
   set(BSP_HAS_PMIC TRUE)
-  set(BSP_PMIC_CAN_POWER_OFF TRUE)
-elseif(SIM_BOARD STREQUAL "crowpanel")
-  set(BSP_HAS_PMIC TRUE)
-elseif(SIM_BOARD STREQUAL "wave_43" OR SIM_BOARD STREQUAL "wave_5"
-       OR SIM_BOARD STREQUAL "wave_7b")
+  if(KERN_BOARD_CAN_POWER_OFF)
+    set(BSP_PMIC_CAN_POWER_OFF TRUE)
+  endif()
+elseif(KERN_BOARD_PMIC STREQUAL "adc")
   set(BSP_BATTERY_ADC TRUE)
 endif()
 
@@ -438,13 +440,7 @@ target_compile_definitions(kern_simulator PRIVATE
     $<$<BOOL:${BSP_HAS_PMIC}>:BSP_HAS_PMIC=1>
     $<$<BOOL:${BSP_PMIC_CAN_POWER_OFF}>:BSP_PMIC_CAN_POWER_OFF=1>
     $<$<BOOL:${BSP_BATTERY_ADC}>:BSP_BATTERY_ADC=1>
-    $<$<STREQUAL:${SIM_BOARD},wave_4b>:CONFIG_KERN_BOARD_WAVE_4B=1>
-    $<$<STREQUAL:${SIM_BOARD},wave_35>:CONFIG_KERN_BOARD_WAVE_35=1>
-    $<$<STREQUAL:${SIM_BOARD},wave_5>:CONFIG_KERN_BOARD_WAVE_5=1>
-    $<$<STREQUAL:${SIM_BOARD},wave_43>:CONFIG_KERN_BOARD_WAVE_43=1>
-    $<$<STREQUAL:${SIM_BOARD},crowpanel>:CONFIG_KERN_BOARD_CROWPANEL=1>
-    $<$<STREQUAL:${SIM_BOARD},wave_7b>:CONFIG_KERN_BOARD_WAVE_7B=1>
-    $<$<STREQUAL:${SIM_BOARD},p4_pico>:CONFIG_KERN_BOARD_P4_PICO=1>
+    ${KERN_BOARD_KCONFIG}=1
 )
 
 target_compile_options(kern_simulator PRIVATE

@@ -1,0 +1,74 @@
+{
+  "boards": [
+    {
+      "name": "wave_4b",
+      "kconfig": "CONFIG_KERN_BOARD_WAVE_4B",
+      "width": 720,
+      "height": 720,
+      "diag_in": 4.0,
+      "touch": "esp_lcd_touch_gt911",
+      "pmic": "none",
+      "can_power_off": false
+    },
+    {
+      "name": "wave_35",
+      "kconfig": "CONFIG_KERN_BOARD_WAVE_35",
+      "width": 320,
+      "height": 480,
+      "diag_in": 3.5,
+      "touch": "esp_lcd_touch_ft5x06",
+      "pmic": "custom",
+      "can_power_off": true
+    },
+    {
+      "name": "wave_5",
+      "kconfig": "CONFIG_KERN_BOARD_WAVE_5",
+      "width": 720,
+      "height": 1280,
+      "diag_in": 5.0,
+      "touch": "esp_lcd_touch_gt911",
+      "pmic": "adc",
+      "can_power_off": false
+    },
+    {
+      "name": "wave_43",
+      "kconfig": "CONFIG_KERN_BOARD_WAVE_43",
+      "width": 480,
+      "height": 800,
+      "diag_in": 4.3,
+      "touch": "esp_lcd_touch_gt911",
+      "pmic": "adc",
+      "can_power_off": false
+    },
+    {
+      "name": "crowpanel",
+      "kconfig": "CONFIG_KERN_BOARD_CROWPANEL",
+      "width": 1024,
+      "height": 600,
+      "diag_in": 7.0,
+      "touch": "esp_lcd_touch_gt911",
+      "pmic": "custom",
+      "can_power_off": false
+    },
+    {
+      "name": "wave_7b",
+      "kconfig": "CONFIG_KERN_BOARD_WAVE_7B",
+      "width": 1024,
+      "height": 600,
+      "diag_in": 7.0,
+      "touch": "esp_lcd_touch_gt911",
+      "pmic": "adc",
+      "can_power_off": false
+    },
+    {
+      "name": "p4_pico",
+      "kconfig": "CONFIG_KERN_BOARD_P4_PICO",
+      "width": 720,
+      "height": 1280,
+      "diag_in": 5.0,
+      "touch": "esp_lcd_touch_gt911",
+      "pmic": "none",
+      "can_power_off": false
+    }
+  ]
+}

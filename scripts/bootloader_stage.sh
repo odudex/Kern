@@ -21,7 +21,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 KERN_SB_DIR="${KERN_SB_DIR:-$REPO_ROOT/kern_secure_boot}"
-BOARDS="wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b p4_pico"
+BOARDS="$(python3 "$REPO_ROOT/tools/boards.py" list)"
 # Each board twice: ESP32-P4 chip revision v1.x, then v3.x (<board>_v3)
 DEVICES="$BOARDS $(printf '%s_v3 ' $BOARDS)"
 
