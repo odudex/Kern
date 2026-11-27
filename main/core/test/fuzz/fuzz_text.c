@@ -2,6 +2,7 @@
 #include "core/descriptor_text.h"
 #include "core/message_sign.h"
 #include "core/multisig_setup.h"
+#include "core/payload_classify.h"
 #include "fuzz.h"
 #include "utils/text_file.h"
 #include <stdbool.h>
@@ -32,6 +33,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   free(multisig_setup_to_descriptor(text));
   free(descriptor_to_unambiguous(text));
   free(text_file_normalize(data, size));
+
+  payload_classification_t classified;
+  payload_classify_text(text, size, &classified);
+  payload_classify_free(&classified);
+
   free(text);
   return 0;
 }

@@ -3,6 +3,7 @@
 
 #include "login_scan.h"
 #include "../../core/kef.h"
+#include "../../core/payload_classify.h"
 #include "../../core/registry.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -93,16 +94,6 @@ static void show_psbt_needs_key(void) {
                    unidentified_dismissed_cb, NULL, DIALOG_STYLE_OVERLAY);
 }
 
-static bool is_psbt_content(const char *content, size_t len) {
-  if (!content)
-    return false;
-  if (len >= 6 && strncmp(content, "cHNidP", 6) == 0)
-    return true;
-  if (len >= 5 && memcmp(content, "psbt\xff", 5) == 0)
-    return true;
-  return false;
-}
-
 static void wo_validation_cb(descriptor_validation_result_t result,
                              void *user_data) {
   (void)user_data;
@@ -165,7 +156,7 @@ static void on_scan_done(void) {
   bool has_ur = qr_scanner_get_ur_result(&ur_type, NULL, NULL);
   bool psbt_scanned =
       (has_ur && ur_type && strcmp(ur_type, "crypto-psbt") == 0) ||
-      is_psbt_content(content, len);
+      payload_looks_like_psbt((const uint8_t *)content, len);
   char *desc_candidate = descriptor_extract_from_scanner();
 
   qr_scanner_page_hide();
