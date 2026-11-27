@@ -6,8 +6,7 @@
 #include "../../core/payload_classify.h"
 #include "../../core/registry.h"
 #include "../../core/wallet.h"
-#include "../../qr/encoder.h"
-#include "../../qr/scanner.h"
+#include "../../qr/seedqr.h"
 #include "../../ui/dialog.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
@@ -16,6 +15,7 @@
 #include "../shared/descriptor_loader.h"
 #include "../shared/kef_decrypt_page.h"
 #include "../shared/key_confirmation.h"
+#include "../shared/qr_scanner.h"
 #include <lvgl.h>
 #include <stdlib.h>
 #include <string.h>

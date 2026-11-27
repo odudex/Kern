@@ -5,9 +5,9 @@
 #include "../../core/message_sign.h"
 #include "../../core/secp_hardening.h"
 #include "../../core/wallet.h"
-#include "../../qr/viewer.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme_widgets.h"
+#include "../shared/qr_viewer.h"
 #include "scan.h"
 #include "scan_internal.h"
 #include <lvgl.h>

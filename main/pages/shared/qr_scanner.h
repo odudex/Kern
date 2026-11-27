@@ -7,10 +7,11 @@
 #ifndef QR_SCANNER_H
 #define QR_SCANNER_H
 
-#include "../utils/attributes.h"
-#include "video.h"
+#include "../../utils/attributes.h"
 #include <lvgl.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /**
  * @brief Create the QR scanner page

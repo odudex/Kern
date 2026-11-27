@@ -1,8 +1,7 @@
-#ifndef QR_ENCODER_H
-#define QR_ENCODER_H
+#ifndef UI_QR_WIDGET_H
+#define UI_QR_WIDGET_H
 
 #include "../utils/attributes.h"
-#include "seedqr.h"
 #include <lvgl.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -11,7 +10,7 @@
 /**
  * @brief Bytes a qrcodegen output buffer needs (== qrcodegen_BUFFER_LEN_MAX for
  * version 40). Defined here so callers can allocate a qr_buf without pulling in
- * the qrcodegen header; a _Static_assert in encoder.c keeps them in sync.
+ * the qrcodegen header; a _Static_assert in qr_widget.c keeps them in sync.
  */
 #define QR_CODE_BUF_LEN 3918
 
@@ -156,4 +155,4 @@ KERN_WARN_UNUSED_RESULT char *qr_bech32_to_upper(const char *text);
 lv_result_t qr_update_binary(lv_obj_t *qr_obj, const unsigned char *data,
                              size_t len, qr_encode_result_t *result);
 
-#endif
+#endif // UI_QR_WIDGET_H

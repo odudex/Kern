@@ -6,7 +6,7 @@
 #include "../../core/registry.h"
 #include "../../core/secp_hardening.h"
 #include "../../core/wallet.h"
-#include "../../qr/encoder.h"
+#include "../../qr/seedqr.h"
 #include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/theme.h"

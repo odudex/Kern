@@ -1,12 +1,12 @@
-#include "viewer.h"
-#include "../core/settings.h"
-#include "../ui/dialog.h"
-#include "../ui/input_helpers.h"
-#include "../ui/theme_widgets.h"
-#include "../utils/session_cleanup.h"
-#include "encoder.h"
-#include "export.h"
-#include "progress.h"
+#include "qr_viewer.h"
+#include "../../core/settings.h"
+#include "../../qr/export.h"
+#include "../../qr/progress.h"
+#include "../../ui/dialog.h"
+#include "../../ui/input_helpers.h"
+#include "../../ui/qr_widget.h"
+#include "../../ui/theme_widgets.h"
+#include "../../utils/session_cleanup.h"
 #include <inttypes.h>
 #include <lvgl.h>
 #include <stdlib.h>
@@ -69,7 +69,10 @@ static void hide_controls(void) {
     lv_obj_add_flag(done_button, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void controls_timer_cb(lv_timer_t *timer) { hide_controls(); }
+static void controls_timer_cb(lv_timer_t *timer) {
+  (void)timer;
+  hide_controls();
+}
 
 static void position_done_button(void) {
   if (!view || !done_button)
@@ -106,6 +109,7 @@ static void show_controls(void) {
 }
 
 static void screen_clicked_cb(lv_event_t *e) {
+  (void)e;
   if (done_button && !lv_obj_has_flag(done_button, LV_OBJ_FLAG_HIDDEN))
     hide_controls();
   else
@@ -113,6 +117,7 @@ static void screen_clicked_cb(lv_event_t *e) {
 }
 
 static void done_button_cb(lv_event_t *e) {
+  (void)e;
   if (return_callback)
     return_callback();
 }
@@ -308,6 +313,7 @@ static bool display_frame(uint32_t index) {
 }
 
 static void animation_timer_cb(lv_timer_t *timer) {
+  (void)timer;
   if (!view || paused || settings_overlay ||
       qr_export_part_count(view->source) <= 1)
     return;
@@ -363,7 +369,10 @@ static void fps_slider_cb(lv_event_t *e) {
     lv_timer_set_period(animation_timer, 1000 / qr_fps);
 }
 
-static void settings_close_cb(lv_event_t *e) { destroy_settings_overlay(); }
+static void settings_close_cb(lv_event_t *e) {
+  (void)e;
+  destroy_settings_overlay();
+}
 
 static lv_obj_t *add_settings_slider(lv_obj_t *panel, const char *name,
                                      int32_t min, int32_t max, int32_t value,
@@ -430,7 +439,10 @@ static void create_settings_overlay(void) {
   lv_obj_add_event_cb(close_btn, settings_close_cb, LV_EVENT_CLICKED, NULL);
 }
 
-static void settings_btn_cb(lv_event_t *e) { create_settings_overlay(); }
+static void settings_btn_cb(lv_event_t *e) {
+  (void)e;
+  create_settings_overlay();
+}
 
 static void hide_message_timer_cb(lv_timer_t *timer) {
   lv_obj_del(lv_timer_get_user_data(timer));

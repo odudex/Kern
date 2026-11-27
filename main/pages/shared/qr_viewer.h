@@ -1,7 +1,7 @@
 #ifndef QR_VIEWER_H
 #define QR_VIEWER_H
 
-#include "../utils/attributes.h"
+#include "../../utils/attributes.h"
 #include <lvgl.h>
 
 /**
@@ -53,4 +53,4 @@ void qr_viewer_page_hide(void);
  */
 void qr_viewer_page_destroy(void);
 
-#endif
+#endif // QR_VIEWER_H
