@@ -7,7 +7,6 @@
 #include "../../core/storage.h"
 #include "../../core/wallet.h"
 #include "../../qr/parser.h"
-#include "../../qr/scanner.h"
 #include "../../ui/assets/icons.h"
 #include "../../ui/dialog.h"
 #include "../../ui/input_helpers.h"
@@ -16,6 +15,7 @@
 #include "../../ui/text_fit.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session_cleanup.h"
+#include "qr_scanner.h"
 #include "types/bytes_type.h"
 #include "types/output.h"
 #include <stdio.h>

@@ -151,6 +151,7 @@ set(APP_UTIL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session_cleanup.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/secure_memory/secure_memory.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/bip39_filter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/camera_pipeline.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/dice_quality.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/estimated_entropy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/utils/session.c
@@ -217,6 +218,7 @@ set(APP_UI_SOURCES
     ${APP_UI_DIR}/oneshot.c
     ${APP_UI_DIR}/path_keypad.c
     ${APP_UI_DIR}/power.c
+    ${APP_UI_DIR}/qr_widget.c
     ${APP_UI_DIR}/word_selector.c
     ${APP_UI_DIR}/wallet_source_picker.c
     ${APP_UI_DIR}/battery.c
@@ -319,6 +321,8 @@ set(APP_PAGE_SOURCES
     ${APP_PAGES_DIR}/shared/kef_encrypt_page.c
     ${APP_PAGES_DIR}/shared/key_confirmation.c
     ${APP_PAGES_DIR}/shared/mnemonic_editor.c
+    ${APP_PAGES_DIR}/shared/qr_scanner.c
+    ${APP_PAGES_DIR}/shared/qr_viewer.c
     ${APP_PAGES_DIR}/shared/sd_file_browser.c
     ${APP_PAGES_DIR}/shared/storage_browser.c
     ${APP_PAGES_DIR}/shared/text_input_scan.c
@@ -346,12 +350,10 @@ set(APP_PAGE_SOURCES
 
 # --- QR + k_quirc + cUR ---
 set(QR_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/encoder.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/seedqr.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/parser.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/viewer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/export.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/scanner.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/qr/scanner_engine.c
 )
 
 file(GLOB KQUIRC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../components/k_quirc/src/*.c)

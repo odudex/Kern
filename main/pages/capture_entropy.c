@@ -1,19 +1,19 @@
 // Capture Entropy Page - Reusable camera page for capturing entropy
 
 #include "capture_entropy.h"
+#include "../qr/frame_pool.h"
+#include "../utils/camera_pipeline.h"
 #include "../utils/session_cleanup.h"
 
 #include <bsp/esp-bsp.h>
-#include <driver/ppa.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <lvgl.h>
 #include <string.h>
 #include <wally_crypto.h>
 
 #include "../core/crypto_utils.h"
-#include "../core/entropy_pool.h"
 #include "../ui/dialog.h"
 #include "../ui/input_helpers.h"
 #include "../ui/theme_widgets.h"
@@ -39,6 +39,7 @@ static const char *TAG = "capture_entropy";
                                             : (CAMERA_INPUT_HEIGHT))
 #define CAMERA_WIDTH CAMERA_SIZE
 #define CAMERA_HEIGHT CAMERA_SIZE
+#define PREVIEW_UPDATE_INTERVAL_MS 30
 // Minimum acceptable bits per pixel. Not derived from the 128/256 bits the seed
 // needs. It is a sanity gate on the frame, set high only because the camera is
 // a rich source and demanding more costs nothing: what fails it is a covered
@@ -46,37 +47,32 @@ static const char *TAG = "capture_entropy";
 #define ESTIMATED_ENTROPY_THRESHOLD 5.0f
 #define ESTIMATED_ENTROPY_UNAVAILABLE (-1.0f)
 
-typedef enum {
-  CAMERA_EVENT_TASK_RUN = BIT(0),
-  CAMERA_EVENT_DELETE = BIT(1),
-} camera_event_id_t;
-
 static lv_obj_t *capture_screen = NULL;
 static lv_obj_t *camera_img = NULL;
+static lv_timer_t *preview_timer = NULL;
 static void (*return_callback)(void) = NULL;
 
 static lv_img_dsc_t img_dsc;
-static EventGroupHandle_t camera_event_group = NULL;
+static camera_pipeline_t pipeline;
 
-static uint8_t *display_buffer_a = NULL;
-static uint8_t *display_buffer_b = NULL;
-static uint8_t *current_display_buffer = NULL;
+// Lock-free preview pool handed from the camera task to the LVGL timer: the
+// camera task never waits on bsp_display_lock, skips PPA when LVGL has not
+// consumed the previous frame or a dialog is open, and never overwrites the
+// CLAIMED buffer while touch_event_cb hashes it.
+static uint8_t *preview_buffers[FRAME_POOL_SIZE];
+static const uint8_t *current_display_buffer = NULL;
 static size_t display_buffer_size = 0;
-
-static ppa_client_handle_t cam_ppa_client = NULL;
+static frame_pool_t preview_pool;
+static portMUX_TYPE pool_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static volatile bool closing = false;
 static volatile bool is_initialized = false;
-static volatile int active_frame_ops = 0;
 
 static uint8_t captured_entropy[32];
 static volatile bool entropy_captured = false;
 static volatile bool dialog_showing = false;
 
 static void touch_event_cb(lv_event_t *e);
-static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
-                            uint32_t camera_buf_hes, uint32_t camera_buf_ves,
-                            size_t camera_buf_len);
 
 static void low_entropy_prompt_cb(bool retry, void *user_data) {
   (void)user_data;
@@ -84,6 +80,7 @@ static void low_entropy_prompt_cb(bool retry, void *user_data) {
   if (!retry) {
     // User chose "No" - exit the capture page
     closing = true;
+    camera_pipeline_request_stop(&pipeline);
     if (return_callback)
       return_callback();
   }
@@ -95,20 +92,9 @@ static void back_btn_cb(lv_event_t *e) {
   if (closing)
     return;
   closing = true;
+  camera_pipeline_request_stop(&pipeline);
   if (return_callback)
     return_callback();
-}
-
-static uint8_t *allocate_buffer(size_t size) {
-  // PPA writes directly into these buffers, so they must be cache-line aligned.
-  size_t aligned = (size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
-                   ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
-  uint8_t *buf = heap_caps_aligned_calloc(CONFIG_CACHE_L2_CACHE_LINE_SIZE,
-                                          aligned, 1, MALLOC_CAP_SPIRAM);
-  if (!buf)
-    buf = heap_caps_aligned_calloc(CONFIG_CACHE_L2_CACHE_LINE_SIZE, aligned, 1,
-                                   MALLOC_CAP_INTERNAL);
-  return buf;
 }
 
 // Returns bits per pixel, or ESTIMATED_ENTROPY_UNAVAILABLE if the histogram
@@ -137,137 +123,99 @@ static float calculate_estimated_shannon_entropy(const uint8_t *rgb565_data,
   return estimated_entropy;
 }
 
-static bool allocate_buffers(void) {
-  display_buffer_size = CAMERA_WIDTH * CAMERA_HEIGHT * 2;
-  display_buffer_size =
-      (display_buffer_size + CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1) &
-      ~(CONFIG_CACHE_L2_CACHE_LINE_SIZE - 1);
-
-  display_buffer_a = allocate_buffer(display_buffer_size);
-  display_buffer_b = allocate_buffer(display_buffer_size);
-
-  if (!display_buffer_a || !display_buffer_b) {
-    SAFE_FREE_STATIC(display_buffer_a);
-    SAFE_FREE_STATIC(display_buffer_b);
-    display_buffer_size = 0;
-    return false;
-  }
-  return true;
+static void reset_preview_pool(void) {
+  portENTER_CRITICAL_SAFE(&pool_lock);
+  preview_pool = (frame_pool_t){0};
+  portEXIT_CRITICAL_SAFE(&pool_lock);
+  current_display_buffer = NULL;
 }
 
 static void free_buffers(void) {
-  current_display_buffer = NULL;
-  SAFE_FREE_STATIC(display_buffer_a);
-  SAFE_FREE_STATIC(display_buffer_b);
+  reset_preview_pool();
+  for (size_t i = 0; i < FRAME_POOL_SIZE; i++)
+    SAFE_FREE_STATIC(preview_buffers[i]);
   display_buffer_size = 0;
 }
 
-static void camera_frame_cb(uint8_t *camera_buf, uint8_t camera_buf_index,
-                            uint32_t camera_buf_hes, uint32_t camera_buf_ves,
-                            size_t camera_buf_len) {
-  __atomic_add_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
-
-  if (closing || !is_initialized || !camera_event_group) {
-    __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
-    return;
+static bool allocate_buffers(void) {
+  if (preview_buffers[0]) {
+    // Kept by a prior shutdown that could not confirm PPA idle.
+    if (!camera_pipeline_is_idle(&pipeline)) {
+      ESP_LOGE(TAG, "Camera display buffers are still in use");
+      return false;
+    }
+    reset_preview_pool();
+    return true;
   }
 
-  EventBits_t bits = xEventGroupGetBits(camera_event_group);
-  if (!(bits & CAMERA_EVENT_TASK_RUN) || (bits & CAMERA_EVENT_DELETE)) {
-    __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
-    return;
-  }
+  display_buffer_size =
+      camera_pipeline_align_size((size_t)CAMERA_WIDTH * CAMERA_HEIGHT * 2);
 
-  if (!display_buffer_a || !display_buffer_b || !current_display_buffer ||
-      !cam_ppa_client) {
-    __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
-    return;
-  }
-
-  uint8_t *back_buffer = (current_display_buffer == display_buffer_a)
-                             ? display_buffer_b
-                             : display_buffer_a;
-
-  uint32_t in_w = camera_buf_hes ? camera_buf_hes : CAMERA_INPUT_WIDTH;
-  uint32_t in_h = camera_buf_ves ? camera_buf_ves : CAMERA_INPUT_HEIGHT;
-  uint32_t crop_max = (in_w < in_h) ? in_w : in_h;
-  // Snap crop so PPA's Q4.4 scale produces exactly CAMERA_WIDTH; otherwise
-  // the truncated scale leaves a noisy column on the right edge.
-  uint32_t crop = app_video_ppa_snap_crop(crop_max, CAMERA_WIDTH);
-  uint32_t crop_ox = (in_w - crop) / 2;
-  uint32_t crop_oy = (in_h - crop) / 2;
-  float scale = (float)CAMERA_WIDTH / (float)crop;
-
-  ppa_srm_oper_config_t srm = {
-      .in.buffer = camera_buf,
-      .in.pic_w = in_w,
-      .in.pic_h = in_h,
-      .in.block_w = crop,
-      .in.block_h = crop,
-      .in.block_offset_x = crop_ox,
-      .in.block_offset_y = crop_oy,
-      .in.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-      .out.buffer = back_buffer,
-      .out.buffer_size = display_buffer_size,
-      .out.pic_w = CAMERA_WIDTH,
-      .out.pic_h = CAMERA_HEIGHT,
-      .out.block_offset_x = 0,
-      .out.block_offset_y = 0,
-      .out.srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-      .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-      .scale_x = scale,
-      .scale_y = scale,
-      .mode = PPA_TRANS_MODE_BLOCKING,
-  };
-  if (ppa_do_scale_rotate_mirror(cam_ppa_client, &srm) != ESP_OK) {
-    __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
-    return;
-  }
-
-  // Sensor shot noise is real physical entropy and the frame is already here.
-  // memcpy rather than a uint32_t cast: the callback contract hands over a
-  // uint8_t *, so alignment is an assumption about today's allocator, not a
-  // guarantee. Three separate stirs rather than one XOR of the three, which
-  // would let equal samples cancel on a uniform frame.
-  if (display_buffer_size >= sizeof(uint32_t)) {
-    size_t last = (display_buffer_size - sizeof(uint32_t)) & ~(size_t)3;
-    size_t offsets[3] = {0, (last / 2) & ~(size_t)3, last};
-    for (size_t i = 0; i < 3; i++) {
-      uint32_t word;
-      memcpy(&word, back_buffer + offsets[i], sizeof(word));
-      entropy_pool_stir(word);
+  for (size_t i = 0; i < FRAME_POOL_SIZE; i++) {
+    preview_buffers[i] = camera_pipeline_alloc_buffer(display_buffer_size);
+    if (!preview_buffers[i]) {
+      free_buffers();
+      return false;
     }
   }
+  reset_preview_pool();
+  return true;
+}
 
-  if (!closing && !dialog_showing && bsp_display_lock(0)) {
-    if (!closing && camera_img) {
-      current_display_buffer = back_buffer;
-      img_dsc.data = back_buffer;
-      lv_img_set_src(camera_img, &img_dsc);
-      // Live camera preview counts as activity: hold off screensaver/session
-      // lock
-      lv_display_trigger_activity(NULL);
-    }
-    bsp_display_unlock();
-  }
+static void on_camera_frame(ppa_client_handle_t ppa, uint8_t *camera_buf,
+                            uint32_t width, uint32_t height, size_t len,
+                            void *ctx) {
+  (void)len;
+  (void)ctx;
 
-  __atomic_sub_fetch(&active_frame_ops, 1, __ATOMIC_SEQ_CST);
+  if (closing || !is_initialized || dialog_showing || !preview_buffers[0])
+    return;
+
+  // Skip PPA if LVGL has not yet claimed the previous finished preview frame.
+  int index = -1;
+  portENTER_CRITICAL_SAFE(&pool_lock);
+  if (!frame_pool_has_ready(&preview_pool))
+    index = frame_pool_acquire(&preview_pool);
+  portEXIT_CRITICAL_SAFE(&pool_lock);
+  if (index < 0)
+    return;
+
+  uint32_t in_w = width ? width : CAMERA_INPUT_WIDTH;
+  uint32_t in_h = height ? height : CAMERA_INPUT_HEIGHT;
+
+  esp_err_t err = camera_pipeline_scale_rgb565_crop(
+      ppa, camera_buf, in_w, in_h, 0, preview_buffers[index],
+      display_buffer_size, CAMERA_WIDTH);
+
+  portENTER_CRITICAL_SAFE(&pool_lock);
+  if (err == ESP_OK)
+    frame_pool_finish(&preview_pool, index);
+  else
+    frame_pool_abandon(&preview_pool, index);
+  portEXIT_CRITICAL_SAFE(&pool_lock);
+}
+
+static void preview_timer_cb(lv_timer_t *timer) {
+  (void)timer;
+  if (!camera_img || closing || dialog_showing || !preview_buffers[0])
+    return;
+
+  portENTER_CRITICAL_SAFE(&pool_lock);
+  int index = frame_pool_claim(&preview_pool);
+  portEXIT_CRITICAL_SAFE(&pool_lock);
+  if (index < 0)
+    return;
+
+  current_display_buffer = preview_buffers[index];
+  img_dsc.data = current_display_buffer;
+  lv_img_set_src(camera_img, &img_dsc);
+  // Live camera preview counts as activity: hold off screensaver/session lock
+  lv_display_trigger_activity(NULL);
 }
 
 static bool camera_init(void) {
   if (app_video_is_streaming())
     return true;
-
-  if (!app_video_is_ready()) {
-    ESP_LOGE(TAG, "Video pipeline is not ready");
-    return false;
-  }
-
-  camera_event_group = xEventGroupCreate();
-  if (!camera_event_group)
-    return false;
-
-  xEventGroupSetBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
 
   img_dsc = (lv_img_dsc_t){
       .header = {.cf = LV_COLOR_FORMAT_RGB565,
@@ -280,17 +228,16 @@ static bool camera_init(void) {
   if (!allocate_buffers())
     return false;
 
-  current_display_buffer = display_buffer_a;
-  img_dsc.data = current_display_buffer;
-
-  ppa_client_config_t ppa_cfg = {.oper_type = PPA_OPERATION_SRM};
-  if (ppa_register_client(&ppa_cfg, &cam_ppa_client) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to register PPA client");
-    cam_ppa_client = NULL;
-    return false;
-  }
-
-  if (app_video_start(camera_frame_cb, 0) != ESP_OK)
+  const camera_pipeline_config_t cfg = {
+      .on_frame = on_camera_frame,
+      .on_ppa_done = NULL,
+      .is_idle = NULL,
+      .ctx = NULL,
+      .max_pending_trans_num = 1,
+      .core_id = 0,
+      .stir_entropy = true,
+  };
+  if (!camera_pipeline_start(&pipeline, &cfg))
     return false;
 
   // Apply the wider AE hysteresis + gain cap - without this, the sensor keeps
@@ -302,6 +249,7 @@ static bool camera_init(void) {
 }
 
 static void touch_event_cb(lv_event_t *e) {
+  (void)e;
   if (closing || dialog_showing || !current_display_buffer)
     return;
 
@@ -347,6 +295,7 @@ static void touch_event_cb(lv_event_t *e) {
 
   entropy_captured = true;
   closing = true;
+  camera_pipeline_request_stop(&pipeline);
   if (return_callback)
     return_callback();
 }
@@ -359,7 +308,6 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
   closing = false;
   is_initialized = false;
   dialog_showing = false;
-  active_frame_ops = 0;
   entropy_captured = false;
   secure_memzero(captured_entropy, sizeof(captured_entropy));
 
@@ -396,6 +344,8 @@ void capture_entropy_page_create(lv_obj_t *parent, void (*return_cb)(void)) {
     return;
   }
 
+  preview_timer =
+      lv_timer_create(preview_timer_cb, PREVIEW_UPDATE_INTERVAL_MS, NULL);
   is_initialized = true;
 }
 
@@ -414,21 +364,12 @@ void capture_entropy_page_destroy(void) {
   closing = true;
   is_initialized = false;
 
-  if (camera_event_group) {
-    xEventGroupClearBits(camera_event_group, CAMERA_EVENT_TASK_RUN);
-    xEventGroupSetBits(camera_event_group, CAMERA_EVENT_DELETE);
+  if (preview_timer) {
+    lv_timer_del(preview_timer);
+    preview_timer = NULL;
   }
 
-  int wait = 0;
-  while (__atomic_load_n(&active_frame_ops, __ATOMIC_SEQ_CST) > 0 &&
-         wait < 30) {
-    vTaskDelay(pdMS_TO_TICKS(10));
-    wait++;
-  }
-
-  esp_err_t stop_err = app_video_stop();
-  if (stop_err != ESP_OK)
-    ESP_LOGW(TAG, "Camera stop failed: %s", esp_err_to_name(stop_err));
+  bool pipeline_idle = camera_pipeline_stop(&pipeline);
 
   bool locked = bsp_display_lock(1000);
   camera_img = NULL;
@@ -439,24 +380,14 @@ void capture_entropy_page_destroy(void) {
   if (locked)
     bsp_display_unlock();
 
-  free_buffers();
-
-  if (cam_ppa_client) {
-    ppa_unregister_client(cam_ppa_client);
-    cam_ppa_client = NULL;
-  }
-
-  if (camera_event_group) {
-    vEventGroupDelete(camera_event_group);
-    camera_event_group = NULL;
-  }
+  if (pipeline_idle)
+    free_buffers();
 
   capture_entropy_clear();
 
   return_callback = NULL;
   closing = false;
   dialog_showing = false;
-  active_frame_ops = 0;
 }
 
 bool capture_entropy_get_hash(uint8_t *hash_out) {

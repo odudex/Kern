@@ -88,4 +88,8 @@ static inline bool frame_pool_is_writing(const frame_pool_t *pool) {
   return frame_pool_find(pool, FRAME_WRITING) >= 0;
 }
 
+static inline bool frame_pool_has_ready(const frame_pool_t *pool) {
+  return frame_pool_find(pool, FRAME_READY) >= 0;
+}
+
 #endif

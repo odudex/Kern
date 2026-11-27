@@ -22,6 +22,7 @@ static void check_invariants(const world_t *w) {
   assert(count[FRAME_READY] <= 1);
   assert(count[FRAME_CLAIMED] <= 1);
   assert(frame_pool_is_writing(&w->pool) == (w->in_flight_count > 0));
+  assert(frame_pool_has_ready(&w->pool) == (count[FRAME_READY] > 0));
 
   // The PPA never writes what the consumer may be reading, nor one buffer
   // twice, and what the consumer reads stays a whole frame until it claims

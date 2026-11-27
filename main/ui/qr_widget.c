@@ -1,4 +1,4 @@
-#include "encoder.h"
+#include "qr_widget.h"
 #include "../utils/secure_mem.h"
 #include "src/libs/qrcode/qrcodegen.h"
 #include "src/misc/cache/instance/lv_image_cache.h"

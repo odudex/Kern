@@ -2,8 +2,8 @@
 
 #include "about.h"
 #include "../../project.h"
-#include "../../qr/encoder.h"
 #include "../../ui/assets/kern_logo_lvgl.h"
+#include "../../ui/qr_widget.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session_cleanup.h"
 #include <esp_app_desc.h>

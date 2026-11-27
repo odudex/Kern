@@ -21,7 +21,7 @@
 #include "pages/pin/pin_page.h"
 #include "pages/scan/scan.h"
 #include "pages/scan/scan_internal.h"
-#include "qr/viewer.h"
+#include "pages/shared/qr_viewer.h"
 #include "qr/parser.h"
 #include "ui/display_cleanup.h"
 #include "ui/input_helpers.h"

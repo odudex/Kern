@@ -3,7 +3,7 @@
 #include "store_mnemonic.h"
 #include "../core/key.h"
 #include "../core/storage.h"
-#include "../qr/encoder.h"
+#include "../qr/seedqr.h"
 #include "../ui/dialog.h"
 #include "../ui/oneshot.h"
 #include "../ui/theme_widgets.h"

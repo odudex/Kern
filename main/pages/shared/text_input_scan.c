@@ -1,10 +1,10 @@
 #include "text_input_scan.h"
 #include "../../qr/parser.h"
-#include "../../qr/scanner.h"
 #include "../../ui/dialog.h"
 #include "../../utils/secure_mem.h"
 #include "../../utils/session_cleanup.h"
 #include "../../utils/utf8.h"
+#include "qr_scanner.h"
 #include "types/bytes_type.h"
 #include <stdlib.h>
 #include <string.h>

@@ -9,10 +9,10 @@ Untrusted inputs, in order of importance:
 - **QR payloads** (`main/qr/`): raw bytes from the QR decoder (`components/k_quirc`) are assembled by `main/qr/parser.c` from UR (`components/cUR`: CBOR, fountain codes), BBQr (`components/bbqr` + `components/deflate_codec`), pMofN and plaintext parts, then handed to the consumers below.
 - **PSBTs** (`main/core/psbt.c`, `psbt_parse.c`): parsed by libwally, then classified and verified against the loaded descriptor before signing. Outputs are shown to the user as change or spend; the fee and amounts come from the PSBT's UTXO data.
 - **Output descriptors / miniscript** (`main/core/descriptor_validator.c`, `wallet.c`, `miniscript_policy.c`, `registry.c`, `script_templates.c`): parsed by libwally's descriptor parser, validated for the device's own key, stored, and later used to derive addresses and to decide which PSBT outputs are change.
-- **Mnemonics and key material**: SeedQR, Compact SeedQR, mnemonic text (`main/qr/encoder.c` is the encoder; `main/pages/load_mnemonic/` the loaders); KEF-encrypted envelopes (`main/core/kef.c`), BIP138 encrypted backups (`main/core/bip138_*.c`, `components/bip138`); BIP322 message-signing requests (`main/core/bip322.c`, `message_sign.c`).
+- **Mnemonics and key material**: SeedQR, Compact SeedQR, mnemonic text (`main/qr/seedqr.c` and `main/ui/qr_widget.c` handle encoding; `main/pages/load_mnemonic/` the loaders); KEF-encrypted envelopes (`main/core/kef.c`), BIP138 encrypted backups (`main/core/bip138_*.c`, `components/bip138`); BIP322 message-signing requests (`main/core/bip322.c`, `message_sign.c`).
 - **SD card files** (`components/sd_card`, `main/pages/shared/sd_file_browser.c`, `main/core/storage.c`): the same PSBT, descriptor and KEF payloads as files, plus firmware update images (`main/core/fw_update.c`), on a FAT filesystem that an attacker can write at will.
 - **Internal flash** (SPIFFS `storage` partition, NVS): written by the device itself. Treat it as attacker-controlled too: the flash chip is external and the "evil maid" rewriting it is a threat we care about.
-- **Camera frames**: the ISP output fed to the QR locator (`main/qr/scanner.c`, `components/video`). Lower priority than the decoded bytes, still in scope.
+- **Camera frames**: the ISP output fed to the QR locator (`main/qr/scanner_engine.c`, `main/utils/camera_pipeline.c`, `components/video`). Lower priority than the decoded bytes, still in scope.
 
 ## Components that matter most / least
 
