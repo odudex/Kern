@@ -68,7 +68,6 @@ void scan_create_review_note(lv_obj_t *parent, const char *text,
                              lv_color_t color);
 
 /* scan_psbt_review.c */
-bool scan_psbt_parse_base64(const char *base64_data);
 void scan_psbt_cleanup(void);
 bool scan_psbt_check_mismatch(void);
 void scan_psbt_resume_review(bool offer_descriptor);

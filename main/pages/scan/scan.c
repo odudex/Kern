@@ -12,6 +12,7 @@
 #include "../../core/kef.h"
 #include "../../core/key.h"
 #include "../../core/message_sign.h"
+#include "../../core/payload_classify.h"
 #include "../../core/psbt.h"
 #include "../../core/wallet.h"
 #include "../../qr/encoder.h"
@@ -35,9 +36,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <wally_address.h>
-#include <wally_bip39.h>
 #include <wally_core.h>
 #include <wally_psbt.h>
 
@@ -62,52 +60,6 @@ void scan_defer_with_progress(const char *title, const char *text,
 static void scan_kef_return_cb(void);
 static void scan_kef_success_cb(const uint8_t *data, size_t len);
 
-static bool is_bluewallet_descriptor(const char *data) {
-  return strstr(data, "Policy:") != NULL;
-}
-
-typedef enum {
-  ADDRESS_NETWORK_NONE,
-  ADDRESS_NETWORK_MAINNET,
-  ADDRESS_NETWORK_TESTNET,
-} address_network_t;
-
-static address_network_t detect_address_network(const char *data) {
-  const char *addr = data;
-  char *stripped = NULL;
-
-  // Strip BIP21 prefix
-  if (strncasecmp(data, "bitcoin:", 8) == 0) {
-    const char *start = data + 8;
-    const char *query = strchr(start, '?');
-    size_t addr_len = query ? (size_t)(query - start) : strlen(start);
-    stripped = strndup(start, addr_len);
-    if (!stripped)
-      return ADDRESS_NETWORK_NONE;
-    addr = stripped;
-  }
-
-  unsigned char script[128];
-  size_t written = 0;
-  address_network_t result = ADDRESS_NETWORK_NONE;
-
-  if (wally_addr_segwit_to_bytes(addr, "bc", 0, script, sizeof(script),
-                                 &written) == WALLY_OK ||
-      wally_address_to_scriptpubkey(addr, WALLY_NETWORK_BITCOIN_MAINNET, script,
-                                    sizeof(script), &written) == WALLY_OK) {
-    result = ADDRESS_NETWORK_MAINNET;
-  } else if (wally_addr_segwit_to_bytes(addr, "tb", 0, script, sizeof(script),
-                                        &written) == WALLY_OK ||
-             wally_address_to_scriptpubkey(addr, WALLY_NETWORK_BITCOIN_TESTNET,
-                                           script, sizeof(script),
-                                           &written) == WALLY_OK) {
-    result = ADDRESS_NETWORK_TESTNET;
-  }
-
-  free(stripped);
-  return result;
-}
-
 void scan_dismiss_progress(void) {
   if (scan_ctx.progress_dialog) {
     lv_obj_del(scan_ctx.progress_dialog);
@@ -124,82 +76,78 @@ static void finish_dispatch(char *qr_content, size_t qr_content_len,
                             bool parse_success, int detected_format) {
   scan_ctx.is_message_sign = false;
 
-  // Layer 2: plaintext/binary heuristics — try each parser in priority order
+  // Layer 2: plaintext/binary heuristics — classify in core/payload_classify
   if (!parse_success && qr_content) {
-    // 1. Message
-    if (message_sign_parse(qr_content, &scan_ctx.message)) {
+    payload_classification_t c;
+    payload_classify_text(qr_content, qr_content_len, &c);
+
+    switch (c.kind) {
+    case PAYLOAD_KIND_MESSAGE_SIGN:
+      message_sign_free_parsed(&scan_ctx.message);
+      scan_ctx.message = c.message;
+      memset(&c.message, 0, sizeof(c.message));
       scan_ctx.is_message_sign = true;
       parse_success = true;
-    } else if (strncmp(qr_content, "signmessage ", 12) == 0) {
+      break;
+
+    case PAYLOAD_KIND_INVALID_MESSAGE_SIGN:
+      payload_classify_free(&c);
       dialog_show_error_timeout("Invalid message signing request",
                                 scan_ctx.return_cb, 0);
       SECURE_FREE_STRING(qr_content);
       return;
-    }
 
-    // 2. PSBT (base64)
-    if (!parse_success) {
-      parse_success = scan_psbt_parse_base64(qr_content);
-    }
+    case PAYLOAD_KIND_PSBT:
+      scan_psbt_cleanup();
+      scan_ctx.psbt = c.psbt;
+      c.psbt = NULL;
+      scan_ctx.source_base64 = c.psbt_is_base64;
+      parse_success = true;
+      break;
 
-    // 3. Descriptor
-    if (!parse_success && (text_is_descriptor_prefix(qr_content) ||
-                           is_bluewallet_descriptor(qr_content))) {
+    case PAYLOAD_KIND_DESCRIPTOR:
+      payload_classify_free(&c);
       scan_handle_descriptor(qr_content);
+      SECURE_FREE_STRING(qr_content);
+      return;
+
+    case PAYLOAD_KIND_ADDRESS: {
+      bool addr_is_mainnet = (c.address_network == PAYLOAD_ADDRESS_MAINNET);
+      bool wallet_is_mainnet = (wallet_get_network() == WALLET_NETWORK_MAINNET);
+      payload_classify_free(&c);
+      if (addr_is_mainnet == wallet_is_mainnet) {
+        scan_handle_address(qr_content);
+      } else {
+        dialog_show_error_timeout(
+            addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
+                            : "Address is for Testnet, wallet is on Mainnet",
+            scan_ctx.return_cb, 3000);
+      }
       SECURE_FREE_STRING(qr_content);
       return;
     }
 
-    // 4. Address
-    if (!parse_success) {
-      address_network_t addr_net = detect_address_network(qr_content);
-      if (addr_net != ADDRESS_NETWORK_NONE) {
-        bool addr_is_mainnet = (addr_net == ADDRESS_NETWORK_MAINNET);
-        bool wallet_is_mainnet =
-            (wallet_get_network() == WALLET_NETWORK_MAINNET);
-        if (addr_is_mainnet == wallet_is_mainnet) {
-          scan_handle_address(qr_content);
-        } else {
-          dialog_show_error_timeout(
-              addr_is_mainnet ? "Address is for Mainnet, wallet is on Testnet"
-                              : "Address is for Testnet, wallet is on Mainnet",
-              scan_ctx.return_cb, 3000);
-        }
-        SECURE_FREE_STRING(qr_content);
-        return;
-      }
+    case PAYLOAD_KIND_MNEMONIC:
+      payload_classify_free(&c);
+      scan_handle_mnemonic(qr_content, qr_content_len);
+      SECURE_FREE_STRING(qr_content);
+      return;
+
+    case PAYLOAD_KIND_KEF:
+      SECURE_FREE_STRING(qr_content);
+      kef_decrypt_page_create(lv_screen_active(), scan_kef_return_cb,
+                              scan_kef_success_cb, c.kef_envelope,
+                              c.kef_envelope_len);
+      kef_decrypt_page_show();
+      payload_classify_free(&c);
+      return;
+
+    case PAYLOAD_KIND_UNKNOWN:
+    default:
+      break;
     }
 
-    // 5. Mnemonic
-    if (!parse_success) {
-      char *mnemonic =
-          mnemonic_qr_to_mnemonic(qr_content, qr_content_len, NULL);
-      if (mnemonic) {
-        SECURE_FREE_STRING(mnemonic);
-        scan_handle_mnemonic(qr_content, qr_content_len);
-        SECURE_FREE_STRING(qr_content);
-        return;
-      }
-      SECURE_FREE_STRING(mnemonic);
-    }
-
-    // 6. Encrypted (KEF) envelope — e.g. a base64-armored descriptor or
-    // mnemonic backup. Tried last so a base64 PSBT is recognized as a PSBT
-    // first. On success the decrypted payload is re-dispatched.
-    if (!parse_success) {
-      size_t env_len = 0;
-      uint8_t *envelope = kef_envelope_from_bytes((const uint8_t *)qr_content,
-                                                  qr_content_len, &env_len);
-      if (envelope) {
-        SECURE_FREE_STRING(qr_content);
-        kef_decrypt_page_create(lv_screen_active(), scan_kef_return_cb,
-                                scan_kef_success_cb, envelope, env_len);
-        kef_decrypt_page_show();
-        free(envelope);
-        return;
-      }
-    }
-
+    payload_classify_free(&c);
     SECURE_FREE_STRING(qr_content);
   }
 
