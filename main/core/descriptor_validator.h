@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 #include "miniscript_policy.h"
-#include "storage.h"
 #include "wallet.h"
 
 /* Discard pending validation without invoking completion callbacks. */
@@ -112,14 +111,6 @@ typedef void (*validation_info_confirm_cb)(const descriptor_info_t *info,
                                            void (*proceed)(bool confirmed,
                                                            void *user_data));
 
-// Future persistent-registration hook, used to collect the registry ID and
-// storage location once descriptor registration is re-enabled with encrypted
-// descriptor backups.
-typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
-                                                     storage_location_t loc,
-                                                     void *user_data),
-                                     void *user_data);
-
 // Validate a descriptor against the loaded key and load it into the session
 // registry. Runs the checks of descriptor_validate_keyed, then rejects a
 // session duplicate. On purpose/script binding mismatch, uses confirm_cb to
@@ -132,7 +123,6 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
                                   validation_info_confirm_cb info_confirm_cb,
-                                  validation_id_loc_cb id_loc_cb,
                                   void *user_data);
 
 /* Infer a descriptor's network by trying to parse it as mainnet, then testnet.

@@ -165,7 +165,7 @@ static int marker;
 
 static descriptor_validation_result_t run(const char *desc) {
   capture_reset();
-  descriptor_validate_and_load(desc, done_cb, warn_cb, info_cb, NULL, &marker);
+  descriptor_validate_and_load(desc, done_cb, warn_cb, info_cb, &marker);
   return done_result;
 }
 
@@ -303,7 +303,7 @@ static void test_preconditions(void) {
   check("NULL descriptor: internal error",
         run(NULL) == VALIDATION_INTERNAL_ERROR && done_user_data == &marker);
   capture_reset();
-  descriptor_validate_and_load(wpkh84(), NULL, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), NULL, warn_cb, info_cb, NULL);
   check("NULL completion callback tolerated", info_calls == 0);
   registry_clear();
 }
@@ -762,12 +762,12 @@ static void test_single_sig_success(void) {
   registry_clear();
   capture_reset();
   info_answer = false;
-  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL);
   check("declining the info dialog", done_result == VALIDATION_USER_DECLINED);
   check("declined descriptor not registered", registry_count() == 0);
 
   capture_reset();
-  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, NULL, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, NULL, NULL);
   check("NULL info callback auto-confirms",
         done_result == VALIDATION_SUCCESS && registry_count() == 1);
 
@@ -796,7 +796,7 @@ static void test_purpose_binding_warning(void) {
   capture_reset();
   warn_auto = false;
   info_auto = false;
-  descriptor_validate_and_load(mixed, done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(mixed, done_cb, warn_cb, info_cb, NULL);
   check("purpose/script mismatch raises the warning first",
         warn_calls == 1 && info_calls == 0 && done_calls == 0);
   check("warning names the purpose and the script",
@@ -811,13 +811,13 @@ static void test_purpose_binding_warning(void) {
   registry_clear();
   capture_reset();
   warn_answer = false;
-  descriptor_validate_and_load(mixed, done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(mixed, done_cb, warn_cb, info_cb, NULL);
   check("declining the warning stops the flow",
         done_result == VALIDATION_USER_DECLINED && info_calls == 0 &&
             registry_count() == 0);
 
   capture_reset();
-  descriptor_validate_and_load(mixed, done_cb, NULL, info_cb, NULL, NULL);
+  descriptor_validate_and_load(mixed, done_cb, NULL, info_cb, NULL);
   check("NULL warning callback auto-declines",
         done_result == VALIDATION_USER_DECLINED && info_calls == 0);
 
@@ -825,8 +825,7 @@ static void test_purpose_binding_warning(void) {
       descf("sh(wpkh([" FP "/84'/0'/0']%s/0/*))", xpub_at("m/84'/0'/0'"));
   capture_reset();
   warn_auto = false;
-  descriptor_validate_and_load(sh_wsh_84, done_cb, warn_cb, info_cb, NULL,
-                               NULL);
+  descriptor_validate_and_load(sh_wsh_84, done_cb, warn_cb, info_cb, NULL);
   check("purpose 84 inside sh(wpkh) warns with the wrapper name",
         warn_calls == 1 && strstr(warn_msg, "purpose-84") &&
             strstr(warn_msg, "sh(wpkh)"));
@@ -1121,7 +1120,7 @@ static void test_generation_guard(void) {
   registry_clear();
   capture_reset();
   info_auto = false;
-  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL);
   void (*canceled_proceed)(bool, void *) = info_proceed;
   descriptor_validation_cancel();
   descriptor_validation_cancel();
@@ -1130,7 +1129,7 @@ static void test_generation_guard(void) {
         done_calls == 0 && registry_count() == 0);
   capture_reset();
   info_auto = false;
-  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL);
   void (*stale_proceed)(bool, void *) = info_proceed;
   check("first flow waits on the info dialog",
         info_calls == 1 && done_calls == 0 && stale_proceed != NULL);
@@ -1138,7 +1137,7 @@ static void test_generation_guard(void) {
   const char *other =
       descf("wpkh([" FP "/84'/0'/1']%s/0/*)", xpub_at("m/84'/0'/1'"));
   capture_reset();
-  descriptor_validate_and_load(other, done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(other, done_cb, warn_cb, info_cb, NULL);
   check("second flow completes while the first is abandoned",
         done_calls == 1 && done_result == VALIDATION_SUCCESS &&
             registry_count() == 1);
@@ -1152,7 +1151,7 @@ static void test_generation_guard(void) {
 
   capture_reset();
   info_auto = false;
-  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL);
   void (*live_proceed)(bool, void *) = info_proceed;
   live_proceed(true, NULL);
   check("live confirmation completes its flow",
@@ -1167,11 +1166,11 @@ static void test_generation_guard(void) {
   warn_auto = false;
   const char *mixed =
       descf("wpkh([" FP "/44'/0'/0']%s/0/*)", xpub_at("m/44'/0'/0'"));
-  descriptor_validate_and_load(mixed, done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(mixed, done_cb, warn_cb, info_cb, NULL);
   void (*stale_warn)(bool, void *) = warn_proceed;
   check("warning flow waits", warn_calls == 1 && done_calls == 0);
   capture_reset();
-  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL, NULL);
+  descriptor_validate_and_load(wpkh84(), done_cb, warn_cb, info_cb, NULL);
   check("new flow completes while a warning was pending",
         done_result == VALIDATION_SUCCESS);
   stale_warn(true, NULL);
