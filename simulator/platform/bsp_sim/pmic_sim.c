@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 /*
- * Simulated PMIC for boards with battery (wave_35).
+ * Simulated PMIC for boards with battery telemetry (wave_35, crowpanel).
  * Pretends a battery is present at 75%, discharging.
  */
 
@@ -18,8 +18,12 @@ esp_err_t bsp_pmic_init(void) {
 }
 
 esp_err_t bsp_pmic_power_off(void) {
+#ifdef BSP_PMIC_CAN_POWER_OFF
   fprintf(stderr, "[SIM] bsp_pmic_power_off() called — exiting\n");
   exit(0);
+#else
+  return ESP_ERR_NOT_SUPPORTED;
+#endif
 }
 
 esp_err_t bsp_pmic_get_battery_percent(uint8_t *pct) {
@@ -47,7 +51,13 @@ bool bsp_pmic_is_vbus_present(void) { return false; }
 
 bool bsp_pmic_is_available(void) { return pmic_initialized; }
 
-bool bsp_pmic_can_power_off(void) { return pmic_initialized; }
+bool bsp_pmic_can_power_off(void) {
+#ifdef BSP_PMIC_CAN_POWER_OFF
+  return pmic_initialized;
+#else
+  return false;
+#endif
+}
 
 #elif defined(BSP_BATTERY_ADC)
 
