@@ -22,6 +22,7 @@ Usage:
     python3 tools/derive_font_sizes.py --apply    # also rewrite the tree
 """
 import argparse
+import json
 import math
 import re
 from pathlib import Path
@@ -29,16 +30,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # --- Boards -------------------------------------------------------------------
-# Native panel resolution (orientation-agnostic) and physical diagonal. diag_in
-# only feeds the DPI report column; it does not affect the pixel-based curve.
+# Loaded from boards.json (single source of truth for board resolutions and
+# physical diagonals; diag_in feeds the DPI report column only).
 BOARDS = [
-    {"name": "wave_35", "sdkconfig": "sdkconfig.defaults.wave_35", "w": 320, "h": 480, "diag_in": 3.5},
-    {"name": "wave_43", "sdkconfig": "sdkconfig.defaults.wave_43", "w": 480, "h": 800, "diag_in": 4.3},
-    {"name": "wave_4b", "sdkconfig": "sdkconfig.defaults.wave_4b", "w": 720, "h": 720, "diag_in": 4.0},
-    {"name": "crowpanel", "sdkconfig": "sdkconfig.defaults.crowpanel", "w": 1024, "h": 600, "diag_in": 7.0},
-    {"name": "wave_7b", "sdkconfig": "sdkconfig.defaults.wave_7b", "w": 1024, "h": 600, "diag_in": 7.0},
-    {"name": "wave_5", "sdkconfig": "sdkconfig.defaults.wave_5", "w": 720, "h": 1280, "diag_in": 5.0},
-    {"name": "p4_pico", "sdkconfig": "sdkconfig.defaults.p4_pico", "w": 720, "h": 1280, "diag_in": 5.0},
+    {
+        "name": b["name"],
+        "sdkconfig": f"sdkconfig.defaults.{b['name']}",
+        "w": b["width"],
+        "h": b["height"],
+        "diag_in": b["diag_in"],
+    }
+    for b in json.loads((REPO_ROOT / "boards.json").read_text())["boards"]
 ]
 
 # --- Curve knobs (adjust these) ----------------------------------------------

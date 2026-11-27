@@ -48,15 +48,11 @@ DIRS=(
     "$REPO_ROOT/components/k_quirc"
     "$REPO_ROOT/components/sd_card"
     "$REPO_ROOT/components/video"
-    "$REPO_ROOT/components/wave_4b"
-    "$REPO_ROOT/components/wave_35"
-    "$REPO_ROOT/components/wave_43"
-    "$REPO_ROOT/components/wave_5"
     "$REPO_ROOT/components/esp_lcd_hx8394"
-    "$REPO_ROOT/components/crowpanel"
-    "$REPO_ROOT/components/wave_7b"
-    "$REPO_ROOT/components/p4_pico"
 )
+for board in $(python3 "$REPO_ROOT/tools/boards.py" list); do
+    DIRS+=("$REPO_ROOT/components/$board")
+done
 
 if $CHECK_MODE; then
     echo "Checking clang-format on project source files..."

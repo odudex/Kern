@@ -8,7 +8,7 @@ export IDF_PATH_FORCE := "1"
 # Append _v3 to a board (just build wave_43_v3) for ESP32-P4 chip revision
 # v3.x: IDF cannot build one image for both v1.x and v3.x silicon.
 
-boards := "wave_4b wave_35 wave_5 wave_43 crowpanel wave_7b p4_pico"
+boards := `python3 tools/boards.py list`
 
 _check_board board:
     #!/usr/bin/env sh
@@ -179,15 +179,12 @@ site port="8000":
     echo "Serving http://localhost:{{port}}/"
     python3 -m http.server {{port}} -d site
 
-# Simulator board resolution mapping
-# wave_4b: 720x720, wave_35: 320x480, wave_5: 720x1280, wave_43: 480x800, crowpanel: 1024x600, wave_7b: 1024x600, p4_pico: 720x1280
+# Simulator board resolution mapping (from boards.json)
 _sim_h_res board:
-    #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 320;; wave_5) echo 720;; wave_43) echo 480;; crowpanel) echo 1024;; wave_7b) echo 1024;; p4_pico) echo 720;; *) echo 720;; esac
+    @python3 tools/boards.py get "{{board}}" width
 
 _sim_v_res board:
-    #!/usr/bin/env sh
-    case "{{board}}" in wave_35) echo 480;; wave_5) echo 1280;; wave_43) echo 800;; crowpanel) echo 600;; wave_7b) echo 600;; p4_pico) echo 1280;; *) echo 720;; esac
+    @python3 tools/boards.py get "{{board}}" height
 
 # Build the desktop simulator
 sim-build board="wave_4b": (_check_board board)
