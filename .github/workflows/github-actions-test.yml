@@ -28,3 +28,30 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y zlib1g-dev libmbedtls-dev
     - name: Run tests
       run: ./scripts/test.sh
+
+  test-asan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        submodules: 'recursive'
+    - name: Install test dependencies
+      run: sudo apt-get update && sudo apt-get install -y zlib1g-dev libmbedtls-dev
+    - name: Run core tests with ASan and UBSan
+      run: make -C main/core/test SANITIZE=1 run
+
+  sim-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        submodules: 'recursive'
+    - name: Install simulator dependencies
+      run: sudo apt-get update && sudo apt-get install -y cmake libsdl2-dev libmbedtls-dev zlib1g-dev
+    - name: Build simulator and run lifecycle tests
+      run: |
+        cmake -B simulator/build -S simulator -DCMAKE_BUILD_TYPE=Debug
+        cmake --build simulator/build -- -j$(nproc)
+        ctest --test-dir simulator/build --output-on-failure
