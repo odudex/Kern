@@ -12,7 +12,6 @@
 #include <string.h>
 #include <wally_crypto.h>
 
-#include "../components/video/video.h"
 #include "../core/crypto_utils.h"
 #include "../core/entropy_pool.h"
 #include "../ui/dialog.h"
@@ -21,6 +20,7 @@
 #include "../utils/estimated_entropy.h"
 #include "../utils/memory_utils.h"
 #include "../utils/secure_mem.h"
+#include "video.h"
 
 static const char *TAG = "capture_entropy";
 

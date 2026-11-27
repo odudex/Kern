@@ -1,7 +1,6 @@
 // QR Scanner
 
 #include "scanner.h"
-#include "../components/cUR/src/ur_decoder.h"
 #include "../core/entropy_pool.h"
 #include "../core/settings.h"
 #include "../ui/dialog.h"
@@ -13,6 +12,7 @@
 #include "frame_pool.h"
 #include "parser.h"
 #include "progress.h"
+#include "ur_decoder.h"
 #include "yuv420.h"
 #include <bsp/esp-bsp.h>
 #include <driver/ppa.h>

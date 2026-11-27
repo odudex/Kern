@@ -7,8 +7,6 @@
  */
 
 #include "scan.h"
-#include "../../../components/cUR/src/types/bytes_type.h"
-#include "../../../components/cUR/src/types/psbt.h"
 #include "../../core/bip138_backup.h"
 #include "../../core/bip322.h"
 #include "../../core/kef.h"
@@ -31,6 +29,8 @@
 #include "../shared/kef_decrypt_page.h"
 #include "scan_internal.h"
 #include "sd_card.h"
+#include "types/bytes_type.h"
+#include "types/psbt.h"
 #include <lvgl.h>
 #include <stdio.h>
 #include <stdlib.h>

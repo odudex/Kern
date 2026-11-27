@@ -1,8 +1,8 @@
 #include "export.h"
-#include "../../components/bbqr/src/bbqr.h"
-#include "../../components/cUR/src/types/psbt.h"
-#include "../../components/cUR/src/ur_encoder.h"
+#include "bbqr.h"
 #include "parser.h"
+#include "types/psbt.h"
+#include "ur_encoder.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
