@@ -1,6 +1,6 @@
 #include "parser.h"
-#include "../../components/bbqr/src/bbqr.h"
-#include "../../components/cUR/src/ur_decoder.h"
+#include "bbqr.h"
+#include "ur_decoder.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>

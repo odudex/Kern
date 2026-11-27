@@ -1,6 +1,4 @@
 #include "descriptor_loader.h"
-#include "../../../components/cUR/src/types/bytes_type.h"
-#include "../../../components/cUR/src/types/output.h"
 #include "../../core/descriptor_text.h"
 #include "../../core/key.h"
 #include "../../core/miniscript_policy.h"
@@ -18,6 +16,8 @@
 #include "../../ui/text_fit.h"
 #include "../../ui/theme_widgets.h"
 #include "../../utils/session_cleanup.h"
+#include "types/bytes_type.h"
+#include "types/output.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
