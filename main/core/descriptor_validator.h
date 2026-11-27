@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "miniscript_policy.h"
+#include "storage.h"
 #include "wallet.h"
 
 /* Discard pending validation without invoking completion callbacks. */
@@ -58,6 +59,10 @@ typedef enum {
    * sortedmulti() or pk() parses but has no address, and its scriptPubKey is
    * longer than signing reads. */
   VALIDATION_UNSUPPORTED_TOP_LEVEL,
+  /* The descriptor passed every check and was approved, but could not be
+   * stored: the registry is full, its name is taken on flash, or the backup
+   * could not be encrypted or written. */
+  VALIDATION_STORE_FAILED,
 } descriptor_validation_result_t;
 
 typedef void (*validation_complete_cb)(descriptor_validation_result_t result,
@@ -86,6 +91,8 @@ typedef enum {
 #define DESCRIPTOR_INFO_MAX_KEYS MINISCRIPT_POLICY_MAX_KEYS
 typedef struct {
   bool is_multisig;
+  /* Multisig only: sortedmulti() rather than multi(). */
+  bool is_sorted;
   bool is_miniscript;
   uint32_t threshold;
   uint32_t num_keys;
@@ -105,11 +112,28 @@ typedef struct {
   const char *script_type;
 } descriptor_info_t;
 
+// The confirmation info of `descriptor`, written as `descriptor_str`, whose
+// key `our_key_index` is ours, -1 when none is known
+bool descriptor_info_extract(struct wally_descriptor *descriptor,
+                             const char *descriptor_str, int our_key_index,
+                             descriptor_info_t *info);
+
+// The policy of `info` in a few words: "sortedmulti 2 of 3", "Single-sig"...
+void descriptor_info_policy_name(const descriptor_info_t *info, char *out,
+                                 size_t out_len);
+
 // UI-agnostic info confirmation callback: show descriptor info, call proceed()
-// with result.
+// with result. user_data is the one passed to descriptor_validate_and_load*.
 typedef void (*validation_info_confirm_cb)(const descriptor_info_t *info,
                                            void (*proceed)(bool confirmed,
-                                                           void *user_data));
+                                                           void *user_data),
+                                           void *user_data);
+
+// UI-agnostic ID and storage-location callback for persistent registration.
+typedef void (*validation_id_loc_cb)(void (*proceed)(const char *id,
+                                                     storage_location_t loc,
+                                                     void *user_data),
+                                     void *user_data);
 
 // Validate a descriptor against the loaded key and load it into the session
 // registry. Runs the checks of descriptor_validate_keyed, then rejects a
@@ -124,6 +148,14 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_confirm_cb confirm_cb,
                                   validation_info_confirm_cb info_confirm_cb,
                                   void *user_data);
+
+// Same, always registering through id_loc_cb, and without the session dedup:
+// a descriptor already loaded may be registered again under another id.
+void descriptor_validate_and_load_persistent(
+    const char *descriptor_str, validation_complete_cb callback,
+    validation_confirm_cb confirm_cb,
+    validation_info_confirm_cb info_confirm_cb, validation_id_loc_cb id_loc_cb,
+    void *user_data);
 
 /* Infer a descriptor's network by trying to parse it as mainnet, then testnet.
  * Writes the network to *network_out and returns true on success; returns false

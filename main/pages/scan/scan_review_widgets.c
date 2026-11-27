@@ -142,6 +142,10 @@ void scan_create_review_note(lv_obj_t *parent, const char *text,
 }
 
 static void back_button_cb(lv_event_t *e) {
+  if (scan_ctx.psbt_failed_cb) {
+    scan_psbt_fail(SCAN_PSBT_DECLINED, "Declined", NULL, 0);
+    return;
+  }
   if (scan_ctx.return_cb) {
     scan_ctx.return_cb();
   }

@@ -116,6 +116,21 @@ fail:
   return NULL;
 }
 
+qr_export_t *qr_export_from_bbqr(BBQrParts *parts) {
+  if (!parts || parts->count <= 0 || !parts->parts) {
+    bbqr_parts_free(parts);
+    return NULL;
+  }
+  qr_export_t *export = calloc(1, sizeof(*export));
+  if (!export) {
+    bbqr_parts_free(parts);
+    return NULL;
+  }
+  export->bbqr = parts;
+  export->count = (size_t)parts->count;
+  return export;
+}
+
 size_t qr_export_part_count(const qr_export_t *export) { return export->count; }
 
 bool qr_export_is_fountain(const qr_export_t *export) {

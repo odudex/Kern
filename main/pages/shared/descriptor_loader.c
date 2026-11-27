@@ -1,4 +1,5 @@
 #include "descriptor_loader.h"
+#include "../../core/descriptor_checksum.h"
 #include "../../core/descriptor_text.h"
 #include "../../core/key.h"
 #include "../../core/miniscript_policy.h"
@@ -107,6 +108,10 @@ bool descriptor_loader_show_error(descriptor_validation_result_t result) {
     return true;
   }
 
+  case VALIDATION_STORE_FAILED:
+    dialog_show_error_timeout("Could not store the descriptor", NULL, 3000);
+    return true;
+
   case VALIDATION_INTERNAL_ERROR:
   default:
     dialog_show_error_timeout("Validation failed", NULL, 2000);
@@ -148,6 +153,25 @@ static void id_prompt_cleanup(void) {
     lv_obj_delete(g_id_prompt_ctx->screen);
   free(g_id_prompt_ctx);
   g_id_prompt_ctx = NULL;
+}
+
+typedef struct {
+  char id[REGISTRY_ID_MAX_LEN];
+  storage_location_t loc;
+  validation_complete_cb validation_cb;
+  void *user_data;
+} fixed_id_loc_context_t;
+
+static void fixed_id_validation_cb(descriptor_validation_result_t result,
+                                   void *user_data) {
+  fixed_id_loc_context_t *ctx = (fixed_id_loc_context_t *)user_data;
+  if (!ctx)
+    return;
+  validation_complete_cb cb = ctx->validation_cb;
+  void *cb_user_data = ctx->user_data;
+  free(ctx);
+  if (cb)
+    cb(result, cb_user_data);
 }
 
 static void id_prompt_ready_cb(lv_event_t *e) {
@@ -238,8 +262,7 @@ static void loaded_register_named_cb(const char *name, storage_location_t loc,
     loaded_finish();
     return;
   }
-  if (storage_descriptor_exists(STORAGE_FLASH, name,
-                                STORAGE_DESCRIPTOR_BIP138)) {
+  if (registry_name_registered(name)) {
     dialog_show_error_timeout("A registered descriptor already uses this name",
                               loaded_name_taken_cb, 0);
     return;
@@ -291,6 +314,16 @@ static void descriptor_confirm_wrapper(const char *message,
                                        void (*proceed)(bool confirmed,
                                                        void *user_data)) {
   dialog_show_danger_confirm(message, proceed, NULL, DIALOG_STYLE_OVERLAY);
+}
+
+static void fixed_id_loc_wrapper(void (*proceed)(const char *id,
+                                                 storage_location_t loc,
+                                                 void *user_data),
+                                 void *user_data) {
+  fixed_id_loc_context_t *ctx = (fixed_id_loc_context_t *)user_data;
+  if (!ctx || !proceed)
+    return;
+  proceed(ctx->id, ctx->loc, NULL);
 }
 
 // Context for descriptor info confirmation dialog
@@ -486,10 +519,12 @@ lv_obj_t *descriptor_policy_view_create(lv_obj_t *parent, const char *policy,
   return cont;
 }
 
-// UI wrapper for descriptor info confirmation
-static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
-                                            void (*proceed)(bool confirmed,
-                                                            void *user_data)) {
+// Descriptor info confirmation titled with `prompt`, with its alias when not
+// NULL
+static void show_descriptor_info(const descriptor_info_t *info,
+                                 const char *alias, const char *prompt,
+                                 void (*proceed)(bool confirmed,
+                                                 void *user_data)) {
   info_confirm_context_t *ctx = malloc(sizeof(info_confirm_context_t));
   if (!ctx) {
     proceed(false, NULL);
@@ -505,20 +540,10 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   ctx->root = root;
   lv_obj_add_event_cb(root, info_confirm_deleted, LV_EVENT_DELETE, ctx);
 
-  // Title with "Load?" prompt
-  char title[48];
-  if (info->is_miniscript) {
-    snprintf(title, sizeof(title), "Miniscript (%u key%s) - Load?",
-             info->num_keys, info->num_keys == 1 ? "" : "s");
-  } else if (info->is_multisig) {
-    snprintf(title, sizeof(title), "Multisig (%u of %u) - Load?",
-             info->threshold, info->num_keys);
-  } else if (info->script_type) {
-    snprintf(title, sizeof(title), "Single-sig (%s) - Load?",
-             info->script_type);
-  } else {
-    snprintf(title, sizeof(title), "Single-sig - Load?");
-  }
+  char policy[REGISTRY_LABEL_MAX_LEN];
+  descriptor_info_policy_name(info, policy, sizeof(policy));
+  char title[REGISTRY_LABEL_MAX_LEN + 16];
+  snprintf(title, sizeof(title), "%s - %s", policy, prompt);
   lv_obj_t *title_label = theme_create_label(root, title, false);
   lv_obj_set_style_text_font(title_label, theme_font_medium(), 0);
   lv_obj_set_style_text_color(title_label, highlight_color(), 0);
@@ -555,6 +580,15 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   char my_fp[9];
   if (!key_get_fingerprint_hex(my_fp))
     my_fp[0] = '\0'; // matches no key, so nothing is highlighted
+
+  if (alias) {
+    char alias_text[REGISTRY_ID_MAX_LEN + 8];
+    snprintf(alias_text, sizeof(alias_text), "Alias: %s", alias);
+    lv_obj_t *alias_label = theme_create_label(scroll, alias_text, false);
+    lv_obj_set_width(alias_label, scroll_w);
+    lv_label_set_long_mode(alias_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_pad_bottom(alias_label, 12, 0);
+  }
 
   // Key entries
   for (uint32_t i = 0; i < info->num_keys; i++) {
@@ -658,6 +692,41 @@ static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
   }
 }
 
+static void descriptor_info_confirm_wrapper(const descriptor_info_t *info,
+                                            void (*proceed)(bool confirmed,
+                                                            void *user_data),
+                                            void *user_data) {
+  (void)user_data;
+  show_descriptor_info(info, NULL, "Load?", proceed);
+}
+
+static void fixed_id_info_confirm_wrapper(const descriptor_info_t *info,
+                                          void (*proceed)(bool confirmed,
+                                                          void *user_data),
+                                          void *user_data) {
+  const fixed_id_loc_context_t *ctx = user_data;
+  show_descriptor_info(info, ctx->id, "Register?", proceed);
+}
+
+bool descriptor_loader_confirm_unregister(const registry_entry_t *entry,
+                                          void (*proceed)(bool confirmed,
+                                                          void *user_data)) {
+  char *descriptor_str = NULL;
+  descriptor_info_t *info = calloc(1, sizeof(*info));
+  int our_key_index =
+      entry->my_key_index == SIZE_MAX ? -1 : (int)entry->my_key_index;
+  bool ok =
+      info && descriptor_string_from_descriptor(entry->desc, &descriptor_str) &&
+      descriptor_info_extract(entry->desc, descriptor_str, our_key_index, info);
+  if (ok)
+    show_descriptor_info(info, entry->id, "Unregister?", proceed);
+  free(descriptor_str);
+  if (info)
+    free(info->policy);
+  free(info);
+  return ok;
+}
+
 void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
                                        void *user_data,
                                        void (*error_cb)(void)) {
@@ -703,6 +772,33 @@ void descriptor_loader_process_string(const char *descriptor_str,
                                descriptor_info_confirm_wrapper, user_data);
   free(unambiguous);
   free(converted);
+}
+
+void descriptor_loader_process_string_with_id(
+    const char *descriptor_str, const char *id, storage_location_t loc,
+    validation_complete_cb validation_cb, void *user_data) {
+  if (!descriptor_str || !id || id[0] == '\0') {
+    if (validation_cb)
+      validation_cb(VALIDATION_PARSE_ERROR, user_data);
+    return;
+  }
+
+  fixed_id_loc_context_t *fixed = malloc(sizeof(*fixed));
+  if (!fixed) {
+    if (validation_cb)
+      validation_cb(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+  memset(fixed, 0, sizeof(*fixed));
+  snprintf(fixed->id, sizeof(fixed->id), "%s", id);
+  fixed->loc = loc;
+  fixed->validation_cb = validation_cb;
+  fixed->user_data = user_data;
+
+  session_cleanup_register(descriptor_validation_cancel);
+  descriptor_validate_and_load_persistent(
+      descriptor_str, fixed_id_validation_cb, descriptor_confirm_wrapper,
+      fixed_id_info_confirm_wrapper, fixed_id_loc_wrapper, fixed);
 }
 
 void descriptor_loader_process_string_watch_only(

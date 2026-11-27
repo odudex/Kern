@@ -40,6 +40,10 @@ components/secure_memory/test/test_secret_alloc
 components/bbqr/test/test_bbqr
 components/bbqr/test/test_base32
 components/deflate_codec/test/test_deflate_codec
+components/bip377/src/*.o
+components/bip377/src/libbip377.a
+components/bip377/test/test_vectors
+components/bip377/test/test_api
 main/qr/test/test_parser
 main/qr/test/test_progress
 main/qr/test/test_yuv420
@@ -64,6 +68,10 @@ main/core/test/test_bip138_keys
 main/core/test/test_bip138_backup
 main/core/test/combined.o
 main/core/test/libwally.a
+main/pages/bip_flow/test/test_bip_flow_register
+main/pages/bip_flow/test/test_bip_flow_header
+main/pages/bip_flow/test/test_bip388
+main/pages/bip_flow/test/test_liana
 
 # IDE / tools
 .vscode/

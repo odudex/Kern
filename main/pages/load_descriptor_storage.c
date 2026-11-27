@@ -128,7 +128,7 @@ static void deferred_bip138_cb(lv_timer_t *timer) {
   (void)timer;
   char *descriptor_str = NULL;
   bool opened = bip138_backup_decrypt_any(pending_bip138, pending_bip138_len,
-                                          &descriptor_str, NULL);
+                                          &descriptor_str, NULL, NULL);
   free(pending_bip138);
   pending_bip138 = NULL;
   pending_bip138_len = 0;
@@ -231,21 +231,15 @@ static void sd_desc_on_file_selected(const char *full_path, const char *dir,
  * Descriptors, so the flash list leaves it out. Other BIP138 files stay
  * listed: they belong to another key or lack this device's approval mark. */
 static bool is_registered_backup(storage_location_t loc, const char *filename) {
-  if (loc != STORAGE_FLASH ||
-      storage_descriptor_format(filename) != STORAGE_DESCRIPTOR_BIP138)
+  if (loc != STORAGE_FLASH)
     return false;
-  const char *start = filename;
-  size_t prefix_len = strlen(STORAGE_DESCRIPTOR_PREFIX);
-  if (strncmp(start, STORAGE_DESCRIPTOR_PREFIX, prefix_len) == 0)
-    start += prefix_len;
-  size_t id_len = strlen(start) - strlen(STORAGE_DESCRIPTOR_EXT_BIP138);
-  char id[REGISTRY_ID_MAX_LEN];
-  if (id_len >= sizeof(id))
-    id_len = sizeof(id) - 1;
-  memcpy(id, start, id_len);
-  id[id_len] = '\0';
-  const registry_entry_t *entry = registry_find_by_id(id);
-  return entry && entry->persisted && entry->loc == STORAGE_FLASH;
+  for (size_t i = 0; i < registry_count(); i++) {
+    const registry_entry_t *entry = registry_get(i);
+    if (entry->persisted && entry->loc == STORAGE_FLASH &&
+        strcmp(entry->filename, filename) == 0)
+      return true;
+  }
+  return false;
 }
 
 static esp_err_t list_loadable_descriptors(storage_location_t loc,

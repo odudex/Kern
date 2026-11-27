@@ -29,13 +29,15 @@ typedef struct {
   validation_complete_cb callback;
   validation_confirm_cb confirm_cb;
   validation_info_confirm_cb info_confirm_cb;
+  validation_id_loc_cb id_loc_cb;
   void *user_data;
   descriptor_info_t info;
   /* Keyed loads keep the parsed descriptor for registry_add_parsed. */
   struct wally_descriptor *descriptor;
   int key_index;
   char descriptor_checksum[9];
-  bool watch_only;                /* keyless: skip key/xpub stages */
+  bool watch_only; /* keyless: skip key/xpub stages */
+  bool force_persistent;
   wallet_network_t watch_network; /* network for the watch-only registry add */
   bool psb_warn; /* purpose/script-binding warning pending after the gates */
   char psb_msg[160]; /* stashed PSB warning text (descriptor freed early) */
@@ -200,7 +202,8 @@ descriptor_scripts_are_generatable(const struct wally_descriptor *desc) {
          written <= sizeof(work);
 }
 
-// Parse multisig threshold from descriptor string (e.g., "multi(2,..." -> 2)
+// Parse multisig threshold from descriptor string ("multi(2,..." or
+// "sortedmulti(2,..." -> 2)
 static uint32_t parse_multisig_threshold(const char *descriptor_str) {
   const char *multi = strstr(descriptor_str, "multi(");
   if (!multi) {
@@ -355,10 +358,9 @@ static const char *descriptor_script_type(struct wally_descriptor *descriptor) {
   return name;
 }
 
-static bool extract_descriptor_info(struct wally_descriptor *descriptor,
-                                    const char *descriptor_str,
-                                    int our_key_index,
-                                    descriptor_info_t *info) {
+bool descriptor_info_extract(struct wally_descriptor *descriptor,
+                             const char *descriptor_str, int our_key_index,
+                             descriptor_info_t *info) {
   memset(info, 0, sizeof(descriptor_info_t));
 
   /* static_checks rejects more keys than letter IDs; this guards keys[]. */
@@ -380,6 +382,7 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
 
   if (info->is_multisig) {
     info->threshold = parse_multisig_threshold(descriptor_str);
+    info->is_sorted = strstr(descriptor_str, "sortedmulti(") != NULL;
   }
 
   /* Each distinct key is listed by its first expression. */
@@ -430,6 +433,41 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   return true;
 }
 
+void descriptor_info_policy_name(const descriptor_info_t *info, char *out,
+                                 size_t out_len) {
+  if (info->is_miniscript)
+    snprintf(out, out_len, "Miniscript (%u key%s)", info->num_keys,
+             info->num_keys == 1 ? "" : "s");
+  else if (info->is_multisig)
+    snprintf(out, out_len, "%s %u of %u",
+             info->is_sorted ? "sortedmulti" : "multi", info->threshold,
+             info->num_keys);
+  else if (info->script_type)
+    snprintf(out, out_len, "Single-sig (%s)", info->script_type);
+  else
+    snprintf(out, out_len, "Single-sig");
+}
+
+static void id_loc_proceed(const char *id, storage_location_t loc,
+                           void *user_data) {
+  (void)user_data;
+  if (!ctx_callback_is_live())
+    return;
+  pending_generation = 0;
+  if (!id || strlen(id) == 0) {
+    complete_validation(VALIDATION_USER_DECLINED);
+    return;
+  }
+  bool added = registry_persist_or_add_parsed(
+      id, current_ctx->descriptor, (size_t)current_ctx->key_index, loc);
+  current_ctx->descriptor = NULL;
+  if (!added) {
+    ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
+    complete_validation(VALIDATION_STORE_FAILED);
+    return;
+  }
+  complete_validation(VALIDATION_SUCCESS);
+}
 static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
   if (current_ctx->descriptor_checksum[0] == '\0')
     return false;
@@ -448,25 +486,6 @@ static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
   }
 
   return false;
-}
-
-static void build_session_descriptor_label(char out[REGISTRY_LABEL_MAX_LEN]) {
-  if (!out)
-    return;
-
-  if (current_ctx->info.is_miniscript) {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Miniscript (%u key%s)",
-             current_ctx->info.num_keys,
-             current_ctx->info.num_keys == 1 ? "" : "s");
-  } else if (current_ctx->info.is_multisig) {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Multisig (%u of %u)",
-             current_ctx->info.threshold, current_ctx->info.num_keys);
-  } else if (current_ctx->info.script_type) {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig (%s)",
-             current_ctx->info.script_type);
-  } else {
-    snprintf(out, REGISTRY_LABEL_MAX_LEN, "Single-sig");
-  }
 }
 
 static void session_register_current_descriptor(void) {
@@ -494,7 +513,7 @@ static void session_register_current_descriptor(void) {
   }
 
   char label[REGISTRY_LABEL_MAX_LEN];
-  build_session_descriptor_label(label);
+  descriptor_info_policy_name(&current_ctx->info, label, sizeof(label));
   // The descriptor is loaded either way; without a label it lists under its id.
   if (!registry_set_label(id, label))
     ESP_LOGW(TAG, "Failed to label session descriptor '%s'", id);
@@ -516,14 +535,20 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
     return;
   }
 
-  session_register_current_descriptor();
+  if (current_ctx->force_persistent && current_ctx->id_loc_cb) {
+    pending_generation = current_ctx->generation;
+    current_ctx->id_loc_cb(id_loc_proceed, current_ctx->user_data);
+  } else {
+    session_register_current_descriptor();
+  }
 }
 
 /* Show the info dialog, or auto-confirm when the caller passed no callback. */
 static void show_info_or_auto_confirm(void) {
   pending_generation = current_ctx->generation;
   if (current_ctx->info_confirm_cb)
-    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed);
+    current_ctx->info_confirm_cb(&current_ctx->info, info_confirm_proceed,
+                                 current_ctx->user_data);
   else
     info_confirm_proceed(true, NULL);
 }
@@ -688,7 +713,7 @@ static void show_keyed_info(struct wally_descriptor *descriptor,
              purpose, script_name);
   }
 
-  bool have_info = extract_descriptor_info(
+  bool have_info = descriptor_info_extract(
       descriptor, current_ctx->descriptor_str, key_index, &current_ctx->info);
   current_ctx->descriptor = descriptor;
   current_ctx->key_index = key_index;
@@ -883,10 +908,50 @@ void descriptor_validate_and_load(const char *descriptor_str,
   show_keyed_info(descriptor, key_index);
 }
 
+void descriptor_validate_and_load_persistent(
+    const char *descriptor_str, validation_complete_cb callback,
+    validation_confirm_cb confirm_cb,
+    validation_info_confirm_cb info_confirm_cb, validation_id_loc_cb id_loc_cb,
+    void *user_data) {
+  if (descriptor_str && callback &&
+      (!key_is_loaded() || !wallet_is_initialized())) {
+    cleanup_context();
+    callback(VALIDATION_INTERNAL_ERROR, user_data);
+    return;
+  }
+
+  struct wally_descriptor *descriptor = NULL;
+  if (validation_begin(descriptor_str, callback, info_confirm_cb, user_data,
+                       &descriptor) != VALIDATION_SUCCESS)
+    return;
+
+  current_ctx->confirm_cb = confirm_cb;
+  current_ctx->id_loc_cb = id_loc_cb;
+  current_ctx->force_persistent = true;
+
+  int key_index = find_matching_key_index(descriptor, 0);
+  if (key_index < 0) {
+    ESP_LOGE(TAG, "Wallet fingerprint not found in descriptor");
+    wally_descriptor_free(descriptor);
+    complete_validation(VALIDATION_FINGERPRINT_NOT_FOUND);
+    return;
+  }
+
+  descriptor_validation_result_t keys_result = verify_own_keys(descriptor);
+  if (keys_result != VALIDATION_SUCCESS) {
+    wally_descriptor_free(descriptor);
+    complete_validation(keys_result);
+    return;
+  }
+
+  // One descriptor may be registered under several aliases
+  show_keyed_info(descriptor, key_index);
+}
+
 // Watch-only: extract info and show the "Load?" dialog, skipping the xpub
 // verification and PSB warning that the keyed path performs.
 static void watch_only_show_info(struct wally_descriptor *descriptor) {
-  bool have_info = extract_descriptor_info(
+  bool have_info = descriptor_info_extract(
       descriptor, current_ctx->descriptor_str, -1, &current_ctx->info);
   wally_descriptor_free(descriptor);
   if (!have_info) {

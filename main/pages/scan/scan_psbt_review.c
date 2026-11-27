@@ -38,8 +38,26 @@ static bool create_psbt_info_display(const psbt_owners_t *owners);
 #define NONSTANDARD_INPUT_INLINE_THRESHOLD 4
 #define SELF_TRANSFER_INLINE_THRESHOLD 4
 
+// Why the policy gate last refused the PSBT
+static scan_psbt_failure_t policy_refusal;
+
+static const char *policy_refusal_message(scan_psbt_failure_t refusal) {
+  switch (refusal) {
+  case SCAN_PSBT_NOTHING_TO_SIGN:
+    return "No input matches this wallet's signing policy";
+  case SCAN_PSBT_REFUSED:
+    return "Refused by a signing setting";
+  default:
+    return "PSBT cannot be signed safely";
+  }
+}
 static void policy_reject_dismissed_cb(void *user_data) {
   (void)user_data;
+  if (scan_ctx.psbt_failed_cb) {
+    scan_psbt_fail(policy_refusal, policy_refusal_message(policy_refusal), NULL,
+                   0);
+    return;
+  }
   if (scan_ctx.return_cb)
     scan_ctx.return_cb();
 }
@@ -51,15 +69,18 @@ void scan_psbt_resume_review(bool offer_descriptor) {
   psbt_owners_t owners;
   if (!psbt_review_classify_owners(scan_ctx.psbt, scan_ctx.is_testnet,
                                    &owners)) {
-    dialog_show_error_timeout("Invalid PSBT data", scan_ctx.return_cb, 0);
+    scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid PSBT data", scan_ctx.return_cb,
+                   0);
     return;
   }
   if (psbt_sign_policy_allows_review(scan_ctx.psbt, owners.inputs,
                                      owners.outputs, policy_reject_dismissed_cb,
                                      offer_descriptor ? psbt_offer_descriptor_cb
-                                                      : NULL) &&
+                                                      : NULL,
+                                     &policy_refusal) &&
       !create_psbt_info_display(&owners))
-    dialog_show_error_timeout("Invalid PSBT data", scan_ctx.return_cb, 0);
+    scan_psbt_fail(SCAN_PSBT_INVALID, "Invalid PSBT data", scan_ctx.return_cb,
+                   0);
   psbt_review_free_owners(&owners);
 }
 
@@ -126,6 +147,11 @@ static void psbt_desc_sd_cb(void) {
 
 static void mismatch_dialog_cb(void *user_data) {
   scan_psbt_cleanup();
+  if (scan_ctx.psbt_failed_cb) {
+    scan_psbt_fail(SCAN_PSBT_NETWORK_MISMATCH, "PSBT is for another network",
+                   NULL, 0);
+    return;
+  }
   if (scan_ctx.return_cb) {
     scan_ctx.return_cb();
   }
