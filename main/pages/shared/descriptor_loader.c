@@ -196,14 +196,6 @@ static void prompt_descriptor_name(storage_location_t loc, const char *prefill,
     lv_textarea_set_text(ctx->input.textarea, prefill);
 }
 
-static void descriptor_id_loc_wrapper(void (*proceed)(const char *id,
-                                                      storage_location_t loc,
-                                                      void *user_data),
-                                      void *user_data) {
-  (void)user_data;
-  prompt_descriptor_name(STORAGE_FLASH, NULL, proceed);
-}
-
 /* ---------- Post-load chooser: session only, or register ---------- */
 
 static ui_menu_t *loaded_menu = NULL;
@@ -681,8 +673,7 @@ void descriptor_loader_process_scanner(validation_complete_cb validation_cb,
     session_cleanup_register(descriptor_validation_cancel);
     descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                  validation_cb, descriptor_confirm_wrapper,
-                                 descriptor_info_confirm_wrapper,
-                                 descriptor_id_loc_wrapper, user_data);
+                                 descriptor_info_confirm_wrapper, user_data);
     free(unambiguous);
     free(converted);
     free(descriptor_str);
@@ -709,8 +700,7 @@ void descriptor_loader_process_string(const char *descriptor_str,
   session_cleanup_register(descriptor_validation_cancel);
   descriptor_validate_and_load(unambiguous ? unambiguous : to_process,
                                validation_cb, descriptor_confirm_wrapper,
-                               descriptor_info_confirm_wrapper,
-                               descriptor_id_loc_wrapper, user_data);
+                               descriptor_info_confirm_wrapper, user_data);
   free(unambiguous);
   free(converted);
 }

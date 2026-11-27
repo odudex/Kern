@@ -23,18 +23,12 @@
 
 static const char *TAG = "descriptor_validator";
 
-/* Keep the persistent-registration path dormant until descriptor backups can be
- * encrypted to the descriptor's own public keys, per the Bitcoin Encrypted
- * Backup proposal in bitcoin/bips#1951. */
-#define DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED 0
-
 typedef struct {
   uint32_t generation; /* set once at create; see pending_generation below */
   char *descriptor_str;
   validation_complete_cb callback;
   validation_confirm_cb confirm_cb;
   validation_info_confirm_cb info_confirm_cb;
-  validation_id_loc_cb id_loc_cb;
   void *user_data;
   descriptor_info_t info;
   /* Keyed loads keep the parsed descriptor for registry_add_parsed. */
@@ -436,27 +430,6 @@ static bool extract_descriptor_info(struct wally_descriptor *descriptor,
   return true;
 }
 
-static void id_loc_proceed(const char *id, storage_location_t loc,
-                           void *user_data) {
-  (void)user_data;
-  if (!ctx_callback_is_live())
-    return;
-  pending_generation = 0;
-  if (!id || strlen(id) == 0) {
-    complete_validation(VALIDATION_USER_DECLINED);
-    return;
-  }
-  bool added = registry_add_parsed(id, current_ctx->descriptor,
-                                   (size_t)current_ctx->key_index, loc, true);
-  current_ctx->descriptor = NULL;
-  if (!added) {
-    ESP_LOGE(TAG, "Failed to register descriptor '%s'", id);
-    complete_validation(VALIDATION_INTERNAL_ERROR);
-    return;
-  }
-  complete_validation(VALIDATION_SUCCESS);
-}
-
 static bool build_session_descriptor_id(char out[REGISTRY_ID_MAX_LEN]) {
   if (current_ctx->descriptor_checksum[0] == '\0')
     return false;
@@ -543,15 +516,7 @@ static void info_confirm_proceed(bool confirmed, void *user_data) {
     return;
   }
 
-  /* Descriptor registration is disabled: load into the in-memory session
-   * registry only. Keep id_loc_cb wired for the future registration flow, but
-   * skip it until encrypted descriptor backups are ready. */
-  if (DESCRIPTOR_PERSISTENT_REGISTRATION_ENABLED && current_ctx->id_loc_cb) {
-    pending_generation = current_ctx->generation;
-    current_ctx->id_loc_cb(id_loc_proceed, NULL);
-  } else {
-    session_register_current_descriptor();
-  }
+  session_register_current_descriptor();
 }
 
 /* Show the info dialog, or auto-confirm when the caller passed no callback. */
@@ -880,7 +845,6 @@ void descriptor_validate_and_load(const char *descriptor_str,
                                   validation_complete_cb callback,
                                   validation_confirm_cb confirm_cb,
                                   validation_info_confirm_cb info_confirm_cb,
-                                  validation_id_loc_cb id_loc_cb,
                                   void *user_data) {
   if (descriptor_str && callback &&
       (!key_is_loaded() || !wallet_is_initialized())) {
@@ -895,7 +859,6 @@ void descriptor_validate_and_load(const char *descriptor_str,
     return;
 
   current_ctx->confirm_cb = confirm_cb;
-  current_ctx->id_loc_cb = id_loc_cb;
 
   int key_index = find_matching_key_index(descriptor, 0);
   if (key_index < 0) {
